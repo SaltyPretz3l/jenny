@@ -143,11 +143,8 @@
   --z-boot-curtain: 90;
   --z-window-controls: 95;
   --sidebar-width: 320px;
-  --sidebar-width-compact: 272px;
-  --sidebar-collapsed-width: 84px;
   --sidebar-current-width: var(--sidebar-width);
   --context-panel-width: 320px;
-  --sidebar-resizer-width: 10px;
   /* Chat reading measure. The user-selectable width (Appearance > Chat layout
      > Chat width) is a line length: --chat-measure-cap-ch characters of the
      prose font (68 Narrow, 92 Standard, uncapped Wide; the overrides are
@@ -462,7 +459,6 @@
 
   /* ── Top navigation (nav overhaul) ── */
   /* The view rail is retired into the title bar: no row of its own. */
-  --toprail-height: 0px;
   --toprail-gap: var(--space-1);
   --toprail-item-height: 36px;
   --toprail-item-pad-inline: var(--space-7);
@@ -480,12 +476,6 @@
   /* ── Per-view contextual panel tokens (nav overhaul) ── */
   --view-panel-bg: var(--mat-live-bg);
   --view-panel-border: var(--mat-live-border);
-  --view-panel-header-pad: var(--space-6);
-  --view-panel-strip-width: 56px;
-  --view-panel-flyout-bg: var(--mat-ephemeral-bg);
-  --view-panel-flyout-border: var(--mat-ephemeral-border);
-  --view-panel-flyout-shadow: var(--shadow-float);
-  --view-panel-flyout-radius: var(--radius-md);
 
   /* Shared text-rail vocabulary. Chats and Settings keep separate DOM and
      controller contracts while consuming the same quiet interaction surfaces. */

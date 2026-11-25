@@ -1,11 +1,12 @@
 'use strict';
 // The Settings > Tools backends that main owns: the command sandbox and the
-// optional PDF reading add-on, image engine, managed NInfer runtime and dictation. All use
+// optional PDF reading add-on, image engine, managed NInfer and Strata runtimes and dictation. All use
 // the trusted-sender authorizer.
 const { registerCommandSandboxIpc } = require('./command-sandbox-ipc-registration');
 const { registerPdfAddonIpc } = require('./pdf-addon-ipc-registration');
 const { registerImageEngineIpc } = require('./image-engine-ipc-registration');
 const { registerNinferIpc } = require('./ninfer-ipc-registration');
+const { registerStrataIpc } = require('./strata-ipc-registration');
 const { registerDictationIpc } = require('./dictation-ipc-registration');
 const { registerAppSoundIpc, registerBrowserUseIpc } = require('./browser-use-ipc-registration');
 
@@ -17,6 +18,7 @@ function registerToolsSettingsIpc(ipcMain, {
   // A missing dialog keeps the registration's Electron default instead of null.
   registerImageEngineIpc(ipcMain, { backendService, authorization, dialogImpl: dialog || undefined, getMainWindow, userDataPath });
   registerNinferIpc(ipcMain, { backendService, authorization });
+  registerStrataIpc(ipcMain, { backendService, authorization });
   // Push-to-talk dictation: the speech model download plus the audio calls. The
   // flag and the sidecar client are read per call, not captured at registration.
   registerDictationIpc(ipcMain, {

@@ -302,7 +302,7 @@ test('background tasks: unsupported sources keep counts unknown; supported rows 
     scope: 'session_and_direct_children',
     counts: { active: null, waiting: null, failed: null, completed: null },
     coverage: 'partial',
-    unsupported_sources: ['workspace_test', 'session_runtime', 'linked_chat_turn', 'background_job'],
+    unsupported_sources: ['workspace_test', 'linked_chat_turn', 'background_job'],
     items: [],
   });
 
@@ -317,7 +317,7 @@ test('background tasks: unsupported sources keep counts unknown; supported rows 
   const testSource = { getActivityRuns: () => rows, subscribeActivity: () => () => {} };
   const on = (await makeService({ activityEnabled: true, testSource }).service.getSummary(req())).summary.background_tasks;
   assert.equal(on.data.coverage, 'partial');
-  assert.deepEqual(on.data.unsupported_sources, ['session_runtime', 'linked_chat_turn', 'background_job']);
+  assert.deepEqual(on.data.unsupported_sources, ['linked_chat_turn', 'background_job']);
   assert.deepEqual(on.data.counts, { active: 1, waiting: null, failed: 1, completed: 1 });
   assert.deepEqual(on.data.items.map((item) => item.operation_id), ['r1', 'r2', 'r3']);
   assert.deepEqual(on.data.items[1], {
@@ -331,8 +331,8 @@ test('background task items are capped at thirty and complete coverage is possib
   const section = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows, workspaceTestSupported: true });
   assert.equal(section.data.items.length, 30);
   assert.equal(section.data.counts.active, 35);
-  const complete = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, sessionRuntimeSupported: true });
-  assert.equal(complete.data.coverage, 'partial', 'linked_chat_turn has no source in checkpoint 2');
+  const complete = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [], jobRows: [] });
+  assert.deepEqual([complete.data.coverage, complete.data.unsupported_sources, complete.data.counts.active], ['complete', [], 0], 'the foreground turn is no source');
 });
 
 function jobSnapshot(jobId, state, extra = {}) {
@@ -353,7 +353,7 @@ test('background jobs become task items: live first, finished history newest fir
     { state: 'running' },
   ];
   const section = buildBackgroundTasksSection({
-    sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, sessionRuntimeSupported: true, linkedRows: [], jobRows,
+    sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [], jobRows,
   });
   assert.equal(section.data.coverage, 'complete');
   assert.deepEqual(section.data.unsupported_sources, []);
@@ -389,7 +389,7 @@ test('background jobs become task items: live first, finished history newest fir
   assert.deepEqual([hostile.data.items[0].command, hostile.data.items[0].started_at_ms], ['rm -rf x', null]);
 
   const off = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [] });
-  assert.deepEqual(off.data.unsupported_sources, ['session_runtime', 'background_job']);
+  assert.deepEqual(off.data.unsupported_sources, ['background_job']);
 });
 
 test('the service reads the session jobs from the background-job tracker', async () => {

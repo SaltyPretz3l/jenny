@@ -11,6 +11,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from sidecar.ai.routing.auto_approval_scope import (
+    auto_runs_without_card,  # noqa: F401  (re-exported for tool_execution)
+)
 from sidecar.ai.routing.route_policy_runtime import increment_counter_for_kernel
 from sidecar.ai.tools import assembly as _tools_assembly
 from sidecar.ai.tools import schema_examples as _tools_schema_examples

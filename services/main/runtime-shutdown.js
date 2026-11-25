@@ -9,8 +9,12 @@ const { resolveLaunchAcceleration } = require('./llama-server-acceleration-launc
 const { createLlamaServerManager } = require('./llama-server-manager');
 const { createNinferManager } = require('./ninfer-manager');
 const ninferLifecycle = require('../ninfer-lifecycle');
+const { createStrataManager } = require('./strata-manager');
+const strataLifecycle = require('../strata-lifecycle');
 const { buildFeatureFlags } = require('../feature-flags');
-const { estimateLlamaServerMb, estimateNinferMb, withVramPreflight } = require('../backend/vram-load-preflight');
+const {
+  estimateLlamaServerMb, estimateNinferMb, estimateStrataMb, withVramPreflight,
+} = require('../backend/vram-load-preflight');
 const {
   localSubagentEngineLoadPlan, localSubagentEngineOwnsManager, startLocalSubagentEngine,
 } = require('../backend/local-subagent-engine');
@@ -66,6 +70,8 @@ function createRuntimeShutdownController({
   resolveLaunchAccelerationImpl = resolveLaunchAcceleration,
   ninferLifecycleImpl = ninferLifecycle,
   createNinferWatchdogImpl = undefined,
+  strataLifecycleImpl = strataLifecycle,
+  createStrataWatchdogImpl = undefined,
   // Image engine (stable-diffusion.cpp) hooks. Startup: reap an orphan render
   // with proof BEFORE llama-server autostart takes the GPU. Shutdown: the chat
   // GPU handoff's closing latch (cancel the render, never restore) runs before
@@ -84,15 +90,45 @@ function createRuntimeShutdownController({
   // managed server owns the GPU, so the llama-server launch gate refuses while
   // NInfer is up and a NInfer launch stops llama-server first (ninfer-manager.js).
   ninferManager = null,
+  // The managed Strata runtime (row 200) ranks above both: llama-server <
+  // NInfer < Strata. A Strata launch stops the two lower managers first; their
+  // launch gates refuse while Strata is up (strata-manager.js).
+  strataManager = null,
 } = {}) {
   // Flag-off (JENNY_ENABLE_NINFER=0) hides the manager entirely: no autostart,
   // no broker, no IPC data. Read lazily; the shell config may not exist yet.
+  // The shell config replaces its state object on every write, so the flags are read once per state rather than
+  // cloning the whole config on every manager lookup (several per chat turn).
+  let flagsState = null;
+  let flagsMemo = null;
+  function featureFlags() {
+    const service = getShellConfigService();
+    const state = service?.state || null;
+    if (!state || state !== flagsState) {
+      flagsMemo = buildFeatureFlags(processRef.env, service?.getState?.()?.featureOverrides || {});
+      flagsState = state;
+    }
+    return flagsMemo;
+  }
   function ninferEnabled() {
     try {
-      return buildFeatureFlags(processRef.env, getShellConfigService()?.getState?.()?.featureOverrides || {}).ninfer !== false;
+      return featureFlags().ninfer !== false;
     } catch (_error) {
       return false;
     }
+  }
+  function strataEnabled() {
+    try {
+      return processRef.platform === 'win32' && featureFlags().strata !== false;
+    } catch (_error) {
+      return false;
+    }
+  }
+  let managedStrata = null;
+  function strataLaunchRefusal() {
+    const state = managedStrata?.getStatus?.()?.state;
+    if (['starting', 'ready', 'stopping'].includes(state)) return 'strata_running';
+    return managedStrata?.cleanupUnconfirmed?.() ? 'strata_stop_unconfirmed' : '';
   }
   let managedNinfer = null;
   function ninferLaunchRefusal() {
@@ -120,6 +156,16 @@ function createRuntimeShutdownController({
       || ownsHelper(backendService, 'ninfer');
     if (!brokered || typeof backendService.refreshManagedConfig !== 'function') return undefined;
     return Promise.resolve(backendService.refreshManagedConfig('ninfer_stopped')).catch(() => null);
+  }
+  // Same release rule as NInfer's, for the Strata origin and key.
+  let strataEndpointBrokered = false;
+  function releaseStrataEndpoint(status) {
+    if (!strataEndpointBrokered || !['stopped', 'crashed'].includes(status.state) || status.identityRetained === true) return undefined;
+    strataEndpointBrokered = false;
+    if (runtimeShutdownStarted || status.stoppedBy === 'engine_switch') return undefined;
+    const backendService = getBackendService();
+    if (backendService?.currentEngineType !== 'openai-compatible' || typeof backendService.refreshManagedConfig !== 'function') return undefined;
+    return Promise.resolve(backendService.refreshManagedConfig('strata_stopped')).catch(() => null);
   }
   function ownsHelper(backendService, kind) {
     try {
@@ -189,9 +235,9 @@ function createRuntimeShutdownController({
     // launch may take the GPU back except the handoff's own identity restore.
     launchGate: () => {
       try {
-        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || ninferLaunchRefusal();
+        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || strataLaunchRefusal() || ninferLaunchRefusal();
       } catch (_error) {
-        return ninferLaunchRefusal();
+        return strataLaunchRefusal() || ninferLaunchRefusal();
       }
     },
     // Managed-engine liveness heartbeat for the sidecar's stream-inactivity
@@ -218,9 +264,9 @@ function createRuntimeShutdownController({
     ...(createNinferWatchdogImpl ? { createWatchdog: createNinferWatchdogImpl } : {}),
     launchGate: () => {
       try {
-        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || '';
+        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || strataLaunchRefusal();
       } catch (_error) {
-        return '';
+        return strataLaunchRefusal();
       }
     },
     onStateChange: (status) => {
@@ -229,6 +275,44 @@ function createRuntimeShutdownController({
       if (status.state !== 'ready') return releaseNinferEndpoint(status);
       ninferEndpointBrokered = true;
       return rebrokerManagedServer(status, 'ninfer_ready', 'ninfer');
+    },
+  });
+  managedStrata = strataManager || createStrataManager({
+    userDataPath: () => app.getPath('userData'),
+    getShellConfigService,
+    getRuntime: () => getBackendService()?.strataRuntime || null,
+    getLowerManagers: () => [['ninfer', managedNinfer], ['llama-server', managedLlamaServer]],
+    emitStartupAuditMark,
+    log,
+    lifecycle: withVramPreflight(strataLifecycleImpl, { startKey: 'startStrataServer', engine: 'strata', estimate: estimateStrataMb, getPreflight: () => getBackendService()?.vramLoadPreflight, pidFileName: strataLifecycle.STRATA_PID_FILENAME, modelOf: () => 'Inkling 2 Mini' }),
+    ...(createStrataWatchdogImpl ? { createWatchdog: createStrataWatchdogImpl } : {}),
+    launchGate: () => {
+      try {
+        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || '';
+      } catch (_error) {
+        return '';
+      }
+    },
+    onEngineActivity: () => {
+      try {
+        getBackendService()?.sidecarClient?.notifyEngineActivity?.();
+      } catch (_error) {
+        /* best-effort */
+      }
+    },
+    onWindowLearned: (key, window) => {
+      try {
+        const config = getShellConfigService();
+        const learnedFits = { ...(config?.getLocalEngines?.()?.strata?.learnedFits || {}), [key]: window };
+        config?.updateStrataSettings?.({ learnedFits });
+      } catch (_error) { /* the next launch starts from the default cap again */ }
+    },
+    onStateChange: (status) => {
+      sendBridgeEvent('strata.onChanged', { source: 'manager', state: status.state, phase: status.phase || '', stoppedBy: status.stoppedBy || '' });
+      getBackendService()?.performance?.refreshRuntime?.();
+      if (status.state !== 'ready') return releaseStrataEndpoint(status);
+      strataEndpointBrokered = true;
+      return rebrokerManagedServer(status, 'strata_ready', 'strata');
     },
   });
   let emergencyRuntimeShutdownTriggered = false;
@@ -274,6 +358,11 @@ function createRuntimeShutdownController({
   // no NInfer at all.
   function getNinferManager() {
     return ninferEnabled() ? managedNinfer : null;
+  }
+
+  // null while the flag is off or off Windows: no Strata anywhere.
+  function getStrataManager() {
+    return strataEnabled() ? managedStrata : null;
   }
 
   function getLlamaServerApiKey() {
@@ -379,6 +468,18 @@ function createRuntimeShutdownController({
     // default model); without a backend the manager reads the preferred one.
     const engineType = getBackendService()?.currentEngineType;
     if (startLocalSubagentEngineAtBoot(engineType)) return;
+    if (strataEnabled()) {
+      // Owner D8 A: a server this Jenny recorded and still owns is ended at
+      // boot, by that exact PID through the identity check.
+      try {
+        strataLifecycleImpl.reapRecordedStrataServer?.({ userDataPath: app.getPath('userData'), logger: log });
+      } catch (_error) { /* the next Strata launch reaps it again */ }
+      const strataBoot = await managedStrata.startFromSettings(engineType ? { engineType } : {});
+      if (strataBoot?.autostarted === true) {
+        log('INFO', 'runtime.startup_step', { step: 'llama_server_autostart', status: 'skipped', reason: 'strata_autostarted' });
+        return;
+      }
+    }
     // NInfer first: when it was the last-used managed server it owns the boot
     // launch and llama-server stays down (one managed server on the GPU).
     if (ninferEnabled()) {
@@ -424,6 +525,7 @@ function createRuntimeShutdownController({
   }
 
   async function stopLlamaServerOnShutdown() {
+    await managedStrata.stop();
     await managedNinfer.stop();
     await managedLlamaServer.stop();
   }
@@ -558,6 +660,10 @@ function createRuntimeShutdownController({
       // runShutdownStage already logged the failure
     }
     try { await runShutdownStage('browser_use', () => getBackendService()?.toolExecutor?.browserUse?.dispose?.(), signal); } catch (_error) { /* the stage logged it */ }
+    // Row 196: let go of every key and button and stop the watch, before the Live tab's stage stops the shared helper.
+    try { await runShutdownStage('computer_use', () => getBackendService()?.toolExecutor?.computerUse?.dispose?.(), signal); } catch (_error) { /* the stage logged it */ }
+    // Row 197: the Live tab's program is asked to close, then its job ends, before the GPU owners stop.
+    try { await runShutdownStage('run_view', () => getBackendService()?.runView?.shutdown?.(), signal); } catch (_error) { /* the stage logged it */ }
     try {
       await runShutdownStage('llama_server', () => stopLlamaServerOnShutdown(), signal);
     } catch (_error) {
@@ -675,6 +781,11 @@ function createRuntimeShutdownController({
       // best effort only
     }
     try {
+      managedStrata.stopSync();
+    } catch (_error) {
+      // best effort only
+    }
+    try {
       managedNinfer.stopSync();
     } catch (_error) {
       // best effort only
@@ -759,6 +870,7 @@ function createRuntimeShutdownController({
     getLlamaServerApiKey,
     getLlamaServerManager,
     getNinferManager,
+    getStrataManager,
     runEmergencyRuntimeShutdownSync,
     shutdownStepCount: SHUTDOWN_STEP_COUNT,
     shutdownStepIndex: SHUTDOWN_STEP_INDEX,

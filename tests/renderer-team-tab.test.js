@@ -7,7 +7,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { TEAM, OTHER, ME, DOT, MAYA, flush, pushed, micro, snapshot, memberTeam, hostState, ROSTER, harness, chatMember, overview, OWN_KEY_LINE, OWN_KEY_CASES } = require('./helpers/team-settings-harness');
+const { TEAM, OTHER, ME, DOT, MAYA, flush, pushed, micro, snapshot, memberTeam, hostState, ROSTER, harness, chatMember, overview, OWN_KEY_LINE, OWN_KEY_CASES,
+  openChat, chatPush, chatChannel } = require('./helpers/team-settings-harness');
 
 // What a non-owner is sent: active members only, no devices.
 const MEMBER_ROSTER = ROSTER.filter((member) => member.state === 'active').map(({ devices: _devices, ...member }) => member);
@@ -434,6 +435,33 @@ test('a change under the open switcher menu closes it, and hiding the tab takes 
   h.view.q('[data-team-tab-action="switch"]').click();
   h.tab.hideTeamTab();
   assert.equal(menuOf(h), null);
+});
+
+// Row 201 H23.2: a presence or unread push writes the column only; a menu whose own anchor did not change stays open.
+test('presence and unread pushes redraw the column under an open switcher or notify menu without closing it', async (t) => {
+  const { h } = await openChat();
+  t.after(h.restore);
+  const doc = h.window.document;
+  const pushes = (state, unread) => {
+    chatPush(h, { type: 'presence', member_id: ME, state, last_seen_at: null });
+    chatPush(h, { type: 'channels', partial: true, channels: [chatChannel({ unread, last_seq: unread })] });
+  };
+  for (const [action, className] of [['switch', 'team-switch-menu'], ['notify', 'team-notify-menu']]) {
+    h.view.q(`[data-team-tab-action="${action}"]`).click();
+    const menu = () => doc.querySelector('.inv-context-menu.' + className);
+    assert.ok(menu(), action + ' opens');
+    const focused = doc.activeElement;
+    pushes(action === 'switch' ? 'offline' : 'online', action === 'switch' ? 3 : 0);
+    await flush();
+    assert.ok(menu(), action + ': the menu stays open');
+    assert.equal(doc.activeElement, focused, action + ': the focus stays');
+    assert.equal(h.view.q(`[data-team-tab-action="${action}"]`).getAttribute('aria-expanded'), 'true', action + ': its button still says so');
+    const offline = h.view.q('[data-team-presence="offline"]');
+    assert.equal(Boolean(offline && offline.textContent.includes('Olive Owner')), action === 'switch', action + ': the people column follows the push');
+    h.view.q(`[data-team-tab-action="${action}"]`).click();
+    await flush();
+    assert.equal(menu(), null, action + ': its own button closes it');
+  }
 });
 
 // ------------------------------------------------------------- narrow, life

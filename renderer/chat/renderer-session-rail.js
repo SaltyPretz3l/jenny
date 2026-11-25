@@ -1,42 +1,38 @@
 /* renderer/chat/renderer-session-rail.js - one session rail per chat pane (UMD).
 
-   Row 59 checkpoint 2 (chat workspace parity spec, "Session rail"). The controller
-   owns, for ONE pane: the data (window.jennyShell.chatWorkspace, contract C2), the responsive
-   docking decision, the Session toggle in the pane's utility cluster, the sheet below the dock
-   threshold, the disclosure sections and their persistence, and focus. Markup lives in
-   renderer-session-rail-render.js, words and rules in renderer-session-rail-model.js, layout in
+   Row 59 checkpoint 2 (chat workspace parity spec, "Session rail"). The controller owns, for ONE pane:
+   the data (window.jennyShell.chatWorkspace, contract C2), the rail's place in the Chat workbench's
+   Session view, the disclosure sections and their persistence, and focus. Markup lives in
+   renderer-session-rail-render.js, words and rules in renderer-session-rail-model.js, styling in
    styles/chat-session-rail.css (which keys off the attribute this controller writes).
 
-   The pane element carries data-session-rail="docked|undocked|hidden":
-     docked    >= 920px of pane (>= 640px while a side panel is open or moving and the rail was
-               already docked): the rail shows at the pane's end edge and the stage and composer
-               give it room. The toggle (aria-pressed) hides and shows it and writes rail_visible.
-     hidden    docked-capable but hidden by the person (rail_visible false), or not available here
-               (no bridge, no session, a pane hosted in the Workspace dock).
-     undocked  below the threshold: the toggle (aria-expanded) opens a non-modal sheet anchored to
-               the pane. The sheet never writes rail_visible; responsive collapse never does.
-
-   Motion (renderer-session-rail-motion.js): the toggle glides the rail's column through the shared side-panel
-   motion; a side panel's open that leaves the pane under the dock width takes the rail out inside its own
-   motion (side-panel-measuring); every other change (first paint, session switch, a width-driven dock
-   change, disposal) is instant. A separator on the docked rail's start edge resizes it, 240 to 420 px.
+   The pane element carries data-session-rail="hosted|hidden":
+     hosted    row 190: the focused pane's rail lives in the Chat workbench's Session view
+               (configure({ getHost })). No room in the pane, no toggle, no resizer: the workbench
+               owns the width.
+     hidden    another pane's rail is hosted, or the rail is not available here (no bridge, no
+               session, a pane hosted in the Workspace dock). It waits, unpainted, inside the pane.
 
    Data: getSummary on mount and on a session/input change, a refetch on onChanged for this pane's
    session (debounced, one request in flight), and an optional visible-rail freshness timer. A summary for another session is
    never painted: a session change clears to "checking" first. Every listener, observer, timer
-   and the bridge subscription is released by dispose(). */
+   and the bridge subscription is released by dispose().
+
+   Row 195: a rail nobody can see (the stack is folded, another tab or another room is in front) fetches nothing
+   and runs no timer; it notes that it is behind and refreshes once when it shows again (isShown + syncHosts).
+   Running now and Jenny's checklist take their rows from injected readers (getRunningRows, getChecklist), a
+   run opens through openRun / openRuns, and isFullAuto names the run mode; each is a mount option or a
+   configure() port. A detail open names this rail's own pane, so the action lands in the pane the rail shows. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-session-rail-model'), require('./renderer-session-rail-render'), require('./renderer-session-rail-performance'), require('./renderer-context-preview'), require('./renderer-session-rail-jobs'), require('./renderer-session-rail-motion'));
+    module.exports = factory(require('./renderer-session-rail-model'), require('./renderer-session-rail-render'), require('./renderer-session-rail-performance'), require('./renderer-context-preview'), require('./renderer-session-rail-jobs'));
     return;
   }
-  root.rendererSessionRail = factory(root.rendererSessionRailModel, root.rendererSessionRailRender, root.rendererSessionRailPerformance, root.rendererContextPreview, root.rendererSessionRailJobs, root.rendererSessionRailMotion);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, render, performanceRail, contextPreview, railJobs, railMotion) {
+  root.rendererSessionRail = factory(root.rendererSessionRailModel, root.rendererSessionRailRender, root.rendererSessionRailPerformance, root.rendererContextPreview, root.rendererSessionRailJobs);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, render, performanceRail, contextPreview, railJobs) {
   'use strict';
 
   const REFETCH_DELAY_MS = 120;
-  const REFLOW_EVENT = railMotion.REFLOW_EVENT;
-  const SHEET_TOP_PROPERTY = '--session-rail-sheet-top';
   const SCHEMA_VERSION = 1;
   let railSequence = 0;
 
@@ -47,29 +43,34 @@
   function normalizeView(value) {
     const view = isObject(value) ? value : {};
     return {
-      rail_visible: typeof view.rail_visible === 'boolean' ? view.rail_visible : null,
       disclosures: isObject(view.disclosures) ? { ...view.disclosures } : {},
       children_expanded: typeof view.children_expanded === 'boolean' ? view.children_expanded : null,
     };
   }
 
-  const configured = { openSession: null }; // Row 59 cp5a: a linked Background tasks row opens its chat (app-level port)
+  const PORTS = ['openSession', 'getRunningRows', 'openRun', 'openRuns', 'getChecklist', 'isFullAuto']; // app-level function ports
+  const configured = { openSession: null, getHost: null, isShown: null, getRunningRows: null, openRun: null, openRuns: null, getChecklist: null, isFullAuto: null }; // Row 59 cp5a: a linked Background tasks row opens its chat (app-level port)
   const mountedByPane = new WeakMap(); // pane -> its live rail's api; a remount retires it
-  const configure = (options) => { if (typeof options?.openSession === 'function') configured.openSession = options.openSession; };
+  const liveRails = new Set(); // every mounted rail, for syncHosts()
+  const configure = (options) => { // row 190: getHost(pane) -> the host element, or null (hidden: another pane's rail is hosted)
+    for (const name of PORTS) if (options && name in options) configured[name] = typeof options[name] === 'function' ? options[name] : null;
+    if (options && 'getHost' in options) configured.getHost = typeof options.getHost === 'function' ? options.getHost : null;
+    // isShown() -> false while the host is off screen (another room, another tab, a folded stack): no paint, no fetch.
+    if (options && 'isShown' in options) configured.isShown = typeof options.isShown === 'function' ? options.isShown : null;
+  };
+  const syncHosts = () => { liveRails.forEach((api) => api.syncHost()); }; // row 190: after the host or the focused pane changed
 
   function mountSessionRail(options) {
     const o = options || {};
     const pane = o.pane;
-    const cluster = o.cluster;
     const getSessionId = o.getSessionId;
-    if (!pane || !cluster || typeof getSessionId !== 'function') return null;
+    if (!pane || typeof getSessionId !== 'function') return null;
     if (o.signal && o.signal.aborted) return null;
     const doc = pane.ownerDocument;
     const win = o.windowRef || (doc && doc.defaultView);
     if (!doc || !win) return null;
     const jt = typeof o.jt === 'function' ? o.jt : model.defaultJt();
     const stage = o.stage || Array.from(pane.children).find((child) => child.classList.contains('chat-thread-stage')) || null;
-    const chatView = pane.closest ? pane.closest('.chat-view') : null;
     const bridge = o.bridge || (win.jennyShell && win.jennyShell.chatWorkspace) || null;
     const bridgeOk = Boolean(bridge && typeof bridge.getSummary === 'function' && typeof bridge.setView === 'function');
     const idPrefix = `session-rail-${(pane.dataset && pane.dataset.paneId) || 'p'}-${railSequence += 1}`;
@@ -82,8 +83,6 @@
     let view = normalizeView(null);
     let revision = 0;
     let overrides = {};
-    let docked = false;
-    let sheetOpen = false;
     let fetching = false;
     let generation = 0;
     let refetchQueued = false;
@@ -91,9 +90,12 @@
     let fetchTimer = 0;
     let writeChain = Promise.resolve();
     let lastMode = '';
-    let tray = null;
     let painted = false;
-    const cache = new Map(), everHad = new Map(); // everHad: chats that had a server (row 176), bounded by the model
+    const cache = new Map();
+    let paintedKeys = '';
+    let wasVisible = false; // the last answer of visible(): a change to true refreshes once
+    let fetchedOnce = false;
+    const port = (name) => (typeof o[name] === 'function' ? o[name] : configured[name]); // a mount option wins over the app-level port
     const disposers = [];
 
     function listen(target, type, handler, listenerOptions) {
@@ -104,46 +106,24 @@
 
     // ── Elements ─────────────────────────────────────────────────────────
     mountedByPane.get(pane)?.dispose(); // retire the previous controller (timer, listeners, nodes)
-    cluster.querySelectorAll('[data-session-rail-toggle]').forEach((node) => node.remove());
-    pane.querySelectorAll(':scope > [data-session-rail-root], :scope > [data-session-rail-sheet]').forEach((node) => node.remove());
+    pane.querySelectorAll(':scope > [data-session-rail-root]').forEach((node) => node.remove());
     const title = jt('chat.sessionRail.title', 'Session');
     const rail = doc.createElement('aside');
     rail.className = 'session-rail';
     rail.setAttribute('data-session-rail-root', 'true');
     rail.setAttribute('aria-label', title);
     rail.hidden = true;
-    const sheet = doc.createElement('div');
-    sheet.className = 'session-rail-sheet';
-    sheet.setAttribute('data-session-rail-sheet', 'true');
-    sheet.setAttribute('role', 'dialog');
-    sheet.setAttribute('aria-modal', 'false');
-    sheet.setAttribute('aria-label', title);
-    sheet.hidden = true;
-    tray = doc.createElement('div');
+    const tray = doc.createElement('div');
     tray.className = 'session-rail-tray';
-    pane.append(rail, sheet);
-    cluster.insertAdjacentHTML('afterbegin', win.inventoryActionButton
-      ? win.inventoryActionButton({
-        plain: true, className: 'chat-timeline-utility-button session-rail-toggle', ariaPressed: false,
-        dataset: { 'session-rail-toggle': 'true' }, trustedHtml: render.toggleContent(title),
-      })
-      : '');
-    const toggle = cluster.querySelector('[data-session-rail-toggle]');
-    if (!toggle) {
-      rail.remove();
-      sheet.remove();
-      return null;
-    }
-    // Row 115 slice 3: the toggle's glide and the drag-to-resize separator (renderer-session-rail-motion.js).
-    const layout = railMotion.createRailLayout({ pane, rail, stage, chatView, win, getPaneWidth: o.getPaneWidth, motionOptions: o.motion });
-    const resizer = railMotion.createRailResizer({ pane, rail, stage, chatTimeline: o.chatTimeline, doc, win, jt, notify: layout.notify });
-    const jobs = railJobs?.createRailJobs({ tray, toggle, win, jt, getSessionId: () => sessionId, trayShown: () => visible(), getBackgroundJobs: () => win.jennyShell?.backgroundJobs, getJobWaiters: o.getJobWaiters, getBrowserUse: o.getBrowserUse, onBrowserChange: () => paint() }); if (jobs) disposers.push(jobs.dispose); // background-job rows + toggle readout
-    // Row 59 cp6: the Performance section and the toggle readout (own bridge; absent = nothing renders).
-    const perf = performanceRail ? performanceRail.createRailPerformance({ win, doc, jt, getSessionId, idPrefix, bridge: o.performance, onChange: () => syncToggle(currentMode()) }) : null;
+    rail.append(tray);
+    pane.append(rail);
+    const jobs = railJobs?.createRailJobs({ tray, win, jt, getSessionId: () => sessionId, trayShown: () => visible(), getBackgroundJobs: () => win.jennyShell?.backgroundJobs, getJobWaiters: o.getJobWaiters, getBrowserUse: o.getBrowserUse, onBrowserChange: () => paint() }); if (jobs) disposers.push(jobs.dispose); // background-job rows
+    // Row 59 cp6: the Performance section (own bridge; absent = nothing renders).
+    const perf = performanceRail ? performanceRail.createRailPerformance({ win, doc, jt, getSessionId, idPrefix, bridge: o.performance, shown: false }) : null;
 
     // ── Mode ─────────────────────────────────────────────────────────────
     function hostedElsewhere() {
-      return pane.classList.contains('ide-chat-dock-body') || pane.hasAttribute('data-pane-hosted')
+      return pane.classList.contains('ide-chat-dock-body')
         || (stage ? !pane.contains(stage) : true);
     }
 
@@ -151,106 +131,54 @@
       return !disposed && bridgeOk && Boolean(sessionId) && !hostedElsewhere();
     }
 
+    function hostEl() { // row 190: the host element the workbench gave this pane, or null (another pane is hosted)
+      return (typeof configured.getHost === 'function' ? configured.getHost(pane) : null) || null;
+    }
+
     function currentMode() {
-      if (!available()) return 'hidden';
-      return model.resolveRailMode({ docked, railVisible: view.rail_visible });
+      return available() && hostEl() ? 'hosted' : 'hidden';
     }
 
     function visible() {
+      return currentMode() === 'hosted' && (typeof configured.isShown !== 'function' || configured.isShown() !== false);
+    }
+
+    /* Visible now? A change to shown refreshes once (the summary, the chat's browser page, the performance reading);
+       a change to hidden stops the performance timer. A rail that was never fetched leaves that to its caller. */
+    function noteVisibility() {
+      const now = visible();
+      if (perf) perf.setVisible(now);
+      if (now !== wasVisible) jobs?.sync?.(); // the running rows' clock ticks only while the rail shows
+      if (now && !wasVisible) {
+        jobs?.syncBrowser();
+        if (fetchedOnce || needsFetch) { needsFetch = false; void fetchSummary(); }
+      }
+      wasVisible = now;
+      return now;
+    }
+
+    // A fetch now when the rail is on screen, else one owed for when it shows.
+    function requestFetch() {
+      if (visible()) void fetchSummary();
+      else needsFetch = true;
+    }
+
+    // Applies the mode to the pane and its parts: hosted, the rail sits in the workbench's host; hidden, it waits in the pane.
+    function applyMode() {
       const mode = currentMode();
-      return mode === 'docked' || (mode === 'undocked' && sheetOpen);
-    }
-
-    function toggleLabel(mode) {
-      if (mode === 'docked') return jt('chat.sessionRail.toggleHide', 'Hide session summary');
-      if (mode === 'hidden') return jt('chat.sessionRail.toggleShow', 'Show session summary');
-      return jt('chat.sessionRail.toggleOpen', 'Session summary');
-    }
-
-    function syncToggle(mode) {
-      toggle.hidden = !available();
-      toggle.title = toggleLabel(mode);
-      // Docked, the toggle is the panel glyph alone (the word stays for assistive tech): the cluster's
-      // reach comes out of the reading gutters, so it keeps to one glyph; the sheet's toggle names itself.
-      toggle.classList.add('session-rail-toggle--icon');
-      if (mode === 'undocked') {
-        toggle.removeAttribute('aria-pressed');
-        toggle.setAttribute('aria-haspopup', 'dialog');
-        toggle.setAttribute('aria-expanded', sheetOpen ? 'true' : 'false');
-      } else {
-        toggle.removeAttribute('aria-haspopup');
-        toggle.removeAttribute('aria-expanded');
-        toggle.setAttribute('aria-pressed', mode === 'docked' ? 'true' : 'false');
+      lastMode = mode;
+      pane.dataset.sessionRail = mode;
+      const host = mode === 'hosted' ? hostEl() : null;
+      if (host) {
+        if (rail.parentNode !== host) host.appendChild(rail);
+      } else if (rail.parentNode !== pane) {
+        pane.appendChild(rail);
       }
-      if (perf) perf.syncReadout(toggle, mode, toggleLabel(mode));
-    }
-
-    function attachTray(mode) {
-      const target = mode === 'docked' ? rail : (mode === 'undocked' && sheetOpen ? sheet : null);
-      if (!target) {
-        if (tray.parentNode) {
-          const hadFocus = tray.contains(doc.activeElement);
-          tray.remove();
-          if (hadFocus && !toggle.hidden) toggle.focus();
-        }
-        return;
-      }
-      if (tray.parentNode !== target) {
-        const hadFocus = tray.contains(doc.activeElement);
-        target.appendChild(tray);
-        if (hadFocus) toggle.focus();
-      }
-    }
-
-    /* Applies the mode to the pane and its parts. `how` names who asked: 'glide' (the person's toggle) moves
-       the rail's column through the shared side-panel motion, 'measuring' (a side panel's open is being
-       measured) lets the rail leave inside that motion, anything else is instant. Instant layout changes
-       (docked <-> not) are bracketed by the reflow notice so the pane's scroll coordinator keeps the reader's
-       place; the glide's anchors replace that bracket, never add to it. */
-    function applyMode(how) {
-      const mode = currentMode();
-      if (!how && layout.target() === mode) return syncToggle(mode); // the glide already carries this mode
-      const layoutChange = (mode === 'docked') !== (lastMode === 'docked');
-      if (mode !== 'undocked' && sheetOpen) closeSheet({ restoreFocus: false, silent: true });
-      if (!how && layout.target()) layout.cancel(); // a different mode while a glide runs: it snaps
-      syncToggle(mode); // the pressed state flips with the click, not with the glide
-      const run = () => {
-        pane.dataset.sessionRail = mode;
-        rail.hidden = mode !== 'docked';
-        sheet.hidden = !(mode === 'undocked' && sheetOpen);
-        attachTray(mode);
-        resizer.setShown(mode === 'docked');
-      };
-      const changed = layoutChange && Boolean(lastMode);
-      lastMode = mode; // before the commit: a measuring step inside it must see this mode, not the old one
-      layout.commit({ how, mode, changed, run });
-      if (visible()) {
+      rail.hidden = mode !== 'hosted';
+      if (noteVisibility()) {
         paint();
         if (needsFetch) { needsFetch = false; void fetchSummary(); }
       }
-    }
-
-    // ── Docking ──────────────────────────────────────────────────────────
-    /* `measuring`: a side panel's open is being measured (side-panel-measuring), so the decision is made
-       with the panel's final state now and the rail leaves inside that motion. */
-    let awaitResize = false, awaitTimer = 0;
-    function evaluateDock(options) {
-      if (disposed) return;
-      const measuring = Boolean(options && options.measuring === true);
-      // Never re-evaluate mid-motion: the motion's end (the attribute leaving) re-runs this.
-      if (!measuring && chatView && chatView.hasAttribute('data-panel-motion')) return;
-      // A hidden chat has no width; showing it resizes the stage, so decide then, after layout (250 ms at most).
-      if (!measuring && pane.closest && pane.closest('.hidden')) { awaitResize = true; return; }
-      if (!measuring && awaitResize && !(options && options.resized)) {
-        if (!awaitTimer) awaitTimer = win.setTimeout(() => { awaitTimer = 0; if (awaitResize) evaluateDock({ resized: true }); }, 250);
-        return;
-      }
-      awaitResize = false;
-      const width = layout.paneWidth(docked);
-      if (perf) perf.setPaneWidth(width);
-      const next = model.resolveDocked({ paneWidth: width, panelActive: layout.panelActive(), wasDocked: docked });
-      if (next !== docked) docked = next;
-      if (currentMode() !== lastMode) applyMode(measuring ? 'measuring' : undefined);
     }
 
     // ── Data ─────────────────────────────────────────────────────────────
@@ -259,6 +187,7 @@
       if (disposed || !sid || !bridgeOk) return;
       if (fetching) { refetchQueued = true; return; }
       fetching = true;
+      fetchedOnce = true;
       const requestGeneration = generation, requestedAt = Date.now();
       const response = await Promise.resolve()
         .then(() => bridge.getSummary({ schema_version: SCHEMA_VERSION, session_id: sid }))
@@ -281,7 +210,7 @@
             revision = rev;
           }
         } else if (summary) {
-          summary = contextPreview.markStale(summary, model.SECTION_KEYS);
+          summary = contextPreview.markStale(summary, model.SUMMARY_KEYS);
         } else {
           status = 'unavailable';
         }
@@ -298,11 +227,11 @@
       if (disposed) return;
       generation += 1;
       if (fetchTimer) win.clearTimeout(fetchTimer);
+      if (!visible()) { needsFetch = true; return; } // a rail nobody sees sets no timer and asks for nothing
       fetchTimer = win.setTimeout(() => {
         fetchTimer = 0;
         if (disposed) return;
-        if (visible()) void fetchSummary();
-        else needsFetch = true;
+        requestFetch();
       }, REFETCH_DELAY_MS);
     }
 
@@ -320,11 +249,11 @@
       refetchQueued = false;
       needsFetch = false;
       if (fetchTimer) { win.clearTimeout(fetchTimer); fetchTimer = 0; }
-      closeSheet({ restoreFocus: false, silent: true });
-      layout.cancel(); // a switch snaps any glide
-      applyMode(); jobs?.syncBrowser(); // the new chat's browser page
+      const wasShown = wasVisible;
+      applyMode();
+      if (wasShown && visible()) jobs?.syncBrowser(); // the new chat's browser page (a rail coming into view reads it itself)
       paint({ instant: true });
-      void fetchSummary();
+      requestFetch();
       return true;
     }
 
@@ -337,15 +266,18 @@
     }
 
     function buildVm() {
-      const vm = model.buildRailViewModel({ summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt, browser: jobs?.getBrowser(), everHadServer: everHad.has(sessionId) });
-      model.rememberServers(everHad, sessionId, vm);
-      return vm;
+      return model.buildRailViewModel({
+        summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt, browser: jobs?.getBrowser(),
+        fullAuto: port('isFullAuto')?.(sessionId) === true, getRunningRows: port('getRunningRows'), getChecklist: port('getChecklist'),
+      });
     }
 
     function paint(paintOptions) {
       if (disposed || !visible()) return;
       const vm = buildVm();
-      if (!painted || vm.sections.length !== cache.size) { // first paint, or Servers came or went (row 176)
+      const keys = vm.sections.map((section) => section.key).join(',');
+      if (!painted || keys !== paintedKeys) { // first paint, or Running now or the checklist came or went
+        paintedKeys = keys;
         tray.innerHTML = vm.sections.map((section) => render.sectionHtml(section, idPrefix)).join('');
         cache.clear();
         for (const section of vm.sections) {
@@ -418,88 +350,21 @@
       return writeChain;
     }
 
-    function toggleSection(key) { // a section head, or Background tasks' finished divider
+    function toggleSection(key) { // a section head
       if (!model.DISCLOSURE_KEYS.includes(key)) return;
       const vm = buildVm();
       const next = !model.isDisclosureOpen(vm, key);
       overrides = { ...overrides, [key]: next };
       paint();
-      void writeView({ disclosures: { [key]: next } }, {
+      const persistKey = model.PERSIST_KEY[key];
+      if (!persistKey) return; // the checklist's fold lasts for this pane only
+      void writeView({ disclosures: { [persistKey]: next } }, {
         confirm: () => { delete overrides[key]; },
         revert: () => { delete overrides[key]; },
       });
     }
 
-    function toggleRailVisible() {
-      const previous = view;
-      const shown = view.rail_visible !== false;
-      const next = !shown;
-      view = { ...view, rail_visible: next };
-      applyMode('glide');
-      void writeView({ rail_visible: next }, {
-        confirm: () => {},
-        revert: () => { if (view.rail_visible === next) view = previous; },
-      });
-    }
-
-    // ── Sheet ────────────────────────────────────────────────────────────
-    function onOutsidePointer(event) {
-      if (!sheetOpen) return;
-      const target = event.target;
-      if (sheet.contains(target) || toggle.contains(target)) return;
-      closeSheet({ restoreFocus: sheet.contains(doc.activeElement) });
-    }
-
-    function openSheet() {
-      if (sheetOpen || currentMode() !== 'undocked') return;
-      const stageTop = stage ? stage.getBoundingClientRect().top : 0;
-      const gap = 4;
-      const top = Math.max(0, Math.round(toggle.getBoundingClientRect().bottom - stageTop + gap));
-      sheet.style.setProperty(SHEET_TOP_PROPERTY, `${top}px`);
-      sheetOpen = true;
-      doc.addEventListener('pointerdown', onOutsidePointer, true);
-      applyMode();
-      const first = sheet.querySelector('[data-rail-section]');
-      if (first) first.focus();
-    }
-
-    function closeSheet({ restoreFocus = false, silent = false } = {}) {
-      if (!sheetOpen) return;
-      sheetOpen = false;
-      doc.removeEventListener('pointerdown', onOutsidePointer, true);
-      sheet.style.removeProperty(SHEET_TOP_PROPERTY);
-      if (silent) return;
-      applyMode();
-      if (restoreFocus && !toggle.hidden) toggle.focus();
-    }
-
     // ── Events ───────────────────────────────────────────────────────────
-    listen(toggle, 'click', (event) => {
-      event.preventDefault();
-      const mode = currentMode();
-      if (mode === 'undocked') {
-        if (sheetOpen) closeSheet({ restoreFocus: true });
-        else openSheet();
-      } else {
-        toggleRailVisible();
-      }
-    });
-
-    listen(toggle, 'keydown', (event) => {
-      if (event.key === 'Escape' && sheetOpen) {
-        event.preventDefault();
-        event.stopPropagation();
-        closeSheet({ restoreFocus: true });
-      }
-    });
-
-    listen(sheet, 'keydown', (event) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      closeSheet({ restoreFocus: true });
-    });
-
     listen(tray, 'click', (event) => {
       const target = event.target && event.target.closest ? event.target : null;
       if (!target || jobs?.handleClick(event)) return;
@@ -509,10 +374,19 @@
         toggleSection(header.getAttribute('data-rail-section'));
         return;
       }
+      const runsLink = port('openRuns') && target.closest('[data-rail-runs]');
+      if (runsLink && tray.contains(runsLink)) {
+        event.preventDefault();
+        return void port('openRuns')({ ownerSessionId: sessionId, pane });
+      }
+      const runRow = port('openRun') && target.closest('[data-rail-run]');
+      if (runRow && tray.contains(runRow)) {
+        event.preventDefault();
+        return void port('openRun')(runRow.getAttribute('data-rail-run'), { ownerSessionId: sessionId, pane });
+      }
       const sessionRow = configured.openSession && target.closest('[data-rail-session]');
       if (sessionRow && tray.contains(sessionRow)) {
         event.preventDefault();
-        if (sheetOpen) closeSheet({ restoreFocus: false });
         return void configured.openSession(sessionRow.getAttribute('data-rail-session'));
       }
       const row = target.closest('[data-rail-surface]');
@@ -520,20 +394,19 @@
       event.preventDefault();
       const detail = o.detail || win.rendererChatWorkspaceDetail;
       if (!detail || typeof detail.open !== 'function') return;
-      const request = { surface: row.getAttribute('data-rail-surface'), ownerSessionId: sessionId, opener: row };
+      const request = { surface: row.getAttribute('data-rail-surface'), ownerSessionId: sessionId, opener: row, pane }; // the pane this rail shows, not the one on the left
       if (row.getAttribute('data-rail-resource')) request.resourceRef = row.getAttribute('data-rail-resource');
-      if (sheetOpen) closeSheet({ restoreFocus: false });
       detail.open(request);
     });
 
     listen(win, 'jenny:focused-chat-changed', () => { syncSession(); });
     disposers.push(contextPreview.bindRefresh({ pane, win, listen, syncSession, scheduleFetch, paint, visible, options: o, getSessionId: () => sessionId }));
     if (o.chatTimeline) listen(o.chatTimeline, 'transcript-view-rendered', () => { syncSession(); });
-
-    disposers.push(layout.watch({ onResize: () => { syncSession(); evaluateDock({ resized: true }); }, onChange: () => { evaluateDock(); } }));
-    // A side panel's open is being measured: decide the dock with its final state, so a rail it forces out
-    // leaves inside that motion rather than in a second reflow after it.
-    disposers.push(layout.onMeasuring(() => { evaluateDock({ measuring: true }); }));
+    if (typeof win.MutationObserver === 'function') { // the pane moving into or out of the Workspace dock (ide-chat-dock-body)
+      const paneClass = new win.MutationObserver(() => { if (currentMode() !== lastMode) applyMode(); });
+      paneClass.observe(pane, { attributes: true, attributeFilter: ['class'] });
+      disposers.push(() => paneClass.disconnect());
+    }
 
     if (bridgeOk && typeof bridge.onChanged === 'function') {
       const unsubscribe = bridge.onChanged((event) => {
@@ -546,11 +419,9 @@
     // ── Teardown ─────────────────────────────────────────────────────────
     function dispose() {
       if (disposed) return;
-      closeSheet({ restoreFocus: false, silent: true });
       disposed = true;
       if (mountedByPane.get(pane) === api) mountedByPane.delete(pane);
-      layout.dispose();
-      resizer.dispose();
+      liveRails.delete(api);
       if (perf) perf.dispose();
       if (fetchTimer) win.clearTimeout(fetchTimer);
       fetchTimer = 0;
@@ -558,14 +429,8 @@
         const release = disposers.pop();
         try { release(); } catch (_error) { /* best-effort teardown, as the registry does */ }
       }
-      doc.removeEventListener('pointerdown', onOutsidePointer, true);
-      if (stage && lastMode === 'docked') layout.notify('before');
       delete pane.dataset.sessionRail;
-      rail.remove(); sheet.remove(); toggle.remove();
-      if (stage && lastMode === 'docked') {
-        void stage.offsetWidth;
-        layout.notify('after');
-      }
+      rail.remove();
     }
     if (o.signal && typeof o.signal.addEventListener === 'function') {
       o.signal.addEventListener('abort', dispose, { once: true });
@@ -575,26 +440,20 @@
     const api = {
       dispose,
       syncSession,
-      evaluateDock,
       refresh: () => { if (sessionId) void fetchSummary(); },
       getMode: currentMode,
-      isSheetOpen: () => sheetOpen,
-      // Ctrl+\: hides the docked rail through the toggle's own path (glide, rail_visible write); false when not docked.
-      hideDocked: () => { if (currentMode() !== 'docked') return false; toggleRailVisible(); return true; },
-      elements: { rail, sheet, tray, toggle, resizer: resizer.element },
+      syncHost: () => {
+        if (disposed) return;
+        if (currentMode() !== lastMode || (lastMode === 'hosted' && rail.parentNode !== hostEl())) applyMode();
+        else if (noteVisibility()) { paint(); if (needsFetch) { needsFetch = false; void fetchSummary(); } } // back on screen: catch up (once)
+      },
     };
     mountedByPane.set(pane, api);
-    evaluateDock(); applyMode();
-    if (sessionId && bridgeOk) void fetchSummary();
+    liveRails.add(api);
+    applyMode();
+    if (sessionId && bridgeOk) requestFetch();
     return api;
   }
 
-  // Ctrl+\ (renderer-global-shortcuts.js): hides the focused pane's docked rail. True when it did.
-  function hideFocusedRail(doc) {
-    const pane = doc && (doc.querySelector('.chat-pane[data-pane-focused="true"]') || (doc.activeElement && doc.activeElement.closest && doc.activeElement.closest('.chat-pane')));
-    const rail = pane ? mountedByPane.get(pane) : null;
-    return Boolean(rail && rail.hideDocked());
-  }
-
-  return { mountSessionRail, configure, hideFocusedRail, REFLOW_EVENT };
+  return { mountSessionRail, configure, syncHosts };
 });

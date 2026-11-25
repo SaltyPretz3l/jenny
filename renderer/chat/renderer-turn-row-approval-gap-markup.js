@@ -1,6 +1,7 @@
 /* renderer/chat/renderer-turn-row-approval-gap-markup.js renders the
- * approval_gap row: the inline approval card (or its resolved receipt) above
- * the tool row it gates, with the live card state the runtime reports.
+ * approval_gap row: the inline approval card beside the tool row it gates,
+ * with the live card state the runtime reports. Once answered the row renders
+ * visually empty and the step carries the answer (row 192 D2 A).
  * Loaded before renderer-turn-row-tool-render-utils.js, which builds one per
  * row renderer from its settings and shared helpers. */
 (function (root, factory) {
@@ -26,17 +27,6 @@
       return typeof settings.getApprovalCardState === 'function'
         ? settings.getApprovalCardState({ sessionId: options && options.sessionId, turnId: row && row.turn_id, callId: toolCallId, rowState: row && row.payload && row.payload.state })
         : null;
-    }
-
-    // Row 178: a resolved terminal_run's receipt links to the terminal its paired result names ('' otherwise).
-    function terminalReceiptLink(toolName, toolCallId, options) {
-      if (toolName !== 'terminal_run' || !toolCallId) return '';
-      const siblings = Array.isArray(options && options.siblingRows) ? options.siblingRows : [];
-      const result = siblings.find((entry) => entry && entry.kind === 'tool_result' && normalizeId(entry.tool_call_id) === toolCallId);
-      const terminal = result && result.payload && result.payload.metadata ? result.payload.metadata.terminal : null;
-      const cards = globalThis.rendererApprovalBlockCards || (typeof require === 'function' ? require('./renderer-approval-block-cards') : null);
-      return terminal != null && typeof cards?.terminalOpenLinkMarkup === 'function'
-        ? cards.terminalOpenLinkMarkup({ slot: terminal, sessionId: options && options.sessionId }) : '';
     }
 
     function buildApprovalGapMarkup(row, _messages, options) {
@@ -101,6 +91,7 @@
         settingsChangeApproval: toolName === 'settings_change' ? payload.settings_change_approval : undefined,
         scheduleChangeApproval: toolName === 'schedule_change' ? payload.schedule_change_approval : undefined,
         browserApproval: toolName === 'browser' ? payload.browser_approval : undefined,
+        computerApproval: toolName === 'computer' ? payload.computer_approval : undefined,
         // Always passed (even undefined): a command or write without its live exact presentation fails closed.
         exactApproval: cardState.exactApproval,
         // What a command's Always allow covers (live only), and what a resolved one saved (row 103).
@@ -114,7 +105,6 @@
         decision: resolved ? normalizeId(payload.decision) : '',
         approvalScope: resolved ? normalizeId(payload.approval_scope) : '',
         alwaysAllowPrefix: resolved ? String(payload.always_allow_prefix || '') : '',
-        receiptActionHtml: resolved ? terminalReceiptLink(toolName, toolCallId, options) : '',
       }, { escapeHtml });
     }
 

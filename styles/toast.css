@@ -13,13 +13,13 @@
 }
 
 /* A live browser page paints above everything, so a toast waits beside it, not on it. */
-:root:has(.artifact-review-panel[data-artifact-review-mode="browser"]:not(.hidden):not(.artifact-review-overlay)):not(:has(.artifact-review-maximized)) .toast-viewport {
-  inset-inline-end: calc(var(--artifact-review-width, 420px) + var(--space-10));
+:root:has(.artifact-review-panel[data-artifact-review-mode="browser"]:not(.hidden)) .toast-viewport {
+  inset-inline-end: calc(420px + var(--space-10));
 }
 
 /* Split view (gate §C/D14, 2026-09-26): with two panes the stack starts below
- * pane 1's kicker row, so a sticky toast never covers its close glyph. The
- * toast controller measures the kicker into --toast-split-top on each render;
+ * pane 1's header row, so a sticky toast never covers its close button. The
+ * toast controller measures that row into --toast-split-top on each render;
  * the constant is the fallback. Other views (IDE, Settings) keep the default. */
 :root[data-active-view="chat"]:has(#chatView[data-pane-count="2"]) .toast-viewport {
   top: var(--toast-split-top, calc(var(--titlebar-height) + var(--space-8) + 32px));

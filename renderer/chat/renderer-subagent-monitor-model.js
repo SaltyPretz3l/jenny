@@ -250,12 +250,26 @@
       model: normalizeText(source.model, 138) || usage?.model || '',
       provider: normalizeText(source.provider, 96) || usage?.provider || '',
       reasoningEffort: normalizeText(source.reasoning_effort, 16),
+      worktree: normalizeWorktree(source.worktree),
       error: source.error && typeof source.error === 'object' ? { ...source.error } : null,
       terminalReason: reason,
       terminalCopy: terminalCopy(reason, status),
       statusLabel: statusLabel(status),
       tone: toneForStatus(status),
       authoritative: true,
+    };
+  }
+
+  // Row 184 W3: a write task's branch and change counts (null counts: git was unreadable).
+  function normalizeWorktree(value) {
+    if (!value || typeof value !== 'object' || typeof value.kept !== 'boolean') return null;
+    const branch = normalizeText(value.branch, 200);
+    if (!branch) return null;
+    const count = (item) => (Number.isSafeInteger(item) && item >= 0 ? item : null);
+    return {
+      branch, path: normalizeText(value.path, 2000), kept: value.kept,
+      filesChanged: count(value.files_changed), insertions: count(value.insertions),
+      deletions: count(value.deletions), commits: count(value.commits),
     };
   }
 

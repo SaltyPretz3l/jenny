@@ -26,6 +26,7 @@
       case 'scroll': return jt('browserUse.step.scrolling', 'Scrolling');
       case 'press': return target ? jt('browserUse.step.pressingNamed', 'Pressing {target}', { target }) : jt('browserUse.step.pressing', 'Pressing a key');
       case 'screenshot': return jt('browserUse.step.looking', 'Looking at the page');
+      case 'wait': return jt('browserUse.step.watching', 'Watching the page');
       case 'find': return jt('browserUse.step.searching', 'Searching the page');
       default: return jt('browserUse.step.reading', 'Reading the page');
     }

@@ -614,7 +614,7 @@ def test_delegate_parent_output_has_no_steps_or_answer_but_metadata_does(
 def test_delegate_answer_exceeds_summary_cap_but_stays_within_answer_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    text = "a" * 6_000
+    text = "a" * 40_000
     result = SubAgentInvocationResult(
         status="completed", response_text=text, decision=_decision(text=text), iterations_used=1
     )
@@ -688,10 +688,10 @@ def test_delegate_progress_labels_derive_from_prompt_for_every_emitter(
     assert by_status["completed"] == by_status["queued"]
 
 
-def test_delegate_report_carries_prompt_range_path_and_truncation_but_parent_output_does_not(
+def test_delegate_report_carries_prompt_range_path_and_parent_output_only_the_truncation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    text = "tail " * 1_200
+    text = "tail " * 7_000
     decision = _decision(
         _outcome("read_pdf", tool_input={"path": "docs/manual.pdf", "pages": "1-3"}),
         text=text,
@@ -708,13 +708,17 @@ def test_delegate_report_carries_prompt_range_path_and_truncation_but_parent_out
     assert task_report["prompt"] == prompt
     assert task_report["answer_truncated"] is True
     assert len(task_report["answer"]) <= 4_000
+    assert "parent_answer" not in task_report
     assert task_report["steps"][0]["range"] == "p1\u20133"
     assert task_report["steps"][0]["path"] == "docs/manual.pdf"
     payload = json.loads(outcome.output)
-    assert set(payload["results"][0]) <= {"answer", "evidence", "ordinal", "status"}
+    assert set(payload["results"][0]) <= {
+        "answer", "answer_truncated", "evidence", "ordinal", "status"
+    }
+    # A cut answer is said, never passed off as the whole one.
+    assert payload["results"][0]["answer_truncated"] is True
     for ui_only in (
         "prompt",
-        "answer_truncated",
         "range",
         '"path"',
         "Summarise the manual.",
@@ -754,8 +758,9 @@ def test_compact_parent_settlement_never_contains_the_label_or_prompt() -> None:
 
     settlement = build_compact_delegate_settlement(execution="single", task_reports=[report])
 
-    for needle in ("UNIQUE-LABEL-TEXT", "UNIQUE-PROMPT-TEXT", "answer_truncated", "range", "a.md"):
+    for needle in ("UNIQUE-LABEL-TEXT", "UNIQUE-PROMPT-TEXT", "range", "a.md"):
         assert needle not in settlement.output
+    assert settlement.report["results"][0]["answer_truncated"] is True
 
 
 def test_label_skips_list_markers_and_abbreviations() -> None:

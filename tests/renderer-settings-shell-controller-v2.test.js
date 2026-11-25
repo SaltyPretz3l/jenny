@@ -189,25 +189,34 @@ function createGuardedHost({ state, callbacks = {}, shown = [], resolve = (id) =
   return { controller, navArgs: () => navArgs };
 }
 
-test('navigateSettingsSection reports a shown section as true and a vetoed leave as false, asking once', () => {
+test('leaving Personality with unsaved changes asks in the shared dialog, never window.confirm, and moves on only after "Leave without saving"', async () => {
   const previousWindow = global.window;
   const previousDocument = global.document;
   let answer = false;
-  let asked = 0;
-  global.window = { localStorage: createLocalStorage(), confirm() { asked += 1; return answer; } };
+  const asked = [];
+  let built = 0;
+  global.window = { localStorage: createLocalStorage(), confirm() { throw new Error('window.confirm is not used'); },
+    rendererIdeConfirmDialog: { createIdeConfirmDialog(config) { built += 1; assert.equal(config.hostId, 'settingsLeaveConfirmOverlay');
+      return { confirm: async (payload) => { asked.push(payload); return answer; }, dispose() {} }; } },
+    inventoryHelpOverlay: { createHelpOverlay() {} } };
   global.document = { getElementById() { return null; } };
   const state = { ui: { activeView: 'chat', activeSettingsSection: 'personality' } };
   try {
     const { controller } = createGuardedHost({ state, callbacks: { hasPersonalityUnsavedChanges: () => true } });
-    // The app's openSettingsSection seam calls this once and reads its result:
-    // a cancelled confirm must not be asked again by a second call.
+    // The shared dialog answers later: the switch is vetoed now, and a second pick asks again, not twice.
     assert.equal(controller.navigateSettingsSection('tools'), false);
-    assert.equal(asked, 1);
-    assert.equal(state.ui.activeSettingsSection, 'personality');
+    await flushAsyncWork();
+    assert.equal(asked.length, 1);
+    assert.deepEqual([asked[0].title, asked[0].confirmLabel, asked[0].cancelLabel, asked[0].variant],
+      ['Unsaved changes', 'Leave without saving', 'Keep editing', 'danger']);
+    assert.match(asked[0].message, /unsaved context-file changes/);
+    assert.equal(state.ui.activeSettingsSection, 'personality', 'Keep editing stays on the page');
     answer = true;
-    assert.equal(controller.navigateSettingsSection('tools'), true);
-    assert.equal(asked, 2);
-    assert.equal(state.ui.activeSettingsSection, 'tools');
+    assert.equal(controller.navigateSettingsSection('tools'), false, 'the answer comes later');
+    await flushAsyncWork();
+    assert.equal(asked.length, 2);
+    assert.equal(state.ui.activeSettingsSection, 'tools', 'Leave without saving moves on');
+    assert.equal(built, 1, 'one dialog is reused');
     controller.dispose();
   } finally {
     global.window = previousWindow;

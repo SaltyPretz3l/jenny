@@ -19,7 +19,12 @@
  * typed fields are kept across redraws by the page (column.writeKeeping).
  *
  * `createRules({ teamId, projectId, call, isAdmin(), nameOf(id), conversationTitle(id), timeText(ms), errorText(error),
- * onChange() })` -> { html(), onClick(target), onInput(target), onSelect(target), refresh(), dispose() }. */
+ * onChange() })` -> { html(), onClick(target), onInput(target), onSelect(target), refresh(), dispose() }.
+ *
+ * `createPausedWatch({ read(), clock(), live(), redraw() })` -> { paused(), check() }: the conversation's own read of the same
+ * state, for its approval cards (OD-2: while paused a card offers no "Always allow" and no "Allow once, ask for always", since
+ * no rule would ever fire). `check()` reads `projectRules` when an approval waits (at most every 30 s, and again after 5 s
+ * when a read failed); `paused()` is true until a read said it is not (fail closed), and `redraw()` runs when it changes. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-team-project-column'));
@@ -37,6 +42,8 @@
   const TOOLS = Object.freeze(['edit_file', 'write_file']);
   const FOLDER_MAX = 255;
   const REASON_MAX = 200;
+  const RECHECK_MS = 30_000;
+  const RETRY_MS = 5000;
 
   function inv() { return globalThis.inventory || {}; }
   const button = column.button;
@@ -214,5 +221,25 @@
     return { html, onClick, onInput, onSelect, refresh: read, dispose() { disposed = true; form = null; busy.clear(); } };
   }
 
-  return { createRules };
+  function createPausedWatch({ read, clock, live, redraw }) {
+    let state = null; // true: paused; false: not; null: not read yet, or the last read failed
+    let at = -Infinity;
+    let reading = false;
+    function check() {
+      if (reading || !live() || clock() - at < (state === null ? RETRY_MS : RECHECK_MS)) return;
+      reading = true;
+      at = clock();
+      const done = (next) => {
+        reading = false;
+        if (!live()) return;
+        const changed = (state !== false) !== (next !== false);
+        state = next;
+        if (changed) redraw();
+      };
+      Promise.resolve().then(read).then((answer) => done(answer && answer.ok ? Boolean(answer.paused) : null), () => done(null));
+    }
+    return { paused: () => state !== false, check };
+  }
+
+  return { createRules, createPausedWatch };
 });

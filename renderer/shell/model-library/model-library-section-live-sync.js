@@ -1,7 +1,8 @@
 /* Model Library section › live sync on the app's state tick: the catch-up
  * re-read for a load taken before the backend was ready, and the llama-server
  * status reread (sooner while a server is parked). This helper owns the
- * catch-up budget, the in-flight status read and the parked recheck timer. */
+ * catch-up budget, the in-flight status read and the parked recheck timer, and
+ * the section's 'models' graphics-card watcher. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -14,9 +15,9 @@
   var PARKED_RECHECK_MS = 3000;
   var MAX_CATCH_UP_ATTEMPTS = 5;
 
-  // deps: { windowRef, state, source, sourcesModule, isDisposed(),
+  // deps: { windowRef, documentRef, card(), state, source, sourcesModule, isDisposed(),
   //   accelerationFlagEnabled(), getSourceData(), applyLlamaServer(status),
-  //   refresh(), rebuildFromState() }
+  //   refresh(), rebuildFromState(), onShown() }
   function createModelLibrarySectionLiveSync(deps) {
     var d = deps || {};
     var windowRef = d.windowRef;
@@ -82,12 +83,37 @@
       syncLlamaServerStatus();
     }
 
+    // The card is read only while someone looks: Settings > Models on screen is the 'models' watcher.
+    var watching = false;
+    var watchObserver = null;
+    function syncWatch() {
+      var card = d.card();
+      var view = d.documentRef && d.documentRef.getElementById('settingsView');
+      var shown = !d.isDisposed() && Boolean(card && card.classList.contains('settings-section-active') && (!view || view.classList.contains('active-view')));
+      if (shown === watching) return;
+      watching = shown;
+      Promise.resolve(windowRef.jennyShell?.system?.setStatsWatch?.({ source: 'models', watched: shown })).catch(function () {});
+      if (shown && typeof d.onShown === 'function') d.onShown();
+    }
+
+    function bindWatch() {
+      if (typeof windowRef.MutationObserver === 'function') {
+        watchObserver = new windowRef.MutationObserver(syncWatch);
+        [d.documentRef.getElementById('settingsView'), d.card()].forEach(function (node) {
+          if (node) watchObserver.observe(node, { attributes: true, attributeFilter: ['class'] });
+        });
+      }
+      syncWatch();
+    }
+
     function dispose() {
       if (parkedRecheckTimer) windowRef.clearTimeout(parkedRecheckTimer);
       parkedRecheckTimer = null;
+      if (watchObserver) watchObserver.disconnect();
+      if (watching) syncWatch();
     }
 
-    return { syncFromState: syncFromState, noteLoad: noteLoad, dispose: dispose };
+    return { syncFromState: syncFromState, noteLoad: noteLoad, bindWatch: bindWatch, dispose: dispose };
   }
 
   return { createModelLibrarySectionLiveSync: createModelLibrarySectionLiveSync };

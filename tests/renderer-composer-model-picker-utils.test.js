@@ -239,9 +239,12 @@ test('buildPillTitle describes overrides, defaults, and supported thinking', () 
   assert.equal(utils.buildPillTitle({ effort: 'none', effortSupported: true }),
     'Model: default. Thinking: Off');
   assert.equal(utils.buildPillTitle({ effort: 'high', effortSupported: false }), 'Model: default');
+  assert.equal(utils.buildPillTitle({ backendModel: 'qwen3:27b', defaultLocal: true, loadedModel: 'qwen3:27b' }), 'Default: qwen3:27b, on this PC');
+  assert.equal(utils.buildPillTitle({ backendModel: 'qwen3:27b', defaultLocal: true, loadedModel: 'other' }),
+    'Default: qwen3:27b, on this PC. Jenny loads it with your next message', 'row 194: says when the default still has to load');
 });
 
-test('resolveDefaultChatModel names the Settings default unless a cloud engine runs, else the loaded model', () => {
+test('resolveDefaultChatModel names the Settings default under any engine, else the loaded model', () => {
   const state = {
     status: { model: 'ornith15:9b-q6-256k', engine: 'ollama' },
     offline: { preferredLocalModel: 'qwen3.8-27b-nvfp4' },
@@ -255,7 +258,8 @@ test('resolveDefaultChatModel names the Settings default unless a cloud engine r
   );
   assert.deepEqual(
     utils.resolveDefaultChatModel({ ...state, status: { model: 'gpt-6', engine: 'chatgpt' } }),
-    { model: 'gpt-6', engineType: 'chatgpt' }
+    { model: 'qwen3.8-27b-nvfp4', engineType: 'openai-compatible' },
+    'row 194: cloud engine current, Default chat resolves to the Settings default'
   );
   assert.deepEqual(utils.resolveDefaultChatModel({ ...state, offline: {} }), { model: 'ornith15:9b-q6-256k', engineType: 'ollama' });
   assert.deepEqual(utils.resolveDefaultChatModel(null), { model: '', engineType: '' });
@@ -269,7 +273,7 @@ test('row 123: a team model sits in its team group with the notice, and the pill
   assert.deepEqual(entry.group, { key: 'team:team_alpha1', label: 'Alpha crew', order: 65 });
   assert.equal(entry.hint, notice);
   assert.deepEqual([entry.family, entry.tag, entry.engineHint], ['qwen3', '8b-q4', 'team']);
-  assert.equal(utils.normalizeCatalogEntry({ ...team, team_name: '' }).group.label, 'team_alpha1');
+  assert.equal(utils.normalizeCatalogEntry({ ...team, team_name: '' }).group.label, 'Unnamed team', 'never the raw team id');
   // A local model of the same name stays in its own group with no notice.
   const local = utils.normalizeCatalogEntry({ id: 'qwen3:8b-q4', engine_type: 'ollama' });
   assert.deepEqual([local.group.key, local.hint], ['ollama', '']);
@@ -359,4 +363,29 @@ test('a model that cannot turn thinking off shows Min where others show Off', ()
   };
   assert.equal(utils.formatComposerModelPillLabel(inputs), 'gemma4 \u00b7 12b \u00b7 Min');
   assert.equal(utils.buildPillTitle(inputs), 'Model: gemma4:12b. Thinking: Min');
+});
+
+// Row 201 C1 / OD-1: a team model is a third source class; one predicate, a formatted name, never a local default.
+test('isTeamModel is the one predicate for a team id or a catalog entry carrying team_id', () => {
+  assert.equal(utils.isTeamModel('team/team_alpha1/qwen3:8b'), true);
+  assert.equal(utils.isTeamModel({ id: 'qwen3:8b', team_id: 'team_alpha1' }), true);
+  assert.equal(utils.isTeamModel({ id: 'team/team_alpha1/qwen3:8b' }), true);
+  for (const value of ['team/alpha/x', 'qwen3:8b', 'api-provider/openrouter/x', '', null, undefined, { id: 'qwen3:8b' }]) {
+    assert.equal(utils.isTeamModel(value), false, String(value));
+  }
+});
+
+test('a team model shows its own model name, never the raw team/<teamId>/<modelId>, and its group is never the raw team id', () => {
+  assert.equal(utils.displayModelId('team/team_alpha1/qwen3:8b-q4'), 'qwen3:8b-q4');
+  assert.equal(utils.displayModelId('team/alpha/x'), 'team/alpha/x', 'a malformed id keeps its name');
+  assert.match(utils.buildPillTitle({ preferredModel: 'team/team_alpha1/qwen3:8b-q4' }), /^Model: qwen3:8b-q4$/);
+  const entry = utils.normalizeCatalogEntry({ id: 'team/team_alpha1/qwen3:8b-q4', engine_type: 'openai-compatible', team_id: 'team_alpha1' });
+  assert.equal(entry.group.label, 'Unnamed team');
+  assert.deepEqual([entry.family, entry.tag, entry.engineHint], ['qwen3', '8b-q4', 'team']);
+});
+
+test('a saved team id in the local default slot is no default: a Default chat reads as unset', () => {
+  const state = { offline: { preferredLocalModel: 'team/team_alpha1/qwen3:8b' }, status: { model: 'ornith15:9b-q6-256k', engine: 'ollama' },
+    modelList: { data: [{ id: 'team/team_alpha1/qwen3:8b', engine_type: 'openai-compatible', team_id: 'team_alpha1' }] } };
+  assert.deepEqual(utils.resolveDefaultChatModel(state), { model: 'ornith15:9b-q6-256k', engineType: 'ollama' });
 });

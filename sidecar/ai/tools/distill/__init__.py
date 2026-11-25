@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sidecar.ai.config_models import is_cloud_engine_type
 from sidecar.ai.tools.distill.filters.base import (
     DistillOutput,
     OmittedSegment,
@@ -38,6 +39,13 @@ from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore, WorkspaceSto
 logger = logging.getLogger(__name__)
 
 _DISTILL_ENABLED = False
+# Combined output shorter than this passes whole. On a cloud engine it is the
+# shell's model-visible cap, so output that fits is never shortened (Claude Code
+# shows command output whole up to 30k chars); a 700-byte log was being cut to a
+# marker and read back with read_file (2026-11-20). Local engines keep
+# net-positive distillation at every size.
+CLOUD_MIN_DISTILL_CHARS = 20_000
+_DISTILL_MIN_CHARS = 0
 
 # Inputs beyond this skip distillation entirely: the redaction pipeline (a
 # ~25-regex pass) would run over the whole stream, and the model only ever sees
@@ -106,12 +114,15 @@ def configure_distill(config: Any | None) -> None:
     This cached global is the single runtime source of truth for the shell
     distillation path within one ``build_tool_bindings`` pass.
     """
-    global _DISTILL_ENABLED  # noqa: PLW0603 - process-wide configured gate.
+    global _DISTILL_ENABLED, _DISTILL_MIN_CHARS  # noqa: PLW0603 - process-wide configured gate.
     if isinstance(config, dict):
         value = config.get("tools_distill_enabled")
+        engine_type = config.get("engine_type")
     else:
         value = getattr(config, "tools_distill_enabled", None)
+        engine_type = getattr(config, "engine_type", None)
     _DISTILL_ENABLED = value if isinstance(value, bool) else False
+    _DISTILL_MIN_CHARS = CLOUD_MIN_DISTILL_CHARS if is_cloud_engine_type(engine_type) else 0
 
 
 def is_distill_enabled() -> bool:
@@ -189,6 +200,8 @@ def distill_command_output(
     """
     try:
         combined = f"{stdout}\n{stderr}" if stderr else stdout
+        if len(combined) < _DISTILL_MIN_CHARS:
+            return DistillResult(stdout=stdout, stderr=stderr)
         output_filter = select_filter(command=command, content=combined)
         if output_filter is None:
             return DistillResult(stdout=stdout, stderr=stderr)

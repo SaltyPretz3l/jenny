@@ -177,7 +177,7 @@ test('model preserves legacy exports, safely normalizes metadata, and translates
   assert.equal(model.TOOL_CATEGORY_CONFIG_KEYS.Bash, 'bash');
   assert.equal(model.TOOL_CATEGORY_SESSION_KEYS.file_tools, 'files');
   assert.ok(Object.isFrozen(model.SURFACE_FAMILY_UI));
-  assert.deepEqual(model.SURFACE_FAMILY_UI.map((family) => family.id), ['files', 'terminal', 'git', 'python', 'code', 'checks', 'artifacts', 'images', 'web', 'browser_use', 'knowledge', 'home', 'helpers']);
+  assert.deepEqual(model.SURFACE_FAMILY_UI.map((family) => family.id), ['files', 'terminal', 'git', 'python', 'code', 'checks', 'artifacts', 'images', 'web', 'browser_use', 'computer_use', 'knowledge', 'home', 'helpers']);
   assert.equal(model.normalizeToolEntry({ name: 'read_file', connectionId: {}, lockdownAvailable: 'yes' }).connectionId, '');
   assert.equal(model.normalizeToolEntry('read_file').lockdownAvailable, false);
   const prior = global.jennyI18n;

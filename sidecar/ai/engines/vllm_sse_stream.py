@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 import uuid
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sidecar.ai.engines.engine_events import ENGINE_EVENT_PREFILL, EngineEvent, PrefillProgress
 from sidecar.ai.engines.ollama_stream_transport import (
@@ -26,6 +27,12 @@ from sidecar.ai.utils.coercion import (
 )
 from sidecar.runtime.bounded_io import BoundedIOError, iter_bounded_byte_lines
 from sidecar.runtime.vllm_engine_support import GenerationUsage
+
+if TYPE_CHECKING:
+    from sidecar.ai.routing.provider_stream_normalizer import (
+        NormalizedStreamEvent,
+        ProviderStreamNormalizer,
+    )
 
 logger = logging.getLogger("sidecar.ai.engines.vllm_engine_generation")
 
@@ -321,3 +328,22 @@ class LlamaPrefillStream:
             self.closed = True
             events.append(self._event("unavailable"))
         return events
+
+
+def _terminal_gap_diagnostics(
+    normalizer: ProviderStreamNormalizer,
+    truncated: list[NormalizedStreamEvent],
+    started_at: float,
+) -> dict[str, Any]:
+    """Counts and names only (never message text) for the terminal-gap event.
+
+    ``ms_since_last_chunk`` and ``bytes_read`` are not here: the SSE reader
+    owns those clocks and does not surface them (TR-016 follow-up).
+    """
+    counters = normalizer.counters
+    return {
+        "chunk_count": counters.total_chunk_count,
+        "tool_args_streaming": counters.tool_call_delta_count > 0,
+        "truncated_call_names": [str(event.tool_name or "") for event in truncated],
+        "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+    }

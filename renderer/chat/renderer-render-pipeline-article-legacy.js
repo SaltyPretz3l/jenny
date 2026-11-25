@@ -123,8 +123,9 @@
       return [
         combineMessageMetaLabels(isUser ? formatMessageTerminalTimestamp(message.timestamp)
           : buildAssistantMetaLabel(message, formatMessageTerminalTimestamp), formatMessageTokenMeta(tokenMeta)),
-        combineMessageMetaLabels(isUser ? formatMessageClockTime(message.timestamp)
-          : buildShortAssistantMetaLabel(message, formatMessageClockTime), formatMessageTokenMetaShort(tokenMeta)),
+        // Row 192: the assistant short label places the tokens itself (model · time taken · tokens · clock).
+        isUser ? combineMessageMetaLabels(formatMessageClockTime(message.timestamp), formatMessageTokenMetaShort(tokenMeta))
+          : buildShortAssistantMetaLabel(message, formatMessageClockTime, undefined, undefined, formatMessageTokenMetaShort(tokenMeta)),
       ];
     }
 

@@ -525,6 +525,7 @@
       return setupServiceInstance;
     }
 
+    let chatSetupKey = null;
     function ensureSetupController() {
       if (setupController) {
         return setupController;
@@ -579,12 +580,17 @@
             appendClientLog: (...args) => appendClientLog(...args),
             showToastMessage: (...args) => showToastMessage(...args),
             showShellErrorToast: (...args) => showShellErrorToast(...args),
-            setActiveView: (...args) => setActiveView(...args),
             // A setup snapshot changed (a status-driven refresh or a step write): repaint the
             // surface that shows it, so Settings > Account never keeps an old step count.
             renderAfterSetupChange: () => {
               if (state.ui?.activeView === 'settings') renderSettings();
               else if (state.ui?.activeView === 'home') renderAll();
+              // Chat shows setup only in its empty hero: repaint when those facts moved, not on every
+              // snapshot. The first snapshot is boot's, which renders everything itself.
+              const key = JSON.stringify([state.setup?.setupComplete, state.setup?.steps]);
+              const moved = chatSetupKey !== null && key !== chatSetupKey;
+              chatSetupKey = key;
+              if (moved && state.ui?.activeView === 'chat') renderAll();
             },
           },
         }) || null;

@@ -17,6 +17,7 @@
     const factories = [
       (windowRef.rendererMcpServers || {}).createMcpServersController,
       (windowRef.rendererKnowledgeFolders || {}).createKnowledgeFoldersController,
+      (windowRef.rendererComputerSettings || {}).createComputerSettingsController,
       (windowRef.rendererOllamaHealth || {}).createOllamaHealthController,
     ];
     const controllers = [];

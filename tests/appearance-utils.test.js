@@ -834,13 +834,13 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
   );
 });
 
-test('team chat density: one key, comfortable unless compact, on the root and the Appearance page, never in a bundle', () => {
+test('team chat density: one key, comfortable unless compact, on the root, kept by Reset Appearance, never in a bundle', () => {
   const utils = require('../renderer/shared/appearance-utils');
   assert.equal(normalizeAppearancePreferences({}).teamDensityId, 'comfortable');
   assert.equal(normalizeAppearancePreferences({ teamDensityId: ' Compact ' }).teamDensityId, 'compact');
   assert.equal(normalizeAppearancePreferences({ teamDensityId: 'tight' }).teamDensityId, 'comfortable', 'unknown is comfortable');
   assert.equal(getDefaultAppearancePreferences().teamDensityId, 'comfortable');
-  assert.ok(utils.APPEARANCE_PAGE_KEYS.includes('teamDensityId'), 'Reset Appearance restores it');
+  assert.equal(utils.APPEARANCE_PAGE_KEYS.includes('teamDensityId'), false, 'row 193: the row sits on the Team page, so Reset Appearance keeps it');
   const root = { dataset: {} };
   applyAppearanceToDocument(root, { teamDensityId: 'compact' });
   assert.equal(root.dataset.teamDensity, 'compact');
@@ -923,7 +923,6 @@ test('Chats and Settings share a flat rail visual contract without reviving acti
   const foundationCss = readStyleFile('foundation.css');
   const shellChromeCss = readStyleFile('shell-chrome.css');
   const chatsCss = readStyleFile('chats-panel.css');
-  const collapsedChatsCss = readStyleFile('chats-panel-collapsed.css');
   const settingsCss = readStyleFile('settings-nav.css');
   const searchAsset = fs.readFileSync(
     path.join(__dirname, '..', 'renderer', 'inventory', 'assets', 'search.svg'),
@@ -990,10 +989,6 @@ test('Chats and Settings share a flat rail visual contract without reviving acti
   assert.match(
     chatsCss,
     /@media \(forced-colors: active\)[\s\S]*?\.session-row\.active[\s\S]*?background:\s*Highlight;[\s\S]*?color:\s*HighlightText;/
-  );
-  assert.match(
-    collapsedChatsCss,
-    /@media \(forced-colors: active\)[\s\S]*?\.chats-strip__chip--active[\s\S]*?border-color:\s*Highlight;[\s\S]*?background:\s*Highlight;/
   );
   assert.match(
     settingsCss,

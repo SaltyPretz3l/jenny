@@ -57,6 +57,22 @@ test('derive maps managed acquisition and respects list availability and setup r
   assert.equal(deriveHeroView({ backend: { phase: 'model_loading' }, modelList: { data: [] } }).kind, 'ready');
 });
 
+test('model_unavailable is never "ready": a known model failed to load, and with none known the hero asks for one', () => {
+  // Unread model list and no classified cause: the degraded returning boot.
+  const view = deriveHeroView({ backend: { phase: 'model_unavailable', model_lifecycle: { engine: 'ollama' } },
+    offline: { preferredLocalModel: 'qwen3:8b' } });
+  assert.equal(view.kind, 'failed');
+  assert.equal(view.model, 'qwen3:8b');
+  const copy = heroCopy(view);
+  assert.equal(copy.title, "qwen3:8b didn't load");
+  assert.equal(copy.subtitle, 'Ollama could not load it.');
+  assert.deepEqual(actions(copy.actionsHtml).map(([action]) => action), ['retry', 'copyDetails']);
+  assert.equal(copy.composerLine, 'Sending retries the load.');
+  assert.equal(deriveHeroView({ backend: { phase: 'model_unavailable' } }).kind, 'noModel');
+  // Every other phase keeps an unread list unknown.
+  for (const phase of ['ready', 'starting', 'failed']) assert.equal(deriveHeroView({ backend: { phase } }).kind, 'ready', phase);
+});
+
 function actions(html) {
   const dom = new JSDOM(html);
   return [...dom.window.document.querySelectorAll('button[data-hero-action]')]
@@ -71,16 +87,40 @@ test('no model: pick a model, the recommended fit first, Browse beside it, the c
     ['download', 'qwen3:4b', 'Download qwen3:4b', true],
     ['browse', '', 'Browse models', false],
   ]);
-  assert.equal(copy.hint, 'Or sign in with ChatGPT.');
-  // heroCopy stays pure: the link is data, and renderHero builds the button.
+  // Your own API key comes first, so ChatGPT does not read as Jenny's default provider.
+  assert.equal(copy.hint, 'Or add an API key or sign in with ChatGPT.');
+  // heroCopy stays pure: the links are data, and renderHero builds the buttons.
   assert.deepEqual(copy.hintAction, {
-    action: 'cloud', label: 'sign in with ChatGPT', lead: 'Or ', tail: '.',
-    html: '<button type="button" class="hero-hint-link" data-hero-action="cloud">sign in with ChatGPT</button>',
+    parts: [
+      'Or ',
+      { action: 'api-key', label: 'add an API key',
+        html: '<button type="button" class="hero-hint-link" data-hero-action="api-key">add an API key</button>' },
+      ' or ',
+      { action: 'cloud', label: 'sign in with ChatGPT',
+        html: '<button type="button" class="hero-hint-link" data-hero-action="cloud">sign in with ChatGPT</button>' },
+      '.',
+    ],
   });
   assert.equal(copy.composerLine, 'Send turns on once a model is ready.');
   const bare = heroCopy({ kind: 'noModel', recommended: null });
   assert.equal(bare.subtitle, 'Jenny needs a model before she can reply.');
   assert.deepEqual(actions(bare.actionsHtml), [['browse', '', 'Browse models', true]], 'Browse is primary when nothing is recommended');
+});
+
+test('no model: a translation may reorder the hint links; a missing one falls back to plain text', (t) => {
+  const saved = globalThis.jennyI18nFallback;
+  t.after(() => { globalThis.jennyI18nFallback = saved; delete require.cache[require.resolve('../renderer/chat/renderer-hero-model-state')]; });
+  const strings = { 'hero.noModel.cloudOptions': '{chatgpt}, oder {apiKey}.' };
+  globalThis.jennyI18nFallback = (key, fallback) => strings[key] ?? fallback;
+  delete require.cache[require.resolve('../renderer/chat/renderer-hero-model-state')];
+  const translated = require('../renderer/chat/renderer-hero-model-state');
+  const reordered = translated.heroCopy({ kind: 'noModel' });
+  assert.equal(reordered.hint, 'sign in with ChatGPT, oder add an API key.');
+  assert.deepEqual(reordered.hintAction.parts.map((part) => (typeof part === 'string' ? part : part.action)), ['', 'cloud', ', oder ', 'api-key', '.']);
+  strings['hero.noModel.cloudOptions'] = 'Oder {chatgpt}.';
+  const partial = translated.heroCopy({ kind: 'noModel' });
+  assert.equal(partial.hint, 'Oder {chatgpt}.', 'a sentence missing a link shows as written');
+  assert.equal(partial.hintAction, null);
 });
 
 test('downloading: progress with an ETA once a rate exists, Cancel, and the composer line names the pull', () => {
@@ -122,6 +162,16 @@ test("failed: the model that didn't load, the cause in plain words, item 1's two
   const unreachable = heroCopy({ kind: 'failed', failure: { ...failure, cause: 'engine_unreachable' } });
   assert.deepEqual(actions(unreachable.actionsHtml).map((row) => row[0]), ['diagnostics', 'retry']);
   assert.equal(unreachable.subtitle, "Ollama isn't responding.");
+});
+
+test('failed by a Live tab program: the hero names it and offers to stop it, then Retry (row 197)', () => {
+  const failure = { cause: 'out_of_memory', message: 'x', engine: 'openai-compatible', model: 'qwen3:8b', liveRun: { projectId: 'p1', program: 'game.exe' } };
+  const copy = heroCopy({ kind: 'failed', failure });
+  assert.equal(copy.subtitle, 'game.exe, started from the Live tab, is using the GPU memory this model needs.');
+  assert.deepEqual(actions(copy.actionsHtml), [
+    ['stopLiveRun', 'qwen3:8b', 'Stop game.exe', true],
+    ['retry', 'qwen3:8b', 'Retry', false],
+  ]);
 });
 
 test('ready: "New chat", no subtitle, and the model note only while none is loaded', () => {

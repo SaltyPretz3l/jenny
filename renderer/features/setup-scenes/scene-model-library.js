@@ -84,6 +84,13 @@
     var cardMessages = Object.create(null);
     var activeOperationKey = '';
     var settlingKey = '';
+    // A source that could not be read (the backend still starting, Ollama down)
+    // offers Retry and reloads once the backend turns ready.
+    var loading = true;
+    var needsReload = false;
+    var readyDuringLoad = false;
+    var lastBackendPhase = String(shellState && shellState.backend && shellState.backend.phase || '');
+    var unsubscribeBackendStatus = null;
 
     var operationCoordinator = operationsModule.createOperationCoordinator();
 
@@ -149,6 +156,11 @@
 
     function render() {
       if (!rootEl || disposed) return;
+      // An empty grid says "No models match this filter."; that is only true of a read that worked.
+      var showGrid = (Array.isArray(merged.cards) && merged.cards.length > 0) || (!loading && !needsReload);
+      var actions = [{ id: 'close', label: jt('common.back', 'Back'), variant: 'secondary', disabled: operationCoordinator.isLocked() }];
+      if (!loading && needsReload) actions.push({ id: 'retry', label: jt('common.retry', 'Retry'), variant: 'secondary' });
+      actions.push({ id: 'skip', label: jt('setup.modelLibrary.skipForNow', 'Skip for now'), variant: 'ghost' });
       var bodyHtml = '<div class="setup-scene-body setup-model-library-body">'
         + '<div class="setup-model-library-summary">'
         + viewModule.buildHardwareSummaryLine(merged.hardware)
@@ -156,11 +168,11 @@
         + '<p class="setup-model-library-status" aria-live="polite">'
         + sceneUtils.escapeHtml(statusMessage)
         + '</p>'
-        + viewModule.buildModelGrid(merged, {
+        + (showGrid ? viewModule.buildModelGrid(merged, {
           compact: true,
           actions: ACTIONS,
           pulls: currentPulls(),
-        })
+        }) : '')
         + '</div>';
       rootEl.innerHTML = sceneUtils.renderStepModalHtml({
         id: 'model-library',
@@ -168,10 +180,7 @@
         eyebrow: sceneUtils.setupStepEyebrow('localModel'),
         summary: jt('setup.modelLibrary.summary', 'Choose an installed model or pull one from the local catalog.'),
         bodyHtml: bodyHtml,
-        actions: [
-          { id: 'close', label: jt('common.back', 'Back'), variant: 'secondary', disabled: operationCoordinator.isLocked() },
-          { id: 'skip', label: jt('setup.modelLibrary.skipForNow', 'Skip for now'), variant: 'ghost' },
-        ],
+        actions: actions,
       });
       removeBuiltInGridFurniture();
       Object.keys(cardMessages).concat(Object.keys(currentPulls())).forEach(function (key) {
@@ -336,13 +345,33 @@
       if (!footerAction || !rootEl || !rootEl.contains(footerAction)) return;
       var footerId = footerAction.getAttribute('data-step-modal-action');
       if (footerId === 'close' && !operationCoordinator.isLocked()) closeModal();
+      else if (footerId === 'retry' && !loading) void reloadLibrary();
       else if (footerId === 'skip') void handleSkip();
     }
 
-    function loadLibrary() {
+    // A fresh read: one already in flight may predate the change being waited for.
+    function reloadLibrary() {
+      loading = true;
+      statusMessage = jt('setup.modelLibrary.loading', 'Loading model library…');
+      render();
+      return loadLibrary({ force: true });
+    }
+
+    function onBackendStatus(payload) {
+      var phase = String(payload && payload.phase || '');
+      var becameReady = phase === 'ready' && lastBackendPhase !== 'ready';
+      lastBackendPhase = phase;
+      if (disposed || !becameReady) return;
+      if (loading) readyDuringLoad = true;
+      else if (needsReload) void reloadLibrary();
+    }
+
+    function loadLibrary(options) {
       var sceneToken = sourceGeneration;
-      return source.load().then(function (result) {
+      readyDuringLoad = false;
+      return source.load(options).then(function (result) {
         if (isStale(sceneToken) || result.generation !== source.latestGeneration()) return null;
+        loading = false;
         merged = mergeModule.mergeModelLibrary({
           installed: result.installed,
           ollamaTags: result.ollamaTags,
@@ -354,14 +383,19 @@
           activeModel: activeModel(),
           preferredLocalModel: preferredLocalModel(),
         });
+        // Two sources behind one starting backend report the same reason: say it once.
         var unavailable = Object.keys(result.unavailable || {}).map(function (key) {
           return result.unavailable[key];
-        }).filter(Boolean);
+        }).filter(function (message, index, all) { return message && all.indexOf(message) === index; });
         statusMessage = unavailable.join(' ');
+        needsReload = unavailable.length > 0;
         render();
+        if (needsReload && readyDuringLoad) return reloadLibrary();
         return result;
       }).catch(function (error) {
         if (isStale(sceneToken)) return null;
+        loading = false;
+        needsReload = true;
         statusMessage = boundedErrorMessage(error, jt('setup.modelLibrary.loadFailed', 'Could not load the model library.'));
         appendClientLog('WARN', 'setup.model_library_load_failed', { message: statusMessage });
         render();
@@ -376,6 +410,10 @@
         sourceGeneration += 1;
         operationCoordinator.mount();
         rootEl.addEventListener('click', handleClick);
+        loading = true;
+        needsReload = false;
+        var backend = windowRef && windowRef.jennyShell && windowRef.jennyShell.backend;
+        if (backend && typeof backend.onStatus === 'function') unsubscribeBackendStatus = backend.onStatus(onBackendStatus);
         render();
         void loadLibrary();
       },
@@ -383,6 +421,8 @@
         if (disposed) return;
         disposed = true;
         sourceGeneration += 1;
+        if (typeof unsubscribeBackendStatus === 'function') unsubscribeBackendStatus();
+        unsubscribeBackendStatus = null;
         operationCoordinator.dispose();
         if (pullController) pullController.dispose();
         pullController = null;

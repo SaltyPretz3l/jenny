@@ -61,7 +61,6 @@
     layoutModel: ['jennyWorkbenchLayoutModel', '../shared/workbench-layout-model'],
     mruUtils: ['rendererIdeMru', './renderer-ide-mru'],
     chatDockUtils: ['rendererIdeChatDock', './renderer-ide-chat-dock'],
-    workspaceChatsUtils: ['rendererIdeWorkspaceChats', './renderer-ide-workspace-chats'],
     layoutUtils: ['rendererIdeLayout', './renderer-ide-layout'],
     commandsUtils: ['rendererIdeCommands', './renderer-ide-commands'],
     navBookmarksUtils: ['rendererIdeNavBookmarks', './renderer-ide-nav-bookmarks'],

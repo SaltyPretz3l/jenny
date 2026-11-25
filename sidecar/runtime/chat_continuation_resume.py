@@ -12,6 +12,7 @@ from sidecar.ai.feature_flags import is_resource_discipline_enabled
 from sidecar.ai.routing import loop_event_emit, mutation_change_set_lifecycle, plan_mode_transition
 from sidecar.ai.routing import tool_loop as _tool_loop
 from sidecar.ai.routing.iteration_limits import resume_iteration_ceiling as _resume_cap
+from sidecar.ai.routing.iteration_limits import widen_turn_tool_budget
 from sidecar.ai.routing.quota_runtime import restore_runtime_quota
 from sidecar.ai.routing.tool_call_execution import execute_tool_calls_sequentially
 from sidecar.ai.routing.tool_execution_snapshots import split_visible_execution_arguments
@@ -429,6 +430,7 @@ def _finish_pending_batch(
         resolution_context=run.tool_resolution_context,
     )
     if plan_mode_exited:
+        widen_turn_tool_budget(run.runtime, run.kernel._config, next_contract)
         plan_mode_transition.apply_restored_tool_contract(
             working_messages=run.working_messages,
             tool_statuses=next_contract.status_entries,

@@ -147,8 +147,8 @@ function createFixture(t, {
     ...serviceOptions,
   });
   t.after(() => fx.service.dispose());
-  fx.publishGit = (n = 1, { paths = ['src/a.js', 'src/b.js'], summary = 'Fixed the parser.' } = {}) => {
-    const input = R.normalizeGitProposalInput({ summary, question: 'Commit these?', paths }).value;
+  fx.publishGit = (n = 1, { paths = ['src/a.js', 'src/b.js'], summary = 'Fixed the parser.', notChecked } = {}) => {
+    const input = R.normalizeGitProposalInput({ summary, question: 'Commit these?', paths, ...(notChecked ? { not_checked: notChecked } : {}) }).value;
     return fx.service.publish({
       kind: 'git', sessionId, sessionIncarnation, turnId: `turn_${n}`, toolCallId: `call_${n}`, input, binding: gitBinding(input.paths),
     });

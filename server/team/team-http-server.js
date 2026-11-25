@@ -55,15 +55,21 @@ function createTeamHttpServer(context) {
   const sockets = new Set();
   // The request a socket is serving, so an idle socket is told apart from a handler at work.
   const inFlight = new WeakMap();
-  // Hello is kept per device (a loopback socket is one stream, so per connection is not visible here).
+  // Hello is kept per device (a loopback socket is one stream, so per connection is not visible here), in
+  // recency order, each entry saying whether its device is an unredeemed invite (`true`) or a member's device.
   const hello = new Map();
   let active = 0;
   let disposed = false;
 
-  function markHello(deviceId) {
+  // A greeted device that keeps asking stays at the young end, and over the bound an invite (it speaks once, to
+  // join) goes before any member's device: invites cannot push a connected member out of the table (review H9).
+  function markHello(deviceId, isInvite) {
     hello.delete(deviceId);
-    hello.set(deviceId, true);
-    if (hello.size > HELLO_STATE_MAX) hello.delete(hello.keys().next().value);
+    hello.set(deviceId, isInvite);
+    if (hello.size <= HELLO_STATE_MAX) return;
+    let evict = hello.keys().next().value;
+    for (const [id, invite] of hello) if (invite) { evict = id; break; }
+    hello.delete(evict);
   }
 
   const unsubscribeMembership = context.store.onMembershipChange((event) => {
@@ -176,11 +182,13 @@ function createTeamHttpServer(context) {
       if (url.search) { failure(response, 'invalid', 'query_not_supported', requestId); return; }
       const deviceId = actor.device_id;
       const name = `${request.method} ${url.pathname}`;
-      if (name !== HELLO_ROUTE && !hello.has(deviceId)) {
-        failure(response, 'forbidden', 'team_hello_required', requestId); return;
+      const isInvite = actor.role === 'invite';
+      if (name !== HELLO_ROUTE) {
+        if (!hello.has(deviceId)) { failure(response, 'forbidden', 'team_hello_required', requestId); return; }
+        markHello(deviceId, isInvite);
       }
       const ctx = { request, response, requestId, actor, deviceId, action: actionForRoute(name),
-        guard: createRouteGuard({ authorize, actor, requestId }), markHello: () => markHello(deviceId),
+        guard: createRouteGuard({ authorize, actor, requestId }), markHello: () => markHello(deviceId, isInvite),
         forgetHello: () => hello.delete(deviceId),
         isAuthenticated: () => !disposed && directory.liveActor(deviceId) !== null };
       await route(ctx, name, url);

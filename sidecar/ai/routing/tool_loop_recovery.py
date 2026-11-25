@@ -520,6 +520,30 @@ def emit_degradation_status(
         pass
 
 
+HELPER_APPROVAL_REFUSAL = (
+    "a writing helper cannot ask for approval; report what you need and the parent can run it"
+)
+
+
+def _refuse_helper_approval(loop: Any, result: Any, call: Any) -> bool:
+    """Row 184 W3: a writing helper never suspends for a card; the call fails instead."""
+    if not getattr(loop.request_context, "sub_agent_write_mode", False):
+        return False
+    from sidecar.ai.error_codes import CMP_TOOL_POLICY_DENIED
+
+    record_failed_tool_calls(
+        loop,
+        result,
+        (call,),
+        error_code=CMP_TOOL_POLICY_DENIED,
+        output_for_call=lambda refused: (
+            f"Tool '{refused.tool_id}' was not executed: {HELPER_APPROVAL_REFUSAL}."
+        ),
+        metadata={"pre_dispatch_blocked": True},
+    )
+    return True
+
+
 def approval_with_recovery(
     loop: Any,
     result: Any,
@@ -615,6 +639,9 @@ def approval_with_recovery(
                 ),
                 metadata={"pre_dispatch_blocked": True},
             )
+            continue
+        if approval is not None and _refuse_helper_approval(loop, result, call):
+            approval = None
             continue
         surviving.append(call)
         if approval is not None:

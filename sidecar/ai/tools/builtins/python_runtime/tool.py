@@ -24,7 +24,10 @@ from sidecar.ai.tools.builtins.python_runtime.interpreter import (
     ensure_runtime_venv,
     redact_paths,
 )
-from sidecar.ai.tools.builtins.python_runtime.output import format_python_output
+from sidecar.ai.tools.builtins.python_runtime.output import (
+    attach_new_image_note,
+    format_python_output,
+)
 from sidecar.ai.tools.builtins.python_runtime.sandbox import (
     SandboxExecutionCancelled,
     create_scratch_dir,
@@ -92,6 +95,7 @@ def python_execute_tool(
 
     config = _PYTHON_RUNTIME_CONFIG
     sandbox_result = None
+    call_started_at = time.time()
     try:
         try:
             deadline_monotonic = time.monotonic() + configured_bootstrap_budget_seconds(
@@ -154,6 +158,10 @@ def python_execute_tool(
             arguments=arguments,
             spill_store=None if scratch_root is not None else _spill_store(workspace),
         )
+        if scratch_root is None:
+            attach_new_image_note(
+                payload, code=code, workspace_root=authority_root, started_at=call_started_at
+            )
         success = payload.get("error") is None and sandbox_result.returncode == 0
         return ToolHandlerResult(
             output=json.dumps(payload, ensure_ascii=False, indent=2),

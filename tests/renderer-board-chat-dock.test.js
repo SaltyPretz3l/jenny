@@ -27,7 +27,7 @@ function harness(t, { activeView = 'board', flag = true, sessions, currentSessio
     <section id="chatView">
       <div id="chatThreadStage"><div id="chatThreadScroll"><div id="chatTimeline"></div></div></div>
       <div id="composerWrap"><textarea id="chatInput"></textarea></div>
-      <div id="artifactReviewResizer"></div>
+      <aside id="artifactReviewPanel"></aside>
     </section>
     <section id="ideView"><div id="ideShell">
       <div id="ideWorkspaceChatHost"></div>
@@ -151,7 +151,7 @@ test('leaving the Board: the page gives the dock element back before it clears i
   assert.equal(h.reconcile(), true, 'the pipeline reconcile moves the transcript, so it rebuilds the virtualizer');
   assert.equal(h.transcriptIn(h.byId('chatView')), true);
   assert.equal(h.byId('chatThreadStage').nextSibling, h.byId('composerWrap'));
-  assert.equal(h.byId('composerWrap').nextSibling, h.byId('artifactReviewResizer'));
+  assert.equal(h.byId('composerWrap').nextSibling, h.byId('artifactReviewPanel'));
   assert.equal(h.reconcile(), false, 'and is then idle');
 });
 
@@ -358,7 +358,7 @@ test('context.openChat opens a collapsed chat column and docks the transcript, a
   assert.equal(hooks.openChat(), false);
 });
 
-test('context.openSession switches to the Chat page and opens the chat; with no app opener it throws so the card can say so', async (t) => {
+test('context.openSession opens the chat in the Board chat column without leaving the Board; with no app opener it throws so the card can say so', async (t) => {
   const captured = captureContext();
   const h = harness(t);
   await h.board('Auth redesign');
@@ -367,7 +367,7 @@ test('context.openSession switches to the Chat page and opens the chat; with no 
   const page = await h.start();
   const hooks = captured[captured.length - 1].context;
   await hooks.openSession({ sessionId: 's1', messageId: 'm1' });
-  assert.deepEqual(calls, ['view:chat', 'open:s1']);
+  assert.deepEqual(calls, ['open:s1'], 'the chat column is open, so the view stays on the Board');
   h.state.harness = {};
   await assert.rejects(() => hooks.openSession({ sessionId: 's1', messageId: null }));
   page.dispose();

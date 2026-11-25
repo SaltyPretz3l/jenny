@@ -339,7 +339,7 @@
       }
       const pending = Promise.resolve(autoRunConfirmDialog.confirm({
         title: jt('runMode.autoConfirm.title', 'Turn on Auto run?'),
-        message: jt('runMode.autoConfirm.bodyWithIdle', 'In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused.') + ' ' + (Number(state.unattendedGuardMinutes) > 0
+        message: jt('runMode.autoConfirm.bodyWithIdle', 'In Auto, tools run without asking, even file changes and project Python, which can reach beyond it. Denies ask; blocked commands are refused.') + ' ' + (Number(state.unattendedGuardMinutes) > 0
           ? jt('runMode.autoConfirm.idleOn', 'Inactivity pause is enabled after {minutes} minutes without keyboard or mouse input.', { minutes: state.unattendedGuardMinutes })
           : jt('runMode.autoConfirm.idleOff', 'Inactivity pause is off: Auto continues while you are away.')) + ' ' + jt('runMode.autoConfirm.idleSettingsPermissions', 'Change this in Settings > Permissions > Pause Auto when you are away.'),
         confirmLabel: jt('runMode.autoConfirm.confirm', 'Turn on Auto'),

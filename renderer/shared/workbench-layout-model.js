@@ -5,7 +5,7 @@
  * inputs are never modified. normalizeLayout() is safe on untrusted persisted data
  * (it also runs in the main process) and never throws.
  *
- *   Layout = { v: 1, root: Node, bind?: { [viewId]: editorStackId }, profile?: 'board' }
+ *   Layout = { v: 1, root: Node, bind?: { [viewId]: editorStackId }, profile?: 'board'|'chat' }
  *   Node   = Split | Stack
  *   Split  = { t: 'split', id, dir: 'row'|'col', children: [{ node, size }] }
  *   Stack  = { t: 'stack', id, kind: 'views'|'editor', views: string[], active, collapsed }
@@ -70,15 +70,18 @@
   });
   var OPTIONAL_VIEW_IDS = Object.freeze(Object.keys(OPTIONAL_VIEWS));
 
+  // Row 190 Wave 4, row 195: the side panel's views in the Workspace and the Board (Artifacts, Project,
+  // Runs). Optional, like Outline: one joins the right stack when its panel opens in that room, leaves
+  // on its Close, and is never re-homed. The Chat room has Artifacts and Project as fixed views.
+  var SIDE_VIEW = Object.freeze({ home: 'right', minWidth: 280, minHeight: 160, placement: 'edge' });
+  var SIDE_PANEL_VIEW_IDS = Object.freeze(['artifacts', 'project', 'runs']);
+
   var LEFT_VIEWS = ['explorer', 'search', 'source-control'];
   var BOTTOM_VIEWS = ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity'];
   // Extra terminals (F3: four in all) are instances of the `terminal` view: terminal-2..4.
   // They persist where the user put them but are never re-homed when absent.
   var MAX_TERMINALS = 4;
   var TERMINAL_INSTANCE_RE = /^terminal-([2-4])$/;
-  // The second Workspace chat (F3: two chats) is chat-2 + changes-2, instances of `chat` and
-  // `changes`. Same persistence rule as the terminals.
-  var CHAT_INSTANCE_RE = /^(chat|changes)-2$/;
   var RIGHT_VIEWS = ['chat', 'changes'];
   // The stacks a lost view is re-homed into, in order; a left view can land beside Outline.
   var FAMILY_OF_HOME = { left: LEFT_VIEWS.concat(OPTIONAL_VIEW_IDS), bottom: BOTTOM_VIEWS, right: RIGHT_VIEWS };
@@ -93,9 +96,8 @@
     if (typeof id !== 'string') return null;
     if (Object.prototype.hasOwnProperty.call(VIEW_CATALOG, id)) return VIEW_CATALOG[id];
     if (Object.prototype.hasOwnProperty.call(OPTIONAL_VIEWS, id)) return OPTIONAL_VIEWS[id];
-    if (TERMINAL_INSTANCE_RE.test(id)) return VIEW_CATALOG.terminal;
-    var chat = CHAT_INSTANCE_RE.exec(id);
-    return chat ? VIEW_CATALOG[chat[1]] : null;
+    if (SIDE_PANEL_VIEW_IDS.indexOf(id) >= 0) return SIDE_VIEW;
+    return TERMINAL_INSTANCE_RE.test(id) ? VIEW_CATALOG.terminal : null;
   }
 
   /* The Board page (row 150) is a second workbench: the boards list on the left, the canvas
@@ -111,7 +113,39 @@
   });
 
   function boardEntry(id) {
+    if (SIDE_PANEL_VIEW_IDS.indexOf(id) >= 0) return SIDE_VIEW; // optional (Wave 4, row 195)
     return typeof id === 'string' && Object.prototype.hasOwnProperty.call(BOARD_VIEWS, id) ? BOARD_VIEWS[id] : null;
+  }
+
+  /* The Chat room (row 190) is a third workbench: the Chats list on the left, the chat panes where
+   * the editor stack sits, and one right stack (Session, Artifacts, Changes, Project: row 195). The
+   * optional views join the right stack when first opened and can be closed; they are never
+   * re-homed when absent. An id shared with the Workspace (changes, terminal, activity) keeps the
+   * Workspace's minimum sizes, so a minimum never depends on which profile asks. */
+  var CHAT_LIST_SIZE = 320;
+  var CHAT_RIGHT_SIZE = 340;
+  var CHAT_SIDE_VIEW = SIDE_VIEW;
+  var CHAT_VIEWS = Object.freeze({
+    chats: Object.freeze({ home: 'left', minWidth: 240, minHeight: 120, placement: 'edge' }),
+    session: CHAT_SIDE_VIEW,
+    artifacts: CHAT_SIDE_VIEW,
+    changes: VIEW_CATALOG.changes,
+    project: CHAT_SIDE_VIEW,
+  });
+  var CHAT_OPTIONAL_VIEWS = Object.freeze({
+    preview: CHAT_SIDE_VIEW,
+    browser: CHAT_SIDE_VIEW,
+    'live-view': CHAT_SIDE_VIEW,
+    terminal: VIEW_CATALOG.terminal,
+    runs: CHAT_SIDE_VIEW,
+    activity: VIEW_CATALOG.activity,
+  });
+  var CHAT_RIGHT_VIEWS = ['session', 'artifacts', 'changes', 'project'];
+
+  function chatEntry(id) {
+    if (typeof id !== 'string') return null;
+    if (Object.prototype.hasOwnProperty.call(CHAT_VIEWS, id)) return CHAT_VIEWS[id];
+    return Object.prototype.hasOwnProperty.call(CHAT_OPTIONAL_VIEWS, id) ? CHAT_OPTIONAL_VIEWS[id] : null;
   }
 
   // entry: is this id a view of the profile; homes: the views a tree must hold, with their side.
@@ -122,22 +156,24 @@
     name: 'board', entry: boardEntry, homes: BOARD_VIEWS, families: { left: ['boards'], bottom: [], right: RIGHT_VIEWS }, maxEditors: 1, binds: false,
   };
 
+  var CHAT_PROFILE = {
+    name: 'chat', entry: chatEntry, homes: CHAT_VIEWS, families: { left: ['chats'], bottom: [], right: CHAT_RIGHT_VIEWS }, maxEditors: 1, binds: false,
+  };
+
   function profileNamed(name) {
-    return name === 'board' ? BOARD_PROFILE : WORKSPACE_PROFILE;
+    if (name === 'board') return BOARD_PROFILE;
+    return name === 'chat' ? CHAT_PROFILE : WORKSPACE_PROFILE;
   }
 
   // Any profile's view: minimum sizes and the layout ops ask by id alone.
   function catalogEntry(id) {
-    return workspaceEntry(id) || boardEntry(id);
+    return workspaceEntry(id) || boardEntry(id) || chatEntry(id);
   }
 
-  // The catalog view an instance id stands for (terminal-2..4 -> terminal, chat-2 -> chat,
-  // changes-2 -> changes); null for base ids and anything else.
+  // The catalog view an instance id stands for (terminal-2..4 -> terminal); null for base ids and
+  // anything else.
   function instanceBase(id) {
-    if (typeof id !== 'string') return null;
-    if (TERMINAL_INSTANCE_RE.test(id)) return 'terminal';
-    var chat = CHAT_INSTANCE_RE.exec(id);
-    return chat ? chat[1] : null;
+    return typeof id === 'string' && TERMINAL_INSTANCE_RE.test(id) ? 'terminal' : null;
   }
 
   function isInstanceView(id) {
@@ -240,13 +276,13 @@
   function cloneLayout(layout) {
     var out = { v: 1, root: cloneNode(layout.root) };
     if (isObj(layout.bind)) out.bind = Object.assign({}, layout.bind);
-    if (layout.profile === 'board') out.profile = 'board';
+    if (layout.profile === 'board' || layout.profile === 'chat') out.profile = layout.profile;
     return out;
   }
 
   // W7c: chats and terminals can be bound to an editor group (Changes follows its chat).
   function isBindableView(id) {
-    return id === 'chat' || id === 'chat-2' || terminalSlot(id) > 0;
+    return id === 'chat' || terminalSlot(id) > 0;
   }
 
   // Keeps bindings whose view is in the tree and whose group is one of its editor stacks.
@@ -263,16 +299,22 @@
     return out;
   }
 
-  /* Minimum extent of a node along `axis`. aware: collapsed stacks count as a strip. */
-  function nodeMin(node, axis, scale, aware) {
+  /* A centre minimum the caller supplies (row 190: Chat passes 360 per pane); else the constant. */
+  function sanitizeCentreMin(v) {
+    return isFiniteNumber(v) && v > 0 ? clamp(Math.round(v), 120, SIZE_MAX) : EDITOR_MIN_WIDTH;
+  }
+
+  /* Minimum extent of a node along `axis`. aware: collapsed stacks count as a strip.
+   * centreMin: the editor stack's width floor before the text scale (EDITOR_MIN_WIDTH if absent). */
+  function nodeMin(node, axis, scale, aware, centreMin) {
     if (node.t === 'split') {
-      var mins = node.children.map(function (c) { return nodeMin(c.node, axis, scale, aware); });
+      var mins = node.children.map(function (c) { return nodeMin(c.node, axis, scale, aware, centreMin); });
       if (node.dir === axis) return mins.reduce(function (a, b) { return a + b; }, 0);
       return mins.reduce(function (a, b) { return Math.max(a, b); }, 0);
     }
     if (aware && node.collapsed) return stripOf(axis);
     if (node.kind === 'editor') {
-      return axis === 'row' ? Math.ceil(EDITOR_MIN_WIDTH * scale) : EDITOR_MIN_HEIGHT;
+      return axis === 'row' ? Math.ceil((centreMin || EDITOR_MIN_WIDTH) * scale) : EDITOR_MIN_HEIGHT;
     }
     var key = axis === 'row' ? 'minWidth' : 'minHeight';
     return node.views.reduce(function (m, id) {
@@ -281,8 +323,8 @@
   }
 
   /* Collapsed-aware minimum extent of a node along an axis (render-time floor). */
-  function minExtent(node, axis, fontScale) {
-    return nodeMin(node, axis, sanitizeScale(fontScale), true);
+  function minExtent(node, axis, fontScale, centreMin) {
+    return nodeMin(node, axis, sanitizeScale(fontScale), true, sanitizeCentreMin(centreMin));
   }
 
   function flexIndex(split) {
@@ -492,7 +534,8 @@
     });
   }
 
-  /* profileName: 'board' for a Board page layout; anything else is the Workspace. */
+  /* profileName: 'board' for a Board page layout, 'chat' for the Chat room's; anything else is the
+   * Workspace. */
   function normalizeLayout(value, profileName) {
     try {
       if (!isObj(value) || value.v !== 1 || !isObj(value.root)) return null;
@@ -516,8 +559,19 @@
   /* ------------------------------------------------------------------ default layout */
 
   /* The fresh-profile tree: rail | (editor over bottom panel) | chat dock.
-   * For the Board: boards list | canvas | chat dock, with the chat open. */
+   * For the Board: boards list | canvas | chat dock, with the chat open.
+   * For Chat: Chats list | chat panes | the right stack open on Session. */
   function createDefaultLayout(profileName) {
+    if (profileNamed(profileName) === CHAT_PROFILE) {
+      return normalizeLayout({
+        v: 1,
+        root: mkSplit('row', [
+          entry(mkStack(['chats'], 'chats', false), CHAT_LIST_SIZE),
+          entry(mkEditor(), null),
+          entry(mkStack(CHAT_RIGHT_VIEWS, 'session', false), CHAT_RIGHT_SIZE),
+        ]),
+      }, 'chat');
+    }
     if (profileNamed(profileName) === BOARD_PROFILE) {
       return normalizeLayout({
         v: 1,
@@ -641,6 +695,7 @@
         isObj: isObj,
         isFiniteNumber: isFiniteNumber,
         sanitizeScale: sanitizeScale,
+        sanitizeCentreMin: sanitizeCentreMin,
         DEFAULT_ROW_SIZE: DEFAULT_ROW_SIZE,
         DEFAULT_COL_SIZE: DEFAULT_COL_SIZE,
         SIZE_MAX: SIZE_MAX,
@@ -653,7 +708,10 @@
   return {
     VIEW_CATALOG: VIEW_CATALOG,
     OPTIONAL_VIEW_IDS: OPTIONAL_VIEW_IDS,
+    SIDE_PANEL_VIEW_IDS: SIDE_PANEL_VIEW_IDS,
     BOARD_VIEW_IDS: Object.freeze(Object.keys(BOARD_VIEWS)),
+    CHAT_VIEW_IDS: Object.freeze(Object.keys(CHAT_VIEWS)),
+    CHAT_OPTIONAL_VIEW_IDS: Object.freeze(Object.keys(CHAT_OPTIONAL_VIEWS)),
     STRIP_SIZE: STRIP_SIZE,
     HEADER_SIZE: HEADER_SIZE,
     EDITOR_MIN_WIDTH: EDITOR_MIN_WIDTH,

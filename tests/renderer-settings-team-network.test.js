@@ -304,3 +304,110 @@ test('a restored team comes back with joining off; once the owner turns it on, t
   assert.equal(h.q('#teamNetAddr').value, 'home.example.net');
   assert.equal(h.q('#teamNetRelay').value, 'https://relay.example.org');
 });
+
+// ------------------------------------------- team review fixes (row 201): OD-11 Clear token
+
+test('Clear token sends token: null with the saved address and relay, waits for unsaved edits, and shows only while a token is saved', async (t) => {
+  const saved = { public_address: null, relay_url: 'https://relay.example.net', has_token: true };
+  let current = on('relay_connected', { internet: saved });
+  const h = owner(t, current, {
+    hostInternet: () => { current = on('relay_connected', { internet: { ...saved, has_token: false } }); return { ok: true, host: current, restarted: true }; },
+    hostStatus: () => ({ ok: true, host: current }),
+  });
+  await flush();
+  h.type('#teamNetAddr', 'half-typed.example.net');
+  await flush();
+  assert.equal(h.q('[data-team-action="net-clear-token"]').disabled, true, 'an unsaved edit is saved or discarded first');
+  h.click('[data-team-action="net-discard"]');
+  await flush();
+  const clear = h.q('[data-team-action="net-clear-token"]');
+  assert.ok(clear, 'a saved token can be cleared');
+  assert.equal(clear.disabled, false);
+  assert.equal(clear.textContent.trim(), 'Clear token');
+  clear.click();
+  await flush();
+  assert.deepEqual(h.sent('hostInternet').map((c) => c.payload), [{ enabled: true, relay_url: 'https://relay.example.net', token: null }],
+    'the saved setting with token null');
+  assert.equal(h.q('[data-team-action="net-clear-token"]'), null, 'nothing to clear once the token is gone');
+});
+
+// ------------------------------------------- team review fixes (row 201): OD-5 the pool context length
+
+const POOL_HELP = 'How much text one request to the team’s GPUs may hold. Leave it empty for Auto: it follows the model that answers, up to 1,048,576 tokens. Or type a lower limit, from 2,048. It applies the next time the server starts.';
+const POOL_REFUSED = 'Use a whole number from 2,048 to 1,048,576 tokens, or leave the field empty for Auto.';
+const poolSave = (h) => h.q('[data-team-action="pool-save"]');
+
+test('the pool context length: Auto by default, the saved cap when there is one, in the owner\'s Network group only', async (t) => {
+  const h = owner(t, off({ pool_context_cap: null }));
+  await flush();
+  assert.equal(text(h.q('#teamPoolContextTitle')), 'Pool context length');
+  assert.equal(text(h.q('#teamPoolContextHelp')), POOL_HELP);
+  const field = h.q('#teamPoolCap');
+  assert.equal(field.value, '');
+  assert.equal(field.getAttribute('placeholder'), 'Auto');
+  assert.equal(poolSave(h).disabled, true, 'nothing to save');
+  assert.ok(group(h).contains(field), 'with the owner\'s host settings');
+  const capped = owner(t, on('mapped', { pool_context_cap: 65536 }));
+  await flush();
+  assert.equal(capped.q('#teamPoolCap').value, '65536');
+  const member = harness({ host: { state: 'stopped', team_id: null, team_name: null, deployed: false, reason: null, since: 1 }, teams: [memberTeam()] });
+  t.after(member.restore);
+  await flush();
+  assert.equal(member.q('#teamPoolCap'), null, 'a member never sees it');
+  assert.equal(member.q('#teamPoolContextTitle'), null);
+});
+
+test('a typed cap is saved as a whole number, Auto (an empty field) as null, and the saved value comes back from the host state', async (t) => {
+  let cap = null;
+  const h = owner(t, off({ pool_context_cap: cap }), {
+    hostPoolContext: (p) => { cap = p.context_cap; return { ok: true, host: off({ pool_context_cap: cap }), restarted: false }; },
+    hostStatus: () => ({ ok: true, host: off({ pool_context_cap: cap }) }) });
+  await flush();
+  h.type('#teamPoolCap', '65536');
+  await flush();
+  assert.equal(poolSave(h).disabled, false);
+  assert.equal(h.q('#teamPoolCap').value, '65536', 'a redraw keeps what was typed');
+  poolSave(h).click();
+  await flush();
+  assert.deepEqual(h.sent('hostPoolContext').map((c) => c.payload), [{ context_cap: 65536 }]);
+  assert.equal(h.q('#teamPoolCap').value, '65536');
+  assert.equal(poolSave(h).disabled, true, 'saved');
+  h.type('#teamPoolCap', '');
+  await flush();
+  poolSave(h).click();
+  await flush();
+  assert.deepEqual(h.sent('hostPoolContext').map((c) => c.payload).at(-1), { context_cap: null });
+  assert.equal(h.q('#teamPoolCap').value, '');
+  h.type('#teamPoolCap', '2048');
+  poolSave(h).click();
+  await flush();
+  assert.deepEqual(h.sent('hostPoolContext').map((c) => c.payload).at(-1), { context_cap: 2048 }, 'the lowest');
+  h.type('#teamPoolCap', '1048576');
+  poolSave(h).click();
+  await flush();
+  assert.deepEqual(h.sent('hostPoolContext').map((c) => c.payload).at(-1), { context_cap: 1048576 }, 'the highest: the same as Auto');
+});
+
+test('a cap out of range or not whole is refused in the page with its sentence, and nothing is sent; the host\'s own refusal says the same', async (t) => {
+  const h = owner(t, off({ pool_context_cap: null }), { hostPoolContext: { ok: false, error: { code: 'invalid_request', reason: 'team_pool_context_invalid' } } });
+  await flush();
+  for (const bad of ['2047', '1048577', '12.5', '0', '-4096', '99999999999999999999']) {
+    h.type('#teamPoolCap', bad);
+    poolSave(h).click();
+    await flush();
+    assert.equal(text(group(h).querySelector('.team-set-note')), POOL_REFUSED, bad);
+  }
+  assert.equal(h.sent('hostPoolContext').length, 0, 'nothing sent');
+  h.type('#teamPoolCap', '4096');
+  poolSave(h).click();
+  await flush();
+  assert.equal(h.sent('hostPoolContext').length, 1);
+  assert.equal(text(group(h).querySelector('.team-set-note')), POOL_REFUSED, 'the host\'s answer has the same words');
+  assert.equal(h.q('#teamPoolCap').value, '4096', 'the typed value stays for another try');
+  const missing = owner(t, off({ pool_context_cap: null }), { hostPoolContext: { ok: false, error: { code: 'HOST_UNAVAILABLE', reason: 'team_host_not_deployed' } } });
+  await flush();
+  missing.type('#teamPoolCap', '4096');
+  poolSave(missing).click();
+  await flush();
+  assert.match(text(group(missing).querySelector('.team-set-note')), /has not hosted a team yet/);
+});

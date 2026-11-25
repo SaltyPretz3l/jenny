@@ -9,10 +9,20 @@
 //
 // A refusal is a reason word only: the text never reaches a log, a failure or
 // an error message.
+//
+// Team review fixes (row 201): an invite names the relay a member's bridge dials,
+// so the rule is the bridge's (native relay.rs `destination_ok`): `localhost` and
+// every name under it are refused, as every address literal already is (private
+// LAN addresses included: a relay a member reaches over the internet has a name).
+// The relay token's one grammar lives here too, for invites.js, the owner's
+// setting and the bridge's start line alike.
 
 const MAX_RELAY_URL_CHARS = 100;
 const SCHEME = 'https://';
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+// An HTTP bearer token's characters (RFC 6750 b64token), so the bridge can send it as is; at most 48 of them.
+const MAX_RELAY_TOKEN_CHARS = 48;
+const RELAY_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/u;
 
 function refused() {
   return { ok: false, reason: 'team_relay_url_invalid' };
@@ -45,6 +55,7 @@ function parseRelayUrl(text) {
   const match = /^([^:]+)(?::(\d{1,5}))?$/u.exec(rest);
   if (!match || !isDnsHostName(match[1])) return refused();
   const host = match[1].toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return refused();
   if (match[2] === undefined) return { ok: true, url: `${SCHEME}${host}` };
   if (!/^[1-9]\d*$/u.test(match[2])) return refused();
   const port = Number(match[2]);
@@ -58,4 +69,11 @@ function isCanonicalRelayUrl(text) {
   return parsed.ok && parsed.url === text;
 }
 
-module.exports = { MAX_RELAY_URL_CHARS, isCanonicalRelayUrl, isDnsHostName, parseRelayUrl };
+/** True for a relay token in the one grammar: 1 to 48 characters of an HTTP bearer token. */
+function isRelayToken(text) {
+  return typeof text === 'string' && text.length >= 1 && text.length <= MAX_RELAY_TOKEN_CHARS && RELAY_TOKEN.test(text);
+}
+
+module.exports = {
+  MAX_RELAY_TOKEN_CHARS, MAX_RELAY_URL_CHARS, isCanonicalRelayUrl, isDnsHostName, isRelayToken, parseRelayUrl,
+};

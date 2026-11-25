@@ -114,13 +114,13 @@
     }
 
     // Resolved at render time: the settings field modules load after this one.
-    function autoIndexRowMarkup(skillsState) {
+    function descriptorRowMarkup(id, value, options) {
       const load = (path) => (typeof require === 'function' ? require(path) : null);
       const binding = windowRef.rendererSettingsFieldBinding || load('../shell/renderer-settings-field-binding');
       const descriptors = windowRef.rendererSettingsFieldDescriptors || load('../shell/renderer-settings-field-descriptors');
-      const descriptor = descriptors?.getSettingDescriptor?.('skillsAutoIndexToggle');
+      const descriptor = descriptors?.getSettingDescriptor?.(id);
       if (!binding || !descriptor) return '';
-      return binding.renderSettingRow(descriptor, descriptors.normalizeSettingValue(descriptor, skillsState.settings.autoIndex));
+      return binding.renderSettingRow(descriptor, descriptors.normalizeSettingValue(descriptor, value), options);
     }
 
     function warningMarkup(skillsState, scopes) {
@@ -177,7 +177,7 @@
       if (priorDisclosure) foldersExpanded = !priorDisclosure.hidden;
       const skillsState = state.skills || normalizeSkillsState({});
       if (!skillsState.featureEnabled) {
-        rowsHost.innerHTML = '<p class="settings-note">' + jt('skills.settings.killSwitchOff', 'Skills are turned off by the JENNY_ENABLE_SKILLS_SYSTEM kill switch.') + '</p>';
+        rowsHost.innerHTML = descriptorRowMarkup('skillsUserToggle', false, { managedBy: jt('skills.settings.managedReason', 'Skills are switched off for this PC by a start-up setting. Remove it and restart Jenny to use skills.') });
         foldersHost.innerHTML = '';
         return;
       }
@@ -188,7 +188,7 @@
         ? enabledScopes.flatMap((scope) => scope.entries)
         : skillsState.entries;
       rowsHost.innerHTML = entries.map(skillRowMarkup).join('')
-        + warningMarkup(skillsState, enabledScopes) + autoIndexRowMarkup(skillsState);
+        + warningMarkup(skillsState, enabledScopes) + descriptorRowMarkup('skillsAutoIndexToggle', skillsState.settings.autoIndex);
       foldersHost.innerHTML = foldersMarkup(skillsState);
     }
 

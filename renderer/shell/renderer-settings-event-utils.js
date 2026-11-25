@@ -188,7 +188,6 @@
           if (keys.includes('defaultRunMode') && !state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = state.defaultRunMode;
           if (!keys.includes('uiLanguage')) return;
           try { window.localStorage.setItem('jenny.ui.language', state.uiLanguage); } catch (_error) { /* best effort */ }
-          if (typeof showToastMessage === 'function') showToastMessage(jt('settings.language.savedToast', 'Language saved. Restart Jenny to switch the interface.'), { tone: 'info', dedupeKey: 'settings:ui-language' });
         },
       };
     }
@@ -538,11 +537,10 @@
           openSession,
           setActiveView,
           // Settings > Projects: the Workspace folder pick / close, the chat
-          // list repaint, the Chats panel reveal and the project switcher.
+          // list repaint and the project switcher.
           handleWorkspaceRootChoose: deps.callbacks.handleWorkspaceRootChoose,
           clearWorkspaceRoot: deps.callbacks.clearWorkspaceRoot,
           renderSessions: deps.callbacks.renderSessions,
-          setSidebarCollapsed: deps.callbacks.setSidebarCollapsed,
           getProjectSwitcher: deps.callbacks.getProjectSwitcher,
         },
       }) || null;
@@ -620,7 +618,7 @@
         if (!tool || !toolsFields || fieldDescriptors.getSettingDescriptorByControlId(id)) return;
         void toolsFields.commit({ ...fieldDescriptors.getSettingDescriptor('settings-tool-config-web'), id: toolConfigRowId(id), controlId: id, key: `toolConfig.${tool.key}`, copy: { label: tool.label, description: '' } }, tool.checked);
       }, listenerOptions);
-      bindDescriptorFields(settingsView, ['use24HourTime', 'uiLanguageSelect', 'transcriptViewDefaultSelect', 'drawingInstructionsSelect']);
+      bindDescriptorFields(settingsView, ['use24HourTime', 'uiLanguageSelect', 'transcriptViewDefaultSelect', 'drawingInstructionsSelect', 'appearanceTeamDensitySelect']);
 
       // Dictation (row 84): the switch is a feature flag (features adapter, like
       // spell check); the microphone and the model row bind in the section module.

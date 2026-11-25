@@ -120,6 +120,8 @@ const settingsBlockMethods = {
         reason = 'tools_image_read_enabled_updated';
       } else if (changedTool === 'pythonRuntime') {
         reason = 'tools_python_runtime_enabled_updated';
+      } else if (changedTool === 'computer') {
+        reason = 'tools_computer_use_enabled_updated';
       } else if (changedTool === 'todo') {
         reason = 'tools_todo_enabled_updated';
       } else if (changedTool === 'worktree') {

@@ -175,3 +175,59 @@ async fn each_turn_away_has_its_own_close_code_and_none_is_admitted() {
         "nothing reached the host's loopback listener"
     );
 }
+
+/// Review H11 and C3: the parent's `known_keys` (said in `ready`) clears the cooldown of a key
+/// it newly names, the device key an invite was just redeemed for, while a key it already named
+/// keeps its cooldown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_newly_known_key_is_asked_again_and_a_known_one_stays_cooled() {
+    let http = FakeHttp::start().await;
+    let mut host = Bridge::host();
+    host.send(host_start(
+        &random32(),
+        &random32(),
+        http.port,
+        host_limits(),
+    ))
+    .await;
+    let ready = host.expect("ready").await;
+    assert_eq!(
+        ready["known_keys"], 1,
+        "the bridge says it reads known_keys"
+    );
+    let host_public = ready["public_key"].as_str().expect("key").to_string();
+    let dial = json!([ipv4_address(&ready["addresses"]).to_string()]);
+    let device = keys();
+
+    let mut first = start_member_as(&host_public, &dial, fast_member_limits(), &device).await;
+    admit(&mut host, &device.public, Value::Null).await;
+    assert_eq!(
+        first.expect_state("offline").await["reason"],
+        "host_refused"
+    );
+    let mut cooled = start_member_as(&host_public, &dial, fast_member_limits(), &device).await;
+    no_admit_for(&mut host, Duration::from_millis(1000)).await;
+    assert_eq!(
+        cooled.expect_state("offline").await["reason"],
+        "host_cooldown"
+    );
+
+    host.send(json!({ "t": "known_keys", "keys": [device.public] }))
+        .await;
+    let mut asked = start_member_as(&host_public, &dial, fast_member_limits(), &device).await;
+    admit(&mut host, &device.public, Value::Null).await;
+    assert_eq!(
+        asked.expect_state("offline").await["reason"],
+        "host_refused"
+    );
+
+    // The same set again: the key is not new to it, so the refusal above keeps it cooled.
+    host.send(json!({ "t": "known_keys", "keys": [device.public] }))
+        .await;
+    let mut again = start_member_as(&host_public, &dial, fast_member_limits(), &device).await;
+    no_admit_for(&mut host, Duration::from_millis(1000)).await;
+    assert_eq!(
+        again.expect_state("offline").await["reason"],
+        "host_cooldown"
+    );
+}

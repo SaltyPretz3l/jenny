@@ -78,15 +78,17 @@ function loadStep(load, segment) {
     else if (message.pinned !== null) load.pinned.push({ id: message.id, at: message.pinned.at });
     const rootId = message.thread_root_id;
     if (rootId === null) {
-      // Kept only until a reply needs it: the author id and the mention list, never the text.
-      load.roots.set(message.id, [message.author.member_id, message.mentions, message.seq]);
+      // Kept only until a reply needs it: the author id and the mention list, never the text. A deleted
+      // message (a tombstone) adds no implicit follower.
+      load.roots.set(message.id, message.deleted === null ? [message.author.member_id, message.mentions, message.seq]
+        : [null, [], message.seq]);
     } else {
       const root = load.byId.get(rootId);
       if (!root) continue;
       if (root.root !== null) throw corrupt('thread_invalid');
       const stats = load.threads.get(rootId)
         || { count: 0, last_at: null, members: addMembers(new Map(), ...load.roots.get(rootId)) };
-      addMembers(stats.members, message.author.member_id, message.mentions, message.seq);
+      if (message.deleted === null) addMembers(stats.members, message.author.member_id, message.mentions, message.seq);
       load.threads.set(rootId, { count: stats.count + 1, last_at: message.created_at, last_seq: message.seq,
         members: stats.members });
     }
@@ -145,6 +147,8 @@ function segmentOf(state, n, io) {
 // The stored record with the reply stats the store maintains for a root.
 function presentMessage(state, message) {
   const out = clone(message);
+  // A tombstone written before deletes cleared mentions still names none.
+  if (out.deleted !== null) out.mentions = [];
   if (out.thread_root_id === null) {
     const stats = state.threads.get(out.id);
     out.reply_count = stats ? stats.count : 0;
@@ -172,8 +176,8 @@ function materialize(state, entries, io) {
 // message is deleted; no text, and no copy of the record or its edit history.
 function unreadRecords(state, entries, io) {
   return recordsOf(state, entries, io, (message) => ({ seq: message.seq, root_id: message.thread_root_id,
-    author: { kind: message.author.kind, member_id: message.author.member_id }, mentions: [...message.mentions],
-    deleted: message.deleted !== null }));
+    author: { kind: message.author.kind, member_id: message.author.member_id },
+    mentions: message.deleted === null ? [...message.mentions] : [], deleted: message.deleted !== null }));
 }
 
 function findMessage(state, messageId, io) {
@@ -307,8 +311,9 @@ function rememberAppend(state, message, n, target, rootMessage = null) {
   state.byId.set(message.id, entry);
   if (message.thread_root_id !== null) {
     const rootSeq = state.byId.get(message.thread_root_id).seq;
+    const seed = rootMessage && rootMessage.deleted === null ? rootMessage : null; // a deleted root seeds no follower
     const stats = state.threads.get(message.thread_root_id)
-      || { count: 0, members: addMembers(new Map(), rootMessage?.author.member_id, rootMessage?.mentions || [], rootSeq) };
+      || { count: 0, members: addMembers(new Map(), seed?.author.member_id, seed?.mentions || [], rootSeq) };
     addMembers(stats.members, message.author.member_id, message.mentions, message.seq);
     state.threads.set(message.thread_root_id, { count: stats.count + 1, last_at: message.created_at,
       last_seq: message.seq, members: stats.members });
@@ -322,6 +327,26 @@ function rememberAppend(state, message, n, target, rootMessage = null) {
 function rememberMentions(state, message) {
   const stats = state.threads.get(message.thread_root_id === null ? message.id : message.thread_root_id);
   if (stats) addMembers(stats.members, null, message.mentions, message.seq);
+}
+
+// A delete's thread followers (review Part III): the implicit followers of the thread `message` belongs to,
+// recomputed from the root and every reply that is neither deleted nor `message`, each at the seq of its first such
+// message, so a member only the deleted message added is no longer one. Null for a thread with no reply stats. Reads
+// the thread's segments and assigns nothing; setFollows assigns it after the delete commits.
+function followsWithout(state, message, io) {
+  const rootId = message.thread_root_id === null ? message.id : message.thread_root_id;
+  if (!state.threads.has(rootId)) return null;
+  const entries = [state.byId.get(rootId), ...state.entries.filter((entry) => entry.root === rootId)];
+  const members = new Map();
+  for (const record of unreadRecords(state, entries, io)) {
+    if (!record.deleted && record.seq !== message.seq) addMembers(members, record.author.member_id, record.mentions, record.seq);
+  }
+  return { rootId, members };
+}
+
+function setFollows(state, follows) {
+  const stats = follows ? state.threads.get(follows.rootId) : undefined;
+  if (stats) state.threads.set(follows.rootId, { ...stats, members: follows.members });
 }
 
 const withMessage = (segment, updated) => ({ ...segment,
@@ -364,6 +389,7 @@ module.exports = {
   finishLoad,
   findMessage,
   findRequest,
+  followsWithout,
   forgetMessages,
   historyPage,
   loadChannel,
@@ -377,6 +403,7 @@ module.exports = {
   requestsWith,
   segmentBefore,
   segmentMeta,
+  setFollows,
   startLoad,
   threadPage,
   unreadRecords,

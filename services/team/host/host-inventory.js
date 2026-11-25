@@ -80,7 +80,7 @@ async function countChannel(dir) {
 }
 
 async function chat(root, uncounted) {
-  const out = { team: false, project_channels: 0, messages: 0, attachments: 0, dms: 0, dm_messages: 0 };
+  const out = { team: false, project_channels: 0, custom_channels: 0, messages: 0, attachments: 0, dms: 0, dm_messages: 0 };
   let index;
   try {
     index = readJsonFile(path.join(root, CHAT_DIR, 'index.json'));
@@ -104,6 +104,7 @@ async function chat(root, uncounted) {
     } else {
       if (entry.kind === 'team') out.team = true;
       else if (entry.kind === 'project') out.project_channels += 1;
+      else if (entry.kind === 'channel') out.custom_channels += 1;
       out.messages += counted.messages;
     }
     out.attachments += counted.attachments;

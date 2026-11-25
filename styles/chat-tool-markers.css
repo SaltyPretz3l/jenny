@@ -303,9 +303,9 @@
   outline-offset: 2px;
 }
 
-/* "Allow all once" is the ordinary answer and carries the success tone;
-   "Always allow all" (--allow) grants a standing permission and stays the
-   neutral secondary: the base style above, no accent of its own. */
+/* "Allow all once" is the ordinary answer and carries the success tone. The
+   bar offers no standing permission (row 192 C7): "Always allow" lives on each
+   card only. */
 .approval-batch-action--allow-once {
   border-color: color-mix(in srgb, var(--widget-tool-success-color) 50%, var(--border-default));
   color: var(--widget-tool-success-color);
@@ -390,4 +390,18 @@
   .resume-turn-action {
     transition: none;
   }
+}
+
+/* Row 192 D2 A: an answered approval says its answer on the step's own row,
+   before the status and duration ("✓ Allowed once"); its approval row renders
+   empty, so the step keeps its place when the card closes. */
+.tool-call-approval-note {
+  flex: none;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.tool-call-approval-note[data-approval-decision="allowed"] > span {
+  color: var(--tl-status-ok);
 }

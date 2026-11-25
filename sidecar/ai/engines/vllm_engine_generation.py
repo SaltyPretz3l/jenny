@@ -19,12 +19,14 @@ from sidecar.ai.engines.provider_http import ProviderHttpError
 from sidecar.ai.engines.provider_metrics import ProviderMetrics
 from sidecar.ai.engines.request_route import route_token_headers
 from sidecar.ai.engines.vllm_engine_completion import _VLLMCompletionMixin
+from sidecar.ai.engines.vllm_json_mode import _JsonModeMixin, _retry_json_mode_once
 from sidecar.ai.engines.vllm_sse_stream import (
     LlamaPrefillStream,
     _iter_bounded_sse_lines,  # noqa: F401 - compatibility re-export
     _iter_cancel_aware_sse_lines,
     _parse_usage,
     _resolve_vllm_stream_finish_reason,
+    _terminal_gap_diagnostics,
     has_generated_delta,
 )
 from sidecar.ai.engines.vllm_tool_stream import (
@@ -76,31 +78,12 @@ _SSE_DATA_PREFIX = "data: "
 _SSE_DONE_SENTINEL = "[DONE]"
 
 
-def _terminal_gap_diagnostics(
-    normalizer: ProviderStreamNormalizer,
-    truncated: list[NormalizedStreamEvent],
-    started_at: float,
-) -> dict[str, Any]:
-    """Counts and names only (never message text) for the terminal-gap event.
-
-    ``ms_since_last_chunk`` and ``bytes_read`` are not here: the SSE reader
-    owns those clocks and does not surface them (TR-016 follow-up).
-    """
-    counters = normalizer.counters
-    return {
-        "chunk_count": counters.total_chunk_count,
-        "tool_args_streaming": counters.tool_call_delta_count > 0,
-        "truncated_call_names": [str(event.tool_name or "") for event in truncated],
-        "elapsed_ms": int((time.monotonic() - started_at) * 1000),
-    }
-
-
-
-class _VLLMGenerationMixin(_VLLMCompletionMixin):
+class _VLLMGenerationMixin(_JsonModeMixin, _VLLMCompletionMixin):
     # Per engine class: whether chat-completion calls carry the request's opaque
     # routing token (request_route.py) to a gateway on a loopback IP literal.
     _SENDS_ROUTE_TOKEN: bool = False
 
+    @_retry_json_mode_once
     def stream(  # noqa: C901, PLR0912, PLR0915 - BaseEngine transport contract.
         self,
         prompt: str,
@@ -113,6 +96,7 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
         response_format: Any = None,
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
+        _probe: Any = None,  # supplied by _retry_json_mode_once
     ) -> Generator[StreamChunk | EngineEvent, None, None]:
         # ``wall_clock_deadline`` is an OPTIONAL widening of BaseEngine.stream:
         # this mode previously hardcoded a 120 s transport timeout even though
@@ -218,6 +202,7 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
                         chunk = json.loads(data_str)
                     except json.JSONDecodeError:
                         continue
+                    _probe.note_frame(chunk)
                     if str(chunk.get("object") or "") == FINISH_REASON_PROVIDER_ERROR:
                         # In-band error frame: terminal, but not success.
                         inband_error = str(
@@ -382,6 +367,7 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
         finally:
             finalizer.finalize(cancel_handle=cancel_handle)
 
+    @_retry_json_mode_once
     def stream_with_tools(  # BaseEngine transport contract.
         self,
         prompt: str,
@@ -395,6 +381,7 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
         response_format: Any = None,
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
+        _probe: Any = None,  # supplied by _retry_json_mode_once
     ) -> Generator[StreamChunk | EngineEvent, None, GenerationResult]:
         _raise_if_cancelled(cancel_handle)
         self._assert_ready()
@@ -457,7 +444,9 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
             ) as response:
                 _raise_if_cancelled(cancel_handle)
                 self._raise_for_stream_status(response)
-                usage, saw_sentinel, thinking_budget_aborted, inband_error = (
+                # The probe keeps the terminal in-band error text for the JSON-mode retry
+                # (an attribute target, so the function gains no statement).
+                usage, saw_sentinel, thinking_budget_aborted, _probe.inband_error = (
                     yield from _stream_tool_response(
                         self,
                         response,
@@ -485,7 +474,7 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
             else:
                 finish_reason = _resolve_vllm_stream_finish_reason(
                     saw_terminal=saw_sentinel or normalizer.saw_terminal_evidence,
-                    inband_error=inband_error,
+                    inband_error=_probe.inband_error,
                     reasoning_only=normalizer.reasoning_only_detected,
                     terminal_finish_reason=normalizer.terminal_finish_reason,
                     has_tool_calls=bool(tool_calls),
@@ -496,7 +485,7 @@ class _VLLMGenerationMixin(_VLLMCompletionMixin):
                     log_vllm_stream_terminal_gap(
                         self,
                         finish_reason=finish_reason,
-                        inband_error=inband_error,
+                        inband_error=_probe.inband_error,
                         diagnostics=_terminal_gap_diagnostics(
                             normalizer, truncated_calls, started_at
                         ),

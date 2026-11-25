@@ -46,6 +46,8 @@
     const onSelectSession = typeof deps?.onSelectSession === 'function' ? deps.onSelectSession : noop;
     // The page's project (the Board names its own): that project's chats come first, each part newest first.
     const getPreferredProjectId = typeof deps?.getPreferredProjectId === 'function' ? deps.getPreferredProjectId : () => '';
+    // Row 190 Wave 4: trusted markup after the list (the dock's New chat), and the page's tab as the opener.
+    const getFooterHtml = typeof deps?.getFooterHtml === 'function' ? deps.getFooterHtml : () => '';
     const showShellErrorToast = typeof deps?.showShellErrorToast === 'function' ? deps.showShellErrorToast : noop;
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const actionButton = resolveInventoryPrimitive('inventoryActionButton', '../inventory/action-button');
@@ -125,7 +127,7 @@
         ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
         trustedHtml: search
       + '<div class="ide-chat-dock-session-list" id="ideChatDockSessionList" role="listbox" aria-label="' + (actionButton.escapeHtml || String)(jt('ide.chipPicker.chatSessions', 'Chat sessions')) + '"></div>'
-          + '<div class="ide-chat-dock-session-status" role="status" aria-live="polite"></div>',
+          + '<div class="ide-chat-dock-session-status" role="status" aria-live="polite"></div>' + getFooterHtml(),
       });
       return `<div class="ide-chat-dock-session-control">${trigger}${picker}</div>`;
     }
@@ -184,9 +186,9 @@
       if (picker && typeof popover?.close === 'function') popover.close(picker, { restoreFocus });
     }
 
-    function open() {
+    function open(opener) {
       const header = getHeader();
-      const trigger = header?.querySelector?.('[data-ide-chatdock-session-trigger]');
+      const trigger = opener || header?.querySelector?.('[data-ide-chatdock-session-trigger]');
       const picker = header?.querySelector?.('#ideChatDockSessionPicker');
       if (!trigger || !picker || typeof popover?.open !== 'function') return;
       resetQuery();
@@ -195,11 +197,11 @@
       header.querySelector('[data-ide-chatdock-session-search]')?.focus?.();
     }
 
-    function toggle() {
+    function toggle(opener) {
       const picker = getHeader()?.querySelector?.('#ideChatDockSessionPicker');
       if (!picker || typeof popover?.isOpen !== 'function') return;
       if (popover.isOpen(picker)) close(true);
-      else open();
+      else open(opener);
     }
 
     async function selectSession(sessionId) {
@@ -343,7 +345,7 @@
       boundHeader = null;
     }
 
-    return { bindEvents, buildMarkup, close, dispose, render };
+    return { bindEvents, buildMarkup, close, dispose, render, toggle, title: () => sessionTitle(activeSession()) };
   }
 
   return { createIdeChatSessionPicker };

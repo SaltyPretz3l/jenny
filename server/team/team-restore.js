@@ -55,29 +55,23 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { writeJson } = require('../../services/host/durable-json');
 const { BackupError, peekBackup, readBackup } = require('../../services/team/host/host-backup');
 const { readJsonFile, renameInside } = require('../../services/team/host/host-files');
 const { checkedManifest, checkedRel } = require('../../services/team/host/host-restore');
-const { PROJECT_STORE_SCHEMA_VERSION, normalizeProjectRecord } = require('../../services/projects/project-schema');
 const { atOwnRealPath, openNoFollow, ownDirectory } = require('./file-checks');
 const { keyPairFromSeed } = require('./ids');
 const { syncDirectory, writeKeyFile } = require('./keygen');
-const { GENERAL_PROJECT_ID } = require('./member-schema');
 const { MEMBERS_FILE } = require('./member-store');
 const { validateSegment } = require('./path-segments');
 const { removeReadyMarker } = require('./ready-marker');
+const { DIR_MODE, FILE_MODE, hostKeyMatches, movable, rewriteProjectRoots } = require('./restore-core');
 const { isTerminalPair, readPassword } = require('./tty-input');
 const {
-  KEPT_IN_PROFILE, RESTORE_MARKER, STAGING, STAGING_PREFIX, findLinks, hasTeam, mountRoot, namesIn, readHostSeed,
+  RESTORE_MARKER, STAGING_PREFIX, findLinks, hasTeam, mountRoot, namesIn, readHostSeed,
   refusal, removeMarker, removeStaging, removeTeamData, rootsReason, teamRoots, teamState, withTeamProfile, writeMarker,
 } = require('./team-maintenance');
 
 const SPARE_BYTES = 256 * 1024 * 1024;
-// Profile entries a backup may carry that are never moved in: the ready marker (never exported) and the profile's
-// own ownership files and markers, which this profile already has or must not get from a file.
-const NOT_MOVED = new Set([...KEPT_IN_PROFILE, 'team-ready.json']);
-const PROJECTS_FILE = 'projects.json';
 
 // The backup file in the exchange folder opened once, link not followed: { file, handle, size } for a regular file
 // with one link at its own real path, else null. The caller closes the handle.
@@ -114,19 +108,19 @@ async function stageBackup({ picked, password, stage }) {
     await readBackup({ file: picked.file, handle: picked.handle, password, handlers: {
       onManifest: (manifest) => {
         restored = checkedManifest(manifest);
-        fs.mkdirSync(stage.profile, { mode: 0o700 });
-        fs.mkdirSync(stage.data, { mode: 0o700 });
+        fs.mkdirSync(stage.profile, { mode: DIR_MODE });
+        fs.mkdirSync(stage.data, { mode: DIR_MODE });
       },
       onDir: (rel) => {
         const parts = checkedRel(rel);
         if (!parts) throw new BackupError('team_backup_password_wrong');
-        fs.mkdirSync(where(parts), { recursive: true, mode: 0o700 });
+        fs.mkdirSync(where(parts), { recursive: true, mode: DIR_MODE });
       },
       onFileStart: (rel) => {
         const parts = checkedRel(rel);
         if (!parts || parts.length < 2) throw new BackupError('team_backup_password_wrong');
-        fs.mkdirSync(path.dirname(where(parts)), { recursive: true, mode: 0o700 });
-        out = fs.openSync(where(parts), 'wx', 0o600);
+        fs.mkdirSync(path.dirname(where(parts)), { recursive: true, mode: DIR_MODE });
+        out = fs.openSync(where(parts), 'wx', FILE_MODE);
       },
       onFileData: (data) => { fs.writeSync(out, data); },
       onFileEnd: () => { fs.fsyncSync(out); fs.closeSync(out); out = null; },
@@ -139,31 +133,6 @@ async function stageBackup({ picked, password, stage }) {
   }
 }
 
-// Points each team project whose stored root ends in its own id at this host's folder for it. Answers the count, or
-// null for a file of a newer schema than this build's project store (review sweep X4c-F04: never rewritten, the
-// restore refuses). A file of any other schema is left byte for byte (the store judges it at start).
-function rewriteRoots(profileStage, projectsRoot) {
-  const file = path.join(profileStage, PROJECTS_FILE);
-  let doc;
-  try { doc = readJsonFile(file); } catch { return 0; }
-  const schema = doc?.schema_version;
-  if (Number.isSafeInteger(schema) && schema > PROJECT_STORE_SCHEMA_VERSION) return null;
-  if (schema !== PROJECT_STORE_SCHEMA_VERSION) return 0;
-  let changed = 0;
-  for (const [id, record] of Object.entries(doc?.projects ?? {})) {
-    if (id === GENERAL_PROJECT_ID || typeof record?.root_path !== 'string') continue;
-    const own = path.join(projectsRoot, id);
-    if (record.root_path.split(/[\\/]/u).filter(Boolean).at(-1) !== id || record.root_path === own) continue;
-    // The record again through the project store's own normalizer: its root id is derived from the root.
-    const moved = normalizeProjectRecord({ ...record, root_path: own }, { projectId: id });
-    if (!moved) continue;
-    doc.projects[id] = moved;
-    changed += 1;
-  }
-  if (changed) writeJson(file, doc);
-  return changed;
-}
-
 const isEmptyDir = (dir) => ownDirectory(dir) !== null && namesIn(dir)?.length === 0;
 
 // The staged profile entries to move, member store last; or a refusal word: `team_host_exists` when one would land
@@ -171,7 +140,7 @@ const isEmptyDir = (dir) => ownDirectory(dir) !== null && namesIn(dir)?.length =
 function profileMoves(stage, roots) {
   const staged = namesIn(stage.profile);
   if (staged === null) return 'team_restore_failed';
-  const names = staged.filter((name) => !NOT_MOVED.has(name) && !STAGING.test(name))
+  const names = staged.filter(movable)
     .sort((a, b) => (a === MEMBERS_FILE) - (b === MEMBERS_FILE));
   for (const name of names) {
     const there = path.join(roots.profile, name);
@@ -195,22 +164,26 @@ function stagedFolders(stage) {
   return found;
 }
 
-// Step 6: moves the staged trees into place; false when a move or a listing failed (the marker stays for the next
-// run). `cut('project')` runs after each project folder, `cut(step)` after each step.
-function moveIntoPlace(stage, roots, names, cut) {
+// The staged project and trash folder names ({ projects, trash }; an absent folder is empty), or null when either cannot
+// be listed. Listed before the restore marker is written, so a folder that cannot be read fails the restore before
+// anything moves.
+function stagedNames(stage) {
   const projects = namesIn(path.join(stage.data, 'projects'));
-  if (projects === null) return false;
-  for (const name of projects) {
+  const trash = namesIn(path.join(stage.data, 'trash'));
+  return projects === null || trash === null ? null : { projects, trash };
+}
+
+// Step 6: moves the staged trees into place; false when a move failed (the marker stays for the next run).
+// `listed`: stagedNames's answer. `cut('project')` runs after each project folder, `cut(step)` after each step.
+function moveIntoPlace(stage, roots, names, listed, cut) {
+  for (const name of listed.projects) {
     if (!renameInside(roots.data, path.join(stage.data, 'projects', name), path.join(roots.projects, name))) return false;
     cut('project');
   }
   cut('projects');
-  const stagedTrash = path.join(stage.data, 'trash');
-  const trash = namesIn(stagedTrash);
-  if (trash === null) return false;
-  if (trash.length) {
+  if (listed.trash.length) {
     if (isEmptyDir(roots.trash)) fs.rmdirSync(roots.trash);
-    if (!renameInside(roots.data, stagedTrash, roots.trash)) return false;
+    if (!renameInside(roots.data, path.join(stage.data, 'trash'), roots.trash)) return false;
   }
   cut('trash');
   for (const name of names) {
@@ -260,28 +233,27 @@ async function settleEarlier(config, roots, output) {
 
 // Steps 5 to 7 on the staged team. Answers the command's result.
 async function placeStaged({ roots, stage, restored, output, say, cut, syncFolder }) {
-  let doc;
-  try { doc = readJsonFile(path.join(stage.profile, MEMBERS_FILE)); } catch { doc = null; }
   const names = profileMoves(stage, roots);
-  const refused = doc?.team?.host_public_key !== keyPairFromSeed(restored.seed).publicKey ? 'team_host_key_mismatch'
+  const refused = !hostKeyMatches(stage.profile, restored.seed) ? 'team_host_key_mismatch'
     : typeof names === 'string' ? names : null;
   if (refused) {
     await removeStaging(roots);
     return refusal(refused);
   }
-  const rewritten = rewriteRoots(stage.profile, roots.projects);
-  if (rewritten === null) {
+  const rewritten = rewriteProjectRoots(stage.profile, roots.projects);
+  const listed = rewritten === null ? null : stagedNames(stage);
+  if (rewritten === null || listed === null) {
     await removeStaging(roots);
-    return refusal('team_backup_too_new');
+    return refusal(rewritten === null ? 'team_backup_too_new' : 'team_restore_failed');
   }
-  const projects = namesIn(path.join(stage.data, 'projects'))?.length ?? 0;
+  const projects = listed.projects.length;
   for (const dir of stagedFolders(stage)) syncFolder(dir);
   if (writeMarker(roots, RESTORE_MARKER)) {
     await removeStaging(roots);
     return refusal('team_restore_failed');
   }
   cut('marker');
-  if (!moveIntoPlace(stage, roots, names, cut)) return refusal('team_restore_failed');
+  if (!moveIntoPlace(stage, roots, names, listed, cut)) return refusal('team_restore_failed');
   await removeStaging(roots);
   removeReadyMarker({ userDataPath: roots.profile });
   for (const dir of [roots.profile, roots.data, roots.projects, roots.trash]) syncFolder(dir);
@@ -294,7 +266,8 @@ async function placeStaged({ roots, stage, restored, output, say, cut, syncFolde
   }
   syncDirectory(fs, roots.secrets);
   cut('key');
-  removeMarker(roots, RESTORE_MARKER);
+  // The key is written; a marker that cannot go is finished by the next run (step 1), so this run is not a success.
+  if (!removeMarker(roots, RESTORE_MARKER)) return refusal('team_restore_failed');
   say('INFO', 'team.restore.done', { projects, roots_rewritten: rewritten });
   output.write(`Restored the team: ${projects} projects${rewritten ? `, ${rewritten} project folders pointed at this host` : ''}.\n`
     + 'Internet joining and any relay come from team-host.json, not from the backup.\n'

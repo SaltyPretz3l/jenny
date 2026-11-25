@@ -164,8 +164,8 @@ test('browserApprovalFields keeps only the validated fields and is empty for oth
   assert.deepEqual(browserApprovalFields(null), {});
 });
 
-test('only session_message and browser consent from inside their own execution', () => {
-  assert.deepEqual([...MID_TOOL_CONSENT_TOOLS].sort(), ['browser', 'session_message']);
+test('only session_message, browser and computer consent from inside their own execution', () => {
+  assert.deepEqual([...MID_TOOL_CONSENT_TOOLS].sort(), ['browser', 'computer', 'session_message']);
 });
 
 // The bridge: the tool's own approver, the per-call signal, and the closed paths.

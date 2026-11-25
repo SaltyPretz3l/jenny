@@ -1,0 +1,36 @@
+{
+ "object": "list",
+ "data": [
+  {
+   "id": "inkling-2-mini-sq-20",
+   "object": "model",
+   "created": 1795542967,
+   "owned_by": "strata",
+   "status": {
+    "value": "loaded"
+   },
+   "max_model_len": 49152,
+   "context_length": 49152,
+   "max_context_length": 49152,
+   "limit": {
+    "context": 49152,
+    "output": 49144
+   },
+   "meta": {
+    "n_ctx": 49152,
+    "llamaswap": {
+     "max_output_tokens": 49144
+    }
+   },
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   }
+  }
+ ]
+}

@@ -1,7 +1,8 @@
 /* Team tab: a shared conversation's message menu (right-click, Menu key, Shift+F10 on a row), Regenerate (asks first: the host
  * keeps no earlier answer, a recorded deviation from D7), Edit and resend in the row, Branch, Ask a teammate, Hand to… and host
- * receipts under their turn (row 175 items 5, 6, 9, 11, F13, F18). What does not apply is greyed with its reason. Names are
- * escaped in markup and isolated in menus; ids go only in payloads. Lazy with the Team tab. */
+ * receipts under their turn (row 175 items 5, 6, 9, 11, F13, F18). What does not apply is greyed with its reason; what no team
+ * conversation can do yet (Pin to board) is not listed. Names are escaped in markup and isolated in menus; ids go only in
+ * payloads. Lazy with the Team tab. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -18,7 +19,6 @@
   const actionButton = (o) => ((globalThis.inventory || 0).actionButton || nodeButton || (nodeButton = require('../inventory/action-button')))(o);
   function teamModule(global, file) { if (globalThis[global]) return globalThis[global]; try { return require(file); } catch (_error) { return null; } }
 
-  const EDIT_MAX = 32_000;
   const TOAST_MS = 1800;
   const MEMBERS_MS = 30_000;
   const PICK_MAX = 32;
@@ -36,7 +36,8 @@
   const resolved = (decision, text) => '<div class="tool-approval-block" data-approval-status="resolved" data-approval-decision="' + decision + '"><p class="tool-approval-receipt" dir="auto">'
     + escapeHtml(text) + '</p></div>';
 
-  // `d`: the conversation's ids and accessors (renderer-team-project-conversation.js passes them); `call` is the store's.
+  // `d`: the conversation's ids and accessors (renderer-team-project-conversation.js passes them); `call` is the store's. `d.promptMax`:
+  // the message box's own limit (renderer-team-project-box.js PROMPT_MAX): Edit and resend takes as much as a sent message.
   function createActions(d) {
     const scope = { team_id: d.teamId, project_id: d.projectId, session_id: d.sessionId };
     const conv = { team_id: d.teamId, session_id: d.sessionId };
@@ -55,10 +56,6 @@
       const driver = d.driver();
       if (driver && driver !== d.me()) return jt('team.actions.driving', '{name} is driving.', { name: d.nameOf(driver) });
       return live.busy ? jt('team.actions.busy', 'Wait for the last action to finish.') : '';
-    }
-    function pinBlock() {
-      if (globalThis.rendererTopNavShellController?.openBoardView?.({ dry: true }) !== true) return jt('team.actions.pinBoardOff', 'Turn on the Board tab to pin to a board.');
-      return jt('team.actions.pinLater', 'Pinning from a team conversation is not available yet.');
     }
 
     // A row: its turn, its prompt, the saved message it stands for, its words.
@@ -86,7 +83,6 @@
         { value: 'work', label: jt('team.turn.showWorkTitle', 'Show Jenny’s work'), ...off(t.turn ? '' : jt('team.actions.noWork', 'Jenny has not answered this yet.')), action: () => d.openTurn(t.turn.id) },
         { value: 'copy-link', label: jt('team.link.copyLabel', 'Copy link'), ...off(unsaved), action: () => copyLink(t) },
         { value: 'copy-source', label: jt('team.message.copyWithSource', 'Copy with source'), ...off(empty), action: () => copySource(t) },
-        { value: 'pin', label: jt('team.actions.pin', 'Pin to board'), ...off(pinBlock()) },
         { separator: true },
         { value: 'branch', label: jt('team.actions.branch', 'Branch from here'), ...off(writeBlock() || unsaved), action: () => branch(t.messageId) },
       ];
@@ -158,7 +154,7 @@
       const answer = await once(method, { ...scope, ...extra });
       if (answer && !answer.ok) toast(d.errorText(answer.error)); else if (answer) ok(answer);
     }
-    const branch = (id) => act('projectBranch', { message_id: id }, (a) => { const n = globalThis.rendererTeamNotify; if (n && n.request) n.request({ kind: 'conversation', teamId: d.teamId, sessionId: a.session_id, projectId: d.projectId }); });
+    const branch = (id) => act('projectBranch', { message_id: id }, (a) => { if (d.onOpenConversation && d.onOpenConversation(a.session_id) === true) return; const n = globalThis.rendererTeamNotify; if (n && n.request) n.request({ kind: 'conversation', teamId: d.teamId, sessionId: a.session_id, projectId: d.projectId }); });
     const ask = (id, approvalId) => act('projectAskTeammate', { member_id: id, ...(approvalId ? { approval_id: approvalId } : {}) }, () => toast(jt('team.actions.asked', 'Asked {name}', { name: d.nameOf(id) })));
     const hand = (id) => act('projectHandDriver', { member_id: id }, () => toast(jt('team.actions.handedTo', '{name} is driving now.', { name: d.nameOf(id) })));
     // F18: the seat was handed to this member.
@@ -201,7 +197,7 @@
           + button('redo-go', label, 'danger', p.busy) + button('redo-branch', jt('team.actions.branchFirst', 'Branch first'), 'secondary', p.busy || !p.answerId)
           + button('panel-cancel', jt('team.projects.cancel', 'Cancel'), 'ghost') + '</div>' + status(p.note) + '</div>';
       }
-      return '<div class="team-edit team-conv-act" data-conv-act-panel="edit"><textarea class="team-edit__input" rows="2" dir="auto" maxlength="' + EDIT_MAX + '" aria-label="'
+      return '<div class="team-edit team-conv-act" data-conv-act-panel="edit"><textarea class="team-edit__input" rows="2" dir="auto" maxlength="' + d.promptMax + '" aria-label="'
         + escapeHtml(jt('team.actions.editLabel', 'Edit your question')) + '"' + (p.busy ? ' disabled' : '') + '></textarea><div class="team-edit__bar"><span class="team-edit__hint">'
         + escapeHtml(jt('team.actions.editHint', 'Enter to send · Esc to cancel')) + '</span>' + button('panel-cancel', jt('team.projects.cancel', 'Cancel'), 'ghost')
         + button('edit-save', jt('team.actions.editSave', 'Save and send'), 'primary', p.busy) + '</div>' + status(p.note) + '</div>';
@@ -238,7 +234,7 @@
       const p = live.panel;
       if (!p || p.busy) return;
       const prompt = p.value.trim();
-      if (p.kind === 'edit' && (!prompt || prompt.length > EDIT_MAX)) { p.note = prompt ? jt('team.conv.tooLong', 'That message is too long to send.') : jt('team.actions.editEmpty', 'Write the question first.'); mount(true); return; }
+      if (p.kind === 'edit' && (!prompt || prompt.length > d.promptMax)) { p.note = prompt ? jt('team.conv.tooLong', 'That message is too long to send.') : jt('team.actions.editEmpty', 'Write the question first.'); mount(true); return; }
       p.busy = true;
       p.note = '';
       mount(false);

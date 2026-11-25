@@ -13,7 +13,7 @@ const { TOOL_ERROR_CODES } = require('../backend/error-codes');
 const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
 const { executeResolvedTool } = require('./tool-execution-dispatch');
 const { effectiveSideEffecting, isNonEmptyPlainObject } = require('./tool-policy-actions');
-const { MID_TOOL_CONSENT_TOOLS } = require('./mid-tool-consent');
+const { MID_TOOL_CONSENT_TOOLS, TURN_CLOCK_TOOLS } = require('./mid-tool-consent');
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -51,6 +51,7 @@ class ToolExecutor {
     configService,
     refreshManagedConfig,
     browserUse,
+    computerUse,
   }) {
     this.registry = registry;
     this._permissionStore = permissionStore;
@@ -63,6 +64,8 @@ class ToolExecutor {
     this._browserSessionService = browserSessionService || null;
     // The lazy per-profile {get, dispose} holder for the model-driven browser (row 114).
     this._browserUse = browserUse || null;
+    // The lazy {get, peek, onTurnEnd, forgetChat, dispose} holder for the computer tool (row 196).
+    this._computerUse = computerUse || null;
     // Attached, not injected: the Workspace Test Runner is created during IPC
     // registration, after this executor already exists.
     this._workspaceTestRunnerService = null;
@@ -124,6 +127,7 @@ class ToolExecutor {
     const call = { ...rawCall, input: isPlainObject(rawCall.input) ? rawCall.input : {} };
     context = this._bindExecutionContext(context);
     if (MID_TOOL_CONSENT_TOOLS.has(call.toolName)) context = { ...context, authorize, suspendTurnClocks };
+    else if (TURN_CLOCK_TOOLS.has(call.toolName)) context = { ...context, suspendTurnClocks };
     const { callId, toolName } = call;
     const preflight = this._preflightTool(call, context, { preApproved: true });
     if (!preflight.tool) {
@@ -171,6 +175,10 @@ class ToolExecutor {
 
   get browserUse() {
     return this._browserUse;
+  }
+
+  get computerUse() {
+    return this._computerUse;
   }
 
   // Late-bind the Test Runner the `verify` tool reads off the execution

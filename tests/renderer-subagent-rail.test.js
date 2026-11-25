@@ -17,6 +17,7 @@ const reviewPrefs = require('../renderer/features/renderer-artifact-review-prefs
 const sidePanelOwner = require('../renderer/chat/renderer-side-panel-owner');
 const { createShellArtifactBridge } = require('../renderer/shell/renderer-shell-artifact-bridge');
 const { createSubagentMonitorController } = require('../renderer/chat/renderer-subagent-monitor-controller');
+const { createPanelHostStub } = require('./helpers/artifact-panel-host-stub');
 
 const STORAGE_KEY = 'jenny.artifactReview.v1';
 
@@ -77,6 +78,7 @@ function rig(t, { prefs = null, sessions = ['session-a'], focus = 'session-a', m
     features: { featureFlags: {} },
   };
   const byId = (id) => doc.getElementById(id);
+  const host = createPanelHostStub();
   const bridge = createShellArtifactBridge({
     state,
     windowRef: dom.window,
@@ -98,6 +100,7 @@ function rig(t, { prefs = null, sessions = ['session-a'], focus = 'session-a', m
     callbacks: {
       getActiveSession: () => ({ id: state.currentSessionId }),
       setActiveView: (view) => { state.ui.activeView = view; },
+      getChatLayoutHost: () => host,
     },
   });
   // eager: false leaves the surface unbuilt, as at boot before any panel open.
@@ -150,7 +153,7 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
     assert.equal(r.review().mode, 'subagents');
     assert.equal(r.panel.dataset.artifactReviewMode, 'subagents');
     assert.equal(r.panel.classList.contains('hidden'), false, 'the panel shows');
-    assert.equal(r.panel.getAttribute('aria-label'), 'Subagent monitor');
+    assert.equal(r.panel.getAttribute('aria-label'), 'Helper monitor');
     const record = r.state.ui.subagentMonitor;
     assert.deepEqual({ sessionId: record.sessionId, key: record.key, page: record.page }, { sessionId: 'session-a', key: 'call-a', page: 'tree' });
     assert.deepEqual(Object.keys(record.prior).sort(), ['enabled', 'mode', 'sessionId'], 'no retired collapsed/userDismissed prefs');
@@ -170,8 +173,8 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
     r.byId('cardA').click();
     assert.equal(r.state.ui.subagentMonitor.page, 'detail');
     assert.ok(r.panel.querySelector('[data-subagent-page="detail"]'));
-    assert.equal(r.doc.activeElement, r.panel.querySelector('[data-subagent-back]'), 'focus lands on Back');
-    r.panel.querySelector('[data-subagent-back]').click();
+    assert.equal(r.doc.activeElement, r.panel.querySelector('[data-subagent-runs-back]'), 'focus lands on the back control');
+    r.panel.querySelector('.subagent-monitor-body').dispatchEvent(key(r.dom.window, 'Backspace'));
     assert.equal(r.state.ui.subagentMonitor.page, 'tree');
     assert.ok(r.panel.querySelector('[data-subagent-page="tree"]'));
     assert.equal(r.doc.activeElement, r.panel.querySelector('[data-subagent-select="task-1"]'), 'Back focuses the child\'s row');
@@ -179,6 +182,26 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
     assert.equal(r.state.ui.subagentMonitor.page, 'detail');
     assert.match(r.shell().textContent, /Renderer summary|Renderer/, 'the drill-in shows the answer');
     assert.doesNotMatch(r.shell().innerHTML, /<script/i, 'a script in the answer never lands');
+  });
+
+  test('inside Runs the monitor has one back control, "Runs", and no header, title or Close of its own; Back returns to the list on that helper', (t) => {
+    const r = rig(t, { messages: { 'session-a': batchMessages('call-a') } });
+    const opened = [];
+    r.dom.window.rendererBackgroundTasksPanel = { open: (options) => { opened.push(options); return Promise.resolve(true); } };
+    r.makeController(0, 'session-a');
+    r.byId('cardA').click();
+    for (const page of ['tree', 'detail']) {
+      if (page === 'detail') r.panel.querySelector('[data-subagent-select]').click();
+      assert.equal(r.shell().getAttribute('data-subagent-page'), page);
+      const back = r.shell().querySelector('[data-subagent-runs-back]');
+      assert.equal(back.textContent.trim(), 'Runs');
+      assert.equal(back.getAttribute('aria-label'), 'Back to Runs');
+      assert.equal(r.shell().querySelector('.subagent-monitor-header').children.length, 1, 'the header row holds the back control only');
+      assert.doesNotMatch(r.shell().textContent, /ubagent/, 'one name: Helpers');
+      assert.equal(r.shell().querySelector('[data-subagent-close], [data-subagent-back], .subagent-monitor-title'), null);
+    }
+    r.shell().querySelector('[data-subagent-runs-back]').click();
+    assert.deepEqual(opened, [{ sessionId: 'session-a', focusTaskId: 'helper:call-a:task-1' }]);
   });
 
   test('keyboard: Enter opens a row, Backspace / ArrowLeft / Alt+ArrowLeft go back, Home and End move', (t) => {
@@ -193,7 +216,7 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
     rows()[0].dispatchEvent(key(r.dom.window, 'Enter'));
     assert.equal(r.state.ui.subagentMonitor.page, 'detail');
     for (const init of [{ key: 'Backspace' }, { key: 'ArrowLeft' }, { key: 'ArrowLeft', altKey: true }]) {
-      r.panel.querySelector('[data-subagent-back]').dispatchEvent(key(r.dom.window, init.key, init));
+      r.panel.querySelector('.subagent-monitor-body').dispatchEvent(key(r.dom.window, init.key, init));
       assert.equal(r.state.ui.subagentMonitor.page, 'tree', `${init.key} goes back`);
       rows()[0].dispatchEvent(key(r.dom.window, 'ArrowRight'));
       assert.equal(r.state.ui.subagentMonitor.page, 'detail');
@@ -281,13 +304,11 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
     assert.equal(reviewPrefs.loadArtifactReviewPreferences(r.dom.window, STORAGE_KEY).mode, 'artifact');
   });
 
-  test('Escape closes the monitor, is defaultPrevented, and does not also dismiss the overlay panel', (t) => {
-    const r = rig(t, { prefs: { enabled: true, collapsed: false, userDismissed: false, width: 420 }, messages: { 'session-a': batchMessages('call-a') } });
-    r.byId('workspace').getBoundingClientRect = () => ({ width: 760 });
+  test('Escape closes the monitor, is defaultPrevented, and does not also dismiss the panel', (t) => {
+    const r = rig(t, { prefs: { enabled: true, collapsed: false, userDismissed: false }, messages: { 'session-a': batchMessages('call-a') } });
     r.makeController(0, 'session-a');
     r.byId('cardA').focus();
     r.byId('cardA').click();
-    assert.equal(r.panel.classList.contains('artifact-review-overlay'), true, 'a 760px stage uses the overlay drawer');
     const event = key(r.dom.window, 'Escape');
     r.panel.querySelector('[data-subagent-select]').dispatchEvent(event);
     assert.equal(event.defaultPrevented, true);
@@ -348,19 +369,6 @@ describe('the subagents rail mode: the pull, the record and the restore', () => 
     await Promise.resolve();
     assert.equal(reopened.review().mode, 'subagents');
     assert.ok(reopened.state.ui.subagentMonitor, 'the fresh record is not undone');
-  });
-
-  test('Escape in a maximized non-overlay panel closes the monitor and keeps the panel maximized', (t) => {
-    const r = rig(t, { prefs: { enabled: true, collapsed: false, userDismissed: false, width: 420 }, messages: { 'session-a': batchMessages('call-a') } });
-    r.byId('workspace').getBoundingClientRect = () => ({ width: 2000 });
-    r.makeController(0, 'session-a');
-    r.byId('cardA').click();
-    r.surface.toggleArtifactReviewMaximized(true);
-    assert.equal(r.surface.isArtifactReviewMaximized(), true);
-    assert.equal(r.panel.classList.contains('artifact-review-overlay'), false, 'precondition: not the overlay drawer');
-    r.panel.querySelector('[data-subagent-select]').dispatchEvent(key(r.dom.window, 'Escape'));
-    assert.equal(r.state.ui.subagentMonitor, null, 'the monitor closed');
-    assert.equal(r.surface.isArtifactReviewMaximized(), true, 'the panel did not also un-maximize');
   });
 
   test('a session switch, then open and close in one tick: the stale deferred restore stands down', async (t) => {

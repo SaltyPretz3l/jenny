@@ -119,14 +119,6 @@
         </div>
       </aside>
 
-      <div
-        class="sidebar-resizer"
-        id="sidebarResizer"
-        role="separator"
-        aria-label="Resize sidebar" data-i18n-aria-label="sidebar.resizeLabel" title="Drag to resize the sidebar" data-i18n-title="sidebar.resizeTitle"
-        aria-orientation="vertical"
-        tabindex="0"
-      ></div>
 
       <main class="main-stage">
         <div class="main-stage-glow" aria-hidden="true"></div>
@@ -270,7 +262,6 @@
             <div class="chat-surface-effect-gutter" id="chatSurfaceEffectLeft"></div>
           </div>
           <div class="chat-pane" id="chatPane0" data-pane-id="0" data-pane-focused="true">
-          <div class="chat-pane-kicker" id="chatPaneKicker" data-chat-node="chatPaneKicker" hidden></div>
           <div class="hero-stage" id="heroStage" data-chat-node="heroStage" data-dock-anchor="hero">
             <div class="hero-stack" id="heroStack">
               <h1 class="hero-title" id="heroTitle" data-i18n="hero.ready.title">New chat</h1>
@@ -326,7 +317,7 @@
               </button>
             </div>
             <button
-              class="chat-jump-latest"
+              class="chat-jump-latest chat-jump-latest--labeled"
               id="jumpToBottomButton" data-chat-node="jumpToBottomButton"
               type="button"
               data-visible="false"
@@ -336,7 +327,7 @@
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M8 3.25v9.25"></path>
                 <path d="M4 8.75 8 12.75l4-4"></path>
-              </svg>
+              </svg><span class="chat-jump-latest-label"></span>
             </button>
           </div>
 
@@ -444,20 +435,12 @@
           </div>
           </div>
           <div
-            class="chat-pane-resizer artifact-review-resizer hidden"
+            class="chat-pane-resizer hidden"
             id="chatPaneResizer"
             role="separator"
             aria-orientation="vertical"
             aria-valuemin="20" aria-valuemax="80" aria-valuenow="50"
             aria-label="Resize conversation panes" data-i18n-aria-label="chat.panes.resizeLabel" title="Drag to resize the conversation panes" data-i18n-title="chat.panes.resizeTitle"
-            tabindex="-1"
-          ></div>
-          <div
-            class="artifact-review-resizer hidden"
-            id="artifactReviewResizer" data-chat-node="artifactReviewResizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize artifact review panel" data-i18n-aria-label="artifacts.review.resizeLabel" title="Drag to resize the artifact review panel" data-i18n-title="artifacts.review.resizeTitle"
             tabindex="-1"
           ></div>
 
@@ -470,7 +453,6 @@
           </aside>
           <template id="chatPaneTemplate">
             <div class="chat-pane">
-              <div class="chat-pane-kicker" data-chat-node="chatPaneKicker" hidden></div>
               <div class="hero-stage" data-chat-node="heroStage" data-dock-anchor="hero">
                 <div class="hero-stack">
                   <h1 class="hero-title" data-i18n="hero.ready.title">New chat</h1>
@@ -625,8 +607,8 @@
                   <div class="diagnostics-log-header" aria-hidden="true"><span data-i18n="diagnostics.activity.time">Time</span><span></span><span data-i18n="diagnostics.activity.message">Message</span><span data-i18n="diagnostics.activity.event">Event</span><span data-i18n="diagnostics.activity.source">Source</span></div>
                   <div class="log-list" id="logList" role="listbox" aria-label="Diagnostic activity, oldest to newest" data-i18n-aria-label="diagnostics.activity.listLabel" aria-live="off"></div><div class="diagnostics-activity-empty" id="logEmpty" hidden></div>
                 </div>
-                <!-- Not a view-panel-registry panel: the logs view declares `panel: null`
-                     (renderer-view-panel-registry.js), so `.view-shell.panel-none .view-panel`
+                <!-- Not a view panel: every view is `panel-none` (renderer-top-nav-shell.js),
+                     so `.view-shell.panel-none .view-panel`
                      would display:none this inspector. Do not re-add the `view-panel` class. -->
                 <aside class="logs-detail-panel" id="logDetailPanel" role="complementary" aria-label="Selected record" data-i18n-aria-label="diagnostics.activity.detailLabel" hidden></aside>
               </div>
@@ -656,6 +638,7 @@
               <div class="settings-content-scroll">
               <section class="settings-card readiness-card" data-settings-section="readiness" id="readinessSettingsSection">
                 <div class="settings-card-header"><h3 data-i18n="settings.readiness.heading">Readiness</h3><span class="settings-badge" id="readinessBadge" data-state="pending" data-i18n="settings.readiness.checking">Checking</span></div>
+                <p class="settings-copy" data-i18n="settings.readiness.description">Whether Jenny is ready to chat and use her tools on this PC.</p>
                 <div class="settings-control-tower-host" id="settingsControlTowerHost"></div>
                 <div class="settings-group" role="group" aria-labelledby="setupSettingsHeading">
                   <h4 class="settings-group-heading" id="setupSettingsHeading" data-i18n="settings.account.setup.heading">Setup</h4>
@@ -705,7 +688,6 @@
                   <p class="settings-group-copy" data-i18n="settings.account.description">Jenny runs locally without an account. This optional profile name is stored on this device and does not affect chat access.</p>
                   <div id="localProfileSettingsMount" data-renders="local-profile"></div>
                   <div class="settings-note" id="accountSummary" aria-live="polite" data-i18n="settings.account.localProfile.loading">Loading local profile…</div>
-                  <div class="settings-note" id="backendSummary" aria-live="polite" data-i18n="settings.account.backendNotReady">Backend not ready.</div>
                 </div>
                 <div class="settings-group" role="group" aria-labelledby="homeScratchpadHeading" data-settings-merged-section="home">
                   <h4 class="settings-group-heading" id="homeScratchpadHeading" data-i18n="settings.general.quickCapture.heading">Quick capture</h4>
@@ -807,6 +789,13 @@
                     <div id="toolsWebList"></div>
                   </div>
 
+                  <div class="settings-group cu-settings-group" role="group" aria-labelledby="toolsComputerHeading">
+                    <h4 class="settings-group-heading" id="toolsComputerHeading" data-i18n="settings.tools.computer.heading">Computer</h4>
+                    <p class="settings-group-copy" data-i18n="settings.tools.computer.copy">Jenny uses the real mouse and keyboard, only in programs you allow in each chat. Windows only.</p>
+                    <div id="toolsComputerList"></div>
+                    <div id="toolsComputerExtra"></div>
+                  </div>
+
                   <div class="settings-group" role="group" aria-labelledby="toolsCodeHeading">
                     <h4 class="settings-group-heading" id="toolsCodeHeading" data-i18n="settings.tools.code.heading">Code and commands</h4>
                     <div id="toolsTerminalList"></div>
@@ -832,23 +821,20 @@
                 </div>
                 <p class="settings-copy" data-i18n="settings.notifications.description">Desktop notifications while you work in other apps. They never take focus; click one to return to the chat.</p>
                 <div class="settings-note" id="notificationsStatus" aria-live="polite"></div>
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="notificationsGeneralHeading">
+                <div class="settings-group" role="group" aria-labelledby="notificationsGeneralHeading">
                   <h4 class="settings-group-heading" id="notificationsGeneralHeading" data-i18n="settings.notifications.general.heading">General</h4>
                   <div class="settings-toggle-list" id="notificationsGeneralList"></div>
                 </div>
-
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="notificationsCategoriesHeading">
+                <div class="settings-group" role="group" aria-labelledby="notificationsCategoriesHeading">
                   <h4 class="settings-group-heading" id="notificationsCategoriesHeading" data-i18n="settings.notifications.categories.heading">Notify me when</h4>
                   <div class="settings-toggle-list" id="notificationsCategoryList"></div>
                 </div>
-
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="notificationsContentHeading">
+                <div class="settings-group" role="group" aria-labelledby="notificationsContentHeading">
                   <h4 class="settings-group-heading" id="notificationsContentHeading" data-i18n="settings.notifications.content.heading">Content</h4>
-                  <div class="settings-toggle-list" id="notificationsContentList"></div>
                   <p class="settings-group-copy" data-i18n="settings.notifications.content.note">Your system keeps its own copy of each notification in its notification center, and can silence Jenny system-wide in its notification settings.</p>
+                  <div class="settings-toggle-list" id="notificationsContentList"></div>
                 </div>
-
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="jennyChatQuietHeading"><h4 class="settings-group-heading" id="jennyChatQuietHeading" data-i18n="settings.jennyChat.quietHours.heading">Quiet hours</h4><div class="settings-toggle-list" id="jennyChatQuietList"></div></div>
+                <div class="settings-group" role="group" aria-labelledby="jennyChatQuietHeading"><h4 class="settings-group-heading" id="jennyChatQuietHeading" data-i18n="settings.jennyChat.quietHours.heading">Quiet hours</h4><div class="settings-toggle-list" id="jennyChatQuietList"></div></div>
               </section>
 
               <section class="settings-card settings-card--wide personality-card" data-settings-section="personality">
@@ -945,13 +931,13 @@
                 <div class="settings-card-header">
                   <h3 id="memoryPageHeading" tabindex="-1" data-i18n="settings.memories.heading">Memory</h3>
                   <span class="settings-badge" id="memoryBadge" data-badge-state="loading" data-i18n="settings.memories.loading">Loading</span>
-                  <div class="memory-header-actions" id="memoryHeaderActions"></div>
                 </div>
                 <p class="settings-copy" data-i18n="settings.memories.lede">What Jenny remembers about you and your projects. Jenny saves notes as you chat; you can edit, pin or forget any of them.</p>
                 <div class="settings-summary-row" id="memorySummary" aria-live="polite" data-i18n="settings.memories.loadingStatus">Loading memory status...</div>
                 <div class="settings-note" id="memoryHealthNote" aria-live="polite" hidden></div>
 
-                <div class="settings-group settings-group--wide memory-list-group" role="group" aria-labelledby="memoryPageHeading">
+                <div class="settings-group settings-group--wide memory-list-group" role="group" aria-labelledby="memoryListHeading">
+                  <div class="settings-group-bar"><h4 class="settings-group-heading" id="memoryListHeading" data-i18n="settings.memories.list.heading">Your memories</h4><div class="memory-header-actions" id="memoryHeaderActions"></div></div>
                   <div id="memoryTabsHost"></div>
                   <div class="memory-meter" id="memoryMeter" hidden></div>
                   <div class="memory-page-filters"><div id="memorySearchHost"></div><div id="memoryKindFilterHost"></div></div>
@@ -1011,13 +997,13 @@
               <section class="settings-card settings-card--wide team-set" data-settings-section="team" data-feature-flag="team" id="teamSettingsSection" hidden><div class="settings-card-header"><h3 data-i18n="settings.team.heading">Team</h3></div><p class="settings-copy" data-i18n="settings.team.lede">Work with people you trust: host a team on this PC or join someone else’s. Your own chats stay on this PC either way.</p><div id="teamSettingsBody"></div></section>
               <section class="settings-card" data-settings-section="advanced" id="advancedSettingsSection">
                 <div class="settings-card-header">
-                  <h3 data-i18n="settings.advanced.heading">Limits &amp; budgets</h3>
-                  <div class="settings-actions" id="advancedTuningActions"></div>
+                  <h3 data-i18n="settings.sections.limits.title">Limits</h3>
                 </div>
                 <p class="settings-copy" data-i18n="settings.advanced.description">How far one reply may go, and how much Jenny runs at once. Leave these alone unless a long job is being cut short or the machine is struggling.</p>
                 <p class="settings-note" id="advancedTuningStatus" role="status" aria-live="polite" hidden></p>
                 <p class="settings-note" data-limits-status role="status" aria-live="polite" hidden></p>
                 <div class="settings-flow" id="advancedTuningFields" data-limits-lines></div>
+                <div class="settings-group" role="group" aria-labelledby="limitsResetHeading"><h4 class="settings-group-heading" id="limitsResetHeading" data-i18n="settings.limits.reset.heading">Reset</h4><div id="advancedTuningActions"></div></div>
               </section>
 
               </div>
@@ -1469,6 +1455,7 @@
 <script defer src="renderer/shell/renderer-knowledge-scope.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-catalog.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-folders.js"></script>
+<script defer src="renderer/shell/renderer-computer-settings.js"></script>
 <script defer src="renderer/shell/renderer-ollama-tray-toast.js"></script>
 <script defer src="renderer/shell/renderer-ollama-health.js"></script>
 <script defer src="renderer/features/renderer-workspace-root-nudge.js"></script>
@@ -1492,9 +1479,7 @@
   <script defer src="renderer/shell/renderer-app-sound.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel.js"></script>
   <script defer src="renderer/shell/renderer-sidebar-utils.js"></script>
-  <script defer src="renderer/shell/renderer-view-panel-registry.js"></script>
   <script defer src="renderer/shell/renderer-toprail-utils.js"></script>
-  <script defer src="renderer/shell/renderer-chats-strip.js"></script>
   <script defer src="renderer/shell/renderer-attention-inbox-model.js"></script>
   <script defer src="renderer/shell/renderer-desktop-notifications.js"></script>
   <script defer src="renderer/shell/renderer-attention-inbox-flyout.js"></script>
@@ -1562,6 +1547,7 @@
   <script defer src="renderer/chat/renderer-composer-v2-model.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-state.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-toggle.js"></script>
+  <script defer src="renderer/chat/renderer-computer-step-display.js"></script>
   <script defer src="renderer/chat/renderer-composer-tools-slot.js"></script>
   <script defer src="renderer/chat/renderer-composer-model-picker-utils.js"></script>
   <script defer src="renderer/chat/renderer-composer-model-picker.js"></script>
@@ -1678,7 +1664,6 @@
 <script defer src="renderer/features/renderer-artifact-draft-store.js"></script>
 <script defer src="renderer/features/renderer-artifact-async-ops.js"></script>
 <script defer src="renderer/features/renderer-artifacts-surface-controller.js"></script>
-<script defer src="renderer/features/renderer-side-panel-motion.js"></script>
 <!-- WS3 auto-open controller (workspace_artifact_panel); must precede renderer-artifacts-utils.js, which wires it. -->
 <script defer src="renderer/features/renderer-artifact-review-autoopen.js"></script>
 <!-- Artifact-review preference helpers (incl. artifact_panel_v2 widthBySession); must precede renderer-artifacts-utils.js, which delegates to it. -->
@@ -1727,7 +1712,6 @@
   <script defer src="renderer/chat/renderer-session-rail-jobs.js"></script>
   <script defer src="renderer/chat/renderer-session-rail-performance.js"></script>
   <script defer src="renderer/chat/renderer-session-bar.js"></script>
-  <script defer src="renderer/chat/renderer-session-rail-motion.js"></script>
   <script defer src="renderer/chat/renderer-session-rail.js"></script>
   <script defer src="renderer/chat/renderer-chat-tool-row-toggles.js"></script>
   <script defer src="renderer/chat/renderer-chat-approval-card-bindings.js"></script>
@@ -1832,7 +1816,6 @@
   <script defer src="renderer/app/renderer-app-pane-chrome.js"></script>
   <script defer src="renderer/app/renderer-app-pane-stack.js"></script>
   <script defer src="renderer/app/renderer-app-pane-placement.js"></script>
-  <script defer src="renderer/app/renderer-app-pane-kickers.js"></script>
   <script defer src="renderer/app/renderer-app-pane-composition.js"></script>
   <script defer src="renderer/app/renderer-app-split-view-composition.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-mcp.js"></script>

@@ -159,7 +159,8 @@ test('a settled image row on the minimal row path renders the figure beside its 
   assert.equal(doc.querySelectorAll('.inv-artifact-figures .inv-artifact-figure').length, 1);
   assert.equal(doc.querySelector('.inv-artifact-figure').closest('.tool-call-row-body'), null);
   assert.equal(doc.querySelector('.inv-artifact-figure-meta').textContent, '1024 × 768 · seed 7');
-  assert.equal(row.getAttribute('data-run-foldable'), null);
+  // Row 192: an own-content row never folds under the steps heading either, so it is stamped in every view.
+  assert.equal(row.getAttribute('data-run-foldable'), 'false');
 });
 
 // F30: a running image_generate row also takes the minimal row path. The sized

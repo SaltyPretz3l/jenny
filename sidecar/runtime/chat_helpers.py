@@ -11,7 +11,6 @@ from sidecar.ai.context.context_count import (
     normalize_context_calibration,
 )
 from sidecar.ai.error_codes import CMP_APPROVAL_REJECTED, CMP_CHAT_INVALID_PARAMS
-from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR, is_feature_flag_enabled
 from sidecar.ai.mode_policy import normalize_mode
 from sidecar.ai.routing.loop_events import StopEvent
 from sidecar.ai.routing.tool_observation import (
@@ -489,12 +488,3 @@ def mode_from_params(params: Any, default_mode: str) -> str:
     if isinstance(mode, str) and mode.strip():
         return normalize_mode(mode, default=default_mode)
     return normalize_mode(default_mode, default=default_mode)
-
-
-# ---------------------------------------------------------------------------
-# IPC debouncing (H8)
-# ---------------------------------------------------------------------------
-
-
-def _executor_runtime_enabled(feature_flags: dict[str, bool] | None) -> bool:
-    return is_feature_flag_enabled(feature_flags or {}, FEATURE_AGENT_EXECUTOR)

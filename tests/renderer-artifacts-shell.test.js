@@ -29,11 +29,9 @@ function dispatchPastedImage(window, input, name = 'clipboard.png') {
 function setWorkspaceWidths(window, doc, workspaceWidth = 1600) {
   const workspace = doc.getElementById('workspace');
   const sidebar = doc.getElementById('viewPanel');
-  const sidebarResizer = doc.getElementById('sidebarResizer');
   const height = 900;
   workspace.getBoundingClientRect = () => ({ top: 0, left: 0, right: workspaceWidth, bottom: height, width: workspaceWidth, height });
   sidebar.getBoundingClientRect = () => ({ top: 0, left: 0, right: 320, bottom: height, width: 320, height });
-  sidebarResizer.getBoundingClientRect = () => ({ top: 0, left: 320, right: 330, bottom: height, width: 10, height });
   window.dispatchEvent(new window.Event('resize'));
 }
 
@@ -223,7 +221,6 @@ test('leaving chat for the IDE view hides split review chrome even when split re
   const input = doc.getElementById('chatInput');
   const sendButton = doc.getElementById('sendButton');
   const splitPanel = doc.getElementById('artifactReviewPanel');
-  const splitResizer = doc.getElementById('artifactReviewResizer');
   const chatView = doc.getElementById('chatView');
 
   try {
@@ -239,7 +236,6 @@ test('leaving chat for the IDE view hides split review chrome even when split re
     await waitForUi(window, 120);
 
     assert.equal(splitPanel.classList.contains('hidden'), false);
-    assert.equal(chatView.classList.contains('artifact-review-open'), true);
 
     // W1-5: the studio view is gone — the IDE view is the non-chat surface
     // that must park the split review chrome (eligibility is chat-only).
@@ -247,8 +243,6 @@ test('leaving chat for the IDE view hides split review chrome even when split re
     await waitForUi(window, 40);
 
     assert.equal(splitPanel.classList.contains('hidden'), true);
-    assert.equal(splitResizer.classList.contains('hidden'), true);
-    assert.equal(chatView.classList.contains('artifact-review-open'), false);
     assert.equal(chatView.classList.contains('artifact-review-mode'), false);
   } finally {
     await app.dispose();

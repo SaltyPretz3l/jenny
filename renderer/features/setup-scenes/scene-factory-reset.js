@@ -58,7 +58,7 @@
     var setupService = d.setupService || {};
     var applySnapshot = typeof d.applySnapshot === 'function' ? d.applySnapshot : function (value) { return value; };
     var closeModal = typeof d.closeModal === 'function' ? d.closeModal : function () {};
-    var showHome = typeof d.showHome === 'function' ? d.showHome : function () {};
+    var reopenFirstRun = typeof d.reopenFirstRun === 'function' ? d.reopenFirstRun : function () {};
     var showToastMessage = typeof d.showToastMessage === 'function' ? d.showToastMessage : function () {};
     var showShellErrorToast = typeof d.showShellErrorToast === 'function' ? d.showShellErrorToast : function () {};
     var appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : function () {};
@@ -102,8 +102,7 @@
         if (snapshot) {
           applySnapshot(snapshot);
         }
-        showHome();
-        showToastMessage(jt('setup.factoryReset.completeHome', 'Onboarding reset complete — setup tiles reopened on Home.'), {
+        showToastMessage(jt('setup.factoryReset.completeReopened', 'Onboarding reset. Setup has reopened.'), {
           title: jt('setup.factoryReset.successTitle', 'Onboarding Reset'),
           tone: 'success',
           source: 'setup.factory_reset',
@@ -119,7 +118,10 @@
         showShellErrorToast(jt('setup.factoryReset.failed', 'Could not reset first-launch setup. Try again in a moment.'), {
           title: jt('setup.factoryReset.failureTitle', 'Onboarding Reset Failed'),
         });
+        return;
       }
+      // The reset is committed: first run reopens in place, over whatever view it came from.
+      reopenFirstRun();
     }
 
     return {

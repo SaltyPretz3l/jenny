@@ -14,6 +14,7 @@ const {
   normalizeChatMessages,
   getLatestAssistantMessageId,
   buildAssistantMetaLabel,
+  buildShortAssistantMetaLabel,
   mergeReasoningEntries,
   normalizeInteractiveRoundRecap,
 } = require('../renderer/chat/chat-message-utils');
@@ -171,7 +172,7 @@ test('buildAssistantMetaLabel formats terminal states and hides streaming metada
   );
   assert.equal(
     buildAssistantMetaLabel(errorMessage, formatTime),
-    'Failed @ 2026-03-12T14:23:04.000Z · Model unknown'
+    'Failed @ 2026-03-12T14:23:04.000Z · Model unknown · took 4.0s'
   );
   assert.equal(buildAssistantMetaLabel(streamingMessage, formatTime), '');
   assert.equal(
@@ -187,6 +188,35 @@ test('buildAssistantMetaLabel formats terminal states and hides streaming metada
     ),
     ''
   );
+});
+
+// Row 192 C10: the details line reads "model · time taken · tokens · clock time".
+test('buildShortAssistantMetaLabel reads model, time taken, tokens and clock time; an unknown part drops out', () => {
+  const fmt = (value) => `@${value}`;
+  const done = {
+    role: 'assistant', status: 'complete', model_used: 'qwen3.8-27b-nvfp4',
+    timestamp: '2026-11-23T15:37:00.000Z', finalizedAt: '2026-11-23T15:41:12.000Z',
+  };
+  const clock = '@2026-11-23T15:41:12.000Z';
+  assert.equal(buildShortAssistantMetaLabel(done, fmt, undefined, undefined, '18.4k tokens'),
+    `qwen3.8-27b-nvfp4 · 4m 12s · 18.4k tokens · ${clock}`);
+  // A turn that did not succeed keeps its status first.
+  assert.equal(buildShortAssistantMetaLabel({ ...done, status: ERROR_STATUS }, fmt, undefined, undefined, '1.9k tokens'),
+    `Failed · qwen3.8-27b-nvfp4 · 4m 12s · 1.9k tokens · ${clock}`);
+  assert.equal(buildShortAssistantMetaLabel({ ...done, status: ERROR_STATUS, terminal_status: 'cancelled' }, fmt),
+    `Stopped · qwen3.8-27b-nvfp4 · 4m 12s · ${clock}`);
+  // Unknown time taken (no start, or no real finish time) and unknown tokens leave their parts out.
+  assert.equal(buildShortAssistantMetaLabel({ ...done, timestamp: '' }, fmt), `qwen3.8-27b-nvfp4 · ${clock}`);
+  assert.equal(buildShortAssistantMetaLabel({ ...done, finalizedAt: '' }, fmt), 'qwen3.8-27b-nvfp4 · @2026-11-23T15:37:00.000Z');
+  // The turn's own duration runs from its earliest assistant message.
+  const turnMessages = [
+    { role: 'assistant', model_used: 'qwen3.8-27b-nvfp4', timestamp: '2026-11-23T15:40:24.000Z' },
+    { role: 'assistant', model_used: 'qwen3.8-27b-nvfp4', timestamp: '2026-11-23T15:41:00.000Z' },
+  ];
+  assert.equal(buildShortAssistantMetaLabel(done, fmt, turnMessages), `qwen3.8-27b-nvfp4 · 48s · ${clock}`);
+  // The long label keeps its content and adds the time taken.
+  assert.equal(buildAssistantMetaLabel(done, fmt), `Completed ${clock} · qwen3.8-27b-nvfp4 · took 4m 12s`);
+  assert.equal(buildAssistantMetaLabel({ ...done, timestamp: '' }, fmt), `Completed ${clock} · qwen3.8-27b-nvfp4`);
 });
 
 test('normalizeChatMessage hydrates legacy messages with empty reasoning metadata', () => {

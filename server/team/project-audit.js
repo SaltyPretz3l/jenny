@@ -44,7 +44,7 @@
 
 const { isBoardId } = require('../../services/boards/board-ids');
 const { hostFailure } = require('../api-contract');
-const { BoundedLogFile, emptyLogDocument, validLogDocument } = require('./bounded-log');
+const { BoundedLogFile, emptyLogDocument, entryBytes, validLogDocument } = require('./bounded-log');
 const { isId, isSessionId } = require('./ids');
 const {
   hasExactKeys, isCount, isPlainObject, isProjectId,
@@ -271,7 +271,8 @@ function boundShared(candidate, { maxEntries, maxBytes }, isLive) {
     if (!seen.has(projectId)) seen.set(projectId, isLive(projectId));
     return seen.get(projectId);
   };
-  const sizes = entries.map((entry) => Buffer.byteLength(JSON.stringify(entry), 'utf8') + 1);
+  // Each entry's size is kept per entry (OD-10), so only the new entry is stringified here.
+  const sizes = entries.map(entryBytes);
   let size = sizes.reduce((sum, value) => sum + value, 0);
   const header = (floorSeq, floors) => Buffer.byteLength(JSON.stringify({ ...candidate, floor_seq: floorSeq,
     project_floors: floors, entries: [] }), 'utf8');
@@ -416,13 +417,34 @@ class ProjectAudit {
   // every project's entries (E30, E31). `next` is the cursor for the following
   // page, or null when nothing is left. `floor_seq` is the higher of the log's
   // floor and the project's own.
-  read({ afterSeq = 0, limit = PROJECT_AUDIT_LIMITS.MAX_PAGE, projectId } = {}) {
-    if (!isCount(afterSeq) || !Number.isSafeInteger(limit) || limit < 1 || !isProjectId(projectId)) {
+  // `beforeSeq` (a positive integer, not with a non-zero `afterSeq`) reads backwards: the newest page of entries
+  // with seq below it, still oldest first, so a reader finds the tail in one call and pages older with the
+  // answer's `next`, which is then the page's oldest seq (the next `beforeSeq`), or null when nothing older is left.
+  read({ afterSeq = 0, beforeSeq, limit = PROJECT_AUDIT_LIMITS.MAX_PAGE, projectId } = {}) {
+    const backwards = beforeSeq !== undefined;
+    if (!isCount(afterSeq) || !Number.isSafeInteger(limit) || limit < 1 || !isProjectId(projectId)
+      || (backwards && (!Number.isSafeInteger(beforeSeq) || beforeSeq < 1 || afterSeq !== 0))) {
       return hostFailure('invalid', 'team_cursor_invalid');
     }
     const doc = this._file.load();
     if (!doc) return unavailable();
     const size = Math.min(limit, PROJECT_AUDIT_LIMITS.MAX_PAGE);
+    const floor = Math.max(doc.floor_seq, Object.hasOwn(doc.project_floors, projectId) ? doc.project_floors[projectId] : 0);
+    if (backwards) {
+      const page = [];
+      let more = false;
+      for (let index = doc.entries.length - 1; index >= 0; index -= 1) {
+        const entry = doc.entries[index];
+        if (entry.seq >= beforeSeq || entry.project_id !== projectId) continue;
+        if (page.length === size) {
+          more = true;
+          break;
+        }
+        page.push(copyEntry(entry));
+      }
+      page.reverse();
+      return { ok: true, entries: page, floor_seq: floor, next: more ? page[0].seq : null };
+    }
     const page = [];
     let more = false;
     for (const entry of doc.entries) {
@@ -433,12 +455,7 @@ class ProjectAudit {
       }
       page.push(copyEntry(entry));
     }
-    return {
-      ok: true,
-      entries: page,
-      floor_seq: Math.max(doc.floor_seq, Object.hasOwn(doc.project_floors, projectId) ? doc.project_floors[projectId] : 0),
-      next: more ? page[page.length - 1].seq : null,
-    };
+    return { ok: true, entries: page, floor_seq: floor, next: more ? page[page.length - 1].seq : null };
   }
 }
 

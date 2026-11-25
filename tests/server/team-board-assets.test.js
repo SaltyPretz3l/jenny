@@ -497,3 +497,49 @@ test('a picture damaged on disk is written again when it is sent again (P5)', as
   assert.equal(h.logs.filter((entry) => entry.event === 'team_board_asset.repaired').length, 2);
   assert.equal((await must(put(h.assets, P, bytes))).stored, false, 'a sound picture still answers as already there');
 });
+
+test('H4: put asks the caller\'s check inside the queue before any write; a refusal writes nothing, a pass stores', async (t) => {
+  const h = setup(t);
+  await newBoard(h);
+  const bytes = png(5, 5);
+  const denied = () => hostFailure('forbidden', 'role_forbidden');
+  const answer = await refused(h, () => h.assets.put({ projectId: P, hash: sha(bytes), bytes, recheck: denied }), 'a denied check');
+  assert.equal(answer.error.reason, 'role_forbidden');
+  assert.equal((await must(h.assets.put({ projectId: P, hash: sha(bytes), bytes, recheck: () => null }))).stored, true);
+  // A picture already stored is answered as stored: false, and a check that refuses still refuses it.
+  assert.equal((await h.assets.put({ projectId: P, hash: sha(bytes), bytes, recheck: denied })).error?.reason, 'role_forbidden');
+  assert.equal((await h.assets.put({ projectId: P, hash: sha(bytes), bytes, recheck: () => { throw new Error('x'); } })).ok, false);
+});
+
+test('H4: discard with ifUnreferenced removes a picture no board names and keeps one a card names', async (t) => {
+  const h = setup(t);
+  const live = await newBoard(h);
+  const [named, loose] = [png(6, 6), png(7, 7)];
+  await must(put(h.assets, P, named));
+  await must(put(h.assets, P, loose));
+  await addCards(h, live, image(sha(named)));
+  assert.deepEqual(await h.assets.discard({ projectId: P, hash: sha(named), ifUnreferenced: true }), { ok: true, removed: false });
+  assert.equal(fs.existsSync(path.join(h.assetsDir(P), `${sha(named)}.png`)), true, 'the named picture stays');
+  assert.deepEqual(await h.assets.discard({ projectId: P, hash: sha(loose), ifUnreferenced: true }), { ok: true, removed: true });
+  assert.equal(fs.existsSync(path.join(h.assetsDir(P), `${sha(loose)}.png`)), false);
+  // No view of the boards: nothing is removed.
+  const blind = h.make({ refs: async () => ({ ok: false }) });
+  await must(put(h.assets, P, loose));
+  assert.equal((await blind.discard({ projectId: P, hash: sha(loose), ifUnreferenced: true })).ok, false);
+  assert.equal(fs.existsSync(path.join(h.assetsDir(P), `${sha(loose)}.png`)), true);
+});
+
+test('a damaged clocks file does not keep a re-uploaded picture on the list a full project frees from', async (t) => {
+  const [first, second, third] = [png(11, 3), png(12, 3), png(13, 3)];
+  const h = setup(t);
+  const store = h.make({ limits: { pictures: 2 } });
+  await newBoard(h);
+  await must(put(store, P, first));
+  await must(put(store, P, second));
+  // The first picture's clock is the oldest; one more entry is not a valid hash, so the file reads as rebuilt.
+  h.writeClocks(P, { [sha(first)]: iso(START - 2 * DAY), [sha(second)]: iso(START - DAY), nothash: iso(START) });
+  assert.equal((await must(put(store, P, first))).stored, false, 'sent again: a card is about to name it');
+  assert.equal((await must(put(store, P, third))).stored, true, 'the project was full: the idle one went');
+  const on = (bytes) => fs.existsSync(path.join(h.assetsDir(P), `${sha(bytes)}.png`));
+  assert.deepEqual([first, second, third].map(on), [true, false, true]);
+});

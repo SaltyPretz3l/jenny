@@ -14,6 +14,7 @@
  *     settle (the artifact renderer's churn lesson); a busy/never-reporting
  *     frame lands in a bounded "stopped responding" state via the frame
  *     factory's own timeout.
+ *   - png / jpg / gif / webp → one <img> via readImage (SVG stays out).
  *   - everything else (unsupported / missing / binary / too large) → an
  *     explicit bounded state, never injected into a renderer.
  *
@@ -56,10 +57,19 @@
   // renderer UMD modules — the RAIL_PANELS mirroring precedent).
   const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mmd', 'mermaid']);
   const HTML_EXTENSIONS = new Set(['html', 'htm']);
+  const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+  const IMAGE_FAILURE_STATES = Object.freeze({ 'CMP-WORKSPACEFS-0012': 'too-large', 'CMP-WORKSPACEFS-0014': 'unsupported' });
   // Derived from the Sets above so the unsupported-state copy can't drift
   // from what kindOf() actually accepts.
-  const SUPPORTED_LABEL = jt('ide.previewStage.supportedFormats', 'Markdown ({markdownExtensions}) and self-contained HTML ({htmlExtensions})', { markdownExtensions: [...MARKDOWN_EXTENSIONS].map((ext) => `.${ext}`).join(', '), htmlExtensions: [...HTML_EXTENSIONS].map((ext) => `.${ext}`).join(', ') });
+  const SUPPORTED_LABEL = jt('ide.previewStage.supportedFormats', 'Markdown ({markdownExtensions}) and self-contained HTML ({htmlExtensions})', { markdownExtensions: [...MARKDOWN_EXTENSIONS].map((ext) => `.${ext}`).join(', '), htmlExtensions: [...HTML_EXTENSIONS].map((ext) => `.${ext}`).join(', ') })
+    + jt('ide.previewStage.supportedImages', ', and images ({imageExtensions})', { imageExtensions: [...IMAGE_EXTENSIONS].map((ext) => `.${ext}`).join(', ') });
   const MAX_PREVIEW_BYTES = 1_500_000;
+  // Bounded state-card copy shared by the text and image lanes.
+  const STATE_COPY = {
+    'too-large': (path) => jt('ide.previewStage.tooLarge', '“{path}” is too large to preview safely.', { path }),
+    unsupported: (path) => jt('ide.previewStage.unsupported', '“{path}” can’t be previewed — supported: {supported}.', { path, supported: SUPPORTED_LABEL }),
+    missing: (path) => jt('ide.previewStage.readFailed', '“{path}” could not be read — it may have been deleted, renamed, or the workspace is unavailable.', { path }),
+  };
   // Render-outcome wire codes for workspacePresentation.reportOutcome (not UI copy).
   const RENDER_DETAIL = Object.freeze({ frameFailed: 'frame_failed', unsupported: 'unsupported' });
   const previewUtf8Encoder = new globalRef.TextEncoder();
@@ -126,7 +136,10 @@
 
     function kindOf(path) {
       const extension = extensionOf(path);
-      return MARKDOWN_EXTENSIONS.has(extension) ? 'markdown' : HTML_EXTENSIONS.has(extension) ? 'html' : '';
+      if (MARKDOWN_EXTENSIONS.has(extension)) return 'markdown';
+      if (HTML_EXTENSIONS.has(extension)) return 'html';
+      // An outside-Workspace key has no readImage lane, so it never previews as an image.
+      return IMAGE_EXTENSIONS.has(extension) && !isOutside(path) ? 'image' : '';
     }
 
     // Row 137: an outside-Workspace key (outside://<id>/<name>) previews by its name; other schemes never do.
@@ -165,7 +178,7 @@
       bodyEl.className = 'ide-preview-stage-body';
       hostEl.appendChild(barEl);
       hostEl.appendChild(bodyEl);
-      htmlSurface = surfaceModule.createPreviewHtmlSurface({ getBodyEl: () => bodyEl, windowRef, frameUtils, assetsUtils, editorHost, getWorkspaceFsApi });
+      htmlSurface = surfaceModule.createPreviewHtmlSurface({ getBodyEl: () => bodyEl, windowRef, frameUtils, assetsUtils, editorHost, getWorkspaceFsApi, getFileOperations, appendClientLog, maxPreviewBytes: MAX_PREVIEW_BYTES });
       bar = chrome.createBarController({ getBarEl: () => barEl, windowRef, ideStateUtils, escapeHtml, isWatchActive });
       onBarClick = (event) => {
         if (event.target?.closest?.('[data-preview-reload]')) reload();
@@ -227,49 +240,31 @@
       return markdownUtils.renderMarkdown(source, options) || '';
     }
 
-    async function readSource(path) {
-      if (editorHost?.hasDocument?.(path)) {
-        return { ok: true, text: String(editorHost.getValue(path) || ''), editable: true };
+    // One <img> from readImage; failures land the text path's bounded state cards.
+    async function renderImage(path, token, requestSignature) {
+      const read = await htmlSurface.readDataUrl(path);
+      if (disposed || token !== renderToken) return abandonRequest(requestSignature);
+      completeRequest(requestSignature);
+      if (!read.ok) {
+        const state = IMAGE_FAILURE_STATES[read.code] || 'missing';
+        return renderState(path, state, STATE_COPY[state](path));
       }
-      try {
-        const operations = getFileOperations();
-        let payload = null;
-        if (operations?.beginPreview && operations?.readForPreview) {
-          const intent = operations.beginPreview(path);
-          const read = await operations.readForPreview(intent, { maxBytes: MAX_PREVIEW_BYTES });
-          if (read.stale || !read.payload) return { ok: false, reason: 'stale' };
-          payload = read.payload;
-        } else {
-          // Compatibility until composition supplies the shared owner. This
-          // remains versioned/bounded and never falls back to raw readFile.
-          const api = getWorkspaceFsApi();
-          if (typeof api?.readText !== 'function') return { ok: false, reason: 'unavailable' };
-          payload = await api.readText({ path, intent: 'preview', maxBytes: MAX_PREVIEW_BYTES });
-          if (!payload
-            || payload.ok !== true
-            || typeof payload.content !== 'string'
-            || typeof payload.rootId !== 'string'
-            || !payload.rootId
-            || !Number.isSafeInteger(payload.generation)
-            || typeof payload.fileVersion !== 'string'
-            || !payload.fileVersion) return { ok: false, reason: 'invalid' };
-        }
-        return {
-          ok: true,
-          text: payload.content,
-          // Propagated uncoerced: readForPreview's payload always carries the
-          // decoder's real editable value, but the compat branch's raw bridge
-          // payload may omit the field entirely — only an explicit `false`
-          // (never a missing/undefined field) may route to the binary state.
-          editable: payload.editable,
-          signature: `${payload.rootId}:${payload.generation}:${payload.pathKey}:${payload.fileVersion}`,
-        };
-      } catch (error) {
-        appendClientLog('WARN', 'ide_preview_stage.read_failed', {
-          message: String(error?.message || error || ''),
-        });
-        return { ok: false, reason: 'missing' };
-      }
+      const version = read.version || read.dataUrl;
+      if (shown.path === path && shown.text === version && renderReport?.path !== path) return bar.settle();
+      disposeFrame();
+      bar.render(path, '', '', true);
+      const current = () => !disposed && token === renderToken;
+      htmlSurface.mountImage(read.dataUrl, ideStateUtils.fileNameOf?.(path) || path, {
+        onLoad: () => { if (current()) settleRenderReport(path, { render: 'loaded' }); },
+        onError: () => {
+          // A late error forgets the shown image, so an unchanged-version skip cannot keep it broken.
+          if (shown.path === path && shown.text === version) shown = { path: '', text: null };
+          if (!current()) return;
+          settleRenderReport(path, { render: 'failed', detail: RENDER_DETAIL.frameFailed });
+          renderState(path, 'frame-failed', jt('ide.previewStage.imageFailed', 'The image “{path}” could not be displayed — the file may be damaged.', { path }));
+        },
+      });
+      shown = { path, text: version };
     }
 
     function signatureFor(path) {
@@ -314,10 +309,11 @@
       const kind = kindOf(path);
       if (!kind) {
         completeRequest(requestSignature);
-        renderState(path, 'unsupported', jt('ide.previewStage.unsupported', '“{path}” can’t be previewed — supported: {supported}.', { path, supported: SUPPORTED_LABEL }));
+        renderState(path, 'unsupported', STATE_COPY.unsupported(path));
         return;
       }
-      const source = await readSource(path);
+      if (kind === 'image') return renderImage(path, token, requestSignature);
+      const source = await htmlSurface.readSource(path);
       if (disposed || token !== renderToken) return abandonRequest(requestSignature);
       if (source.reason === 'stale') {
         abandonRequest(requestSignature);
@@ -326,13 +322,13 @@
       }
       if (!source.ok) {
         completeRequest(requestSignature);
-        renderState(path, 'missing', jt('ide.previewStage.readFailed', '“{path}” could not be read — it may have been deleted, renamed, or the workspace is unavailable.', { path }));
+        renderState(path, 'missing', STATE_COPY.missing(path));
         return;
       }
       const text = source.text;
       if (exceedsPreviewBytes(text)) {
         completeRequest(requestSignature);
-        renderState(path, 'too-large', jt('ide.previewStage.tooLarge', '“{path}” is too large to preview safely.', { path }));
+        renderState(path, 'too-large', STATE_COPY['too-large'](path));
         return;
       }
       // The main-process decoder (services/versioned-workspace-file-encoding.js)
@@ -538,6 +534,8 @@
       diskRevision += 1;
       if (!isPreviewActive()) return;
       lastRequestedSignature = '';
+      // An image rewritten in a burst (a capture loop) is read once per pause, not per write.
+      if (kindOf(path) === 'image') return scheduleRender(path);
       bar?.beginUpdating();
       renderPath(path);
     }
@@ -588,6 +586,7 @@
 
   return {
     HTML_EXTENSIONS,
+    IMAGE_EXTENSIONS,
     MARKDOWN_EXTENSIONS,
     MAX_PREVIEW_BYTES,
     SUPPORTED_LABEL,

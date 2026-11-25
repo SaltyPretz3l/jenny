@@ -29,6 +29,8 @@
   const DRAFTS = Object.freeze({ teamDeleteName: 'typed', teamStartNewName: 'newName', teamRestoreName: 'restoreTyped' });
   // What the owner types to delete an old team whose name could not be read (main checks the same word).
   const OLD_CONFIRM_WORD = 'delete';
+  // A team name is at most 40 characters, which may be two UTF-16 units each (emoji): the typed-name fields cap by units, so 80.
+  const NAME_FIELD_MAX = 80;
 
   let ui = fresh();
   let asked = 0;
@@ -80,6 +82,7 @@
     const channels = c.attachments
       ? jtn('settings.team.del.channelsFiles', c.project_channels || 0, { messages: num(c.messages || 0), files: num(c.attachments) }, '#team and {count} project channel, with {messages} messages and the {files} files attached to them.', '#team and {count} project channels, with {messages} messages and the {files} files attached to them.')
       : jtn('settings.team.del.channels', c.project_channels || 0, { messages: num(c.messages || 0) }, '#team and {count} project channel, with {messages} messages.', '#team and {count} project channels, with {messages} messages.');
+    const custom = c.custom_channels ? ' ' + jtn('settings.team.del.customChannels', c.custom_channels, {}, 'Also {count} custom channel, its messages counted above.', 'Also {count} custom channels, their messages counted above.') : '';
     const dms = c.dms ? jtn('settings.team.del.dms', c.dms, { messages: num(c.dm_messages || 0) }, '{count} direct conversation between members, with {messages} messages.', '{count} direct conversations between members, with {messages} messages.') : '';
     const projects = i.projects.length
       ? p(jtn('settings.team.del.projects', i.projects.length, {}, '{count} shared project: its files on this PC’s disk and its conversations with Jenny.', '{count} shared projects: their files on this PC’s disk and their conversations with Jenny.')) + projectTable(i.projects)
@@ -92,7 +95,7 @@
     const dt = (text) => '<dt>' + escapeHtml(text) + '</dt>';
     return '<dl class="team-del__what">'
       + dt(jt('settings.team.del.people', 'People')) + '<dd>' + part(gone('members'), p(people) + p(waiting)) + '</dd>'
-      + dt(jt('settings.team.del.messages', 'Messages')) + '<dd>' + part(gone('messages'), p(channels) + p(dms)) + '</dd>'
+      + dt(jt('settings.team.del.messages', 'Messages')) + '<dd>' + part(gone('messages'), p(channels + custom) + p(dms)) + '</dd>'
       + dt(jt('settings.team.del.projectsHeading', 'Projects')) + '<dd>' + part(gone('projects') || gone('conversations'), projects + p(trash)) + '</dd>'
       + dt(jt('settings.team.del.recordsHeading', 'Records')) + '<dd>' + p(records) + '</dd></dl>';
   }
@@ -107,12 +110,12 @@
   }
 
   function exportForm(vm, team, where) {
-    return '<div class="team-set-confirm" role="group" aria-label="' + escapeHtml(jt('settings.team.export.row', 'Export this team')) + '">'
+    return '<div class="team-set-confirm" role="group" data-team-export-form="' + where + '" aria-label="' + escapeHtml(jt('settings.team.export.row', 'Export this team')) + '">'
       + p(jt('settings.team.export.lead', 'Export {team} to a folder you pick. Two things are saved:', { team })) + '<ul><li>'
       + escapeHtml(jt('settings.team.export.readable', 'A readable copy: every project’s files, and the messages you can read yourself (#team, the channels of your projects, your own direct conversations) as text files.'))
       + '</li><li>' + escapeHtml(jt('settings.team.export.backup', 'A backup file that can bring the whole team back: its key, members, every message and project. It is locked with a password you choose. Jenny cannot recover a lost password.'))
-      + '</li></ul><div class="team-set-inline">'
-      + input({ id: 'teamExportPass', type: 'password', maxLength: 1024, dataset: SECRET, ariaLabel: jt('settings.team.export.password', 'Password for the backup'), placeholder: jt('settings.team.export.password', 'Password for the backup') })
+      + '</li></ul><p class="settings-field-note" id="teamExportPassHint">' + escapeHtml(jt('settings.team.export.passwordHint', 'The password needs at least 10 characters.')) + '</p><div class="team-set-inline">'
+      + input({ id: 'teamExportPass', type: 'password', maxLength: 1024, dataset: SECRET, describedBy: 'teamExportPassHint', ariaLabel: jt('settings.team.export.password', 'Password for the backup'), placeholder: jt('settings.team.export.password', 'Password for the backup') })
       + input({ id: 'teamExportPass2', type: 'password', maxLength: 1024, dataset: SECRET, ariaLabel: jt('settings.team.export.again', 'The same password again'), placeholder: jt('settings.team.export.again', 'The same password again') })
       + '</div><div class="team-set-after">' + view.button(vm, 'export-go', jt('settings.team.export.go', 'Choose a folder and export'), { variant: 'primary', busyKey: 'export' })
       + view.button(vm, 'export-cancel', jt('settings.team.cancel', 'Cancel'), { busyKey: 'export', ids: { teamId: where } }) + '</div>' + view.note(vm.errors.export) + '</div>';
@@ -149,7 +152,7 @@
       : jt('settings.team.del.oldUnnamed', 'This old team’s name could not be read. Type {word} to confirm.', { word: OLD_CONFIRM_WORD });
     const deleting = busy || (!old && host && host.operation === 'hostDelete');
     const typeRow = '<div class="team-del__type"><label for="teamDeleteName">' + escapeHtml(typeText) + '</label>'
-      + input({ id: 'teamDeleteName', value: ui.typed, ariaLabel: named ? jt('settings.team.del.typeLabel', 'The team’s name') : typeText, maxLength: 40, disabled: busy || !ready })
+      + input({ id: 'teamDeleteName', value: ui.typed, ariaLabel: named ? jt('settings.team.del.typeLabel', 'The team’s name') : typeText, maxLength: NAME_FIELD_MAX, disabled: busy || !ready })
       + view.button(vm, old ? 'old-del-go' : 'del-go', deleting ? jt('settings.team.del.deleting', 'Deleting…') : jt('settings.team.del.go', 'Delete team and files'), { variant: 'danger', ids, busyKey, disabled: !matches || !ready || hostBusy(host) })
       + view.button(vm, 'confirm-cancel', jt('settings.team.cancel', 'Cancel'), { busyKey }) + '</div>';
     return '<div class="team-set-confirm team-del" role="group" aria-label="' + escapeHtml(jt('settings.team.del.row', 'Delete this team')) + '">'
@@ -203,7 +206,7 @@
         : jt('settings.team.restore.lead', 'Choose the backup file and type its password. The team comes back on this PC as it was when you exported it. Members who still have the team in their Jenny reconnect by themselves; anyone who removed it needs a new invite.'))
       + '<div class="team-set-inline">' + view.button(vm, 'restore-pick', jt('settings.team.restore.pick', 'Choose backup file…'), { busyKey: 'restore' }) + picked + '</div>'
       + (lost ? '<div class="team-del__type"><label for="teamRestoreName">' + escapeHtml(jt('settings.team.del.type', 'Type the team’s name, {team}, to confirm.', { team })) + '</label>'
-        + input({ id: 'teamRestoreName', value: ui.restoreTyped, ariaLabel: jt('settings.team.del.typeLabel', 'The team’s name'), maxLength: 40 }) + '</div>' : '')
+        + input({ id: 'teamRestoreName', value: ui.restoreTyped, ariaLabel: jt('settings.team.del.typeLabel', 'The team’s name'), maxLength: NAME_FIELD_MAX }) + '</div>' : '')
       + '<div class="team-set-after">' + input({ id: 'teamRestorePass', type: 'password', maxLength: 1024, dataset: SECRET, ariaLabel: jt('settings.team.export.password', 'Password for the backup'), placeholder: jt('settings.team.export.password', 'Password for the backup') })
       + view.button(vm, 'restore-go', go, { variant: 'primary', busyKey: 'restore', disabled: Boolean(notYet) || busyHost, ...why(go, notYet) })
       + view.button(vm, 'confirm-cancel', jt('settings.team.cancel', 'Cancel'), { busyKey: 'restore' }) + '</div>' + view.note(vm.errors.restore) + '</div>';
@@ -260,6 +263,36 @@
     if (!keyLost(host)) return null;
     return { tone: 'blocked', value: jt('settings.team.status.cannotStart', 'Cannot start'),
       note: jt('settings.team.status.keyMissing', 'This PC’s key for {team} is missing.', { team: host.team_name }) };
+  }
+
+  /** The server status line for the page: E64 Force local, then a lost key, then the host's own state. `seats`: seats taken while connected, else null. */
+  function hostStatus(host, seats, maxSeats) {
+    if (!host) return null;
+    // E64: while Force local is on the Server line is the state line, deployed or not, the hold's stop included; a
+    // deployed team's Start stays, greyed with it (view.button).
+    if (host.force_local === true) {
+      return { tone: 'blocked', value: words.forceLocalText(), action: host.deployed && host.team_name ? 'start' : null };
+    }
+    if (keyLost(host)) return status(host); // slice 5-6: a lost key cannot start
+    const startable = Boolean(host.team_name);
+    switch (host.state) {
+      case 'running':
+        return { tone: 'ready', value: jt('settings.team.status.running', 'Running on this PC'), action: 'stop',
+          note: seats === null ? '' : jt('settings.team.status.seats', '{count} of {max} seats', { count: seats, max: maxSeats }) };
+      case 'starting': return { tone: '', value: jt('settings.team.status.starting', 'Starting…') };
+      case 'stopping': return { tone: '', value: jt('settings.team.status.stopping', 'Stopping…') };
+      case 'failed':
+        return { tone: 'blocked', value: jt('settings.team.status.failed', 'Stopped with a problem'),
+          note: words.errorText({ code: 'CMP-TEAM-0006', reason: host.reason }),
+          action: startable && host.reason !== 'team_host_platform_unavailable' ? 'start' : null,
+          actionDisabled: host.reason === 'team_host_exit_unconfirmed' };
+      case 'stopped':
+        if (!host.deployed) return null;
+        return { tone: 'blocked', value: jt('settings.team.status.stopped', 'Stopped'), action: startable ? 'start' : null,
+          note: jt('settings.team.status.stoppedNote', 'Nobody can connect until you start it. Nothing was deleted.'),
+          notes: host.reason && host.reason !== 'team_host_stopped' ? [words.errorText({ code: 'CMP-TEAM-0006', reason: host.reason })] : [] };
+      default: return { tone: '', value: jt('settings.team.status.unknown', 'Unavailable') };
+    }
   }
 
   // ------------------------------------------------------------- actions
@@ -366,6 +399,22 @@
     await ctx.refreshAll();
   }
 
+  // Closes the export form and puts focus back on the button that opened it.
+  function closeExport(ctx, where, doc) {
+    ui.exportOpen = '';
+    ctx.render();
+    const opener = doc.querySelector('[data-team-action="export-open"][data-team-id="' + where + '"]');
+    if (opener) opener.focus({ preventScroll: true });
+  }
+
+  // Escape inside the export form closes it (and nothing around it); true when it did.
+  function onEscape(event, ctx) {
+    const form = event.target.closest && event.target.closest('[data-team-export-form]');
+    if (!form) return false;
+    closeExport(ctx, form.getAttribute('data-team-export-form'), form.ownerDocument);
+    return true;
+  }
+
   function onClick(event, ctx) {
     const button = event.target.closest && event.target.closest('[data-team-action]');
     if (!button || button.disabled) return false;
@@ -378,7 +427,7 @@
       case 'old-del-go': void removeOld(ctx, teamId); return true;
       case 'old-show': void ctx.run('old-show:' + teamId, 'old:' + teamId, () => ctx.call('hostOldShow', { set_aside_id: teamId })); return true;
       case 'export-open': ui.exportOpen = teamId; ui.exported = null; ctx.setNote('export', ''); ctx.render(); return true;
-      case 'export-cancel': ui.exportOpen = ''; ctx.render(); return true;
+      case 'export-cancel': closeExport(ctx, teamId, button.ownerDocument); return true;
       case 'export-go': void exportTeam(ctx); return true;
       case 'new-open': ui.newName = ''; ctx.setConfirm('new-team'); ctx.render(); return true;
       case 'new-go': void startNew(ctx); return true;
@@ -406,5 +455,5 @@
 
   function reset() { ui = fresh(); asked += 1; }
 
-  return { lostKeyGroup, deleteGroup, exportRow, restoreRow, banner, status, keyLost, hostBusy, onClick, onInput, reset };
+  return { lostKeyGroup, deleteGroup, exportRow, restoreRow, banner, status, hostStatus, keyLost, hostBusy, onClick, onEscape, onInput, reset };
 });

@@ -11,7 +11,7 @@ from typing import Any
 from sidecar.ai.routing.delegate_child_steps import (
     bound_report_metadata,
     build_child_steps,
-    child_answer,
+    child_answer_texts,
 )
 from sidecar.ai.routing.delegate_contracts import (
     DELEGATE_EXECUTION_FAILURE_CODE as CMP_TOOL_EXECUTION_FAILED,
@@ -23,6 +23,7 @@ from sidecar.ai.routing.delegate_contracts import (
     ToolExecutionFailure,
     _safe_text,
     build_compact_delegate_settlement,
+    delegate_answer_chars,
     delegate_task_label,
     delegate_task_prompt,
     extract_tool_observed_evidence,
@@ -232,6 +233,7 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
     invocation_by_ordinal = {
         invocation.task.ordinal: invocation for invocation in schedule.invocations
     }
+    answer_chars = delegate_answer_chars(getattr(router, "_config", None))
     task_reports = [
         _task_report(
             task,
@@ -247,12 +249,14 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
             activity=(
                 live_children[task.ordinal].snapshot() if task.ordinal in live_children else None
             ),
+            parent_chars=answer_chars * 2,
         )
         for task in request.tasks
     ]
     compact = build_compact_delegate_settlement(
         execution=schedule.execution,
         task_reports=task_reports,
+        answer_chars=answer_chars,
     )
     rich_report = _rich_report(
         identity=identity,
@@ -335,6 +339,7 @@ def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
     default_steps: int,
     default_runtime_ms: int,
     activity: dict[str, Any] | None = None,
+    parent_chars: int = 0,
 ) -> dict[str, Any]:
     if invocation is None:
         rejected_error = dict(task.error or {}) or {
@@ -383,8 +388,8 @@ def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
                 "retryable": bool(result.error_retryable),
             }
         )
-    answer, stored_answer, answer_truncated = child_answer(
-        result.response_text, summary_chars=1_000
+    answer, stored_answer, answer_truncated, parent_answer = child_answer_texts(
+        result.response_text, summary_chars=1_000, parent_chars=parent_chars
     )
     if not answer and error:
         answer = str(error["message"])
@@ -431,6 +436,10 @@ def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
         "answer_truncated": answer_truncated,
         "transcript": live.get("transcript") or [],
     }
+    if parent_answer and status not in {"failed", "cancelled"}:
+        report["parent_answer"] = parent_answer
+    if result.worktree:  # row 184 W3: where a write task's change is, for monitor and parent.
+        report["worktree"] = dict(result.worktree)
     if live.get("transcript_dropped", 0) > 0:
         report["transcript_dropped"] = live["transcript_dropped"]
     return report

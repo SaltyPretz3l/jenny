@@ -10,6 +10,8 @@ const { contextCalibrationSendField } = require('./session-context-usage');
 const { isPrimaryChatTurn, primaryChatRoleFields } = require('./chat-send-optional-fields');
 const { withDirectoryToolGate } = require('./session-directory-tool-gate');
 const { withPrimarySettingsToolGate } = require('./primary-settings-tool-gate');
+const { withRunViewToolGate } = require('./run-view-tool-gate');
+const { withComputerToolGate } = require('./computer-use-tool-gate');
 const { composeProfileOverviewContextBlock } = require('./profile-overview-block');
 
 const unavailable = (reason) => ({ status: 'unavailable', reason });
@@ -67,9 +69,9 @@ async function runPreview(service, sessionId, session) {
       run_mode: session.run_mode || 'ask', session_start_date: session.session_start_date || null,
       preferred_model: session.preferred_model || null,
       ...contextCalibrationSendField(session), ...primaryChatRoleFields(service, session),
-      // Mirrors the turn's session-directory and settings tool gates so the ring does not count schemas the turn hides.
-      tool_preferences: withPrimarySettingsToolGate(service, { sessionId, session }, withDirectoryToolGate(service, { sessionId, session },
-        { disabled_tools: resolveSessionToolDenyList(session, service.currentStatus?.tools_status) })),
+      // Mirrors the turn's session-directory, settings and run-view tool gates so the ring does not count schemas the turn hides.
+      tool_preferences: withComputerToolGate(service, withRunViewToolGate(service, { sessionId, session }, withPrimarySettingsToolGate(service, { sessionId, session },
+        withDirectoryToolGate(service, { sessionId, session }, { disabled_tools: resolveSessionToolDenyList(session, service.currentStatus?.tools_status) })))),
     };
     if (Buffer.byteLength(JSON.stringify(params), 'utf8') > 8 * 1024 * 1024) return unavailable('preview_too_large');
     const result = await service.sidecarClient.request('context.preview', params, { timeoutMs: 5000 });

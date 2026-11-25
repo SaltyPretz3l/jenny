@@ -339,7 +339,7 @@ test('presence pushes that are malformed, too many, for someone else or for anot
   K.pushPresence(m, { viewers: [DOT, MAYA], cursors: [{ member_id: MAYA }, null, 7, 'x', { x: 1, y: 1 }, { member_id: 5, x: 1, y: 1 }, { member_id: {}, x: 1, y: 1 }], locks: [] });
   assert.equal(cursors(m).length, 0);
   K.pushPresence(m, { viewers: [DOT, MAYA], cursors: [{ member_id: MAYA, x: 30, y: 40, selected: [] }], locks: [] });
-  assert.deepEqual(cursors(m).map((el) => [el.textContent, el.style.left]), [['Maya', '30px']], 'a valid push after the bad ones draws');
+  assert.deepEqual(cursors(m).map((el) => [el.textContent, el.style.transform]), [['Maya', 'translate(30px, 40px) scale(1)']], 'a valid push after the bad ones draws');
   // 10,000 pointers and viewers: at most the team's eight members, no id as a name, this member never.
   const many = Array.from({ length: 10000 }, (_x, i) => ({ member_id: i === 5000 ? DOT : `member_zz${i}`, x: i % 500, y: 3, selected: [] }));
   K.pushPresence(m, { viewers: [DOT, ...many.map((c) => c.member_id)], cursors: [...many, ...Array.from({ length: 7 }, (_x, i) => ({ member_id: `member_p${i}`, x: 1, y: 1, selected: [] }))], locks: [] });

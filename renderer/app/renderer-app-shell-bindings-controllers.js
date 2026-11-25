@@ -26,7 +26,6 @@
       appendClientLog,
       dismissToast,
       escapeHtml,
-      finishSidebarResize,
       getCurrentRuntimePreferences,
       getIdeCommandItems: getIdeCommandItemsCb = () => [],
       ensureLogRowMounted = () => false,
@@ -34,9 +33,6 @@
       handleLinkedSessionPopover = () => {},
       handleRenameSession,
       handleStopActiveStream = async () => null,
-      handleSidebarResizeKeydown,
-      handleSidebarResizeMove,
-      handleSidebarResizeStart,
       handleWorkspaceShortcut,
       isSendPreflightPending,
       loadSessions,
@@ -51,10 +47,8 @@
       resetAttachmentQueue,
       resetPhasePercentiles,
       resetLogsViewState,
-      resetSidebarWidth,
       scrollLogsToBottom,
       setActiveView,
-      setSidebarCollapsed,
       setRovingChatSession,
       showSessionActionError,
       showToastMessage,
@@ -135,7 +129,6 @@
             if (popover && detail?.getCurrent?.()?.surface === surface) return true;
             return detail?.open?.({ surface, ownerSessionId: sessionId }) === true;
           },
-          setSidebarCollapsed: (collapsed) => { setSidebarCollapsed(collapsed); return true; },
           close: (pane) => (pane === 'chat_panel' ? (root.rendererChatWorkspaceDetail?.close?.(), true) : more.close?.(pane) === true),
           readLayout: () => ({ ...(more.readLayout?.() || {}), active_view: state.ui?.activeView || 'other', current_session_id: state.currentSessionId || null,
             chat_panel_open: Boolean(root.rendererChatWorkspaceDetail?.getCurrent?.()), terminal_open: isShown(windowRef.document?.getElementById?.('wbView-terminal')) }),
@@ -243,7 +236,6 @@
       dom: {
         searchInput: dom.searchInput,
         chatsOverflowButton: ctx.documentRef.getElementById('chatsOverflowButton'),
-        sidebarResizer: dom.sidebarResizer,
         conversationGroups: dom.conversationGroups,
         sessionActionButton: dom.sessionActionButton,
         localProfileSettingsMount: dom.localProfileSettingsMount,
@@ -256,12 +248,7 @@
       },
       callbacks: {
         renderSessions,
-        resetSidebarWidth,
         setRovingChatSession,
-        handleSidebarResizeStart,
-        handleSidebarResizeMove,
-        finishSidebarResize,
-        handleSidebarResizeKeydown,
         renderAll,
         showToastMessage,
         appendClientLog: (...a) => appendClientLog(...a),
@@ -324,11 +311,8 @@
         insertSlashCommand: (prompt) => chatShellController?.insertSlashCommand?.(prompt) || false,
         clickNewChat: () => { try { dom.newChatButton?.click?.(); } catch (_err) { /* noop */ } },
         focusConversationSearch: () => { try { dom.searchInput?.focus?.(); } catch (_err) { /* noop */ } },
-        toggleSidebarCollapsed: () => {
-          try {
-            root.rendererTopNavShellController?.togglePanelForActiveView?.();
-          } catch (_err) { /* noop */ }
-        },
+        // The palette's "Toggle sidebar" folds or reopens Chat's Chats stack, as Ctrl+B does there (row 190).
+        toggleSidebarCollapsed: () => state?.ui?.activeView === 'chat' && root.rendererChatWorkbenchController?.toggle?.('chats') === true,
         appendClientLog: (...a) => appendClientLog(...a),
         showToastMessage: (...a) => showToastMessage(...a),
         escapeHtml,
@@ -429,9 +413,9 @@
       });
     }
 
-    // App-level shortcuts (nav overhaul W10): Ctrl+1-6 views, Ctrl+N new chat,
-    // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle,
-    // Ctrl+Alt+W Wide transcript, Ctrl+\ close the side panel or the Session rail.
+    // App-level shortcuts (nav overhaul W10): Ctrl+1-7 views, Ctrl+N new chat,
+    // Ctrl+B panel toggle (the Boards list on the Board), Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle,
+    // Ctrl+Alt+W Wide transcript, Ctrl+\ fold the Chat right stack.
     const globalShortcutsController = (root.rendererGlobalShortcuts || {}).createGlobalShortcutsController?.({
       windowRef,
       // The startup curtain owns the keyboard until it is removed, like a modal.
@@ -443,21 +427,14 @@
       callbacks: {
         setActiveView: (...a) => setActiveView(...a),
         newChat: () => { try { dom.newChatButton?.click?.(); } catch (_err) { /* noop */ } },
-        // In the Workspace, Ctrl+B toggles the side that holds Files (row 40 W3).
+        // Ctrl+B: the Workspace's Files side (row 40 W3), Chat's Chats stack (row 190), or the Board's Boards list.
         togglePanel: () => (state?.ui?.activeView === 'ide' && root.rendererIdeWorkbenchWiring?.getActive?.()?.togglePrimarySide?.() === true)
-          || root.rendererTopNavShellController?.togglePanelForActiveView?.() === true,
+          || (state?.ui?.activeView === 'chat' && root.rendererChatWorkbenchController?.toggle?.('chats') === true)
+          || (state?.ui?.activeView === 'board' && root.rendererBoardPage?.toggleBoardsList?.() === true),
         togglePaneSplit: () => root.rendererAppPaneComposition?.getPaneComposition?.()?.toggleSplit?.() === true,
         toggleChatWidth: () => chatWidthToggle?.toggle('shortcut'),
-        // Row 115, Ctrl+\: close the open side panel through its own Close control (artifact, Changes, Tasks,
-        // Notes and browser share one panel; Activity has its own), else hide the focused pane's docked Session rail.
-        closeFocusedPanel: () => {
-          if (state?.ui?.activeView !== 'chat') return false;
-          const doc = ctx.documentRef;
-          const close = doc.querySelector('.chat-view.artifact-review-mode #artifactReviewCollapseButton')
-            || doc.querySelector('.chat-context-panel.activity-mode:not(.collapsed) [data-activity-action="close"]');
-          if (close) { close.click(); return true; }
-          return root.rendererSessionRail?.hideFocusedRail?.(doc) === true;
-        },
+        // Ctrl+\: the Chat workbench folds and reopens its right stack (row 190).
+        closeFocusedPanel: () => state?.ui?.activeView === 'chat' && root.rendererChatWorkbenchController?.toggle?.('right') === true,
         appendClientLog: (...a) => appendClientLog(...a),
         openCapture: () => {
           // Respect the per-user opt-out (Settings ▸ Home ▸ Quick-capture

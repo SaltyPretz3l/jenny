@@ -72,7 +72,6 @@
       onSelectSession: callable(source.onSelectSession, noop),
       getRoot: callable(source.getRoot, () => null), // the page's workbench element: the focus fallback looks inside it
       preferredProjectId: callable(source.preferredProjectId, () => ''), // its chats lead the session picker
-      revealSecondChanges: callable(source.revealSecondChanges, null),
       changesView: source.changesView || null,
       changesTabs: null,
     };
@@ -94,7 +93,6 @@
       layout: deps?.layoutIdeEditor, // Monaco relayout after the grid gains/loses the dock column
       focusEditor: deps?.focusEditor,
       onSelectSession: deps?.onSelectSession,
-      revealSecondChanges: deps?.revealSecondChanges,
       changesView: deps?.changesView,
     };
   }
@@ -123,6 +121,7 @@
         getHeader: () => getDom().ideChatDockHeader || null,
         onSelectSession: (sessionId) => (activeHost() || hosts[0])?.onSelectSession(sessionId),
         getPreferredProjectId: () => activeHost()?.preferredProjectId() || '',
+        getFooterHtml: () => newChatMarkup(),
         showShellErrorToast,
         appendClientLog,
       })
@@ -174,7 +173,7 @@
         chatThreadScroll: doc.getElementById('chatThreadScroll'),
         chatTimeline: doc.getElementById('chatTimeline'),
         composerWrap: doc.getElementById('composerWrap'),
-        artifactReviewResizer: doc.getElementById('artifactReviewResizer'),
+        artifactReviewPanel: doc.getElementById('artifactReviewPanel'),
         chatInput: doc.getElementById('chatInput'),
         ideEditorHost: doc.getElementById('ideEditorHost'),
       };
@@ -190,14 +189,14 @@
     // ---- The idempotent host reconcile -------------------------------------
     // Desired host from the active page + its flag + open only (NOT session id): the
     // dock body while a host page is active and its chat stack is open, else #chatView
-    // (restored via insertBefore the artifact-review resizer, the node that
-    // directly follows the moved pair in the static markup).
+    // (restored via insertBefore the side panel, the node that directly follows
+    // the moved pair in the static markup).
 
     // The remembered pane root; else the pane root the nodes still sit in (never
     // docked: nothing to move); else the focused pane's root; else #chatView.
     function resolveRestoreHost(nodes, dockBody, movable) {
       if (restoreHost && restoreHost.isConnected && restoreHost !== dockBody) return restoreHost;
-      const chatView = nodes.chatView || nodes.artifactReviewResizer?.parentNode || null;
+      const chatView = nodes.chatView || null;
       const home = movable[0]?.parentNode || null;
       if (home && home !== dockBody && home.parentNode === chatView && home.classList?.contains?.('chat-pane')) return home;
       return chatView?.querySelector?.(':scope > .chat-pane[data-pane-focused="true"]') || chatView;
@@ -308,11 +307,11 @@
       }
       const host = resolveRestoreHost(nodes, dockBody, movable);
       // A pane root keeps its fixed order (thread stage before the utility
-      // cluster, composer last); #chatView itself keeps the artifact anchor.
+      // cluster, composer last); #chatView itself keeps the side-panel anchor.
       const paneRoot = host?.classList?.contains?.('chat-pane') === true;
       const anchor = paneRoot
         ? host.querySelector(':scope > [data-chat-node="chatTimelineUtilityCluster"]')
-        : nodes.artifactReviewResizer || null;
+        : nodes.artifactReviewPanel || null;
       if (!host) {
         return false;
       }
@@ -347,22 +346,36 @@
       return true;
     }
 
-    // ---- Featherweight header + session picker -----------------------------
-    function buildHeaderMarkup() {
-      if (typeof actionButton !== 'function') {
-        return '';
-      }
-      const sessionControl = sessionPicker?.buildMarkup()
-        || '<span class="ide-chat-dock-label">' + (actionButton.escapeHtml || String)(jt('ide.chatDock.sameSession', 'Jenny · same session as Chat')) + '</span>';
-      const newChat = actionButton({
+    // ---- Header + session picker (row 190 Wave 4: the header row is gone; the Chat tab names the chat and
+    // opens the picker, and New chat is the picker's last row) ----------------------------------------------
+    function newChatMarkup() {
+      if (typeof actionButton !== 'function') return '';
+      const label = jt('ide.chatDock.newChat', 'New chat');
+      return actionButton({
         plain: true,
-        className: 'ide-chat-dock-action ide-chat-dock-new-chat',
-        ariaLabel: jt('ide.chatDock.newChat', 'New chat'),
-        title: jt('ide.chatDock.newChat', 'New chat'),
+        className: 'ide-chat-dock-session-new',
+        ariaLabel: label,
+        title: label,
         dataset: { 'ide-chatdock-new-chat': '1' },
-        trustedHtml: PLUS_GLYPH,
+        trustedHtml: PLUS_GLYPH + `<span>${(actionButton.escapeHtml || String)(label)}</span>`,
       });
-      return sessionControl + `<div class="ide-chat-dock-header-actions">${newChat}</div>`;
+    }
+
+    function buildHeaderMarkup() {
+      if (typeof actionButton !== 'function') return '';
+      return sessionPicker?.buildMarkup()
+        || '<span class="ide-chat-dock-label">' + (actionButton.escapeHtml || String)(jt('ide.chatDock.sameSession', 'Jenny · same session as Chat')) + '</span>';
+    }
+
+    // The page's Chat tab: the chat's title while that tab is the one shown, else "Chat".
+    function chatTabLabel(shown) {
+      return shown && sessionPicker ? sessionPicker.title() : jt('ide.workbench.view.chat', 'Chat');
+    }
+
+    // A click on the shown Chat tab opens (or closes) the picker, with that tab as its opener.
+    function openSwitcher(tab) {
+      renderHeader();
+      sessionPicker?.toggle(tab || null);
     }
 
     function renderHeader() {
@@ -443,11 +456,9 @@
     }
 
     // Only while the chat is docked: otherwise the side panel shows the review.
-    // A review asked for from Chat 2 (the Workspace's second chat) opens its own Changes 2.
     function revealChanges(target) {
       const host = activeHost() || hosts[0] || null;
       if (!host) return false;
-      if (target?.secondChat === true) return host.revealSecondChanges?.(target) === true;
       return host.changesTabs && host.isActive() && hostIsOpen(host) ? host.changesTabs.reveal(target) : false;
     }
 
@@ -458,6 +469,7 @@
         return;
       }
       if (target.closest('[data-ide-chatdock-new-chat]')) {
+        sessionPicker?.close(false);
         onNewChat();
       }
     }
@@ -492,6 +504,8 @@
       render,
       registerHost,
       revealChanges,
+      chatTabLabel,
+      openSwitcher,
       hostCount: () => hosts.length,
     };
   }
@@ -520,6 +534,8 @@
       render: core.render,
       registerHost: core.registerHost,
       revealChanges: core.revealChanges,
+      chatTabLabel: core.chatTabLabel,
+      openSwitcher: core.openSwitcher,
       close: page.close,
       open: page.open,
       toggle: page.toggle,

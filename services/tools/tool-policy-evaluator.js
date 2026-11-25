@@ -44,6 +44,11 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   session_message: 'auto',
   // Consent is asked inside the tool, so per-call policy stays out of the way.
   browser: 'auto',
+  // Row 196: the same for the computer tool; its program grants, opens and file dialogs ask inside it.
+  computer: 'auto',
+  // Row 197 D5 A / D6 A: the Live tab's tools run only the owner's confirmed command and take a picture; no card.
+  run_view_look: 'auto',
+  run_view_restart: 'auto',
   exit_plan_mode: 'ask',
   // Draws a card under the reply and nothing else; the user's click is an ordinary chat message.
   suggest_next_step: 'auto',

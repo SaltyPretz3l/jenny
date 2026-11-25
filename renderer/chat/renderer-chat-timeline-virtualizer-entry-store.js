@@ -33,7 +33,6 @@
     var options = deps || {};
     var chatTimeline = options.chatTimeline || null;
     var doc = options.document || (typeof document !== 'undefined' ? document : null);
-    var boundsEnabled = options.boundsEnabled !== false;
     var budgets = options.budgets || {};
     var stringCap = Math.max(1, Number(budgets.virtualizedMarkupEntries) || 160);
     var requestEntryMarkup = typeof options.requestEntryMarkup === 'function'
@@ -138,7 +137,6 @@
     }
 
     function admitString(entryEl, stash) {
-      if (!boundsEnabled) return;
       stringCache.delete(entryEl);
       stringCache.set(entryEl, stash);
       while (stringCache.size > stringCap) {

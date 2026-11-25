@@ -340,6 +340,8 @@ const ANSWERS = Object.freeze({
   'questions.answer': { revision },
   'questions.decline': { revision },
   // Row 175 item 6, F13, F18 (server/command-router-redo.js): ids only.
+  // The host's `control_generation` is dropped: the client's `take` after a redo re-acquires that same seat as a
+  // heartbeat (server/control-leases.js), and a lease generation never reaches the renderer.
   'team.project.regenerate': { session_id: sessionId, stream_id: optional(wordId), revision },
   'team.project.edit_resend': { session_id: sessionId, stream_id: optional(wordId), revision },
   'team.project.branch': { session_id: sessionId, revision },
@@ -415,15 +417,17 @@ function checkedProjectChange(payload) {
 
 // What the project list counts (fix 13): only the fields a count needs, read without copying the stream event's
 // body. A chat_stream of any other kind answers null before anything is copied. Answers
-// { session_id, kind, approval_id? } or null.
-const COUNTED_STREAM = new Set(['started', 'complete', 'error', 'cancelled', 'canceled', 'failed', 'tool_approval_needed']);
+// { session_id, kind, approval_id? } or null. A `tool_use` counts only as the end of an approval that timed out (it
+// carries no decision_changed), so its count leaves with it; any other `tool_use` answers null.
+const COUNTED_STREAM = new Set(['started', 'complete', 'error', 'cancelled', 'canceled', 'failed', 'tool_approval_needed', 'tool_use']);
 const APPROVAL_ID = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 512 && !CONTROL.test(value);
 function countedEvent(type, payload) {
   if (!isPlainObject(payload) || !isSessionId(payload.session_id)) return null;
   if (type === 'chat_stream') {
     const kind = isPlainObject(payload.event) ? payload.event.type : null;
     if (typeof kind !== 'string' || !COUNTED_STREAM.has(kind)) return null;
-    if (kind !== 'tool_approval_needed') return { session_id: payload.session_id, kind };
+    if (kind === 'tool_use' && payload.event.status !== 'timeout') return null;
+    if (kind !== 'tool_approval_needed' && kind !== 'tool_use') return { session_id: payload.session_id, kind };
     return APPROVAL_ID(payload.event.approval_id) ? { session_id: payload.session_id, kind, approval_id: payload.event.approval_id } : null;
   }
   if (type === 'approval_unattended' || type === 'decision_changed') {

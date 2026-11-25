@@ -370,3 +370,13 @@ test('model library source skips the advisory llama-server reads unless asked', 
   assert.equal('llamaServer' in result.unavailable, false);
   assert.equal(result.installed.length, 1);
 });
+
+test('model library source keeps the team fields of a team model row', async () => {
+  const { source } = sourceHarness({ models: { async list() {
+    return { data: [{ id: 'team/team_alpha1/qwen3:70b', engine_type: 'openai-compatible', team_id: 'team_alpha1', team_name: 'Alpha crew', context_length: 32768 },
+      { id: 'plain:1b', engine_type: 'ollama' }] };
+  } } });
+  const result = await source.load();
+  assert.deepEqual(result.installed.map((row) => [row.id, row.team_id, row.team_name, row.context_length]),
+    [['team/team_alpha1/qwen3:70b', 'team_alpha1', 'Alpha crew', 32768], ['plain:1b', undefined, undefined, undefined]]);
+});

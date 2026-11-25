@@ -19,7 +19,7 @@
     || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, (m, n) => (Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m)) : d; };
 
   // Changes is not bound on its own: it follows its chat.
-  const CHAT_OF = { changes: 'chat', 'changes-2': 'chat-2' };
+  const CHAT_OF = { changes: 'chat' };
 
   /**
    * @param {object} deps
@@ -66,9 +66,9 @@
       return group === null ? undefined : group;
     }
 
-    // Pane 0 is the Workspace's Chat, pane 1 its Chat 2.
-    function chatTarget(pane) {
-      return targetOf(Number(pane) === 1 ? 'chat-2' : 'chat');
+    // The Workspace has one chat dock: both panes' diffs go to its bound group.
+    function chatTarget() {
+      return targetOf('chat');
     }
 
     // Diff `id` a bound chat opens (Changes, the transcript's diff row, a suggestion) moves into
@@ -76,14 +76,14 @@
     // tab that was already open stays where it is. The group is the one bound when the open
     // started, and only if it is still bound when the open lands.
     function openDiffFrom(pane, open, id) {
-      const group = pane === 0 || pane === 1 ? chatTarget(pane) : undefined;
+      const group = pane === 0 || pane === 1 ? chatTarget() : undefined;
       const isOpen = (ide, path) => (ide.openTabs || []).some((tab) => tab.path === path);
       const had = isOpen(d.getIde(), id);
       const before = String(d.getIde().activeTabPath || '');
       return Promise.resolve(open()).then((ok) => {
         const ide = d.getIde();
         const groups = d.getEditorGroups?.();
-        if (ok !== true || !group || !id || had || !isOpen(ide, id) || groupsUtils.groupOf(ide, id) !== '' || chatTarget(pane) !== group) return ok;
+        if (ok !== true || !group || !id || had || !isOpen(ide, id) || groupsUtils.groupOf(ide, id) !== '' || chatTarget() !== group) return ok;
         const wasActive = ide.activeTabPath === id;
         if (!groups?.moveToGroup?.(id, group)) return ok;
         const stillPrimary = isOpen(ide, before) && groupsUtils.groupOf(ide, before) === '';

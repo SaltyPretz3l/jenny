@@ -6,10 +6,21 @@
 const { JSDOM } = require('jsdom');
 
 const actionButton = require('../../renderer/inventory/action-button.js');
-const { mountSessionRail } = require('../../renderer/chat/renderer-session-rail.js');
+const rails = require('../../renderer/chat/renderer-session-rail.js');
+
+const { mountSessionRail } = rails;
 
 const flush = async (rounds = 6) => { for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/* The Chat workbench's Session view, as far as the rail can tell: every pane's rail is hosted in one element of
+   its document. Importing this fixture installs it; a test that needs another host calls rails.configure itself
+   and puts this one back afterwards. */
+function hostInDocument(pane) {
+  const doc = pane.ownerDocument;
+  return doc.getElementById('railHost') || doc.body.appendChild(Object.assign(doc.createElement('div'), { id: 'railHost' }));
+}
+rails.configure({ getHost: hostInDocument });
 
 function deferred() {
   let resolve;
@@ -68,7 +79,7 @@ function createBridge({ respond } = {}) {
   return bridge;
 }
 
-function createFixture({ width = 1133, sessionId = 'sess_a', bridge = createBridge(), bridgeMissing = false, paneAttrs = '', performance = null, mountOptions = {} } = {}) {
+function createFixture({ sessionId = 'sess_a', bridge = createBridge(), bridgeMissing = false, paneAttrs = '', performance = null, mountOptions = {} } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <div class="chat-view" id="chatView" data-pane-count="1">
       <div class="chat-pane" id="chatPane0" data-pane-id="0" ${paneAttrs}>
@@ -80,22 +91,14 @@ function createFixture({ width = 1133, sessionId = 'sess_a', bridge = createBrid
     </div></body>`, { pretendToBeVisual: true, url: 'http://localhost/' });
   const { window } = dom;
   window.inventoryActionButton = actionButton;
-  const resizeObservers = [];
-  window.ResizeObserver = class FakeResizeObserver {
-    constructor(callback) { this.callback = callback; this.disconnected = false; resizeObservers.push(this); }
-    observe() {}
-    disconnect() { this.disconnected = true; }
-  };
-  const state = { width, sessionId };
+  const state = { sessionId };
   const detail = { calls: [], open(request) { detail.calls.push(request); } };
   const pane = window.document.getElementById('chatPane0');
   const controller = new window.AbortController();
   const api = mountSessionRail({
     pane,
-    cluster: window.document.getElementById('cluster'),
     chatTimeline: window.document.getElementById('timeline'),
     getSessionId: () => state.sessionId,
-    getPaneWidth: () => state.width,
     bridge: bridgeMissing ? null : bridge,
     performance,
     detail,
@@ -105,18 +108,15 @@ function createFixture({ width = 1133, sessionId = 'sess_a', bridge = createBrid
   });
   const doc = window.document;
   return {
-    dom, window, doc, state, bridge, detail, pane, api, controller, resizeObservers,
+    dom, window, doc, state, bridge, detail, pane, api, controller,
     chatView: doc.getElementById('chatView'),
     context: doc.getElementById('chatContextPanel'),
-    toggle: () => doc.querySelector('[data-session-rail-toggle]'),
     rail: () => doc.querySelector('[data-session-rail-root]'),
-    sheet: () => doc.querySelector('[data-session-rail-sheet]'),
     head: (key) => doc.querySelector(`[data-rail-section="${key}"]`),
     section: (key) => doc.querySelector(`[data-section="${key}"]`),
     text: (key) => doc.querySelector(`[data-section="${key}"]`).textContent.replace(/\s+/g, ' ').trim(),
     value: (key) => doc.querySelector(`[data-section="${key}"] [data-rail-value]`).textContent.trim(),
     changeSession(next) { state.sessionId = next; window.dispatchEvent(new window.CustomEvent('jenny:focused-chat-changed')); },
-    async resize(next) { state.width = next; api.evaluateDock(); await flush(); },
   };
 }
 
@@ -126,4 +126,4 @@ async function docked(options) {
   return f;
 }
 
-module.exports = { flush, sleep, deferred, wrapper, summaryFor, createBridge, createFixture, docked };
+module.exports = { hostInDocument, flush, sleep, deferred, wrapper, summaryFor, createBridge, createFixture, docked };

@@ -84,4 +84,28 @@ test('engineLabel names NInfer for the openai-compatible engine only when the sn
   assert.equal(engineLabel('openai-compatible', llama, 'ninfer'), 'NInfer');
   assert.equal(engineLabel('openai-compatible', ninfer, 'llama-server'), 'llama-server');
   assert.equal(engineLabel('openai-compatible', ninfer, 'vllm'), 'NInfer', 'an unknown stamp falls back to the snapshot');
+  // Row 200: a Strata stamp or snapshot is named Strata.
+  assert.equal(engineLabel('openai-compatible', llama, 'strata'), 'Strata');
+  assert.equal(engineLabel('openai-compatible', { runtime: { managed_server: { kind: 'strata', state: 'ready' } } }), 'Strata');
+});
+
+test('row 197 R3b: a failure the Live tab caused names the program and offers to stop it before a retry', () => {
+  const live = { ...OOM, engine: 'openai-compatible', live_run: { project_id: 'proj-1', program: 'game.exe' } };
+  const read = readModelLoadFailure(backend(live));
+  assert.deepEqual(read.liveRun, { projectId: 'proj-1', program: 'game.exe' });
+  assert.equal(Object.hasOwn(read, 'live_run'), false);
+  assert.equal(causePhrase(read), 'game.exe from the Live tab is using the GPU');
+  assert.equal(causeSentence(read), 'game.exe, started from the Live tab, is using the GPU memory this model needs.');
+  // A smaller context does not help when another program holds the card, whatever the cause.
+  for (const cause of ['out_of_memory', 'other', 'timeout', 'engine_unreachable']) {
+    assert.deepEqual(recoveryActions({ ...read, cause }), ['stopLiveRun', 'retry'], cause);
+  }
+  assert.match(failureDetails(read), /^model: qwen3:8b\nengine: openai-compatible\ncause: out_of_memory\n/);
+  assert.match(failureDetails(read), /\nlive_run: game\.exe$/);
+  // A malformed record reads as an ordinary failure.
+  for (const live_run of [null, 'x', {}, { project_id: 'p' }, { program: 'a' }, { project_id: 7, program: 'a' }]) {
+    const plain = readModelLoadFailure(backend({ ...OOM, live_run }));
+    assert.equal(Object.hasOwn(plain, 'liveRun'), false, JSON.stringify(live_run));
+    assert.deepEqual(recoveryActions(plain), ['loadSmaller', 'showFits']);
+  }
 });

@@ -248,12 +248,12 @@ test('applyPrimaryChatPatch merges shallowly then normalizes', () => {
 test('normalizeState carries the block and serializeState round-trips a permission', () => {
   assert.deepEqual(normalizeState({}).primaryChat, DEFAULT_PRIMARY_CHAT);
   assert.equal(normalizeState({}).version, CONFIG_VERSION);
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
   const state = normalizeState({ primaryChat: { pausedAt: AT(9), launchPermissions: [permission(1, { run_modes: ['plan'] })] } });
   assert.equal(state.primaryChat.launchPermissions.length, 1);
   const serialized = serializeState(state);
   assert.deepEqual(serialized.primaryChat, state.primaryChat);
-  assert.equal(serialized.version, 59);
+  assert.equal(serialized.version, 60);
   assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(serialized))).primaryChat, state.primaryChat);
 });
 

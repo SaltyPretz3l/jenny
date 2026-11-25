@@ -16,6 +16,10 @@
     "content": "## Diagrams\nTo show a diagram, put Mermaid code in a fenced code block tagged mermaid in your reply; the chat draws it as a chart."
   },
   {
+    "heading": "## Mockups",
+    "content": "## Mockups\nTo show what a screen, panel or other interface would look like, write one self-contained HTML page in a fenced code block tagged mockup in your reply; the chat shows it live. Put all CSS, SVG and script inline: the page cannot load files, fonts or anything from the network. Draw the real layout, colours and sizes, never text art. Use the real labels, keys, prices and wording: read them from the code first rather than inventing them. A mockup is part of your reply, not a file, so it works in Plan Mode too."
+  },
+  {
     "heading": "## Executable Tools",
     "content": "## Executable Tools\nThis is the current capability digest for this request. If the user asks what tools or capabilities are available, answer from this block; do not call diagnostic or harness-inspection tools to inventory capabilities.\nSkills are guidance only. Only tools listed as available in this block may be called.\nTool names in this block are Jenny tool IDs, not shell commands. Do not use `run_command` with `which`, `where`, or `Get-Command` to check a listed tool; call the listed tool directly when needed.\nAvailable now:\n- `read_file`: Read files.\nAny tool not listed as available in this block is unavailable for this request."
   },

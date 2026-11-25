@@ -276,6 +276,17 @@ test('a bridge call that never answers fails after 10 s; starting, stopping and 
   assert.deepEqual(seen.join, FAILED);
 });
 
+// Row 201 (H7): turning project files on restarts a running host, which can take its 120 s start limit.
+test('hostFileTools waits past a host restart: it is a long call, not a 10 s read', async (t) => {
+  const { h, tick } = timed(t, { answers: { hostFileTools: () => new Promise(() => {}) } });
+  const seen = {};
+  void h.store.call('hostFileTools', { on: true }).then((answer) => { seen.files = answer; });
+  await tick(60_000);
+  assert.equal(seen.files, undefined, 'still waiting after the 10 s and 60 s bounds');
+  await tick(120_000);
+  assert.deepEqual(seen.files, FAILED, 'and it ends at its own long bound');
+});
+
 test('timer: every 20 s while the Team view shows the owned team hosted here; no other roster is polled', async (t) => {
   const { h, tick } = timed(t, { host: hostState(), teams: [snapshot(), memberTeam()] });
   h.showTab();

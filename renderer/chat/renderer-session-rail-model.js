@@ -1,23 +1,21 @@
 /* renderer/chat/renderer-session-rail-model.js - the session rail's pure model (UMD).
 
-   Row 59 checkpoint 2 (chat workspace parity spec, "Session rail" and the PO decision
-   table). No DOM, no I/O: given the C2 summary (`chatWorkspace.getSummary`) and the persisted
-   workspace view it returns the five section view models the renderer paints, with the PO's
-   words, disclosure defaults and data-state rules:
+   Row 195 (side panels). No DOM, no I/O: given the C2 summary (`chatWorkspace.getSummary`), the persisted
+   workspace view and the injected run and checklist readers it returns the section view models the renderer
+   paints. At most four sections, in this order:
 
-   - Sections in order Environment, Context, Outputs, Changes, Background tasks, then Servers (row 176:
-     the chat's browser page and its run_command jobs that serve on a loopback port; left out until
-     one is up or has been, and a serving job is listed there, not under Background tasks).
-   - Checking, unavailable and stale are muted words, never zero. Unknown is never 0.
-   - A summary that belongs to another session is never shown (it reads as checking).
-   - Disclosure defaults apply only where the persisted disclosure is null: Environment open;
-     Outputs when it has items; Background tasks when anything is active; Context and Changes
-     closed. Inside Background tasks, finished work sits under a "finished" divider that is its
-     own disclosure (background_tasks_finished, open by default).
-   - Docking: docked at >= 920px of pane, or >= 640px while a side panel is open or moving and
-     the rail was already docked (a rail that was not docked does not dock when a panel opens).
+   - This chat          project and run mode, folder, branch (the summary's environment).
+   - Context            "{n}% full", then Used, one plain line and the way into Context details.
+   - Running now        present only while something runs. Its rows come from the injected getRunningRows (the
+                        Runs tab's own list); with none injected they are built from the summary's running items.
+   - Jenny's checklist  present only when getChecklist returns steps.
 
-   Copy goes through jt('chat.sessionRail.*', 'English default'). */
+   Checking, unavailable and stale are muted words, never zero. Unknown is never 0. A summary that belongs to
+   another session is never shown (it reads as checking). Disclosure defaults apply only where the persisted
+   disclosure is null; a section's persisted key is the service's own (PERSIST_KEY) and the checklist has none,
+   so its fold lasts for the pane only.
+
+   Copy goes through jt('sessionRail.*' | 'chat.sessionRail.*', 'English default'). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-context-preview'));
@@ -27,16 +25,17 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (contextPreview) {
   'use strict';
 
-  const SECTION_KEYS = Object.freeze(['environment', 'context', 'outputs', 'changes', 'background_tasks', 'servers']);
-  const RAIL_WIDTH_PX = 280;
-  const DOCK_MIN_WIDTH_PX = 920;
-  const DOCK_MIN_WIDTH_WITH_PANEL_PX = 640;
+  const SECTION_KEYS = Object.freeze(['this_chat', 'context', 'running_now', 'checklist']);
+  const SUMMARY_KEYS = Object.freeze(['environment', 'context', 'background_tasks']); // the summary sections this rail reads
+  const SUMMARY_FIELD = Object.freeze({ this_chat: 'environment', context: 'context' });
+  // The key the service persists a section's disclosure under (services/backend/session-coordination-records.js).
+  const PERSIST_KEY = Object.freeze({ this_chat: 'environment', context: 'context', running_now: 'background_tasks' });
+  const DISCLOSURE_KEYS = SECTION_KEYS;
   const CONTEXT_WARN_RATIO = 0.8;
-  const MAX_BACKGROUND_ROWS = 5;
-  const MAX_FINISHED_ROWS = 20;
-  const FINISHED_DISCLOSURE = 'background_tasks_finished';
-  const MAX_SERVER_CHATS = 64;
-  const DISCLOSURE_KEYS = Object.freeze([...SECTION_KEYS, FINISHED_DISCLOSURE]);
+  const MAX_RUNNING_ROWS = 8;
+  const MAX_CHECKLIST_ROWS = 50;
+  const RUN_KINDS = Object.freeze(['server', 'command', 'helper', 'linked', 'test', 'live']);
+  const CHECKLIST_STATES = Object.freeze(['done', 'now', 'todo']);
 
   function fallbackJt(key, fallback, params) {
     return params
@@ -61,26 +60,6 @@
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  /* ── Docking ─────────────────────────────────────────────────────────── */
-
-  /* The responsive rule, with hysteresis: a pane of at least 920px docks; while a side panel is
-     open or moving a rail that is already docked keeps docking down to 640px (the pane then keeps
-     at least 360px of reading); a rail that was not docked never docks because a panel opened.
-     A pane with no measurable width keeps the previous answer. */
-  function resolveDocked({ paneWidth, panelActive = false, wasDocked = false } = {}) {
-    const width = Number(paneWidth);
-    if (!Number.isFinite(width) || width <= 0) return wasDocked === true;
-    if (width >= DOCK_MIN_WIDTH_PX) return true;
-    return panelActive === true && wasDocked === true && width >= DOCK_MIN_WIDTH_WITH_PANEL_PX;
-  }
-
-  /* docked: the rail shows. hidden: docked-capable but the person hid it (rail_visible false).
-     undocked: the Session toggle opens a sheet instead. `rail_visible: null` means shown. */
-  function resolveRailMode({ docked, railVisible } = {}) {
-    if (docked !== true) return 'undocked';
-    return railVisible === false ? 'hidden' : 'docked';
-  }
-
   /* ── Words ───────────────────────────────────────────────────────────── */
 
   function formatTokens(value) {
@@ -102,8 +81,9 @@
     return contextPreview.formatPercent(used, target);
   }
 
-  function runModeLabel(mode, jt) {
+  function runModeLabel(mode, jt, fullAuto) {
     const token = text(mode).toLowerCase();
+    if (fullAuto === true || token === 'full_auto') return jt('sessionRail.fullAuto', 'Full auto');
     if (!token) return '';
     if (token === 'ask') return jt('composer.runMode.ask', 'Ask');
     if (token === 'auto') return jt('composer.runMode.auto', 'Auto');
@@ -144,154 +124,42 @@
     return jt('chat.sessionRail.state.unknown', 'Unknown');
   }
 
+  /* A live run's state in words (an early end names its exit code); the task phase word when the run state is not one of them. */
+  function liveStateWord(runState, exitCode, phase, jt) {
+    switch (runState) {
+      case 'building': return jt('runs.liveState.building', 'Building');
+      case 'starting': return jt('runs.liveState.starting', 'Starting');
+      case 'no_window': return jt('runs.liveState.no_window', 'No window yet');
+      case 'running': return jt('runs.liveState.running', 'Running');
+      case 'minimized': return jt('runs.liveState.minimized', 'Minimized');
+      case 'stopping': return jt('runs.liveState.stopping', 'Stopping');
+      case 'close_refused': return jt('runs.liveState.close_refused', 'Waiting to close');
+      case 'build_failed': return jt('runs.liveState.build_failed', 'Build failed');
+      case 'ended_early': {
+        const word = jt('runs.liveState.ended_early', 'Ended early');
+        return exitCode == null ? word : `${word} · ${jt('runs.liveExit', 'exit {code}', { code: exitCode })}`;
+      }
+      case 'closed': return jt('runs.liveState.closed', 'Closed');
+      default: return taskPhaseLabel(phase, jt);
+    }
+  }
+
   function taskSourceLabel(kind, jt) {
     const token = text(kind);
     if (token === 'workspace_test') return jt('chat.sessionRail.tasks.sourceWorkspaceTest', 'Workspace tests');
     if (token === 'session_runtime') return jt('chat.sessionRail.tasks.sourceSessionRuntime', 'Session run');
     if (token === 'linked_chat_turn') return jt('chat.sessionRail.tasks.sourceLinkedChat', 'Linked chat');
+    if (token === 'live_run') return jt('chat.sessionRail.tasks.sourceLiveRun', 'Live tab program');
     return jt('chat.sessionRail.tasks.sourceOther', 'Task');
   }
 
   function sectionTitle(key, jt) {
     switch (key) {
-      case 'environment': return jt('chat.sessionRail.section.environment', 'Environment');
+      case 'this_chat': return jt('sessionRail.thisChat', 'This chat');
       case 'context': return jt('chat.sessionRail.section.context', 'Context');
-      case 'outputs': return jt('chat.sessionRail.section.outputs', 'Outputs');
-      case 'changes': return jt('chat.sessionRail.section.changes', 'Changes');
-      case 'servers': return jt('chat.sessionRail.section.servers', 'Servers');
-      default: return jt('chat.sessionRail.section.backgroundTasks', 'Background tasks');
+      case 'checklist': return jt('sessionRail.checklist', "Jenny's checklist");
+      default: return jt('sessionRail.runningNow', 'Running now');
     }
-  }
-
-  /* ── Section builders ────────────────────────────────────────────────── */
-
-  /* Every builder returns { valueText, parts?, dot?, rows, defaultOpen }.
-     `parts` is an alternative to valueText: [{ text, tone: 'add'|'del' }] for the +a -d counts. */
-  function empty(valueText) {
-    return { valueText, parts: null, dot: null, rows: [], defaultOpen: false };
-  }
-
-  function buildEnvironment(data, jt) {
-    const rows = [];
-    const projectName = text(data.project_name) || jt('chat.sessionRail.environment.noProject', 'No project');
-    rows.push({
-      kind: 'action', key: 'project', icon: 'project', surface: 'environment', resourceRef: '',
-      text: projectName, meta: runModeLabel(data.run_mode, jt), title: projectName,
-    });
-    const displayPath = text(data.display_path);
-    if (displayPath) rows.push({ kind: 'fact', key: 'path', icon: 'folder', text: displayPath, meta: '', title: displayPath, pathLike: true });
-    const branch = text(data.branch);
-    if (branch) {
-      const worktree = text(data.worktree_id) ? jt('chat.sessionRail.environment.worktree', 'worktree') : '';
-      rows.push({ kind: 'fact', key: 'branch', icon: 'branch', text: branch, meta: worktree, title: branch });
-    }
-    return { valueText: executionLabel(data.execution_environment, jt), parts: null, dot: null, rows, defaultOpen: true };
-  }
-
-  /* The shared breakdown (window bar, compaction marker, category rows): the composer ring's
-     details popover renders the same markup from the same projection. */
-  function contextBreakdown(data) {
-    return [{ kind: 'breakdown', key: 'breakdown', projection: contextPreview.project(data) }];
-  }
-
-  function buildContext(data, jt) {
-    const used = count(data.used_tokens);
-    const capacity = count(data.capacity_tokens);
-    const available = count(data.available_tokens);
-    const percent = contextPercent(data);
-    const nextSend = data.scope === 'next_send';
-    const projection = contextPreview.project(data);
-    const rows = nextSend ? contextBreakdown(data) : [];
-    let valueText;
-    let dot = null;
-    if (percent !== null) {
-      valueText = percent;
-      if (used / projection.target >= CONTEXT_WARN_RATIO) dot = { tone: 'warn', pulse: false };
-    } else if (used !== null) {
-      valueText = jt('chat.sessionRail.context.tokens', '{count} tokens', { count: formatTokens(used) });
-    } else {
-      valueText = data.status === 'unavailable' ? jt('chat.sessionRail.state.unavailable', 'Unavailable')
-        : data.scope === 'next_send' ? jt('chat.sessionRail.state.checking', 'Checking…') : jt('chat.sessionRail.state.unknown', 'Unknown');
-    }
-    if (used !== null && nextSend) {
-      const line = contextPreview.describeLine(projection);
-      if (line) rows.unshift({ kind: 'note', key: 'used', text: line });
-    } else if (used !== null) {
-      const meta = capacity !== null
-        ? jt('chat.sessionRail.context.usedOf', '{used} of {capacity}', { used: formatTokens(used), capacity: formatTokens(capacity) })
-        : formatTokens(used);
-      rows.unshift({ kind: 'fact', key: 'used', icon: '', text: jt('chat.sessionRail.context.used', 'Used'), meta, title: meta });
-    }
-    if (available !== null && data.scope !== 'next_send') {
-      rows.push({ kind: 'fact', key: 'available', icon: '', text: jt('chat.sessionRail.context.available', 'Available'), meta: formatTokens(available), title: formatTokens(available) });
-    }
-    if (data.measurement === 'estimated' && data.scope !== 'next_send') {
-      rows.push({ kind: 'note', key: 'estimated', text: jt('chat.sessionRail.context.estimated', 'Estimated, not reported by the engine.') });
-    }
-    rows.push({
-      kind: 'note', key: 'scope',
-      text: data.scope === 'next_send'
-        ? jt('chat.sessionRail.context.nextSend', 'Estimated for the next send; retrieval may add context.')
-        : data.scope === 'session'
-        ? jt('chat.sessionRail.context.scopeSession', 'Measured across the session.')
-        : jt('chat.sessionRail.context.scopeRequest', 'Measured on the latest request.'),
-    });
-    rows.push({ kind: 'action', key: 'details', icon: '', surface: 'context', resourceRef: '', text: jt('chat.sessionRail.context.details', 'Context details'), meta: '', title: '' });
-    return { valueText, parts: null, dot, rows, defaultOpen: false };
-  }
-
-  function buildOutputs(data, jt) {
-    const items = Array.isArray(data.items) ? data.items.filter((item) => isObject(item) && text(item.artifact_id)) : [];
-    const total = count(data.total_count);
-    const rows = items.map((item) => {
-      const name = text(item.display_name) || text(item.artifact_id);
-      const unavailable = text(item.availability) && text(item.availability) !== 'available';
-      const kind = text(item.kind);
-      return {
-        kind: 'action', key: `artifact:${text(item.artifact_id)}`, icon: kind === 'code' || kind === 'text' ? 'code' : 'file',
-        surface: 'outputs', resourceRef: text(item.artifact_id), text: name,
-        meta: unavailable ? jt('chat.sessionRail.outputs.unavailable', 'Unavailable') : '',
-        title: kind ? `${name} (${kind})` : name,
-      };
-    });
-    const shown = rows.length;
-    if (total !== null && total > shown) {
-      rows.push({
-        kind: 'action', key: 'more', icon: '', surface: 'outputs', resourceRef: '',
-        text: jt('chat.sessionRail.outputs.more', '{count} more', { count: total - shown }), meta: '', title: '',
-      });
-    }
-    if (!rows.length) rows.push({ kind: 'note', key: 'none', text: jt('chat.sessionRail.outputs.empty', 'Nothing produced in this chat yet.') });
-    const valueText = total === null ? String(shown) : (total === 0 ? jt('chat.sessionRail.outputs.none', 'None yet') : String(total));
-    return { valueText, parts: null, dot: null, rows, defaultOpen: (total === null ? shown : total) > 0 };
-  }
-
-  function buildChanges(data, jt) {
-    const files = count(data.file_count);
-    const additions = count(data.additions);
-    const deletions = count(data.deletions);
-    const rows = [];
-    let valueText;
-    let parts = null;
-    if (files === 0) {
-      valueText = jt('chat.sessionRail.changes.none', 'No changes');
-    } else if (additions !== null && deletions !== null) {
-      parts = [{ text: `+${additions}`, tone: 'add' }, { text: `−${deletions}`, tone: 'del' }];
-      valueText = `+${additions} −${deletions}`;
-    } else if (files !== null) {
-      valueText = jt('chat.sessionRail.changes.files', '{count} files', { count: files });
-    } else {
-      valueText = jt('chat.sessionRail.state.unknown', 'Unknown');
-    }
-    const scope = jt('chat.sessionRail.changes.scope', 'Working tree');
-    rows.push({
-      kind: 'fact', key: 'scope', icon: '', text: scope,
-      meta: files === null ? '' : jt('chat.sessionRail.changes.files', '{count} files', { count: files }), title: scope,
-    });
-    const ref = text(data.ref);
-    if (ref) rows.push({ kind: 'fact', key: 'ref', icon: 'branch', text: ref, meta: '', title: ref });
-    rows.push({ kind: 'action', key: 'review', icon: '', surface: 'changes', resourceRef: '', text: jt('chat.sessionRail.changes.review', 'Review changes'), meta: '', title: '' });
-    return { valueText, parts, dot: null, rows, defaultOpen: false };
   }
 
   function taskDot(phase) {
@@ -302,7 +170,7 @@
     return null;
   }
 
-  /* mm:ss, or h:mm:ss past an hour: a running job's elapsed time and a finished one's duration. */
+  /* mm:ss, or h:mm:ss past an hour: a running job's elapsed time. */
   function formatElapsed(ms) {
     const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
     const hours = Math.floor(total / 3600);
@@ -311,197 +179,83 @@
     return hours > 0 ? `${hours}:${clock}` : clock;
   }
 
-  /* A run_command background job: live (dot, ticking elapsed, Stop) or finished (duration, exit code or
-     Stopped). Either row opens the job in the Background tasks panel (row 138). */
-  function jobRow(item, phase, jt, nowMs) {
-    const jobId = text(item.job_id);
-    const command = text(item.command) || jt('chat.backgroundJobs.backgroundJob', 'background job');
-    const started = Number(item.started_at_ms) || 0;
-    if (phase === 'running') {
-      return { kind: 'job', key: `job:${jobId}`, jobId, dot: taskDot('running'), text: command, title: command, surface: 'background_tasks', resourceRef: `job:${jobId}`,
-        meta: formatElapsed(nowMs - started), startedAtMs: started, stopping: text(item.state) === 'killing',
-        progressPercent: Number.isFinite(item.progress_percent) ? item.progress_percent : null, // row 96 live test run
-        progressMarks: Array.isArray(item.progress_marks) ? item.progress_marks.filter(Number.isFinite) : [],
-        stopLabel: jt('chat.backgroundJobs.stop', 'Stop'), stopTitle: jt('chat.backgroundJobs.stopTitle', 'Stop this background job'),
-        stopAria: jt('chat.backgroundJobs.stopAriaLabel', 'Stop background job: {command}', { command }) };
-    }
-    const failed = phase === 'failed';
-    let meta = formatElapsed((Number(item.ended_at_ms) || started) - started);
-    if (item.stop_requested === true) meta = jt('chat.sessionRail.tasks.stopped', 'Stopped');
-    else if (failed) {
-      meta = Number.isInteger(item.exit_code)
-        ? jt('chat.sessionRail.tasks.exitCode', 'Exit {code}', { code: item.exit_code }) : taskPhaseLabel('failed', jt);
-    }
-    return { kind: 'job_done', key: `job:${jobId}`, jobId, dot: failed && item.stop_requested !== true ? taskDot('failed') : null,
-      text: command, meta, title: `${command} (${taskPhaseLabel(phase, jt)})`, surface: 'background_tasks', resourceRef: `job:${jobId}` };
-  }
-
-  /* Row 176: Servers lists what this chat started that is still serving: its browser page, then run_command jobs
-     with a loopback address (oldest first). A serving job is listed here, not as a Background tasks running row. */
-  const SERVER_DOT = Object.freeze({ tone: 'active', pulse: false });
-  const isServing = (item) => text(item.source_kind) === 'background_job' && taskPhase(item.state) === 'running' && Boolean(text(item.serving_url));
   const bareAddress = (url) => text(url).replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/$/, '');
 
-  function serverEntries(wrapper, browser, jt) {
-    const items = ['available', 'stale'].includes(text(wrapper?.state)) && Array.isArray(wrapper.data?.items) ? wrapper.data.items.filter(isObject) : [];
+  /* ── Summary sections ────────────────────────────────────────────────── */
+
+  /* Every builder returns { valueText, parts?, dot?, rows, defaultOpen }. */
+  function buildThisChat(data, jt, extra) {
     const rows = [];
-    const page = isObject(browser) && browser.open === true ? text(browser.url) : '';
-    if (page) {
-      const name = text(browser.title) || bareAddress(page);
-      rows.push({ kind: 'server', key: 'server:browser', serverKind: 'browser', dot: SERVER_DOT, text: name, meta: jt('chat.sessionRail.servers.browser', 'Browser'),
-        title: `${name} (${page})`, surface: 'browser', resourceRef: '', stopLabel: jt('chat.sessionRail.servers.close', 'Close'),
-        stopAria: jt('chat.sessionRail.servers.closeAria', 'Close the browser: {title}', { title: name }) });
+    const projectName = text(data.project_name) || jt('chat.sessionRail.environment.noProject', 'No project');
+    rows.push({
+      kind: 'action', key: 'project', icon: 'project', surface: 'environment', resourceRef: '',
+      text: projectName, meta: runModeLabel(data.run_mode, jt, extra.fullAuto), title: projectName,
+    });
+    const displayPath = text(data.display_path);
+    if (displayPath) rows.push({ kind: 'fact', key: 'path', icon: 'folder', text: displayPath, meta: '', title: displayPath, pathLike: true });
+    const branch = text(data.branch);
+    if (branch) {
+      const worktree = text(data.worktree_id) ? jt('chat.sessionRail.environment.worktree', 'worktree') : '';
+      rows.push({ kind: 'fact', key: 'branch', icon: 'branch', text: branch, meta: worktree, title: branch });
     }
-    for (const item of items.filter(isServing).sort((a, b) => (Number(a.serving_since_ms) || 0) - (Number(b.serving_since_ms) || 0))) {
-      const jobId = text(item.job_id);
-      const address = bareAddress(item.serving_url);
-      const command = text(item.command) || jt('chat.backgroundJobs.backgroundJob', 'background job');
-      const killing = text(item.state) === 'killing';
-      rows.push({ kind: 'server', key: `server:job:${jobId}`, serverKind: 'job', jobId, dot: SERVER_DOT, text: address, addr: true,
-        meta: killing ? jt('chat.sessionRail.servers.stopping', 'Stopping')
-          : (Number.isInteger(item.serving_port) ? jt('chat.sessionRail.servers.port', 'Port {port}', { port: item.serving_port }) : ''),
-        title: jt('chat.sessionRail.servers.jobTitle', '{command} on {address}', { command, address }), surface: 'background_tasks', resourceRef: `job:${jobId}`,
-        stopLabel: jt('chat.backgroundJobs.stop', 'Stop'), stopTitle: jt('chat.backgroundJobs.stopTitle', 'Stop this background job'),
-        stopAria: jt('chat.sessionRail.servers.stopAria', 'Stop server: {address}', { address }), stopping: killing });
-    }
-    return rows;
+    // A really partial summary keeps one plain note; a complete one says nothing.
+    if (extra.partial === true) rows.push({ kind: 'note', key: 'coverage', text: jt('chat.sessionRail.tasks.partial', "Some sources aren't connected yet.") });
+    return { valueText: executionLabel(data.execution_environment, jt), parts: null, dot: null, rows, defaultOpen: true };
   }
 
-  function buildServers(data, jt, entries) {
-    const up = entries.length > 0;
-    return {
-      valueText: up ? jt('chat.sessionRail.servers.up', '{count} up', { count: entries.length }) : jt('chat.sessionRail.servers.none', 'None up'),
-      parts: null, dot: up ? SERVER_DOT : null, defaultOpen: up,
-      rows: up ? entries : [{ kind: 'note', key: 'none', text: jt('chat.sessionRail.servers.empty', 'Nothing this chat started is still serving.') }],
-    };
-  }
-
-  /* The controller remembers (bounded) which chats ever had a server, so the section can read "None up" after. */
-  function rememberServers(seen, sessionId, vm) {
-    if (!(seen instanceof Map) || !text(sessionId) || vm?.hasServers !== true) return;
-    seen.delete(sessionId);
-    seen.set(sessionId, true);
-    while (seen.size > MAX_SERVER_CHATS) seen.delete(seen.keys().next().value);
-  }
-
-  function buildBackgroundTasks(data, jt) {
-    const counts = isObject(data.counts) ? data.counts : {};
-    const waiting = count(counts.waiting);
-    const failed = count(counts.failed);
-    const completed = count(counts.completed);
-    const items = Array.isArray(data.items) ? data.items.filter(isObject) : [];
-    const serving = items.filter(isServing).length;
-    const active = count(counts.active) === null ? null : Math.max(0, counts.active - serving);
-    const itemPhases = items.map((item) => (isServing(item) ? 'serving' : taskPhase(item.state))); // row 176: Servers lists them
-    const anyActive = (active !== null && active > 0) || itemPhases.includes('running');
+  /* Opened, Context shows exactly: Used (as "20.5k of 32k"), one plain line, and the way into the details
+     view, which keeps the token ledger. Nothing used yet reads in one voice. */
+  function buildContext(data, jt) {
+    const used = count(data.used_tokens);
+    const percent = contextPercent(data);
+    const projection = contextPreview.project(data);
+    const capacity = projection.target || count(data.capacity_tokens);
     let valueText;
     let dot = null;
-    if (active !== null && active > 0) {
-      valueText = jt('chat.sessionRail.tasks.running', '{count} running', { count: active });
-      dot = taskDot('running');
-    } else if (waiting !== null && waiting > 0) {
-      valueText = jt('chat.sessionRail.tasks.waiting', '{count} waiting', { count: waiting });
-      dot = taskDot('waiting');
-    } else if (failed !== null && failed > 0) {
-      valueText = jt('chat.sessionRail.tasks.failed', '{count} failed', { count: failed });
-      dot = taskDot('failed');
-    } else if (data.failed_sources?.length) {
-      valueText = jt('chat.sessionRail.state.unavailable', 'Unavailable');
-    } else if (serving > 0 && active === 0) { // row 176: its live work is all under Servers
-      valueText = jt('chat.sessionRail.tasks.noneRunning', 'None running');
-    } else if (active === null || waiting === null) {
-      valueText = !items.length && data.coverage === 'partial'
-        && Array.isArray(data.unsupported_sources) && data.unsupported_sources.length < 3
-        ? jt('chat.sessionRail.outputs.none', 'None yet')
-        : jt('chat.sessionRail.state.unknown', 'Unknown');
+    if (percent !== null) {
+      valueText = jt('sessionRail.contextFull', '{percent}% full', { percent: percent.replace(/%$/, '') });
+      if (used / projection.target >= CONTEXT_WARN_RATIO) dot = { tone: 'warn', pulse: false };
+    } else if (used !== null) {
+      valueText = jt('chat.sessionRail.context.tokens', '{count} tokens', { count: formatTokens(used) });
     } else {
-      valueText = completed !== null && completed > 0
-        ? jt('chat.sessionRail.tasks.noneRunning', 'None running')
-        : jt('chat.sessionRail.outputs.none', 'None yet');
+      valueText = data.status === 'unavailable' ? jt('chat.sessionRail.state.unavailable', 'Unavailable')
+        : data.scope === 'next_send' ? jt('chat.sessionRail.state.checking', 'Checking…') : jt('chat.sessionRail.state.unknown', 'Unknown');
     }
     const rows = [];
-    const finishedRows = [];
-    const seen = new Set();
-    const nowMs = Date.now();
-    items.forEach((item, index) => {
-      const id = text(item.operation_id) || `row-${index}`;
-      if (seen.has(id)) return;
-      const phase = itemPhases[index];
-      if (phase === 'serving') return;
-      const finished = phase === 'finished' || phase === 'failed';
-      const target = finished ? finishedRows : rows;
-      if (target.length >= (finished ? MAX_FINISHED_ROWS : MAX_BACKGROUND_ROWS)) return;
-      seen.add(id);
-      if (text(item.source_kind) === 'background_job') return void target.push(jobRow(item, phase, jt, nowMs));
-      const label = taskSourceLabel(item.source_kind, jt);
-      const stateWord = taskPhaseLabel(phase, jt);
-      /* A linked chat's turn shows the child's title and opens that chat (sessionRef); the surface
-         stays background_tasks so a rail without an openSession dependency opens the task detail. */
-      const linked = text(item.source_kind) === 'linked_chat_turn' && text(item.session_id);
-      const name = linked ? text(item.title) : '';
-      target.push({
-        kind: 'action', key: `task:${id}`, icon: '', dot: taskDot(phase), surface: 'background_tasks', resourceRef: linked ? `chat:${text(item.session_id)}` : '',
-        text: name || label, meta: stateWord, title: name ? `${label}: ${name} (${stateWord})` : `${label} (${stateWord})`,
-        ...(linked ? { sessionRef: text(item.session_id) } : {}),
-      });
-    });
-    if (finishedRows.length) {
-      // The divider is the finished group's own disclosure; buildRailViewModel resolves it.
-      rows.push({ kind: 'divider', key: 'finished', text: jt('chat.sessionRail.tasks.finished', '{count} finished', { count: finishedRows.length }) });
-      for (const row of finishedRows) rows.push({ ...row, group: 'finished' });
-    } else if (completed !== null && completed > 0) {
-      rows.push({
-        kind: 'action', key: 'finished', icon: 'list', surface: 'background_tasks', resourceRef: '',
-        text: jt('chat.sessionRail.tasks.finished', '{count} finished', { count: completed }), meta: '', title: '',
-      });
+    if (used === 0) {
+      rows.push({ kind: 'note', key: 'empty', text: jt('sessionRail.contextEmpty', 'Nothing used yet. This fills as you and Jenny talk.') });
+    } else {
+      if (used !== null) {
+        const meta = capacity
+          ? jt('chat.sessionRail.context.usedOf', '{used} of {capacity}', { used: formatTokens(used), capacity: formatTokens(capacity) })
+          : formatTokens(used);
+        rows.push({ kind: 'fact', key: 'used', icon: '', text: jt('sessionRail.contextUsed', 'Used'), meta, title: meta });
+      }
+      rows.push({ kind: 'note', key: 'note', text: jt('sessionRail.contextNote', 'Jenny summarises older messages when this fills.') });
     }
-    const unsupported = Array.isArray(data.unsupported_sources) ? data.unsupported_sources : [];
-    for (const source of data.failed_sources || []) {
-      rows.push({ kind: 'note', key: `failed:${source}`, text: `${taskSourceLabel(source, jt)}: ${jt('chat.sessionRail.state.unavailable', 'Unavailable')}` });
-    }
-    if (data.coverage === 'partial' || unsupported.length > 0) {
-      rows.push({ kind: 'note', key: 'coverage', text: jt('chat.sessionRail.tasks.partial', "Some sources aren't connected yet.") });
-    }
-    // Row 138: the section always ends on the way into the Background tasks panel.
-    rows.push({ kind: 'action', key: 'all', icon: 'list', surface: 'background_tasks', resourceRef: '', text: jt('chat.sessionRail.tasks.openAll', 'All background tasks'), meta: '', title: '' });
-    return { valueText, parts: null, dot, rows, defaultOpen: anyActive };
+    rows.push({ kind: 'action', key: 'details', icon: '', surface: 'context', resourceRef: '', text: jt('chat.sessionRail.context.details', 'Context details'), meta: '', title: '' });
+    return { valueText, parts: null, dot, rows, defaultOpen: false };
   }
 
-  const BUILDERS = {
-    environment: buildEnvironment,
-    context: buildContext,
-    outputs: buildOutputs,
-    changes: buildChanges,
-    background_tasks: buildBackgroundTasks,
-    servers: buildServers,
-  };
+  const BUILDERS = { this_chat: buildThisChat, context: buildContext };
 
   function checkingSection(key, jt) {
-    return { key, title: sectionTitle(key, jt), state: 'checking', stateWord: jt('chat.sessionRail.state.checking', 'Checking…'), valueText: jt('chat.sessionRail.state.checking', 'Checking…'), parts: null, dot: null, rows: key === 'context' ? contextBreakdown({}) : [], defaultOpen: false, stale: false };
+    return { key, title: sectionTitle(key, jt), state: 'checking', stateWord: jt('chat.sessionRail.state.checking', 'Checking…'), valueText: jt('chat.sessionRail.state.checking', 'Checking…'), parts: null, dot: null, rows: [], defaultOpen: false, stale: false };
   }
 
-  function unavailableSection(key, jt, state, reason) {
-    let word = jt('chat.sessionRail.state.unavailable', 'Unavailable');
-    const rows = key === 'context' ? contextBreakdown({}) : [];
-    if (state === 'not_applicable') {
-      word = reason === 'not_a_git_repository'
-        ? jt('chat.sessionRail.changes.notGit', 'Not a Git repository')
-        : jt('chat.sessionRail.state.notApplicable', 'Not applicable');
-    } else if (state === 'unavailable' && key === 'changes' && reason === 'not_a_git_repository') {
-      word = jt('chat.sessionRail.changes.notGit', 'Not a Git repository');
-    }
-    return { key, title: sectionTitle(key, jt), state, stateWord: word, valueText: word, parts: null, dot: null, rows, defaultOpen: false, stale: false };
+  function unavailableSection(key, jt, state) {
+    const word = state === 'not_applicable' ? jt('chat.sessionRail.state.notApplicable', 'Not applicable') : jt('chat.sessionRail.state.unavailable', 'Unavailable');
+    return { key, title: sectionTitle(key, jt), state, stateWord: word, valueText: word, parts: null, dot: null, rows: [], defaultOpen: false, stale: false };
   }
 
-  /* One section's view model from its summary wrapper. */
-  function buildSection(key, wrapper, jt, entries) {
+  /* One summary section's view model from its wrapper. `extra`: { fullAuto, partial } for This chat. */
+  function buildSection(key, wrapper, jt, extra) {
     if (!isObject(wrapper)) return checkingSection(key, jt);
     const state = text(wrapper.state);
     if (state === 'checking' && !(key === 'context' && wrapper.data?.scope === 'next_send')) return checkingSection(key, jt);
-    if (state === 'available' || state === 'stale' || (key === 'context' && wrapper.data?.scope === 'next_send')
-      || (key === 'background_tasks' && wrapper.data?.failed_sources?.length)) {
-      if (!isObject(wrapper.data)) return unavailableSection(key, jt, 'unavailable', text(wrapper.reason));
-      const built = BUILDERS[key](wrapper.data, jt, entries);
+    if (state === 'available' || state === 'stale' || (key === 'context' && wrapper.data?.scope === 'next_send')) {
+      if (!isObject(wrapper.data)) return unavailableSection(key, jt, 'unavailable');
+      const built = BUILDERS[key](wrapper.data, jt, isObject(extra) ? extra : {});
       const stale = state === 'stale';
       const staleWord = jt('chat.sessionRail.state.stale', 'stale');
       return {
@@ -510,88 +264,213 @@
         parts: built.parts, dot: stale ? null : built.dot, rows: built.rows, defaultOpen: built.defaultOpen, stale,
       };
     }
-    return unavailableSection(key, jt, state === 'not_applicable' ? 'not_applicable' : 'unavailable', text(wrapper.reason));
+    return unavailableSection(key, jt, state === 'not_applicable' ? 'not_applicable' : 'unavailable');
   }
 
-  /* The finished divider's own disclosure (open unless persisted or toggled closed); a closed
-     group keeps only its divider. */
-  function withFinishedDisclosure(section, persisted, override) {
-    if (!section.rows.some((row) => row.kind === 'divider')) return section;
-    const value = override === true || override === false ? override : persisted[FINISHED_DISCLOSURE];
-    const open = value !== false;
-    const rows = section.rows.filter((row) => open || row.group !== 'finished')
-      .map((row) => (row.kind === 'divider' ? { ...row, open } : row));
-    return { ...section, rows };
+  /* ── Running now ─────────────────────────────────────────────────────── */
+
+  function toMs(value) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+    const parsed = typeof value === 'string' ? Date.parse(value) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  /* Whether a disclosure (a section, or the finished divider) shows open in a built view model. */
+  /* The injected rows, normalised: { id, kind, label, detail, startedAt, canStop }, plus the optional
+     sessionId (a linked chat), progressPercent and progressMarks (a test run's progress). */
+  function normalizeRuns(list) {
+    const seen = new Set();
+    const out = [];
+    for (const raw of Array.isArray(list) ? list : []) {
+      const id = isObject(raw) ? text(raw.id) : '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({
+        id, kind: RUN_KINDS.includes(raw.kind) ? raw.kind : 'helper', label: text(raw.label), detail: text(raw.detail),
+        startedAt: toMs(raw.startedAt), canStop: raw.canStop === true, stopping: raw.stopping === true, sessionId: text(raw.sessionId),
+        progressPercent: Number.isFinite(raw.progressPercent) ? raw.progressPercent : null,
+        progressMarks: Array.isArray(raw.progressMarks) ? raw.progressMarks.filter(Number.isFinite) : [],
+      });
+    }
+    return out;
+  }
+
+  /* With no getRunningRows wired: the summary's running items in the same shape. This is the only place the
+     summary's task items are read for this section. */
+  function summaryRuns(wrapper, jt) {
+    const items = ['available', 'stale'].includes(text(wrapper?.state)) && Array.isArray(wrapper.data?.items) ? wrapper.data.items.filter(isObject) : [];
+    const servers = [];
+    const others = [];
+    items.forEach((item, index) => {
+      if (taskPhase(item.state) !== 'running') return;
+      const source = text(item.source_kind);
+      const opId = text(item.operation_id) || `row-${index}`;
+      const stopping = text(item.state) === 'killing';
+      if (source === 'background_job') {
+        const jobId = text(item.job_id);
+        const command = text(item.command) || jt('chat.backgroundJobs.backgroundJob', 'background job');
+        const serving = Boolean(text(item.serving_url));
+        const entry = {
+          id: `job:${jobId}`, kind: serving ? 'server' : 'command', label: command, detail: serving ? bareAddress(item.serving_url) : '',
+          startedAt: serving ? (Number(item.serving_since_ms) || Number(item.started_at_ms) || 0) : (Number(item.started_at_ms) || 0),
+          canStop: Boolean(jobId), stopping, progressPercent: item.progress_percent, progressMarks: item.progress_marks,
+        };
+        (serving ? servers : others).push(entry);
+      } else if (source === 'linked_chat_turn') {
+        const child = text(item.session_id);
+        others.push({ id: child ? `chat:${child}` : `task:${opId}`, kind: 'linked', label: text(item.title) || taskSourceLabel(source, jt), detail: '', sessionId: child, startedAt: toMs(item.started_at) });
+      } else if (source === 'live_run') {
+        const project = text(item.project_id);
+        const detail = liveStateWord(text(item.run_state), Number.isInteger(item.exit_code) ? item.exit_code : null, 'running', jt);
+        others.push({ id: project ? `live:${project}` : `task:${opId}`, kind: 'live', label: text(item.title) || taskSourceLabel(source, jt), detail, startedAt: toMs(item.started_at) });
+      } else {
+        others.push({ id: `task:${opId}`, kind: source === 'workspace_test' ? 'test' : 'helper', label: taskSourceLabel(source, jt), detail: '', startedAt: toMs(item.started_at) });
+      }
+    });
+    servers.sort((a, b) => a.startedAt - b.startedAt);
+    return normalizeRuns([...servers, ...others]);
+  }
+
+  const SERVER_DOT = Object.freeze({ tone: 'active', pulse: false });
+
+  /* The chat's open browser page: a server-like row that closes itself (the only run the Runs list does not hold). */
+  function browserRow(browser, jt) {
+    const page = isObject(browser) && browser.open === true ? text(browser.url) : '';
+    if (!page) return null;
+    const name = text(browser.title) || bareAddress(page);
+    return { kind: 'server', key: 'server:browser', serverKind: 'browser', dot: SERVER_DOT, text: name, meta: jt('chat.sessionRail.servers.browser', 'Browser'),
+      title: `${name} (${page})`, surface: 'browser', resourceRef: '', stopLabel: jt('chat.sessionRail.servers.close', 'Close'),
+      stopAria: jt('chat.sessionRail.servers.closeAria', 'Close the browser: {title}', { title: name }) };
+  }
+
+  function runRow(entry, jt, nowMs) {
+    // A job, a chat or a Live tab program names its own task in the panel; any other run opens the list.
+    const base = { key: `run:${entry.id}`, runId: entry.id, surface: 'background_tasks', resourceRef: /^(job|chat|live):/.test(entry.id) ? entry.id : '' };
+    const jobId = entry.id.startsWith('job:') ? entry.id.slice(4) : '';
+    const stoppable = entry.canStop && Boolean(jobId);
+    const stop = {
+      jobId, canStop: stoppable, stopping: entry.stopping, stopLabel: jt('chat.backgroundJobs.stop', 'Stop'),
+      stopTitle: stoppable ? jt('chat.backgroundJobs.stopTitle', 'Stop this background job') : jt('sessionRail.cannotStop', 'This run cannot be stopped from here.'),
+    };
+    if (entry.kind === 'server') {
+      const address = entry.detail || entry.label;
+      const label = entry.label || address;
+      return { ...base, ...stop, kind: 'server', serverKind: 'run', dot: SERVER_DOT, text: address, addr: true,
+        metaPrefix: jt('sessionRail.serverUp', 'Up'), startedAtMs: entry.startedAt,
+        title: label === address ? address : jt('chat.sessionRail.servers.jobTitle', '{command} on {address}', { command: label, address }),
+        stopAria: jt('chat.sessionRail.servers.stopAria', 'Stop server: {address}', { address }) };
+    }
+    if (entry.kind === 'command') {
+      const label = entry.label || jt('chat.backgroundJobs.backgroundJob', 'background job');
+      return { ...base, ...stop, kind: 'job', dot: taskDot('running'), text: label, title: label, startedAtMs: entry.startedAt,
+        meta: formatElapsed(nowMs - entry.startedAt), progressPercent: entry.progressPercent, progressMarks: entry.progressMarks,
+        stopAria: jt('chat.backgroundJobs.stopAriaLabel', 'Stop background job: {command}', { command: label }) };
+    }
+    const label = entry.label || taskSourceLabel(entry.kind === 'linked' ? 'linked_chat_turn' : '', jt);
+    const running = jt('sessionRail.running', 'Running');
+    const meta = entry.kind === 'live' && entry.detail ? entry.detail : running; // the Live tab's program says its state (Building, Stopping)
+    return { ...base, kind: 'action', icon: '', dot: taskDot('running'), text: label, meta, title: `${label} (${meta})`,
+      ...(entry.kind === 'linked' && entry.sessionId ? { sessionRef: entry.sessionId } : {}) };
+  }
+
+  function buildRunningNow(entries, browser, jt, nowMs) {
+    const page = browserRow(browser, jt);
+    const total = entries.length + (page ? 1 : 0);
+    if (!total) return null;
+    const rows = [...(page ? [page] : []), ...entries.slice(0, MAX_RUNNING_ROWS).map((entry) => runRow(entry, jt, nowMs))];
+    rows.push({ kind: 'action', key: 'all', icon: 'list', surface: 'background_tasks', resourceRef: '', allRuns: true, text: jt('sessionRail.allRuns', 'All runs'), meta: '', title: '' });
+    return { key: 'running_now', title: sectionTitle('running_now', jt), state: 'available', stateWord: '', valueText: String(total), parts: null,
+      dot: taskDot('running'), rows, defaultOpen: true, stale: false };
+  }
+
+  /* ── Jenny's checklist ───────────────────────────────────────────────── */
+
+  function buildChecklist(list, jt) {
+    const steps = (Array.isArray(list) ? list : []).filter((step) => isObject(step) && text(step.text)).slice(0, MAX_CHECKLIST_ROWS)
+      .map((step) => ({ text: text(step.text), state: CHECKLIST_STATES.includes(step.state) ? step.state : 'todo' }));
+    if (!steps.length) return null;
+    const done = steps.filter((step) => step.state === 'done').length;
+    const rows = steps.map((step, index) => ({
+      kind: 'fact', key: `step:${index}`, icon: '', text: step.text, title: step.text,
+      meta: step.state === 'done' ? jt('sessionRail.stepDone', 'Done') : (step.state === 'now' ? jt('sessionRail.stepNow', 'Now') : ''),
+      ...(step.state === 'now' ? { dot: taskDot('running') } : {}),
+    }));
+    return { key: 'checklist', title: sectionTitle('checklist', jt), state: 'available', stateWord: '',
+      valueText: jt('sessionRail.checklistDone', '{done} of {total} done', { done, total: steps.length }), parts: null, dot: null, rows, defaultOpen: true, stale: false };
+  }
+
+  /* Whether a section shows open in a built view model. */
   function isDisclosureOpen(vm, key) {
-    const tasks = vm.sections.find((entry) => entry.key === 'background_tasks');
-    if (key === FINISHED_DISCLOSURE) return Boolean(tasks?.rows.find((row) => row.kind === 'divider')?.open);
     return Boolean(vm.sections.find((entry) => entry.key === key)?.open);
   }
 
   /* Persisted disclosure where set, the section's default otherwise. */
   function resolveOpen(section, persisted, override) {
     if (override === true || override === false) return override;
-    const value = isObject(persisted) ? persisted[section.key] : undefined;
+    const persistKey = PERSIST_KEY[section.key];
+    const value = persistKey && isObject(persisted) ? persisted[persistKey] : undefined;
     if (value === true || value === false) return value;
     return section.defaultOpen === true;
+  }
+
+  function safeCall(fn, sessionId) {
+    if (typeof fn !== 'function') return null;
+    try { return fn(sessionId); } catch (_error) { return null; }
   }
 
   /* The rail's whole view model.
        summary        the C2 summary, or null while checking / after a failed fetch
        status         'checking' | 'ready' | 'unavailable' (a failed fetch is unavailable)
        sessionId      the pane's session now; a summary for any other session reads as checking
-       workspaceView  the persisted { rail_visible, disclosures, children_expanded }
+       workspaceView  the persisted { disclosures, children_expanded }
        overrides      optimistic disclosure toggles not yet confirmed (key -> boolean)
-       browser        the chat's browser { open, url, title }, or null (Servers lists it while open)
-       everHadServer  this chat had a server before: Servers then stays as "None up" */
-  function buildRailViewModel({ summary, status = 'ready', sessionId = '', workspaceView = null, overrides = null, jt = defaultJt(), browser = null, everHadServer = false } = {}) {
+       browser        the chat's browser { open, url, title }, or null (Running now lists it while open)
+       fullAuto       full auto is armed for this chat (This chat names it as the run mode)
+       getRunningRows (sessionId) -> [{ id, kind, label, detail, startedAt, canStop }]; absent: the summary's running items
+       getChecklist   (sessionId) -> [{ text, state }]; absent: no checklist section
+       nowMs          the clock for a running command's first elapsed reading */
+  function buildRailViewModel({ summary, status = 'ready', sessionId = '', workspaceView = null, overrides = null, jt = defaultJt(), browser = null, fullAuto = false, getRunningRows = null, getChecklist = null, nowMs = Date.now() } = {}) {
     const belongs = isObject(summary) && text(summary.session_id) === text(sessionId) && text(sessionId) !== '';
     const view = isObject(workspaceView) ? workspaceView : {};
     const disclosures = isObject(view.disclosures) ? view.disclosures : {};
     const pending = isObject(overrides) ? overrides : {};
-    let hasServers = false;
-    const sections = SECTION_KEYS.map((key) => {
-      const wrapper = belongs ? summary[key === 'servers' ? 'background_tasks' : key] : null;
-      const entries = key === 'servers' ? serverEntries(wrapper, browser, jt) : null;
-      if (entries) hasServers = entries.length > 0;
-      if (entries && !hasServers && everHadServer !== true) return null;
-      let section;
-      // Row 176: a server that is up shows even while the summary is checking or failed (the browser needs no summary).
-      if (entries?.length && !['available', 'stale'].includes(text(wrapper?.state))) {
-        section = { key, title: sectionTitle(key, jt), state: 'available', stateWord: '', ...buildServers(null, jt, entries), stale: false };
-      } else if (belongs) section = buildSection(key, wrapper, jt, entries);
-      else if (status === 'unavailable') section = unavailableSection(key, jt, 'unavailable', '');
-      else section = checkingSection(key, jt);
-      const resolved = { ...section, open: resolveOpen(section, disclosures, pending[key]) };
-      return key === 'background_tasks' ? withFinishedDisclosure(resolved, disclosures, pending[FINISHED_DISCLOSURE]) : resolved;
-    }).filter(Boolean);
-    return { sessionId: text(sessionId), status: belongs ? 'ready' : status, sections, hasServers };
+    const tasks = belongs ? summary.background_tasks : null;
+    const tasksData = ['available', 'stale'].includes(text(tasks?.state)) && isObject(tasks.data) ? tasks.data : null;
+    const extra = {
+      fullAuto: fullAuto === true,
+      partial: Boolean(tasksData && (tasksData.coverage === 'partial' || tasksData.unsupported_sources?.length > 0 || tasksData.failed_sources?.length > 0)),
+    };
+    const sections = ['this_chat', 'context'].map((key) => {
+      if (belongs) return buildSection(key, summary[SUMMARY_FIELD[key]], jt, extra);
+      return status === 'unavailable' ? unavailableSection(key, jt, 'unavailable') : checkingSection(key, jt);
+    });
+    // The Runs list answers with an array once it holds this chat's rows; until then (null) the summary's items stand in.
+    const listed = typeof getRunningRows === 'function' ? safeCall(getRunningRows, sessionId) : null;
+    const runs = Array.isArray(listed) ? normalizeRuns(listed) : (belongs ? summaryRuns(tasks, jt) : []);
+    for (const built of [buildRunningNow(runs, browser, jt, nowMs), buildChecklist(safeCall(getChecklist, sessionId), jt)]) {
+      if (built) sections.push(built);
+    }
+    return {
+      sessionId: text(sessionId), status: belongs ? 'ready' : status,
+      sections: sections.map((section) => ({ ...section, open: resolveOpen(section, disclosures, pending[section.key]) })),
+    };
   }
 
   return {
     SECTION_KEYS,
+    SUMMARY_KEYS,
     DISCLOSURE_KEYS,
-    FINISHED_DISCLOSURE,
+    PERSIST_KEY,
     defaultJt,
-    RAIL_WIDTH_PX,
-    DOCK_MIN_WIDTH_PX,
-    DOCK_MIN_WIDTH_WITH_PANEL_PX,
-    MAX_BACKGROUND_ROWS,
-    resolveDocked,
-    resolveRailMode,
     formatTokens,
     contextPercent,
     taskPhase,
     taskPhaseLabel,
+    liveStateWord,
     taskDot,
     formatElapsed,
     isDisclosureOpen,
     buildSection,
     buildRailViewModel,
-    rememberServers,
     bareAddress,
   };
 });

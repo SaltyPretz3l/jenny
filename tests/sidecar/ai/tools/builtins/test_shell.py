@@ -1050,6 +1050,31 @@ def test_cleanup_active_jobs_uses_shared_tree_termination(monkeypatch: pytest.Mo
 
     assert terminated == [(managed, 0.5)]
     assert shell_background_module._active_jobs == {}
+    assert managed.end_reason == shell_background_module.SHUTDOWN_END_REASON
+
+
+def test_shutdown_kill_exit_code_reports_named_reason() -> None:
+    # Windows TerminateProcess exits 1; the status must say Jenny ended it, not a bare failure.
+    class KilledPopen:
+        pid = 1002
+        returncode = 1
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            return "Serving HTTP on 127.0.0.1 port 8765", ""
+
+    managed = shell_background_module._ManagedBackgroundProcess(process=KilledPopen())
+    managed.end_reason = shell_background_module.SHUTDOWN_END_REASON
+
+    outcome = shell_background_module._capture_background_terminal(managed, timeout_seconds=5)
+
+    assert outcome.state == "failed"
+    assert outcome.exit_code == 1
+    assert outcome.error == shell_background_module.SHUTDOWN_END_REASON
+
+    managed.end_reason = None
+    assert shell_background_module._capture_background_terminal(
+        managed, timeout_seconds=5
+    ).error is None
 
 
 # ── Git tracking integration ─────────────────────────────────────────

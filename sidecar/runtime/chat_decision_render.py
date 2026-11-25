@@ -82,7 +82,6 @@ def _chat_response_from_decision(
     session_title: str,
     brain_container: BrainContainer,
     decision: ChatDecision,
-    progress_notifications: list[dict[str, Any]] | None = None,
     budget_messages: list[dict[str, object]] | None = None,
     stream_notifications: bool = False,
     notification_writer: Any | None = None,
@@ -97,7 +96,6 @@ def _chat_response_from_decision(
     stack = brain_container.stack
     payload_externalizer = IpcPayloadExternalizer.from_config(stack.config)
     feature_flags = stack.config.feature_flags or {}
-    progress_notifications = list(progress_notifications or [])
 
     turn_diagnostics = getattr(stack, "turn_diagnostics", None)
     if turn_diagnostics is not None:
@@ -110,7 +108,6 @@ def _chat_response_from_decision(
         )
 
     notifications: list[dict[str, Any]] = []
-    notifications.extend(progress_notifications)
     streamed = decision.streamed_event_types
     live_notification_writer = (
         notification_writer

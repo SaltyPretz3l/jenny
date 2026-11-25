@@ -50,6 +50,15 @@
       "ngram": true,
       "vramHeadroomMb": 2048,
       "evidence": "PrismML Ternary-Bonsai-2-27B GGUF ships no MTP head; served only by PrismML's llama.cpp fork"
+    },
+    {
+      "family": "inkling2",
+      "matchPrefixes": ["inkling-2-mini", "inkling2-mini"],
+      "mtp": "no",
+      "mtpShape": "native",
+      "ngram": false,
+      "vramHeadroomMb": 2048,
+      "evidence": "Inkling 2 Mini is served by Strata, whose drafting is internal to its own engine; no llama.cpp MTP head or n-gram path applies"
     }
   ]
 }

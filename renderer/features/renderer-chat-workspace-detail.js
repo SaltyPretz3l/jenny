@@ -4,6 +4,10 @@
  *   window.rendererChatWorkspaceDetail.open({ surface, ownerSessionId, opener, resourceRef })
  *   window.rendererChatWorkspaceDetail.close()
  *
+ * pane (optional): the chat pane element the opening rail shows. The Session rail lives in the workbench's stack, not
+ * inside a pane, so an opener found there has no pane of its own; the composer controls, and the context handed to
+ * the injected openers, then come from this pane instead of the first one in the document (the left one).
+ *
  * surface: 'outputs' | 'changes' | 'background_tasks' | 'browser' | 'context' | 'environment'.
  *   outputs          -> the artifact review panel (resourceRef: an artifact id opens that artifact)
  *   changes          -> the read-only working-tree Changes page (renderer-code-review-rail.js)
@@ -55,39 +59,44 @@
       try { call('log', level, event, payload); } catch (_error) { /* logging never blocks a panel */ }
     }
 
-    // The composer controls of the opener's own pane (never another pane's, never the focused pane's).
-    function findInPane(opener, selector) {
+    const asPane = (value) => (value && typeof value.querySelector === 'function' ? value : null);
+
+    // The composer controls of the named pane, else the opener's own pane (never another pane's, never the focused pane's).
+    function findInPane(opener, selector, namedPane) {
       const doc = documentRef(opener);
-      const pane = opener && typeof opener.closest === 'function' ? opener.closest('.chat-pane') : null;
+      const pane = asPane(namedPane) || (opener && typeof opener.closest === 'function' ? opener.closest('.chat-pane') : null);
       const scope = pane || doc;
       return scope && typeof scope.querySelector === 'function' ? scope.querySelector(selector) : null;
     }
 
-    function openOutputs(ownerSessionId, opener, resourceRef) {
+    // The context an injected opener gets: the owner and the opener, and the pane only when one was named.
+    const withPane = (context, pane) => (asPane(pane) ? { ...context, pane } : context);
+
+    function openOutputs(ownerSessionId, opener, resourceRef, pane) {
       call('claimOwner', ownerSessionId);
-      const result = call('openArtifact', normalizeId(resourceRef), { ownerSessionId, opener });
+      const result = call('openArtifact', normalizeId(resourceRef), withPane({ ownerSessionId, opener }, pane));
       return result !== false && typeof deps.openArtifact === 'function';
     }
 
-    function openChanges(ownerSessionId, opener, reviewFindings) {
+    function openChanges(ownerSessionId, opener, reviewFindings, pane) {
       // The rail claims the owner itself (it must claim before it renders); this one is for fakes.
       // A chat findings list's Show in diff (row 64) hands its findings to the Working tree page.
-      const context = { ownerSessionId, opener };
+      const context = withPane({ ownerSessionId, opener }, pane);
       if (reviewFindings && typeof reviewFindings === 'object') context.reviewFindings = reviewFindings;
       return call('openChanges', context) === true;
     }
 
-    function openBackgroundTasks(ownerSessionId, opener, resourceRef) {
+    function openBackgroundTasks(ownerSessionId, opener, resourceRef, pane) {
       // Row 138: the Background tasks panel, opened on the row's task (job:<id> or chat:<id>) when it names one.
       if (typeof deps.openBackgroundTasks === 'function') {
-        const result = deps.openBackgroundTasks({ ownerSessionId, opener, taskId: normalizeId(resourceRef) });
+        const result = deps.openBackgroundTasks(withPane({ ownerSessionId, opener, taskId: normalizeId(resourceRef) }, pane));
         // The panel loads on first open, so the answer may arrive later: a refusal then forgets the open.
         Promise.resolve(result).then((ok) => { if (ok === false && current?.surface === 'background_tasks') current = null; }, () => {});
         return result !== false;
       }
       call('claimOwner', ownerSessionId);
-      if (typeof deps.openActivity === 'function') return deps.openActivity({ ownerSessionId, opener }) !== false;
-      const button = findInPane(opener, ACTIVITY_BUTTON_SELECTOR);
+      if (typeof deps.openActivity === 'function') return deps.openActivity(withPane({ ownerSessionId, opener }, pane)) !== false;
+      const button = findInPane(opener, ACTIVITY_BUTTON_SELECTOR, pane);
       if (!button) return false;
       // The cluster button toggles: an Activity that is already open stays open (swap in place).
       if (button.getAttribute('aria-pressed') !== 'true') button.click();
@@ -99,8 +108,8 @@
       return typeof seam === 'function' && seam() === true;
     }
 
-    function openComposerPopover(opener, selector) {
-      const control = findInPane(opener, selector);
+    function openComposerPopover(opener, selector, pane) {
+      const control = findInPane(opener, selector, pane);
       if (!control || control.disabled) return false;
       control.click();
       return true;
@@ -115,14 +124,15 @@
         return false;
       }
       const opener = options.opener && typeof options.opener.focus === 'function' ? options.opener : null;
+      const pane = asPane(options.pane);
       let opened;
       try {
-        if (surface === 'outputs') opened = openOutputs(ownerSessionId, opener, options.resourceRef);
-        else if (surface === 'changes') opened = openChanges(ownerSessionId, opener, options.reviewFindings);
-        else if (surface === 'background_tasks') opened = openBackgroundTasks(ownerSessionId, opener, options.resourceRef);
+        if (surface === 'outputs') opened = openOutputs(ownerSessionId, opener, options.resourceRef, pane);
+        else if (surface === 'changes') opened = openChanges(ownerSessionId, opener, options.reviewFindings, pane);
+        else if (surface === 'background_tasks') opened = openBackgroundTasks(ownerSessionId, opener, options.resourceRef, pane);
         else if (surface === 'browser') opened = openBrowser();
-        else if (surface === 'context') opened = openComposerPopover(opener, CONTEXT_RING_SELECTOR);
-        else opened = openComposerPopover(opener, PROJECT_PILL_SELECTOR);
+        else if (surface === 'context') opened = openComposerPopover(opener, CONTEXT_RING_SELECTOR, pane);
+        else opened = openComposerPopover(opener, PROJECT_PILL_SELECTOR, pane);
       } catch (error) {
         log('WARN', 'chat_workspace_detail.open_failed', { surface, message: String(error && error.message || error).slice(0, 200) });
         opened = false;

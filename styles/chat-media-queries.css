@@ -11,10 +11,7 @@
   }
 }
 
-/* Keep the thread usable when the persistent sessions panel is expanded.
-   At the minimum 248px sessions width, the 320px context rail would leave
-   less than a 480px thread below ~1048px. Yield the secondary rail before it
-   can collapse reasoning and tool content into a one-word column. */
+/* Below 1040px the context panel's old column yields to the thread. */
 @media (max-width: 1040px) {
   .chat-view {
     --context-panel-width: 0px;
@@ -22,22 +19,6 @@
 
   .chat-view > .chat-context-panel {
     display: none;
-  }
-}
-
-/* UIUX-004 residual (Wave 2): priority-order pane collapse for the 701–1180
-   band the 640×560 floor made reachable. Priority 1 (context panel yields
-   whenever the rail opens) lives in context-panel.css
-   (.artifact-review-mode). Priority 2 is this belt-and-braces 90vw clamp.
-   The top-nav shell recomputes the stage-based rail width on resize. In the
-   open (side-by-side) state the .artifact-review-open guard in
-   context-panel.css outranks this bound; it still covers the overlay drawer.
-   Below 700px the fixed-overlay block later in this file owns the rail. */
-@media (max-width: 1180px) and (min-width: 701px) {
-  .chat-view > .artifact-review-panel {
-    width: min(var(--artifact-review-width, 420px), 90vw);
-    min-width: 0;
-    max-width: 90vw;
   }
 }
 
@@ -193,33 +174,10 @@
   .chat-view > .chat-context-panel {
     display: none;
   }
-
-  .chat-view > .artifact-review-resizer {
-    display: none;
-  }
-
-  /* Route to the artifact panel at narrow widths (UIUX-004): the grid has no
-     room for a third column here, so an opened artifact review becomes a
-     trailing-edge overlay instead of vanishing entirely. The panel's own
-     Collapse / Full View header controls remain the way back, and the
-     .hidden state (display: none, see context-panel.css) still wins when
-     the panel is closed. */
-  .chat-view > .artifact-review-panel {
-    position: fixed;
-    top: calc(var(--titlebar-height) + var(--toprail-height));
-    inset-inline-end: 0;
-    bottom: 0;
-    width: min(var(--artifact-review-width, 420px), calc(100% - 32px));
-    min-width: 0;
-    max-width: calc(100% - 32px);
-    z-index: var(--z-dock);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.25);
-  }
 }
 
-/* At phone widths the sessions panel becomes the existing 56px chats strip.
-   Size the chat against its actual grid column (not the full viewport) and
-   retire the avatar rail that is already visually hidden in this breakpoint. */
+/* At phone widths size the chat against its actual grid column (not the full
+   viewport) and retire the avatar rail that is already visually hidden here. */
 @media (max-width: 480px) {
   .chat-view {
     --chat-sprite-rail-offset: 0px;

@@ -191,6 +191,12 @@ test('/props applies the owner context cap and reports no vision when no model h
   assert.equal(body.modalities.vision, false);
 });
 
+test('/props under the Auto cap with no node length says 32K, never the Auto value (row 201, OD-5)', async (t) => {
+  const fx = await setup(t, { limits: { contextCap: 1048576 } });
+  const props = await send(fx.port, { method: 'GET', path: '/props', headers: { authorization: `Bearer ${BOOT_KEY}` } });
+  assert.equal(JSON.parse(props.text).default_generation_settings.n_ctx, 32768);
+});
+
 test('any other path or method is a 404 with no detail', async (t) => {
   const fx = await setup(t);
   const key = { authorization: `Bearer ${BOOT_KEY}` };

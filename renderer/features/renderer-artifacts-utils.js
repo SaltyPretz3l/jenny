@@ -44,7 +44,7 @@
     : typeof require === 'function'
       ? require('./renderer-artifact-review-prefs')
       : {};
-  // The rail state machine (prefs, layout, open/close, maximize, wrap, resizer, auto-open wiring).
+  // The rail state machine (prefs, layout, open/close, wrap, auto-open wiring).
   const artifactReviewRailModule = (typeof globalThis !== 'undefined' && globalThis.rendererArtifactReviewRail)
     || (typeof require === 'function' ? require('./renderer-artifact-review-rail') : null);
   const artifactDeleteConfirmModule = (typeof globalThis !== 'undefined' && globalThis.rendererArtifactDeleteConfirm)
@@ -171,7 +171,7 @@
       renderSubagentsSurface = null,
       renderNotesSurface = null,
       renderBackgroundTasksSurface = null, renderTerminalSurface = null,
-      renderBrowserSurface = null,
+      renderBrowserSurface = null, renderLiveSurface = null,
       panelV2 = null,
       sidePanel = null, // split view W3-2 panel owner (shell artifact bridge); absent: the focused session
     } = callbacks;
@@ -594,6 +594,10 @@
         getArtifactReviewState().mode = 'artifact';
         syncArtifactReviewLayout();
       }
+      if (mode === 'live') { // row 197: the Live run view, pulled like the browser; false while its flag is off
+        if (renderLiveSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
+        getArtifactReviewState().mode = 'artifact'; syncArtifactReviewLayout();
+      }
       if (mode === 'subagents') {
         // Pull: the Subagent Monitor paints only for its live record; with none the mode resets (safety net).
         if (renderSubagentsSurface?.(surfaces.split) === true) { panelV2?.afterRender?.(null); return; }
@@ -667,7 +671,7 @@
       // review panel's listeners must attach regardless.
       if (bound) return;
       bound = true;
-      rail.bind(); // syncs the layout and binds the resizer, the strip toggle and Escape
+      rail.bind(); // syncs the layout and binds the rail's own listeners
       for (const [target, type, handler, capture] of listenerTable()) target?.addEventListener(type, handler, capture === true);
       deleteConfirmController?.bind?.();
     }
@@ -686,7 +690,7 @@
       disposeSurfaceController();
     }
 
-    return { bind, dispose, buildArtifactsFromMessages: (messages, options) => buildArtifactsFromMessages(messages, options), clearSourceHighlight, collapseArtifactReview: rail.collapseArtifactReview, filterArtifacts: (artifacts, filterValue) => filterArtifacts(artifacts, filterValue), getArtifactsForSession, getSelectedArtifactSource, invalidateSessionArtifacts, isArtifactReviewVisible, isArtifactReviewMaximized: rail.isArtifactReviewMaximized, jumpToArtifactSource, normalizeArtifactFilter, openArtifactTarget, openArtifactRail: rail.openArtifactRail, restoreArtifactReviewPrefs: rail.restoreArtifactReviewPrefs, pruneSessionArtifacts, rekeySessionArtifacts, renderArtifactReviewPanel, resetArtifactsState, selectArtifact, syncArtifactReviewLayout, setArtifactRailMode: rail.setArtifactRailMode, toggleArtifactReview: rail.toggleArtifactReview, toggleArtifactReviewMaximized: rail.toggleArtifactReviewMaximized, setArtifactDocumentViewMode, getArtifactDocumentViewMode, setArtifactViewMode, getArtifactViewMode, copyArtifactDocumentCodeBlock, copySelectedArtifactSource };
+    return { bind, dispose, buildArtifactsFromMessages: (messages, options) => buildArtifactsFromMessages(messages, options), clearSourceHighlight, collapseArtifactReview: rail.collapseArtifactReview, filterArtifacts: (artifacts, filterValue) => filterArtifacts(artifacts, filterValue), getArtifactsForSession, getSelectedArtifactSource, invalidateSessionArtifacts, isArtifactReviewVisible, getArtifactReviewMode: () => normalizeArtifactReviewMode(getArtifactReviewState().mode), jumpToArtifactSource, normalizeArtifactFilter, openArtifactTarget, openArtifactRail: rail.openArtifactRail, restoreArtifactReviewPrefs: rail.restoreArtifactReviewPrefs, pruneSessionArtifacts, rekeySessionArtifacts, renderArtifactReviewPanel, resetArtifactsState, selectArtifact, syncArtifactReviewLayout, setArtifactRailMode: rail.setArtifactRailMode, toggleArtifactReview: rail.toggleArtifactReview, setArtifactDocumentViewMode, getArtifactDocumentViewMode, setArtifactViewMode, getArtifactViewMode, copyArtifactDocumentCodeBlock, copySelectedArtifactSource };
   }
 
   return { GENERATED_FILE_FILTER, IMAGE_FILTER, TOOL_OUTPUT_FILTER, buildArtifactsFromMessages, clipPreviewText, createArtifactManager, filterArtifacts, normalizeArtifactFilter, sortArtifactsNewestFirst };

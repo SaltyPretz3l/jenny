@@ -1,0 +1,8 @@
+: keep-alive
+
+: keep-alive
+
+data: {"error": {"type": "structured_output_failed", "code": "structured_output_failed", "message": "model did not return valid JSON: Expecting value: line 1 column 1 (char 0)"}}
+
+data: [DONE]
+

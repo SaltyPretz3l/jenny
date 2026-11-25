@@ -20,7 +20,7 @@ const {
 const { ShellConfigService } = require('../services/shell-config-service');
 
 test('CONFIG_VERSION is 49 (defaultRunMode migration)', () => {
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
 });
 
 test('a v48 state migrates forward and materializes defaultRunMode ask', () => {

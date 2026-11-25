@@ -36,16 +36,13 @@
 
   // `deps`: the controller-scoped pieces -- getRuntime (the controller's
   // runtime record: lastThinkingMarkup/-Key, streamingArticleMessageId,
-  // streamingMessageId), isStreamPaintV2Enabled, noteHeaderPatch(kind),
+  // streamingMessageId), noteHeaderPatch(kind),
   // buildAutoCollapseOptions(doc) and getReasoningTailWriter(blockKey) (a
   // `(el, html, index)` writer for that block's tail unit, or null for the
   // plain innerHTML path).
   function createReasoningStackPatcher(deps) {
     const settings = deps || {};
     const getRuntime = typeof settings.getRuntime === 'function' ? settings.getRuntime : () => ({});
-    const isStreamPaintV2Enabled = typeof settings.isStreamPaintV2Enabled === 'function'
-      ? settings.isStreamPaintV2Enabled
-      : () => false;
     const noteHeaderPatch = typeof settings.noteHeaderPatch === 'function' ? settings.noteHeaderPatch : () => {};
     const buildAutoCollapseOptions = typeof settings.buildAutoCollapseOptions === 'function'
       ? settings.buildAutoCollapseOptions
@@ -100,8 +97,7 @@
       copyElementAttributes(existingBlock, nextBlock);
       copyElementAttributes(existingHeader, nextHeader);
       if (existingHeader.innerHTML !== nextHeader.innerHTML) {
-        const morphed = isStreamPaintV2Enabled()
-          && typeof morphElementChildren === 'function'
+        const morphed = typeof morphElementChildren === 'function'
           && morphElementChildren(existingHeader, nextHeader);
         if (morphed) {
           noteHeaderPatch('reasoning_header_morph');

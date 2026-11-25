@@ -44,32 +44,6 @@
   color: var(--text-primary);
 }
 
-.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__header {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-block-end: 1px solid var(--border-subtle);
-}
-
-.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__header b {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__mode {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: var(--space-1);
-}
-
 .artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__strip,
 .artifact-review-panel[data-artifact-review-mode="notes"] .notes-rail__error {
   display: flex;

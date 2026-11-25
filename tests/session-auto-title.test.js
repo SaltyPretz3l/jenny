@@ -345,7 +345,7 @@ test('never rejects, even when the service is unusable', async () => {
 // --- the real turn path --------------------------------------------------------
 
 // A turn run through the adapter the app uses, with only the stream itself faked.
-async function runTurn(t, { status = 'completed', engine = 'ollama' } = {}) {
+async function runTurn(t, { status = 'completed', engine = 'ollama', runView = null } = {}) {
   const harness = createAdapterHarness(t);
   const { adapter, lanes, service, sessionId } = harness;
   const requests = [];
@@ -356,7 +356,7 @@ async function runTurn(t, { status = 'completed', engine = 'ollama' } = {}) {
   const token = beginRuntimeInferenceInitialization(client);
   completeRuntimeInferenceInitialization(client, token, { runtime_inference_admission_version: 1 });
   Object.assign(service, { sidecarClient: client, currentModel: 'mock-v1',
-    sessionRuntime: { lanes, scheduler: { closing: false, beginClosing() {} } } });
+    sessionRuntime: { lanes, scheduler: { closing: false, beginClosing() {} } }, ...(runView ? { runView } : {}) });
   const store = service.sessionStore;
   store.setSessionMeta(sessionId, { title: deriveSessionTitleFromMessage(FIRST) });
   const prepared = await adapter.prepareImmediate(request(sessionId), {}, { workId: 'work-title', turnId: 'turn-title' });
@@ -387,6 +387,21 @@ test('a completed turn on the real path names the chat, after it gave back its i
   assert.equal(requests.length, 1);
   assert.equal(requests[0].method, 'session.generate_title');
   assert.equal(requests[0].lanes[0].inference_requests, 1, 'only the naming call holds the lane');
+});
+
+// Row 197: the end of any turn tells the Live tab, which restarts a running program only after a completed one.
+test('a turn end tells the run view the session, project and status, and a run view that throws changes nothing', async (t) => {
+  for (const status of ['completed', 'failed']) {
+    const calls = [];
+    const { outcome, sessionId } = await runTurn(t, { status, runView: { onTurnEnd: (args) => { calls.push(args); } } });
+    await waitFor(() => calls.length === 1, 'the run view was never told');
+    assert.deepEqual(calls[0], { sessionId, projectId: AUTHORITY.project_id, status });
+    assert.equal(outcome.status, status);
+  }
+  const throwing = await runTurn(t, { runView: { onTurnEnd: () => { throw new Error('run view broke'); } } });
+  const rejecting = await runTurn(t, { runView: { onTurnEnd: async () => { throw new Error('run view broke'); } } });
+  assert.equal(throwing.outcome.status, 'completed');
+  assert.equal(rejecting.outcome.status, 'completed');
 });
 
 test('a turn that did not complete never asks for a name', async (t) => {

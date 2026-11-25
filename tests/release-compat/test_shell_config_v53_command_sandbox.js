@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { normalizeState, serializeState } = require('../../services/shell-config-state');
 test('v53 defaults old profiles off and preserves model and preferences', () => {
  const previous = normalizeState({ version: 52, preferredEngineType: 'ollama', uiLanguage: 'ja', safetyMode: 'paranoid', toolsWorkspaceRoot: 'C:\\work' });
- assert.equal(previous.version, 59);
+ assert.equal(previous.version, 60);
  // Row 106 adds `mode` additively: a profile that never enabled the sandbox starts in synced.
  assert.deepEqual(previous.commandSandbox, { enabled: false, mode: 'synced' });
  assert.equal(previous.preferredEngineType, 'ollama'); assert.equal(previous.uiLanguage, 'ja'); assert.equal(previous.safetyMode, 'paranoid');

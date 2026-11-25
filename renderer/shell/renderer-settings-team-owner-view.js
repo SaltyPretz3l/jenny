@@ -121,8 +121,10 @@
       const fact = here ? jt('settings.team.devices.here', 'this PC') : lastSeen([device]);
       const ids = { teamId: team.team_id, deviceId: device.device_id };
       const sentence = own.length <= 1
-        ? jt('settings.team.devices.lastConfirm', 'This is your only device in this team. Only the owner can bring you back.')
-        : jt('settings.team.devices.hereConfirm', 'This is the PC you are using now. It leaves the team at once; to use the team here again, add it from one of your other devices.');
+        ? (team.role === 'owner' ? jt('settings.team.devices.lastConfirmOwner', 'This is your only device in this team. You can get back in from this PC with Get back in as the owner.')
+          : jt('settings.team.devices.lastConfirm', 'This is your only device in this team. Only the owner can bring you back.'))
+        : here ? jt('settings.team.devices.hereConfirm', 'This is the PC you are using now. It leaves the team at once; to use the team here again, add it from one of your other devices.')
+          : jt('settings.team.devices.otherConfirm', 'This device leaves the team at once. To use the team on it again, add it from one of your other devices.');
       const confirm = vm.confirm === 'device:' + device.device_id
         ? confirmBlock(vm, sentence, 'confirm-device', jt('settings.team.devices.removeAction', 'Remove this device'),
           { variant: 'danger', ids, busyKey: 'device-revoke:' + device.device_id })

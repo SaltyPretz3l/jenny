@@ -202,12 +202,10 @@ class CompanionService {
     configService,
     personalityWorkspace,
     listSessionSummaries,
-    listSessionRecords,
     getWorkspaceState,
     execFileImpl,
     nowProvider,
     formatDateKey,
-    taskLifecycleEnabled,
     taskBoardEnabled,
   } = {}) {
     if (!configService) {
@@ -221,9 +219,6 @@ class CompanionService {
     this.listSessionSummaries = typeof listSessionSummaries === 'function'
       ? listSessionSummaries
       : () => null;
-    this.listSessionRecords = typeof listSessionRecords === 'function'
-      ? listSessionRecords
-      : () => [];
     this.getWorkspaceState = typeof getWorkspaceState === 'function'
       ? getWorkspaceState
       : () => this.configService.getWorkspaceState();
@@ -231,9 +226,6 @@ class CompanionService {
     this.nowProvider = typeof nowProvider === 'function' ? nowProvider : () => new Date();
     this.formatDateKey = formatDateKey;
     this.briefingCache = createDailyBriefingCache({ formatDateKey });
-    this.taskLifecycleEnabled = typeof taskLifecycleEnabled === 'function'
-      ? taskLifecycleEnabled
-      : () => false;
     this.taskBoardEnabled = typeof taskBoardEnabled === 'function'
       ? taskBoardEnabled
       : () => buildFeatureFlagDefaults().tools_task_board_enabled === true;
@@ -255,15 +247,6 @@ class CompanionService {
     const sessions = this.listSessionSummaries();
     const known = Array.isArray(sessions);
     return { sessions: known ? sessions.slice() : [], known };
-  }
-
-  _listSessionRecords() {
-    const sessions = this.listSessionRecords();
-    return Array.isArray(sessions) ? sessions.slice() : [];
-  }
-
-  _isTaskLifecycleEnabled() {
-    return this.taskLifecycleEnabled() === true;
   }
 
   _isTaskBoardEnabled() {
@@ -560,87 +543,20 @@ class CompanionService {
     };
   }
 
-  _buildActiveTurnResumeItems(sessionRecords, workspaceState) {
-    if (!this._isTaskLifecycleEnabled()) {
-      return [];
-    }
-    const activeSessionId = normalizeString(workspaceState?.activeSessionId);
-    const openSessionIds = new Set(
-      Array.isArray(workspaceState?.openSessionIds)
-        ? workspaceState.openSessionIds.map((entry) => normalizeString(entry)).filter(Boolean)
-        : []
-    );
-    return (Array.isArray(sessionRecords) ? sessionRecords : [])
-      .map((session) => {
-        const activeTurn =
-          session?.active_turn && typeof session.active_turn === 'object' && !Array.isArray(session.active_turn)
-            ? session.active_turn
-            : null;
-        if (!activeTurn) {
-          return null;
-        }
-        const sessionId = normalizeString(session?.id);
-        if (!sessionId) {
-          return null;
-        }
-        const sessionTitle = normalizeString(session?.title) || 'Current work';
-        const detail = normalizeString(activeTurn.agent_summary)
-          || normalizeString(session?.last_message_preview)
-          || (sessionId === activeSessionId
-            ? 'Resume the current session.'
-            : openSessionIds.has(sessionId)
-              ? 'Resume this open session.'
-              : 'Resume interrupted work.');
-        return {
-          sessionId,
-          label: sessionTitle,
-          detail,
-          action: {
-            id: `resume_active_turn:${sessionId}`,
-            type: 'continue_session',
-            label: 'Resume this thread',
-            sessionId,
-          },
-          sortKey: [
-            normalizeString(activeTurn.last_event_at),
-            normalizeString(session?.updated_at),
-            normalizeString(session?.created_at),
-          ],
-        };
-      })
-      .filter(Boolean)
-      .sort((left, right) => compareIsoDesc(left.sortKey, right.sortKey));
-  }
-
-  _buildReadyToResumeCard(openLoopsBoard, sessionRecords, workspaceState) {
+  _buildReadyToResumeCard(openLoopsBoard) {
     const activeLoops = Array.isArray(openLoopsBoard?.active) ? openLoopsBoard.active : [];
-    const activeTurnItems = this._buildActiveTurnResumeItems(sessionRecords, workspaceState);
-    const sessionIdsWithActiveTurns = new Set(
-      activeTurnItems.map((item) => normalizeString(item.sessionId)).filter(Boolean)
-    );
-    const loopItems = activeLoops
+    const candidates = activeLoops
       .filter((loop) => loop.isDue || normalizeString(loop.sessionId))
       // A loop whose session was deleted has nothing to resume.
       .filter((loop) => loop.sessionState !== 'missing')
-      .filter((loop) => {
-        const sessionId = normalizeString(loop.sessionId);
-        return !sessionId || !sessionIdsWithActiveTurns.has(sessionId);
-      })
       .map((loop) => ({
         label: normalizeString(loop.title) || 'Open loop',
         detail: loop.isDue
           ? (normalizeString(loop.contextLine) || 'Due now')
           : (normalizeString(loop.contextLine) || normalizeString(loop.sessionTitle) || 'Linked to a session'),
         action: firstReadyToResumeAction(loop),
-      }));
-    const candidates = [
-      ...activeTurnItems.map((item) => ({
-        label: item.label,
-        detail: item.detail,
-        action: item.action,
-      })),
-      ...loopItems,
-    ].slice(0, 3);
+      }))
+      .slice(0, 3);
     if (!candidates.length) {
       return null;
     }
@@ -651,9 +567,9 @@ class CompanionService {
     };
   }
 
-  _buildTodayCards({ sessions, sessionRecords, workspaceState, openLoopsBoard }) {
+  _buildTodayCards({ sessions, workspaceState, openLoopsBoard }) {
     const cards = [];
-    const readyToResumeCard = this._buildReadyToResumeCard(openLoopsBoard, sessionRecords, workspaceState);
+    const readyToResumeCard = this._buildReadyToResumeCard(openLoopsBoard);
     if (readyToResumeCard) {
       cards.push(readyToResumeCard);
     }
@@ -768,8 +684,6 @@ class CompanionService {
     const workspaceState = this.getWorkspaceState();
     const sessionList = this._readSessionList();
     const sessions = sessionList.sessions.sort(compareSessionActivityDesc);
-    const sessionRecords = this._listSessionRecords()
-      .sort(compareSessionActivityDesc);
     const briefingSnapshot = await this.briefingCache.getSnapshot({
       now,
       workspaceRoot: configState.toolsWorkspaceRoot,
@@ -782,7 +696,6 @@ class CompanionService {
     const recentSessionLoop = this._buildRecentSessionOpenLoop(sessions, workspaceState);
     const todayCards = this._buildTodayCards({
       sessions,
-      sessionRecords,
       workspaceState,
       openLoopsBoard,
     });

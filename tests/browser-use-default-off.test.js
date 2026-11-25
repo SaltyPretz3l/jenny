@@ -46,11 +46,19 @@ test('an absent key and any value but a real true leave the tool off', () => {
 });
 
 test('an explicit true offers the tool and leaves the rest of the resolution alone', () => {
-  assert.equal(resolveRequestToolPreferences({ families: { browser_use: true } }), undefined);
+  // Row 196: the computer tool has its own switch, still off here.
+  assert.deepEqual(resolveRequestToolPreferences({ families: { browser_use: true } }), { disabled_tools: ['computer'] });
   const result = resolveRequestToolPreferences({ families: { browser_use: true, web: false } });
   assert.equal(browserOff(result), false);
+  assert.ok(result.disabled_tools.includes('computer'));
   assert.ok(result.disabled_tools.includes('web_search'));
   assert.ok(result.disabled_tools.includes('fetch_url'));
+});
+
+test('an explicit computer_use true offers the computer tool and leaves the browser off', () => {
+  const result = resolveRequestToolPreferences({ families: { computer_use: true } });
+  assert.deepEqual(result, { disabled_tools: ['browser'] });
+  assert.equal(resolveRequestToolPreferences({ families: { computer_use: true, browser_use: true } }), undefined);
 });
 
 test('an explicit false still switches other families off and never touches always-on tools', () => {
@@ -67,13 +75,13 @@ test('an explicit false still switches other families off and never touches alwa
 test('the sidecar catalog entry is resolved the same way', () => {
   const catalog = { browser: { tool_family: 'browser_use' }, mcp__x__browser_thing: { tool_family: 'other', source_kind: 'mcp' } };
   assert.ok(resolveRequestToolPreferences({ families: {} }, catalog).disabled_tools.includes('browser'));
-  assert.equal(resolveRequestToolPreferences({ families: { browser_use: true } }, catalog), undefined);
+  assert.deepEqual(resolveRequestToolPreferences({ families: { browser_use: true } }, catalog), { disabled_tools: ['computer'] });
 });
 
 test('the request and session paths that resolve preferences keep the tool off by default', () => {
   assert.equal(browserOff(normalizeManagedToolPreferences({ families: {} })), true);
   assert.equal(browserOff(normalizeManagedToolPreferences({ web_search: false })), true);
-  assert.equal(normalizeManagedToolPreferences({ families: { browser_use: true } }), undefined);
+  assert.deepEqual(normalizeManagedToolPreferences({ families: { browser_use: true } }), { disabled_tools: ['computer'] });
   assert.ok(resolveSessionToolDenyList({}, undefined).includes('browser'));
   assert.ok(resolveSessionToolDenyList(null, undefined).includes('browser'));
   assert.ok(!resolveSessionToolDenyList({ tool_category_overrides: { browser_use: true } }, undefined).includes('browser'));
@@ -81,17 +89,17 @@ test('the request and session paths that resolve preferences keep the tool off b
 
 test('a turn that names no preference follows the chat for this family and leaves every other one on', () => {
   for (const none of [undefined, null, 'text', []]) {
-    assert.deepEqual(requestToolPreferences(none, { session: { id: 'chat' } }), { disabled_tools: ['browser'] }, String(none));
-    assert.deepEqual(requestToolPreferences(none, {}), { disabled_tools: ['browser'] }, 'no session reads as off');
-    assert.equal(requestToolPreferences(none, { session: { tool_category_overrides: { browser_use: true } } }), undefined);
-    assert.deepEqual(requestToolPreferences(none, { session: { tool_category_overrides: { browser_use: 'true' } } }), { disabled_tools: ['browser'] });
+    assert.deepEqual(requestToolPreferences(none, { session: { id: 'chat' } }), { disabled_tools: ['browser', 'computer'] }, String(none));
+    assert.deepEqual(requestToolPreferences(none, {}), { disabled_tools: ['browser', 'computer'] }, 'no session reads as off');
+    assert.deepEqual(requestToolPreferences(none, { session: { tool_category_overrides: { browser_use: true } } }), { disabled_tools: ['computer'] });
+    assert.deepEqual(requestToolPreferences(none, { session: { tool_category_overrides: { browser_use: 'true' } } }), { disabled_tools: ['browser', 'computer'] });
   }
 });
 
 test('a stated preference is left to the ordinary resolution', () => {
   const session = { tool_category_overrides: { browser_use: true } };
   assert.equal(browserOff(requestToolPreferences({ families: {} }, { session })), true, 'the request names the families');
-  assert.equal(requestToolPreferences({ families: { browser_use: true } }, {}), undefined);
+  assert.deepEqual(requestToolPreferences({ families: { browser_use: true } }, {}), { disabled_tools: ['computer'] });
   assert.deepEqual(requestToolPreferences({ disabled_tools: ['read_file'] }, {}), { disabled_tools: ['read_file'] });
 });
 
@@ -201,14 +209,15 @@ test('a turn nobody is at the keyboard for stays off even in a chat that turned 
     assert.equal(browserOff(requestToolPreferences(undefined, { session, applicationTurn })), true, applicationTurn);
   }
   // A woken chat is offered the tool so it can close its page; browser-tool.js refuses every other step.
-  assert.equal(requestToolPreferences(undefined, { session, applicationTurn: 'wake' }), undefined);
+  assert.deepEqual(requestToolPreferences(undefined, { session, applicationTurn: 'wake' }), { disabled_tools: ['computer'] });
   assert.equal(browserOff(requestToolPreferences(undefined, { session: {}, applicationTurn: 'wake' })), true, 'only where the chat turned it on');
-  assert.equal(requestToolPreferences(undefined, { session, applicationTurn: 'auto_resume' }), undefined, 'it finishes a turn the user started');
-  assert.equal(requestToolPreferences(undefined, { session }), undefined);
+  assert.deepEqual(requestToolPreferences(undefined, { session, applicationTurn: 'auto_resume' }), { disabled_tools: ['computer'] }, 'it finishes a turn the user started');
+  assert.deepEqual(requestToolPreferences(undefined, { session }), { disabled_tools: ['computer'] });
 });
 
 test('the Tools row and the request resolver agree on what starts off', () => {
   const { defaultOffFamilySwitches } = require('../services/tools/tool-surface-families');
   const { DEFAULT_OFF_FAMILY_IDS } = require('../renderer/chat/renderer-composer-v2-model');
   assert.deepEqual([...DEFAULT_OFF_FAMILY_IDS].sort(), Object.keys(defaultOffFamilySwitches({})).sort());
+  assert.equal(defaultOffFamilySwitches({}).computer_use, false);
 });

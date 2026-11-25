@@ -320,7 +320,7 @@
           return;
         }
 
-        const codeReviewButton = event.target.closest('[data-jenny-code-review]');
+        const codeReviewButton = event.target.closest('[data-jenny-code-review], [data-turn-outcome]'); // row 192 outcome links
         if (codeReviewButton) {
           event.preventDefault();
           Promise.resolve(handleCodeReviewAction({
@@ -511,11 +511,11 @@
             featureEnabled: (key) => state.features?.featureFlags?.[key] !== false,
           },
         });
-        // Row 115: the session bar's title, in the same cluster; not mounted for a pane hosted in the IDE dock.
+        // Row 115: the session bar's diff control, in the same cluster; not mounted for a pane hosted in the IDE dock.
         globalThis.rendererSessionBar?.mountSessionBar?.({ pane: utilityCluster.parentElement, cluster: utilityCluster, chatTimeline, getSessionId, windowRef, jt,
-          getTitle: (id) => state.sessions?.find?.((entry) => entry.id === id)?.title, signal: bindAbortController?.signal });
+          signal: bindAbortController?.signal });
         // Row 59 checkpoint 2: this pane's session rail (its own session's facts); it disposes with the bind.
-        globalThis.rendererSessionRail?.mountSessionRail?.({ pane: utilityCluster.parentElement, cluster: utilityCluster, chatTimeline, getSessionId,
+        globalThis.rendererSessionRail?.mountSessionRail?.({ pane: utilityCluster.parentElement, chatTimeline, getSessionId,
           refreshIntervalMs: 15000, // a safety net only: file, git and turn events refetch through onChanged
           // Row 100 P2: the titles of chats waiting on a background job ('' if untitled).
           getJobWaiters: (jobId) => (state.streamWaits?.waitersForJob?.(jobId) || []).map((id) => String(state.sessions?.find?.((entry) => entry.id === id)?.title || '').trim()),

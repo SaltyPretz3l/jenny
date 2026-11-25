@@ -44,7 +44,7 @@ test('the inventory equals what is on disk, with the server stopped and running'
   assert.deepEqual(inv.members, [{ name: 'Olive', owner: true }, { name: 'Dot', owner: false }, { name: 'Maya', owner: false }]);
   assert.equal(inv.pending, 1);
   assert.equal(inv.invites, 1, 'only the live, unused invite');
-  assert.deepEqual(inv.chat, { team: true, project_channels: 2, messages: 5, attachments: 0, dms: 1, dm_messages: 2 });
+  assert.deepEqual(inv.chat, { team: true, project_channels: 2, custom_channels: 0, messages: 5, attachments: 0, dms: 1, dm_messages: 2 });
   assert.deepEqual(inv.projects, [
     { project_id: 'project_site', name: 'jenny-site', files: 2, bytes: 13 + 3000, conversations: 2 },
     { project_id: 'project_tax', name: 'tax-2026', files: 1, bytes: 8, conversations: 1 },
@@ -58,6 +58,18 @@ test('the inventory equals what is on disk, with the server stopped and running'
   assert.deepEqual({ ...running.inventory, busy: [] }, { ...inv, busy: [] }, 'the same numbers while it runs');
   const text = JSON.stringify(running);
   for (const secret of [TEAM_ID, OWNER, DOT, 'device_', 'invite_live', team.userDataPath]) assert.equal(text.includes(secret), false, secret);
+});
+
+test('the inventory counts custom channels (row 201: the delete list names them)', async (t) => {
+  const team = seeded(t);
+  const chat = path.join(team.layout.profile, 'team-chat');
+  const index = JSON.parse(fs.readFileSync(path.join(chat, 'index.json'), 'utf8'));
+  index.channels.push({ channel_id: 'chan_ideas', kind: 'channel' });
+  fs.writeFileSync(path.join(chat, 'index.json'), JSON.stringify(index));
+  fs.mkdirSync(path.join(chat, 'chan_ideas'));
+  fs.writeFileSync(path.join(chat, 'chan_ideas', 'channel.json'), JSON.stringify({ channel_id: 'chan_ideas', kind: 'channel', archived: null }));
+  const answer = await team.controller.handle('hostInventory', {});
+  assert.equal(answer.inventory.chat.custom_channels, 1);
 });
 
 test('delete: a wrong name changes nothing; the right name removes the team, the key, the token and this Jenny\'s membership', async (t) => {
@@ -80,15 +92,31 @@ test('delete: a wrong name changes nothing; the right name removes the team, the
   assert.equal(answer.host.key, null);
 });
 
-test('delete of a running team tells the server first, then stops it, then deletes', async (t) => {
+test('delete of a running team stops the server first and tells no member before the files are gone (OD-6)', async (t) => {
   const team = seeded(t);
   assert.equal((await team.controller.handle('hostDeploy', { name: TEAM_NAME, ...NAMES })).ok, true);
   const child = team.fake.last();
   const answer = await team.controller.handle('hostDelete', { name: TEAM_NAME });
   assert.equal(answer.ok, true, JSON.stringify(answer));
-  const types = child.posted.map((message) => message.type);
-  assert.ok(types.indexOf('team_deleting') >= 0 && types.indexOf('team_deleting') < types.indexOf('stop'), types.join(','));
-  assert.deepEqual(Object.keys(child.posted.find((m) => m.type === 'team_deleting')), ['type'], 'it carries nothing');
+  assert.equal(child.posted.some((message) => message.type === 'stop'), true, 'the server was stopped');
+  assert.equal(child.posted.some((message) => message.type === 'team_deleting'), false, 'a stopped server tells no one');
+});
+
+test('OD-6: a delete the files roll back (team_delete_file_held) never told the members; the team starts again', async (t) => {
+  const team = seeded(t);
+  assert.equal((await team.controller.handle('hostDeploy', { name: TEAM_NAME, ...NAMES })).ok, true);
+  const child = team.fake.last();
+  const realRename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (String(from).endsWith(path.join('projects', 'project_tax'))) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    return realRename(from, to);
+  });
+  const failed = await team.controller.handle('hostDelete', { name: TEAM_NAME });
+  assert.equal(failed.error?.reason, 'team_delete_file_held', JSON.stringify(failed));
+  assert.equal(child.posted.some((message) => message.type === 'team_deleting'), false, 'no permanent notice while the delete can roll back');
+  assert.deepEqual(team.removed, [], 'the membership stays');
+  assert.equal(fs.existsSync(hostPath(team, 'projects', 'project_tax', 'receipts.csv')), true, 'everything is back in place');
+  assert.equal((await team.controller.handle('hostDeploy', { name: TEAM_NAME, ...NAMES })).ok, true, 'the team starts again');
 });
 
 test('a delete that fails part way leaves the config, the key and the token; the team starts; a second delete finishes', async (t) => {
@@ -433,6 +461,35 @@ test('R09-F01a: a quit right after a delete is committed is finished by the next
     token: team.secureStore.values.has(HOST_RELAY_TOKEN_NAME), folder: fs.existsSync(hostPath(team)) },
   { retry: 'team_host_not_deployed', deployed: false, key: false, token: false, folder: false });
   assert.deepEqual(removed, [['removeTeam', TEAM_ID]], 'this Jenny\'s membership goes with the team');
+});
+
+test('H10: the startup sweep finishes a crashed delete only after the team service has loaded its managers', async (t) => {
+  const team = seeded(t);
+  assert.deepEqual(await removeTeamFiles(team.userDataPath), { ok: true, leftover: false });
+  const order = [];
+  let loaded = false;
+  const service = { holds: () => true, startExisting: async () => { order.push('startExisting'); loaded = true; },
+    handle: async (method, payload) => { order.push(method); return loaded ? { ok: true } : { ok: false, error: { reason: 'team_not_found', id: payload.team_id } }; } };
+  createTestHostController(t, { userDataPath: team.userDataPath, secureStore: team.secureStore, service, now: () => NOW, bounds: FAST,
+    script: healthyHostScript({ teamId: TEAM_ID }) });
+  assert.ok(await until(() => !fs.existsSync(hostPath(team))), 'the marked folder is swept');
+  assert.deepEqual(order, ['startExisting', 'removeTeam'], 'the membership is looked for only once the saved teams are loaded');
+});
+
+test('H8: a pending export record whose folder is its parent (a drive root) is cleared and nothing at the root is touched', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-delete-');
+  const root = path.parse(userDataPath).root;
+  fs.writeFileSync(path.join(userDataPath, 'team-export-pending.json'), JSON.stringify({ schema_version: 1, parent: root, folder: root }));
+  const touched = [];
+  const realLstat = fs.lstatSync;
+  // The root reads as absent, so an unfixed sweep cannot remove anything there; the call is what is recorded.
+  t.mock.method(fs, 'lstatSync', (target, ...rest) => {
+    if (path.resolve(String(target)) === root) { touched.push(String(target)); throw Object.assign(new Error('absent'), { code: 'ENOENT' }); }
+    return realLstat(target, ...rest);
+  });
+  assert.deepEqual(await sweepLeftovers(userDataPath, { keys: { load: () => null } }), { left: 0 });
+  assert.deepEqual(touched, [], 'the root was never looked at for removal');
+  assert.equal(fs.existsSync(path.join(userDataPath, 'team-export-pending.json')), false, 'the record is cleared');
 });
 
 test('R09-F01b: a delete whose key removal failed is finished by the next start, and a new team gets a new key', async (t) => {

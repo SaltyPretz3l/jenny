@@ -71,8 +71,8 @@ test('v52 defaults and migration preserve valid forward values', () => {
   assert.equal(defaults.unattendedGuardMinutes, 0);
 
   const migrated = normalizeState({ version: 51 });
-  assert.equal(migrated.version, 59);
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(migrated.version, 60);
+  assert.equal(CONFIG_VERSION, 60);
   assert.equal(migrated.uiLanguage, 'en');
   assert.equal(migrated.safetyMode, 'normal');
   assert.equal(migrated.unattendedGuardMinutes, 0);

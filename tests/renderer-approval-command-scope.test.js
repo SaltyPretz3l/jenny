@@ -119,9 +119,15 @@ test('an Always allowed command receipt reads the saved prefix', () => {
 
   const root = parseFragment(renderApprovalBlock({
     toolCallId: 'call_r', toolName: 'run_command', cardState: 'resolved', decision: 'allowed',
+    approvalScope: 'always', alwaysAllowPrefix: 'npm test', commandText: 'npm test -- --watch', mode: 'card',
+  }));
+  // Row 192 D2 A: the chat's inline row renders empty (the step carries the answer); the card keeps the receipt line.
+  assert.equal(root.querySelector('.tool-approval-receipt').textContent, '\u2713Always allowed\u00b7npm test \u2026');
+  const inline = parseFragment(renderApprovalBlock({
+    toolCallId: 'call_r', toolName: 'run_command', cardState: 'resolved', decision: 'allowed',
     approvalScope: 'always', alwaysAllowPrefix: 'npm test', commandText: 'npm test -- --watch', mode: 'inline',
   }));
-  assert.equal(root.querySelector('.tool-approval-receipt').textContent, '\u2713Always allowed\u00b7npm test \u2026');
+  assert.equal(inline.querySelector('.sr-only').textContent, 'Always allowed \u00b7 npm test \u2026');
 });
 
 test('the live and hydrated receipts both carry the saved prefix', () => {
@@ -161,7 +167,7 @@ test('the live and hydrated receipts both carry the saved prefix', () => {
 test('an exact Always allowed receipt quotes the command', () => {
   const root = parseFragment(renderApprovalBlock({
     toolCallId: 'call_r', toolName: 'run_command', cardState: 'resolved', decision: 'allowed',
-    approvalScope: 'always', commandText: 'python build.py', mode: 'inline',
+    approvalScope: 'always', commandText: 'python build.py', mode: 'card',
   }));
   assert.equal(root.querySelector('.tool-approval-receipt-subject').textContent, 'python build.py');
 });

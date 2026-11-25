@@ -827,3 +827,17 @@ test('the blocked reason names the llama-server engine for a llama-server GGUF a
   }).getState();
   assert.doesNotMatch(`${empty.unavailableReason} ${empty.summary} ${empty.visionUnavailableReason}`, /Model Library/);
 });
+
+test('row 194: the default model is never a cloud model; the save refuses it with a config error', async () => {
+  const patches = [];
+  const service = new OfflineIntelligenceService({
+    configService: { ...createConfigService({ mode: 'disabled', preferredLocalModel: 'qwen3.5:9b' }), updateOfflineIntelligence: (patch) => patches.push(patch) },
+    backendService: createBackendService(),
+  });
+  for (const id of ['api-provider/openrouter/qwen3.8-72b', 'codex-cli/gpt-5.1-codex', 'gpt-5.1']) {
+    await assert.rejects(service.updateSettings({ preferredLocalModel: id }), { code: 'CMP-CONFIG-0001' });
+  }
+  assert.deepEqual(patches, [], 'nothing is stored');
+  await service.updateSettings({ preferredLocalModel: 'llava:7b' });
+  assert.deepEqual(patches, [{ preferredLocalModel: 'llava:7b' }]);
+});

@@ -33,8 +33,8 @@
         if (!switcher || paneProjectSwitcher) return undefined;
         paneProjectSwitcher = switcher;
         // The switcher lists projects lazily (its menu refreshes on open); read
-        // the list once so a kicker can name a project the menu never showed.
-        return Promise.resolve(switcher.refresh?.()).then(() => getPaneComposition()?.renderKickers?.());
+        // the list once so a project the menu never showed can still be named.
+        return switcher.refresh?.();
       }).catch(() => {});
     }
     const project = paneProjectSwitcher?.projectById?.(projectId);

@@ -109,9 +109,9 @@ function withdrawalDto(event) {
   return { session_id: event.sessionId, stream_id: event.streamId, [key[1]]: event[key[0]].slice(0, 512) };
 }
 
-// Every published frame is retained for replay, so a 4 Hz test-progress stream would evict
-// its own stream's tool and approval events: publish at most one frame per second per call
-// (the final one always), carrying the grid labels of the frames skipped in between.
+// Test progress rides the event stream's tail lane (server/event-stream.js), so it no longer evicts its own stream's
+// tool and approval events, but a 4 Hz stream would still crowd the tail's token deltas: publish at most one frame per
+// second per call (the final one always), carrying the grid labels of the frames skipped in between.
 const TEST_PROGRESS_INTERVAL_MS = 1000;
 function createTestProgressThrottle(now) {
   const calls = new Map();

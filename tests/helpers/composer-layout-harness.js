@@ -77,15 +77,15 @@ function startStreaming() {
   stop.classList.remove('hidden');
   pause.classList.remove('hidden');
   const send = document.getElementById('sendButton');
-  send.textContent = 'Queue — runs in Auto';
+  send.innerHTML = window.rendererComposerV2Render.QUEUE_ICON; // row 192: Send's size, the queue icon
   send.setAttribute('aria-label', 'Queue follow-up prompt — runs in Auto');
-  send.classList.add('composer-send-queue');
+  send.classList.add('composer-send-queue', 'composer-send-queue--icon');
 }
 
 const isCompact = () => document.querySelector('#composerWrap .composer').hasAttribute('data-toolbar-compact');
 
 /* One composer in pane 0 of a two-pane view, pane 0 `paneWidth` px wide. */
-async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkroom', streaming = false, mode = 'auto', projectTag = '', waitCompact = true, hostSelector = '#chatPane0', viewport = { width: 1584, height: 914 } }) {
+async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkroom', streaming = false, mode = 'auto', waitCompact = true, hostSelector = '#chatPane0', viewport = { width: 1584, height: 914 } }) {
   // The app's CSP forbids inline script; the modules are injected as text.
   const page = await browser.newPage({ viewport, bypassCSP: true });
   await page.route('**/*', (route) => (/\.m?js(\?|$)/.test(route.request().url()) ? route.abort() : route.continue()));
@@ -103,19 +103,12 @@ async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkr
   for (const file of MODULES) await page.addScriptTag({ content: fs.readFileSync(path.join(ROOT, file), 'utf8') });
   await page.evaluate(`window.__startStreaming = ${startStreaming}; window.__populateSettingsGroup = ${populateSettingsGroup}`);
   await page.evaluate(() => window.rendererDictationController.insertMicBefore(document.getElementById('stopStreamButton'), window.inventoryActionButton));
-  await page.evaluate(({ paneWidth: width, streaming: live, mode: runMode, projectTag: tag, hostSelector }) => {
+  await page.evaluate(({ paneWidth: width, streaming: live, mode: runMode, hostSelector }) => {
     const view = document.getElementById('chatView');
     view.dataset.paneCount = '2';
     view.style.gridTemplateColumns = `${width}px 10px minmax(0, 1fr) auto`;
     document.getElementById('chatPaneResizer').classList.remove('hidden');
     const pane = document.getElementById('chatPane0');
-    if (tag) {
-      const kicker = pane.querySelector('.chat-pane-kicker');
-      kicker.hidden = false;
-      kicker.innerHTML = '<span class="chat-pane-kicker-title">Use the file write tool to create plan.md</span>'
-        + `<span class="chat-pane-kicker-project"> · ${tag}</span>`
-        + '<button type="button" class="workspace-rail-close-button chat-pane-close">x</button>';
-    }
     const group = pane.querySelector('.composer-settings-group');
     const chip = window.inventoryChip;
     window.__populateSettingsGroup(runMode);
@@ -129,7 +122,7 @@ async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkr
     }
     if (live) window.__startStreaming();
     window.__settings = window.rendererPaneComposerRail.createComposerSettingsFit({ groupEl: group, paneRoot: pane, getRunMode: () => runMode, deps: { chip } });
-  }, { paneWidth, streaming, mode, projectTag, hostSelector });
+  }, { paneWidth, streaming, mode, hostSelector });
   if (waitCompact) await page.waitForFunction(isCompact);
   return page;
 }

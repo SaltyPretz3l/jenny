@@ -142,13 +142,40 @@ test('the library has one primary button only while the Pull row shows; Use stay
   assert.equal(pullButton.classList.contains('btn--primary'), false);
 });
 
+test('a Library row button says Load, with the model in its label, and keeps the use action id', () => {
+  const row = fragment(view.buildLibraryRow(card({ key: 'alpha:1b', tag: 'alpha:1b', displayName: 'Alpha' }), { actions: ['use'] }));
+  const load = row.querySelector('[data-model-card-action="use"]');
+  assert.equal(load.textContent.trim(), 'Load');
+  assert.equal(load.getAttribute('aria-label'), 'Load Alpha');
+  const pending = fragment(view.buildLibraryRow(card({ key: 'alpha:1b', displayName: 'Alpha' }), { actions: ['use'], activation: { status: 'running', key: 'alpha:1b' } }));
+  assert.equal(pending.querySelector('[data-model-card-action="use"]').textContent.trim(), 'Starting…');
+});
+
+test('cloud models leave the Library rows and chip counts, and one line says where they went', () => {
+  const merged = libraryMerged();
+  merged.cards.push(card({ key: 'cloud:gpt', tag: 'cloud:gpt', displayName: 'Cloud GPT', engineType: 'openai', selectedEngine: '' }));
+  const withCloud = view.libraryRowsModel(merged, { scope: 'all', sort: 'name', showAllCatalog: true });
+  assert.deepEqual(libraryKeys(withCloud), libraryKeys(view.libraryRowsModel(libraryMerged(), { scope: 'all', sort: 'name', showAllCatalog: true })));
+  assert.deepEqual(withCloud.counts, view.libraryRowsModel(libraryMerged(), { scope: 'all', sort: 'name', showAllCatalog: true }).counts);
+  assert.equal(view.libraryRowsModel(merged, { scope: 'all', query: 'openai' }).counts.all, 0, 'the engine name does not find a cloud row');
+  const items = view.buildLibraryItems(merged, { scope: 'mine', sort: 'name', actions: ['use'] }).items;
+  assert.equal(items.some((item) => item.key === 'cloud:gpt'), false);
+  const note = fragment(items[items.length - 1].html).querySelector('.mlib-cloud-note');
+  assert.equal(items[items.length - 1].key, ':cloud', 'the line comes last, under the list');
+  assert.equal(note.textContent.replace(/\s+/g, ' ').trim(), "Cloud models are not listed here. You pick one in a chat's model button; their providers are under Cloud providers.");
+  assert.equal(note.querySelector('[data-model-library-section-action="cloud-providers"]').textContent, 'Cloud providers');
+  const empty = view.buildLibraryItems({ cards: [card({ engineType: 'openai' })] }, { scope: 'all' }).items;
+  assert.deepEqual(empty.map((item) => item.key), [':empty', ':cloud'], 'the line stays under an empty list');
+});
+
 test('library rows show flags, meta, the fit bar with its number, and an honest dash when unmeasured', () => {
   const doc = (c, o) => fragment(view.buildLibraryRow(c, { actions: ['use', 'tune', 'menu', 'pull'], budgetMb: 12000, ...o }));
   const alpha = doc(card({ key: 'alpha:1b', tag: 'alpha:1b', displayName: 'Alpha', selectedEngine: 'ollama', params: '12B', quant: 'Q4_K_M', vramRequiredMb: 6000, fitSource: 'estimated', mtp: { enabled: true }, preferredLocal: true, accelerationEligible: true }));
   const rowEl = alpha.querySelector('.mrow');
   assert.equal(rowEl.dataset.modelKey, 'alpha:1b');
   assert.equal(rowEl.querySelector('.mrow-name').title, 'alpha:1b');
-  assert.deepEqual([...rowEl.querySelectorAll('.mrow-flag')].map((f) => f.textContent), ['MTP', 'Local default']);
+  assert.deepEqual([...rowEl.querySelectorAll('.mrow-flag')].map((f) => f.textContent), ['MTP', 'Default']);
+  assert.equal([...rowEl.querySelectorAll('.mrow-flag')].find((f) => f.textContent === 'Default').title, 'New chats set to Default use this model');
   assert.equal(rowEl.querySelector('.mrow-meta').textContent, 'Ollama · 12B · Q4_K_M · 32K context · 4 GB on disk');
   assert.equal(rowEl.querySelector('.mrow-fit-bar i').style.width, '50%');
   assert.equal(rowEl.querySelector('.mrow-fit-num').textContent, '~5.9 GB');
@@ -192,4 +219,70 @@ test('libraryEngineName and isHostedCard name the engine and tell a hosted card 
   for (const engineType of ['ollama', 'vllm', 'openai-compatible', '']) {
     assert.equal(view.isHostedCard(card({ engineType })), false, engineType);
   }
+});
+
+// Row 201 C1 / OD-1: team models sit in their own read-only "From your teams" group.
+function teamMerged(extra = {}) {
+  return {
+    ...libraryMerged(),
+    teamModels: [
+      { id: 'team/team_alpha1/qwen3:70b', modelId: 'qwen3:70b', teamId: 'team_alpha1', teamName: 'Alpha crew', contextLength: 32768 },
+      { id: 'team/team_bravo2/gemma3:27b', modelId: 'gemma3:27b', teamId: 'team_bravo2', teamName: '', contextLength: 0 },
+    ],
+    ...extra,
+  };
+}
+
+test('team models list under "From your teams" with the team in the name, read-only, never in On this PC', () => {
+  const options = { scope: 'all', query: '', sort: 'name', actions: ['use', 'tune', 'pull', 'menu', 'unload'] };
+  const root = fragment(`<div>${view.buildLibraryList(teamMerged(), options)}</div>`);
+  const sep = [...root.querySelectorAll('.mrow-sep')].find((el) => /From your teams/.test(el.textContent));
+  assert.ok(sep, 'the group has its title');
+  const rows = [...root.querySelectorAll('.mrow[data-team-model]')];
+  assert.deepEqual(rows.map((row) => row.querySelector('.mrow-name').textContent), ['qwen3:70b \u00b7 Alpha crew', 'gemma3:27b \u00b7 Unnamed team']);
+  for (const row of rows) {
+    assert.equal(row.querySelector('button'), null, 'no Load, Tune, Set as default or menu');
+    assert.doesNotMatch(row.textContent, /Ollama|team\/team_/);
+    assert.match(row.textContent, /can read your prompts/, 'the D7 notice');
+  }
+  assert.equal(root.querySelector('[data-model-key^="team/"]'), null, 'no On this PC row');
+  assert.deepEqual(view.libraryRowsModel(teamMerged(), options).counts, { all: 4, mine: 2, get: 2 }, 'On this PC counts exclude team models');
+  for (const scope of ['mine', 'get']) {
+    const other = fragment(`<div>${view.buildLibraryList(teamMerged(), { ...options, scope })}</div>`);
+    assert.equal(other.querySelector('[data-team-model]'), null, scope);
+  }
+  const searched = fragment(`<div>${view.buildLibraryList(teamMerged(), { ...options, query: 'alpha' })}</div>`);
+  assert.deepEqual([...searched.querySelectorAll('[data-team-model]')].map((row) => row.dataset.teamModel), ['team/team_alpha1/qwen3:70b']);
+  const none = fragment(`<div>${view.buildLibraryList(teamMerged({ teamModels: [] }), options)}</div>`);
+  assert.equal(none.querySelector('[data-team-model]'), null);
+  assert.equal([...none.querySelectorAll('.mrow-sep')].some((el) => /From your teams/.test(el.textContent)), false, 'no group without a team model');
+});
+
+// --- row 200: the Strata row ---
+
+test('a Strata row names the engine in its meta, wears the Strata badge and shows Serving while it serves', () => {
+  const strata = card({
+    key: 'inkling-2-mini-sq-20:latest', tag: 'inkling-2-mini-sq-20', displayName: 'Inkling 2 Mini', selectedEngine: 'strata', engineType: 'openai-compatible',
+    params: '26.4B', quant: 'SQ-20', contextLength: 114432, sizeBytes: 19983212544, vramRequiredMb: 0, fitState: 'unknown',
+  });
+  assert.equal(view.libraryEngineName(strata), 'Strata');
+  const row = fragment(view.buildLibraryRow(strata, { actions: ['use', 'tune', 'menu'] }));
+  assert.match(row.querySelector('.mrow-meta').textContent, /^Strata · 26\.4B · SQ-20 · 111\.8K context · 18\.6 GB on disk$/);
+  assert.deepEqual([...row.querySelectorAll('.mrow-flag')].map((f) => f.textContent), []);
+  assert.equal(row.querySelector('.mrow-fit-num--none').textContent, '—', 'no VRAM figure');
+  const compact = fragment(view.buildModelCard(strata, { compact: true, actions: ['use'], pull: {}, activation: {} }));
+  assert.ok([...compact.querySelectorAll('.inv-badge')].some((badge) => badge.textContent === 'Strata'));
+  const serving = fragment(view.buildLibraryRow({ ...strata, active: true, serving: true, servingPort: 8035 }, { actions: ['use', 'unload', 'tune', 'menu'] }));
+  assert.deepEqual([...serving.querySelectorAll('.mrow-flag')].map((f) => f.textContent), ['Serving on :8035']);
+});
+
+test('a locked Strata row says why in the existing failed-row note and keeps its Tune button', () => {
+  const locked = card({
+    key: 'inkling-2-mini-sq-20:latest', tag: 'inkling-2-mini-sq-20', displayName: 'Inkling 2 Mini', selectedEngine: 'strata', engineType: 'openai-compatible',
+    loadFailure: { cause: 'other', message: 'the SQ-20 pack failed its check. See Engines and providers.', context: null, at: '', engine: 'openai-compatible', model: 'inkling-2-mini-sq-20', managed: 'strata' },
+  });
+  const row = fragment(view.buildLibraryRow(locked, { actions: ['use', 'tune', 'menu'] }));
+  assert.equal(row.querySelector('.mrow').dataset.loadFailed, 'true');
+  assert.equal(row.querySelector('.model-card-note--failed').textContent, 'Strata: the SQ-20 pack failed its check. See Engines and providers.');
+  assert.ok(row.querySelector('[data-model-card-action="tune"]'));
 });

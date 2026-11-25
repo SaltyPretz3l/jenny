@@ -14,6 +14,30 @@ const RESULT = Object.freeze({
     + 'Do not commit or run tests yourself unless the user chooses one. Continue your answer.',
 });
 
+const APPROVED_PLAN_STATES = new Set(['approved', 'approved_auto', 'accepted']);
+const VERIFICATION_CHARS = 400;
+
+// What the plan approved in this turn said to check, or '' (no plan, not approved, nothing to
+// check, or the lookup failed: a lookup never fails the tool).
+function approvedVerification(context, live) {
+  try {
+    // The lookup-only view: no settle-on-read or normalisation of the whole transcript.
+    const messages = context.backendService?.sessionStore?.peekSessionMessages?.(live.sessionId);
+    if (!Array.isArray(messages)) return '';
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message?.kind !== 'plan_document' || String(message.turn_id || '') !== live.turnId) continue;
+      const plan = message.plan_document;
+      if (!APPROVED_PLAN_STATES.has(String(plan?.state || ''))) return '';
+      const text = typeof plan.verification === 'string' ? plan.verification.replace(/\s+/gu, ' ').trim() : '';
+      return text.length > VERIFICATION_CHARS ? `${text.slice(0, VERIFICATION_CHARS - 1)}\u2026` : text;
+    }
+  } catch (_error) {
+    return '';
+  }
+  return '';
+}
+
 // Records a Git decision for the user; it never stages, commits or runs anything.
 module.exports = {
   name: NAME,
@@ -50,6 +74,13 @@ module.exports = {
     if (!captured?.ok) return proposalFailure(NAME, captured?.reason, { cause: captured?.cause_code });
     // Capture awaits Git; the call must still be the live one when it publishes.
     if (!checkLiveCall(context).ok) return proposalFailure(NAME, 'authority_changed');
-    return publishProposal(NAME, RESULT, validated.value, captured.binding, live, context);
+    const result = await publishProposal(NAME, RESULT, validated.value, captured.binding, live, context);
+    const verification = result.isError ? '' : approvedVerification(context, live);
+    if (!verification) return result;
+    return {
+      ...result,
+      content: `${result.content} The plan you were approved said to check: "${verification}". `
+        + 'If any part of that did not run, tell the user in your answer.',
+    };
   },
 };

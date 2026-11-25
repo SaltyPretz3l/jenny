@@ -267,7 +267,7 @@ def test_initialize_exposes_feature_flags_payload() -> None:
             "accept_version": API_VERSION,
             "config": {
                 "feature_flags": {
-                    "agent_executor": True,
+                    "canonical_turn_events": True,
                     "start_minimized_to_tray": False,
                     "ignored_non_boolean": "nope",
                 }
@@ -279,7 +279,7 @@ def test_initialize_exposes_feature_flags_payload() -> None:
 
     assert outcome.response is not None
     result = outcome.response["result"]
-    assert result["feature_flags"]["agent_executor"] is True
+    assert result["feature_flags"]["canonical_turn_events"] is True
     assert result["feature_flags"]["start_minimized_to_tray"] is False
     assert "ignored_non_boolean" not in result["feature_flags"]
 

@@ -46,16 +46,17 @@
   function buildPillMarkup(toneLabel, options) {
     const opts = options || {};
     const tone = escapeHtml(toneLabel.tone || 'muted');
-    const labelHtml = escapeHtml(toneLabel.label || 'Unknown');
+    const words = normString(toneLabel.words);
+    const labelHtml = escapeHtml(words || toneLabel.label || 'Unknown');
     const runMode = opts.runMode === 'auto' ? 'auto' : 'ask';
     const pauseState = ['requested', 'paused'].includes(opts.pauseState) ? opts.pauseState : 'none';
     const unseen = Number(opts.unseenErrorCount) || 0;
     const segments = (Array.isArray(toneLabel.segments) ? toneLabel.segments : [])
       .filter((segment) => segment && normString(segment.label));
     const accessibleLabel = [
-      normString(toneLabel.statusLabel) || normString(toneLabel.label) || jt('healthPill.unknown', 'Unknown'),
-      normString(opts.engine),
-      normString(opts.model),
+      normString(toneLabel.statusLabel) || words || normString(toneLabel.label) || jt('healthPill.unknown', 'Unknown'),
+      words ? '' : normString(opts.engine),
+      words ? '' : normString(opts.model),
       unseen > 0 ? jtn('healthPill.popover.recentErrorCount', unseen, { count: unseen }, '{count} recent error', '{count} recent errors') : '',
     ].concat(segments.map((segment) => normString(segment.label))).filter(Boolean).join(' · ');
     const badge = unseen > 0
@@ -77,16 +78,16 @@
       })
       : '';
     return ''
-      + '<button type="button" class="workbench-health-pill"'
+      + '<button type="button" class="workbench-health-pill' + (words ? ' workbench-health-pill--named' : '') + '"'
       + ' id="' + ID_PILL_BUTTON + '"'
       + ' data-health-tone="' + tone + '"'
       + ' aria-haspopup="dialog"'
       + ' aria-expanded="false"'
       + ' aria-controls="' + ID_POPOVER + '"'
       + ' aria-label="' + escapeHtml(accessibleLabel) + '"'
-      + ' title="' + escapeHtml(accessibleLabel) + '">'
+      + ' title="' + escapeHtml(words ? words + '. ' + jt('healthPill.named.hint', 'Click for the engine and graphics memory.') : accessibleLabel) + '">'
       + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
-      + (toneLabel.tone === 'success'
+      + (toneLabel.tone === 'success' && !words
         ? ''
         : '<span class="workbench-health-pill-label">' + labelHtml + '</span>')
       + segmentHtml
@@ -126,25 +127,26 @@
     return { html: escapeHtml(parts.join(' · ')), valueClass: '' };
   }
 
-  /* The managed NInfer server when it is what serves runtime.model, so the
-   * engine reads NInfer, not the raw openai-compatible it speaks through
+  /* The managed NInfer or Strata server when it is what serves runtime.model, so the
+   * engine reads NInfer or Strata, not the raw openai-compatible it speaks through
    * (gate 2026-10-14 F19). llama-server stays byte-identical. */
-  function managedNinferForModel(runtime) {
+  function managedServerForModel(runtime) {
     const facet = runtime && runtime.managed_server;
-    if (!facet || typeof facet !== 'object' || facet.kind !== 'ninfer') return null;
+    if (!facet || typeof facet !== 'object' || (facet.kind !== 'ninfer' && facet.kind !== 'strata')) return null;
     if (normString(runtime.engine) !== 'openai-compatible') return null;
     const key = (value) => normString(value).toLowerCase().replace(/:latest$/, '');
     const alias = key(facet.alias);
-    return alias && alias === key(runtime.model) ? { state: normString(facet.state).toLowerCase() } : null;
+    return alias && alias === key(runtime.model) ? { state: normString(facet.state).toLowerCase(), kind: facet.kind } : null;
   }
 
   function engineLabelForRuntime(runtime) {
-    return managedNinferForModel(runtime) ? 'NInfer' : normString(runtime && runtime.engine);
+    const managed = managedServerForModel(runtime);
+    return managed ? { ninfer: 'NInfer', strata: 'Strata' }[managed.kind] : normString(runtime && runtime.engine);
   }
 
   function formatEngineModel(snapshot) {
     const runtime = snapshot && snapshot.runtime ? snapshot.runtime : null;
-    const ninfer = managedNinferForModel(runtime);
+    const ninfer = managedServerForModel(runtime);
     const engine = engineLabelForRuntime(runtime) || jt('healthPill.noEngine', 'no engine');
     const model = normString(runtime && runtime.model) || jt('healthPill.noModel', 'no model');
     // A crashed or stopped NInfer no longer holds the model, whatever the last status said.
@@ -179,7 +181,7 @@
     const managed = runtime && runtime.managed_server;
     const facet = managed && typeof managed === 'object' ? managed : runtime && runtime.llama_server;
     if (!facet || typeof facet !== 'object' || Array.isArray(facet)) return null;
-    const kind = facet === managed && facet.kind === 'ninfer' ? 'ninfer' : 'llama-server';
+    const kind = facet === managed && (facet.kind === 'ninfer' || facet.kind === 'strata') ? facet.kind : 'llama-server';
     const state = normString(facet.state).toLowerCase();
     const lastError = normString(facet.last_error);
     if (!state || state === 'unknown' || (state === 'stopped' && !lastError)) return null;
@@ -196,7 +198,7 @@
         + (mode && mode !== 'off' && mode !== 'unknown' ? ' · ' + mode : '')
         + (build ? jt('models.library.buildSuffix', ' · build {build}', { build: build[1] }) : '');
       valueClass = 'success';
-    } else if (state === 'crashed' && kind === 'ninfer' && facet.stopped_by === 'watchdog') {
+    } else if (state === 'crashed' && (kind === 'ninfer' || kind === 'strata') && facet.stopped_by === 'watchdog') {
       detail = jt('healthPill.serverWatchdogStopped', 'stopped by the power watchdog ({watts} W)', { watts: Number(facet.watchdog_watts) || 0 });
       valueClass = 'danger';
     } else if (state === 'crashed') {
@@ -207,7 +209,7 @@
       valueClass = 'danger';
     }
     return {
-      html: escapeHtml(kind === 'ninfer' ? 'NInfer · ' : 'llama-server · ') + '<em>' + escapeHtml(detail) + '</em>',
+      html: escapeHtml({ ninfer: 'NInfer · ', strata: 'Strata · ' }[kind] || 'llama-server · ') + '<em>' + escapeHtml(detail) + '</em>',
       valueClass,
       kind,
       needsRestart: state === 'crashed' || state === 'stopped',
@@ -442,17 +444,10 @@
     ).toLowerCase();
     const hasAcquisition = acquisitionStage === 'acquiring' || acquisitionStage === 'unavailable';
     const hasIssues = issues.none !== true;
+    // The engine block (row 194): plain words and the card first, today's fact lines in a closed fold.
+    const engineView = extras && extras.engine;
 
-    return ''
-      + '<div class="workbench-health-popover" id="' + ID_POPOVER + '" role="dialog"'
-      + ' tabindex="-1" aria-label="' + escapeHtml(jt('healthPill.popover.ariaLabel', 'Runtime health')) + '" data-health-tone="' + tone + '">'
-      + '<div class="workbench-health-popover-status">'
-      + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
-      + '<span>' + escapeHtml(state.toneLabel.label) + '</span>'
-      + '</div>'
-      + (summary ? '<div class="workbench-health-popover-summary">'
-        + escapeHtml(summary) + '</div>' : '')
-      + '<div class="workbench-health-popover-facts">'
+    const factsHtml = '<div class="workbench-health-popover-facts">'
       + (runMode === 'auto'
         ? buildPopoverRow(
           jt('healthPill.runMode.rowLabel', 'Run mode'),
@@ -479,26 +474,46 @@
           + issues.html + '</div>'
         : '')
       + buildLoadFact(extras && extras.systemStats)
-      + '</div>'
-      + buildRecentErrorsSection(extras)
-      + (extras && extras.gpuSection ? extras.gpuSection : '')
-      + '<div class="workbench-health-popover-actions">'
+      + '</div>';
+    const actionsHtml = '<div class="workbench-health-popover-actions">'
+      + (engineView ? engineView.actionsHtml : '')
       + (managedServer && managedServer.needsRestart
         ? (managedServer.kind === 'ninfer'
           ? buildPopoverAction(jt('healthPill.popover.restartNinfer', 'Restart NInfer'), 'restart-ninfer')
-          : buildPopoverAction(jt('healthPill.popover.restartLlamaServer', 'Restart llama-server'), 'restart-llama-server'))
+          : managedServer.kind === 'strata'
+            ? buildPopoverAction(jt('healthPill.popover.restartStrata', 'Restart Strata'), 'restart-strata')
+            : buildPopoverAction(jt('healthPill.popover.restartLlamaServer', 'Restart llama-server'), 'restart-llama-server'))
         : '')
-      + (modelUnavailable
-        ? buildPopoverAction(jt('healthPill.popover.retry', 'Retry'), 'retry-model')
-          + buildPopoverAction(jt('healthPill.popover.models', 'Models'), 'open-models')
-        : '')
+      + (engineView
+        ? buildPopoverAction(jt('healthPill.popover.models', 'Models'), 'open-models')
+        : modelUnavailable
+          ? buildPopoverAction(jt('healthPill.popover.retry', 'Retry'), 'retry-model')
+            + buildPopoverAction(jt('healthPill.popover.models', 'Models'), 'open-models')
+          : '')
       + buildPopoverAction(jt('healthPill.popover.diagnostics', 'Diagnostics'), 'open-runtime-health')
       + buildPopoverAction(jt('healthPill.popover.logs', 'Logs'), 'open-logs')
       + buildPopoverAction(extras && extras.titlebarLoad === true
         ? jt('healthPill.popover.hideLoad', 'Hide load from title bar')
         : jt('healthPill.popover.showLoad', 'Show load in title bar'), 'toggle-titlebar-load')
       + (recentErrors.length ? buildPopoverAction(jt('healthPill.popover.clearErrors', 'Clear errors'), 'clear-errors') : '')
+      + '</div>';
+
+    return ''
+      + '<div class="workbench-health-popover' + (engineView ? ' workbench-health-popover--engine' : '') + '" id="' + ID_POPOVER + '" role="dialog"'
+      + ' tabindex="-1" aria-label="' + escapeHtml(engineView ? jt('healthPill.engine.ariaLabel', 'Engine and graphics memory') : jt('healthPill.popover.ariaLabel', 'Runtime health')) + '" data-health-tone="' + tone + '">'
+      + '<div class="workbench-health-popover-status">'
+      + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
+      + '<span>' + escapeHtml(engineView ? engineView.heading : state.toneLabel.label) + '</span>'
       + '</div>'
+      + (engineView || summary ? '<div class="workbench-health-popover-summary">'
+        + escapeHtml(engineView ? engineView.summary : summary) + '</div>' : '')
+      + (engineView ? engineView.gpuHtml : factsHtml)
+      + buildRecentErrorsSection(extras)
+      + (extras && extras.gpuSection ? extras.gpuSection : '')
+      + actionsHtml
+      + (engineView
+        ? '<details class="workbench-health-popover-tech"><summary>' + escapeHtml(jt('healthPill.engine.tech', 'Technical details')) + '</summary>' + factsHtml + '</details>'
+        : '')
       + '</div>';
   }
 

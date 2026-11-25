@@ -24,6 +24,11 @@
 // durations only; never a body, a header value or the engine key. A failed turn is
 // never retried or replayed.
 //
+// What the node reads is never the caller's object: it is rebuilt from a lowercase allowlist of chat fields
+// (engine-request-fields.js) before the image check, the thinking fit and the stream flag, and a case variant of
+// an allowed key is refused. A revoked or demoted member's request ends at the next membership recheck (the
+// pool's `onRecheck`), on each streaming comment tick and on each data event.
+//
 // An answer counts against its member and in resources() until it has flushed or
 // its socket closed; one whose reader stops taking bytes is destroyed after the
 // host's response write deadline, and any is destroyed after a fixed number of them.
@@ -31,6 +36,7 @@
 const { hostFailure } = require('../api-contract');
 const { RESPONSE_WRITE_TIMEOUT_MS, STATUS_BY_CODE } = require('../http-server');
 const { isId } = require('./ids');
+const { canonicalChatBody } = require('./engine-request-fields');
 const { ENGINE_KEY_PATTERN } = require('./pool-composition');
 const {
   COMMENT_INTERVAL_MS, JSON_HEADERS, SSE_HEADERS, TIMEOUT_REASONS, fitThinking, hasImagePart, isPlainObject, readBody,
@@ -144,6 +150,7 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
   const limits = resolveLimits(overrides);
   const log = safeLogger(logger);
   const requests = new Set(); // admitted chat requests, at most maxPerMember per member
+  let unhook = null;
   const counters = { usage_append_failures: 0 };
   let stopped = false;
 
@@ -178,7 +185,10 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     response.writeHead(200);
     response.flushHeaders();
     record.sse = true;
-    record.timer = setInterval(() => { if (record.relayed === 0) response.write(': keepalive\n\n'); }, limits.commentIntervalMs);
+    record.timer = setInterval(() => {
+      if (lostRight(record)) return;
+      if (record.relayed === 0) response.write(': keepalive\n\n');
+    }, limits.commentIntervalMs);
     record.timer.unref?.();
     record.markReady();
   }
@@ -284,21 +294,42 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     statusFor(failure?.error?.reason, failure?.error?.code), failure?.error?.reason);
 
   // The caller went away, stopped reading or lost the right, or the routes stop:
-  // the job and the lease end, nothing is retried.
+  // the job and the lease end, nothing is retried. A caller that closed after the node's `[DONE]` has its whole
+  // answer: the scheduler completes that job, and the turn is recorded as completed (review H14).
   function abandon(record, reason = 'cancelled') {
     if (record.settled) return;
     record.controller.abort();
     try { record.unwatch?.(); } catch (_error) { /* the job is gone */ }
     record.unwatch = null;
+    let answered = false;
     try {
-      if (record.job) pool.scheduler.cancelJob(record.job.job_id);
-      else if (record.lease && !record.release) pool.scheduler.cancelLease(record.lease.lease_id, { reason: 'cancelled' });
+      if (record.job) {
+        pool.scheduler.cancelJob(record.job.job_id);
+        answered = reason === 'cancelled' && pool.scheduler.getJob(record.job.job_id)?.state === 'done';
+      } else if (record.lease && !record.release) pool.scheduler.cancelLease(record.lease.lease_id, { reason: 'cancelled' });
     } catch (_error) {
       log('WARN', 'team.engine.cancel_failed', {});
     }
     // Cut before settling, so the record leaves `requests` now, not on the close event.
     if (!record.response.writableEnded) record.response.destroy();
-    settle(record, 'cancelled', reasonOf(reason));
+    if (answered) settle(record, 'completed', null);
+    else settle(record, 'cancelled', reasonOf(reason));
+  }
+
+  // True when the member has lost the right to use the engine (demoted, revoked, client unbound): the request ends.
+  function lostRight(record) {
+    if (record.settled) return true;
+    const denied = engineDenial(record.ctx);
+    if (!denied) return false;
+    abandon(record, denied.error.reason);
+    return true;
+  }
+
+  // The membership recheck: every admitted request asks the one guard again, now.
+  function recheck() {
+    for (const record of [...requests]) {
+      try { lostRight(record); } catch (_error) { log('WARN', 'team.engine.recheck_failed', {}); }
+    }
   }
 
   function onJobEvent(record, event) {
@@ -307,8 +338,7 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     if (event.type === 'data') {
       if (clock() - record.checkedAt >= RECHECK_MS) {
         record.checkedAt = clock();
-        const denied = engineDenial(record.ctx); // demoted or revoked while the job runs
-        if (denied) { abandon(record, denied.error.reason); return; }
+        if (lostRight(record)) return; // demoted or revoked while the job runs
       }
       stopTimer(record);
       if (!response.headersSent) response.writeHead(200, JSON_HEADERS);
@@ -332,6 +362,14 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     let body;
     try { body = JSON.parse(bytes.toString('utf8')); } catch (_error) { body = null; }
     return isPlainObject(body) ? body : null;
+  }
+
+  // The body the node will read, rebuilt from the allowlist; null when it cannot be, with `onRefused(reason)` told why.
+  function canonical(raw, onRefused) {
+    const checked = raw ? canonicalChatBody(raw) : { ok: false, reason: 'request_body_invalid' };
+    if (checked.ok) return checked.body;
+    onRefused?.(checked.reason);
+    return null;
   }
 
   // Reads, re-checks and validates the body. Answers `{ body, bytes }` (the parsed
@@ -358,7 +396,11 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
   // at once uses the first parse and drops the bytes.
   async function run(record, engineKey) {
     const { ctx } = record;
-    let { body = null, bytes = null } = (await readRequest(record)) ?? {};
+    const read = (await readRequest(record)) ?? {};
+    if (!read.body) return;
+    let { bytes = null } = read;
+    let body = canonical(read.body, (reason) => reject(record, 400, reason));
+    Object.assign(read, { body: null, bytes: null }); // the first parse and the raw bytes live only in the locals
     if (!body) return;
     record.stream = body.stream === true;
     // A model that is not a string names none (the pool's only model), as before.
@@ -393,14 +435,12 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     const info = handle.lease.model_info || { vision: false, thinking: false };
     if (info.vision !== true && wantsVision) { reject(record, 400, 'model_lacks_vision'); return; }
     bytes = null;
-    if (!body) body = parsed(record.body); // queued: parsed again only now
+    if (!body) body = canonical(parsed(record.body)); // queued: parsed and rebuilt again only now
     record.body = null;
     if (!body) { reject(record, 400, 'request_body_invalid'); return; }
     fitThinking(body, info);
-    // R16-F01: the leased model is the body's one model key. Every key equal to `model` under case folding
-    // goes first (an engine that matches keys without regard to case, as Ollama's Go decoder does, would act
-    // on another); JSON.parse already kept only the last of a duplicate, and the job gets this rebuild.
-    for (const key of Object.keys(body)) if (key.toLowerCase() === 'model') delete body[key];
+    // R16-F01: the leased model is the body's one model key. The rebuild holds no case variant of `model` (an
+    // engine that matches keys without regard to case, as Ollama's Go decoder does, would act on another).
     body.model = handle.lease.model;
     const created = pool.scheduler.createJob(handle.lease.lease_id,
       { requestBytes: Buffer.from(JSON.stringify(body)), stream: record.stream });
@@ -438,13 +478,18 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
     await ready;
   }
 
+  // A pool that tells when membership was rechecked (its `recheckLeases` runs after a revocation or a role change).
+  if (pool !== null && typeof pool.onRecheck === 'function') unhook = pool.onRecheck(recheck);
+
   function serveModels(ctx) {
     ctx.request.resume();
     const models = pool.scheduler.poolSummary().models;
     const payload = Buffer.from(JSON.stringify({
-      // `context_length` (the per-model smallest) only for a model whose length the pool knows (slice 4f).
+      // `context_length` (the per-model smallest) only for a model whose length the pool knows (slice 4f); `vision` /
+      // `thinking` only when a serving node has them (the member's team-engine.js reads only true ones).
       object: 'list', data: models.map((entry) => ({ id: entry.id, object: 'model', created: 0, owned_by: 'team',
-        ...(Number.isSafeInteger(entry.context_length) ? { context_length: entry.context_length } : {}) })),
+        ...(Number.isSafeInteger(entry.context_length) ? { context_length: entry.context_length } : {}),
+        ...(entry.vision === true ? { vision: true } : {}), ...(entry.thinking === true ? { thinking: true } : {}) })),
     }));
     ctx.response.writeHead(200, { ...JSON_HEADERS, 'content-length': payload.length });
     ctx.response.end(payload);
@@ -477,6 +522,8 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
   // an ended answer still flushing is cut.
   async function stop() {
     stopped = true;
+    try { unhook?.(); } catch (_error) { /* the pool is gone */ }
+    unhook = null;
     for (const record of [...requests]) {
       if (!record.settled) { abandon(record); continue; }
       record.response.destroy();
@@ -494,7 +541,7 @@ function createEngineRoutes({ pool = null, usageLog, clock = Date.now, logger, l
       body_bytes: held.reduce((sum, record) => sum + (record.body ? record.body.length : 0), 0) };
   }
 
-  return Object.assign(handle, { stop, resources, counters: () => ({ ...counters }) });
+  return Object.assign(handle, { stop, recheck, resources, counters: () => ({ ...counters }) });
 }
 
 module.exports = { ENGINE_ACTION, TEAM_RESOURCE, createEngineRoutes, memberRouteDenial };

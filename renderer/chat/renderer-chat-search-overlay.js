@@ -107,9 +107,9 @@
     var transientDetails = new Set();
     var canonicalFallbackLogged = false;
 
-    // The IDE dock or a Workspace-hosted pane: Monaco owns Ctrl+F there.
+    // The IDE dock: Monaco owns Ctrl+F there.
     function isHostedElsewhere() {
-      return Boolean(paneRoot && (paneRoot.classList.contains('ide-chat-dock-body') || paneRoot.hasAttribute('data-pane-hosted')));
+      return Boolean(paneRoot && paneRoot.classList.contains('ide-chat-dock-body'));
     }
 
     // Not yet synced (no attribute): focused only while the view has one pane.

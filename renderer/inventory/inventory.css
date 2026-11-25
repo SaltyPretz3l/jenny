@@ -666,6 +666,31 @@
   color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
 }
 
+/* Ghost and danger match the shared .btn--ghost / .btn--danger variants. */
+.inv-step-modal-action--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.inv-step-modal-action--ghost:hover,
+.inv-step-modal-action--ghost:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.inv-step-modal-action--danger {
+  border-color: var(--widget-button-danger-border);
+  background: var(--widget-button-danger-bg);
+  color: var(--widget-button-danger-color);
+}
+
+.inv-step-modal-action--danger:hover,
+.inv-step-modal-action--danger:focus-visible {
+  border-color: color-mix(in srgb, var(--state-danger) 48%, var(--widget-button-danger-border));
+  background: var(--widget-button-danger-bg);
+}
+
 .inv-step-modal-action:disabled {
   cursor: not-allowed;
   opacity: 0.56;
@@ -696,7 +721,7 @@
 
 .inv-toggle--on .inv-toggle-track {
   background: var(--accent);
-  border-color: var(--accent);
+  border-color: light-dark(color-mix(in srgb, var(--accent) 45%, var(--text-primary)), var(--accent));
 }
 
 .inv-toggle-thumb {
@@ -712,6 +737,7 @@
 
 .inv-toggle--on .inv-toggle-thumb {
   transform: translateX(14px);
+  background: light-dark(var(--text-primary), var(--bg-base));
 }
 
 .inv-toggle-label {

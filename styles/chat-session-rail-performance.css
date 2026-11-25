@@ -59,35 +59,3 @@
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
-
-/* ── Session toggle readout: "Session · 182 tok/s" (undocked only). tabular-nums keeps the width
-   from jittering; the value is in the button's accessible name, not announced as it changes. ── */
-.session-rail-readout {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.session-rail-readout-sep::before {
-  content: "\00b7";
-}
-
-.session-rail-readout[hidden] {
-  display: none;
-}
-
-/* Little room in the pane: the word goes, the icon and the rate stay. */
-.session-rail-toggle[data-readout-compact] .chat-timeline-utility-text,
-.session-rail-toggle[data-readout-compact] .session-rail-readout-sep {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}

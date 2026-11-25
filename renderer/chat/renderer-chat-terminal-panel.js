@@ -29,18 +29,15 @@
     const win = d.windowRef || globalThis.window || globalThis;
     const panelEl = d.dom?.artifactReviewPanel || null;
     const fn = (value, fallback = noop) => (typeof value === 'function' ? value : fallback);
-    const [openArtifactRail, renderArtifactReviewPanel, closePanel, claimOwner, appendClientLog, toggleMaximize, setActiveView] = [d.openArtifactRail,
-      d.renderArtifactReviewPanel, d.toggleArtifactReview, d.claimOwner, d.appendClientLog, d.toggleMaximize, d.setActiveView].map((value) => fn(value));
+    const [openArtifactRail, renderArtifactReviewPanel, closePanel, claimOwner, appendClientLog, setActiveView] = [d.openArtifactRail,
+      d.renderArtifactReviewPanel, d.toggleArtifactReview, d.claimOwner, d.appendClientLog, d.setActiveView].map((value) => fn(value));
     const getPanelSessionId = fn(d.getPanelSessionId, () => state.currentSessionId);
-    const isMaximized = fn(d.isMaximized, () => false);
     const getProjectSwitcher = fn(d.getProjectSwitcher, async () => null);
     const insertText = fn(d.insertIntoComposer, (payload) => win.rendererComposerInsert?.insertIntoComposer?.(payload) === true);
     const copyText = fn(d.copyText, async (text) => {
       if (typeof win.navigator?.clipboard?.writeText === 'function') await win.navigator.clipboard.writeText(text);
       else await win.jennyShell?.clipboard?.writeText?.(text);
     });
-    const requestFrame = fn(d.requestFrame, (cb) => win.requestAnimationFrame(cb));
-    const cancelFrame = fn(d.cancelFrame, (id) => win.cancelAnimationFrame(id));
 
     let disposed = false, bound = false;
     let pool = null, poolOff = null, unavailable = false;
@@ -48,9 +45,9 @@
     let project = null, projectFor = null, projectLoad = null; // this chat's project { id, name, rootPath } and the chat it was read for
     let selected = 0, wantedSlot = 0, synced = false, knownTasks = new Set();
     const shown = new Set(), created = new Set(); // the slots with a tab: running ones and the ones started from this panel
-    let ended = false, lastError = '';
+    let ended = false, lastError = '', autoStarting = false; // autoStarting: opening the tab is starting its first terminal
     let hostedSlot = 0, hostedMount = null, forceHost = false, hostLost = false;
-    let mountEl = null, panelObs = null, frameId = 0;
+    let mountEl = null, panelObs = null;
     let renaming = null, lastHead = '', lastStateHtml = '', selectionText = '', opener = null, openToken = 0;
     const listeners = [['click', handleClick], ['keydown', handleKeydown], ['mouseup', handleSelectionEvent], ['keyup', handleSelectionEvent]];
     const windowEvents = [['workspace:root-committed', handleRootChanged], ['jenny:projects-changed', handleRootChanged]];
@@ -152,6 +149,7 @@
       if (!pool) return unavailable ? 'unavailable' : 'loading';
       if (projectFor !== sid()) return 'loading';
       if (mismatch()) return 'other';
+      if (autoStarting) return 'loading';
       if (ended) return 'ended';
       return visibleTabs().length ? 'running' : 'empty';
     }
@@ -175,15 +173,10 @@
       if (P('host', selected, mountEl) === false) { hostedSlot = 0; hostedMount = null; }
     }
 
-    function scheduleRefit() {
-      if (frameId || disposed) return;
-      frameId = requestFrame(() => { frameId = 0; if (!disposed && hostedSlot) P('refit'); });
-    }
-
-    // The pool's xterm watches the hosted element's size itself; a re-fit is only asked for after maximize and restore.
+    // The pool's xterm watches the hosted element's size itself.
     const unwatchMount = () => { mountEl = null; };
 
-    // The shell owns Escape on the whole panel (Restore); typed in the terminal it belongs to the shell.
+    // Escape typed in the terminal belongs to the terminal's shell, not to the panel.
     function handleMountKeydown(event) { if (event.key === 'Escape') event.stopPropagation(); }
 
     // ── Painting ──
@@ -248,7 +241,7 @@
       if (renaming && lastHead) return lastHead;
       const kind = bodyKind();
       const tabs = kind === 'running' || kind === 'ended' ? visibleTabs() : null;
-      lastHead = rr.headHtml({ tabs, canAdd: Boolean(tabs) && tabs.length < maxTerminals(), actions: kind === 'running', maximized: isMaximized() === true });
+      lastHead = rr.headHtml({ tabs, canAdd: Boolean(tabs) && tabs.length < maxTerminals(), limit: maxTerminals(), actions: kind === 'running' });
       return lastHead;
     }
 
@@ -315,6 +308,12 @@
       await resolveProject();
       if (disposed || token !== openToken) return false;
       syncModel();
+      // Choosing Terminal starts this folder's first terminal; the empty state stays for no folder, an error or another project.
+      if (bodyKind() === 'empty' && !lastError && P('rootPath')) {
+        autoStarting = true;
+        try { await createTerminal(); } finally { autoStarting = false; }
+        if (disposed || token !== openToken) return false;
+      }
       renderArtifactReviewPanel();
       return isOpen();
     }
@@ -406,12 +405,6 @@
       close({ restoreFocus: false });
     }
 
-    function maximize() {
-      toggleMaximize();
-      scheduleRefit();
-      refreshView();
-    }
-
     // An inline name field over the tab: Enter or blur keeps it, Escape cancels, an emptied field restores the default name.
     function startRename(slot) {
       const editor = win.inventoryInlineTitleEditor;
@@ -490,7 +483,6 @@
       if (hit('[data-ct-add]')) return void createTerminal();
       if ((node = hit('[data-ct-more]'))) return void openMenu(node);
       if (hit('[data-ct-workspace]')) return showInWorkspace();
-      if (hit('[data-ct-max]')) return maximize();
       if (hit('[data-ct-start]')) return void createTerminal();
       if (hit('[data-ct-start-again]')) return void startAgain();
       if (hit('[data-ct-open-project]')) return void openProject();
@@ -534,8 +526,6 @@
       unwatchMount();
       panelObs?.disconnect?.();
       panelObs = null;
-      if (frameId) cancelFrame(frameId);
-      frameId = 0;
       if (bound) {
         for (const [type, listener] of listeners) panelEl?.removeEventListener?.(type, listener);
         for (const [type, listener] of windowEvents) win.removeEventListener?.(type, listener);

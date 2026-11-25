@@ -37,11 +37,6 @@
   border-inline-start: 1px solid var(--line);
 }
 
-/* The panel's own Maximize replaces the chrome's Restore; the chrome keeps its Close. */
-.artifact-review-panel[data-artifact-review-mode="terminal"] [data-artifact-panel-maximize] {
-  display: none;
-}
-
 .artifact-review-panel[data-artifact-review-mode="terminal"] .artifact-panel-header {
   height: 44px;
   min-height: 44px;

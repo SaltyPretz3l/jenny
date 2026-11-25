@@ -12,6 +12,11 @@
 // `start` line only and never reach a log or an event. Nothing here knows
 // about members, roles or HTTP, and no traffic passes through JavaScript. Logs
 // carry event names, counts and fixed words only.
+//
+// Team review fixes (row 201, C3): the caller names the keys it would admit (its devices and live invites, public
+// keys, at most MAX_KNOWN_KEYS) and the bridge gives a relayed dial claiming one a path strangers cannot fill. The set
+// goes as one `known_keys` line, whole, on each change and once the child is ready, and only to a child whose `ready`
+// said `known_keys: 1`: an older binary would read the line as protocol_invalid. Final admission stays with `admit`.
 
 const { safeLogger } = require('../safe-logger');
 const { defaultSpawnChild } = require('./bridge-binary');
@@ -19,14 +24,15 @@ const { resolveLimits } = require('./bridge-util');
 const {
   ALPN, attachControl, encodeKey, filterLog, parseMapping, parseRelay, relayField, stopChild,
 } = require('./control-channel');
-const { KEY_BYTES, SECRET_BYTES, requireBytes } = require('./preamble');
+const { KEY_BYTES, MAX_PREAMBLE_SOCKETS, SECRET_BYTES, requireBytes } = require('./preamble');
 const { withTimeout } = require('./with-timeout');
 
 const DEFAULT_LIMITS = Object.freeze({
   // Eight seats with a few devices each, plus invites in flight.
   maxConnections: 64,
   maxStreamsPerConnection: 16,
-  maxStreamsTotal: 128,
+  // The host listener holds as many sockets in the preamble phase (preamble.js).
+  maxStreamsTotal: MAX_PREAMBLE_SOCKETS,
   maxHandshakes: 64,
   admitTimeoutMs: 5000,
   dropGraceMs: 1000,
@@ -44,6 +50,8 @@ const DEFAULT_LIMITS = Object.freeze({
   inviteRecheckMs: 5000,
 });
 const CAPPED_LIMITS = Object.freeze(['maxWaiting', 'maxHandshakesPerSource', 'refusedCooldownMs']);
+// The most keys one `known_keys` line carries (the binary's MAX_KNOWN_KEYS).
+const MAX_KNOWN_KEYS = 128;
 const ADMIT_ANSWERS = new Set(['device', 'invite']);
 const KEY_TEXT = /^[A-Za-z0-9_-]{43}$/;
 
@@ -144,6 +152,11 @@ function createHostBridge({
   let ready = false;
   // True when the running child said it reads a stream's class byte (`bulk: 1` in `ready`).
   let bulkStreams = false;
+  // True when the running child said it reads `known_keys` (`known_keys: 1` in `ready`).
+  let readsKnownKeys = false;
+  // The caller's known keys as base64url, kept across a restart of the child; the set last sent to this child.
+  let knownKeys = [];
+  let sentKnown = null;
   let stopping = false;
   let downReported = false;
   let changeFailed = false;
@@ -160,6 +173,8 @@ function createHostBridge({
     mappingState = null;
     relayState = null;
     bulkStreams = false;
+    readsKnownKeys = false;
+    sentKnown = null;
     counters = noCounters();
   }
 
@@ -261,8 +276,33 @@ function createHostBridge({
     if (ready || !Array.isArray(message.addresses)) return;
     ready = true;
     bulkStreams = message.bulk === 1;
+    readsKnownKeys = message.known_keys === 1;
     addressList = message.addresses.filter((address) => typeof address === 'string');
     settleStart();
+    // A new child knows no key: an empty set needs no line.
+    sentKnown = '';
+    sendKnownKeys();
+  }
+
+  // The whole set, when it moved since this child last heard it and the child reads it.
+  function sendKnownKeys() {
+    if (!ready || !readsKnownKeys || stopping || !control) return;
+    const text = knownKeys.join(',');
+    if (text === sentKnown) return;
+    if (control.send({ t: 'known_keys', keys: [...knownKeys] })) sentKnown = text;
+  }
+
+  /** Replaces the known keys (32-byte public keys) wholesale: duplicates once, at most MAX_KNOWN_KEYS. */
+  function setKnownKeys(keys) {
+    if (!Array.isArray(keys)) throw new TypeError('keys must be an array of public keys');
+    const next = [];
+    for (const key of keys) {
+      requireBytes(key, KEY_BYTES, 'known key');
+      const text = encodeKey(key);
+      if (next.length < MAX_KNOWN_KEYS && !next.includes(text)) next.push(text);
+    }
+    knownKeys = next;
+    sendKnownKeys();
   }
 
   function onMessage(message) {
@@ -379,13 +419,16 @@ function createHostBridge({
     };
   }
 
-  /** Closes every connection of one key (a revoke). Returns how many connections it had. */
+  /**
+   * Closes every connection of one key (a revoke) and clears the bridge's cooldown of it. Sent even when no connection
+   * of the key is open (review H11): the cooldown is the bridge's, whatever this side counts. Returns how many
+   * connections it had.
+   */
   function drop(publicKey) {
     requireBytes(publicKey, KEY_BYTES, 'publicKey');
     let matched = 0;
     for (const entry of conns.values()) if (Buffer.compare(entry.key, publicKey) === 0) matched += 1;
-    if (matched === 0 || !control) return 0;
-    control.send({ t: 'drop', key: encodeKey(publicKey) });
+    if (control) control.send({ t: 'drop', key: encodeKey(publicKey) });
     return matched;
   }
 
@@ -449,6 +492,8 @@ function createHostBridge({
 
     drop,
 
+    setKnownKeys,
+
     stats() {
       return { connections: conns.size, ...counters };
     },
@@ -460,4 +505,4 @@ function createHostBridge({
   };
 }
 
-module.exports = { DEFAULT_LIMITS, createHostBridge };
+module.exports = { DEFAULT_LIMITS, MAX_KNOWN_KEYS, createHostBridge };

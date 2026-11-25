@@ -26,15 +26,15 @@ from sidecar.ai.context.compaction_breaker import (
 )
 from sidecar.ai.context.compaction_micro import _MICRO_PRESERVE_TAIL as _MICRO_PRESERVE_TAIL
 from sidecar.ai.context.compaction_micro import MICRO_FIRST_CODE as MICRO_FIRST_CODE
-from sidecar.ai.context.compaction_micro import MICRO_TARGET as _MICRO_TARGET
-from sidecar.ai.context.compaction_micro import CompactionPolicy as CompactionPolicy
-from sidecar.ai.context.compaction_micro import MicrocompactionResult as MicrocompactionResult
 from sidecar.ai.context.compaction_micro import (
+    MICRO_TARGET,
     collect_touched_files,
     micro_first_accepts,
     microcompact,
     touched_files_block,
 )
+from sidecar.ai.context.compaction_micro import CompactionPolicy as CompactionPolicy
+from sidecar.ai.context.compaction_micro import MicrocompactionResult as MicrocompactionResult
 from sidecar.ai.context.compaction_micro import compaction_policy as compaction_policy
 from sidecar.ai.context.compaction_micro import trim_browser_outlines as trim_browser_outlines
 from sidecar.ai.context.compaction_passes import summarize_source_in_passes
@@ -307,6 +307,7 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
     plan_approved_in_turn: bool = False,
     policy: CompactionPolicy | None = None,
     micro_passes_used: int = 0,
+    threshold_scale: float = 1.0,
 ) -> CompactionResult:
     """Compact context using the best available strategy.
 
@@ -318,13 +319,20 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
        microcompact on failure.
 
     ``policy=None`` is the summary-first ladder, byte for byte.
+
+    ``threshold_scale`` (0-1] moves the trigger and the micro target in the estimate's
+    units, for a pass the provider's count forced: the estimate can sit far under its
+    own threshold while the real prompt is over the line, and a pass aimed at the
+    estimate's target then frees too little and repeats.
     """
+    scale = min(max(float(threshold_scale), 0.25), 1.0)
+    micro_target = MICRO_TARGET * scale
     if backend is None:
         backend = CharEstimationBackend()
     breaker = circuit_breaker if circuit_breaker is not None else CompactionCircuitBreaker()
 
     tokens_before = estimate_messages_tokens(messages, backend)
-    threshold = budget.auto_compact_threshold(num_tools)
+    threshold = int(budget.auto_compact_threshold(num_tools) * scale)
 
     leading_system, conversation = _split_leading_system_run(messages)
     mid_turn_window = None
@@ -357,7 +365,7 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
     micro = None
     if policy is not None:
         micro = microcompact(
-            messages, budget, backend, num_tools=num_tools, target_fraction=_MICRO_TARGET,
+            messages, budget, backend, num_tools=num_tools, target_fraction=micro_target,
             recall_hint=policy.recall_hint, keep_argument_keys=policy.keep_argument_keys,
         )
         if policy.micro_first and micro_passes_used < policy.max_micro_passes:
@@ -499,7 +507,7 @@ def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
     # -- Fall back to microcompaction ----------------------------------------
     if micro is None:
         micro = microcompact(
-            messages, budget, backend, num_tools=num_tools, target_fraction=_MICRO_TARGET
+            messages, budget, backend, num_tools=num_tools, target_fraction=micro_target
         )
     tokens_after = estimate_messages_tokens(micro.messages, backend)
 

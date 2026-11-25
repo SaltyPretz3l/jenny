@@ -9,7 +9,7 @@ const { createFixture } = require('./helpers/team-store-fixture');
 const { renameDurable } = require('../../services/host/durable-json');
 const { assertSafeFile } = require('../../services/host/path-guard');
 const {
-  BoundedLogFile, LOG_DOCUMENT_KEYS, boundLogDocument, emptyLogDocument, utcStamp, validLogDocument,
+  BoundedLogFile, LOG_DOCUMENT_KEYS, boundLogDocument, emptyLogDocument, entryBytes, utcStamp, validLogDocument,
 } = require('../../server/team/bounded-log');
 
 const SHAPE = { schemaVersion: 4, maxEntries: 10, validEntry: (entry) => Number.isSafeInteger(entry?.seq) };
@@ -396,4 +396,22 @@ test('3-4b: utcStamp is the one stamp: 17 UTC digits, null for a time that gives
   assert.equal(utcStamp(Date.UTC(2026, 10, 12, 9, 30, 1, 7)), '20261112093001007');
   for (const bad of [Number.NaN, Infinity, 8.64e15 + 1, 'x', undefined]) assert.equal(utcStamp(bad), null, String(bad));
   assert.equal(utcStamp(Date.UTC(10000, 0, 1)), null, 'a six-digit year is not 17 digits');
+});
+
+// OD-10: each entry's serialized size (with its separator) is computed once and kept for the entry.
+test('entryBytes is the stringify size plus a separator, computed once per entry', (t) => {
+  const entry = { seq: 7, pad: 'é'.repeat(5) };
+  assert.equal(entryBytes(entry), Buffer.byteLength(JSON.stringify(entry), 'utf8') + 1);
+  const stringify = t.mock.method(JSON, 'stringify');
+  assert.equal(entryBytes(entry), Buffer.byteLength('{"seq":7,"pad":"ééééé"}', 'utf8') + 1);
+  const calls = stringify.mock.callCount();
+  stringify.mock.restore();
+  assert.equal(calls, 0, 'a kept size is not computed again');
+  const entries = Array.from({ length: 50 }, (_unused, index) => ({ seq: index + 1, pad: 'x'.repeat(index % 40) }));
+  const fresh = structuredClone(entries);
+  for (const maxBytes of [300, 900, 1500]) {
+    boundLogDocument(doc(entries), { maxEntries: 100, maxBytes });
+    assert.deepEqual(boundLogDocument(doc(entries), { maxEntries: 100, maxBytes }).entries.map((e) => e.seq),
+      boundLogDocument(doc(structuredClone(fresh)), { maxEntries: 100, maxBytes }).entries.map((e) => e.seq));
+  }
 });

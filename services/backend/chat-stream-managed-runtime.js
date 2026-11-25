@@ -140,7 +140,8 @@ function createManagedChatStreamRuntime({
   let turnUsage = null;
   let resumableStop = null;
   let discardedDrafts = null;
-  const toolResultCounts = { successful: 0, failed: 0 };
+  // `last` is the turn's latest tool result: a turn that ends on the next-step card has no closing text.
+  const toolResultCounts = { successful: 0, failed: 0, last: null };
   let visibleCompletionEmitted = false;
   let visibleCompletionPromise = null;
   let userMessagePersisted = false;
@@ -466,7 +467,8 @@ function createManagedChatStreamRuntime({
     if (visibleCompletionEmitted) {
       return true;
     }
-    if (!String(assistantText || '').trim() && !ctx.completion) { // a turn-boundary completion may end with no visible text
+    const endedOnNextStepCard = toolResultCounts.last?.name === 'suggest_next_step' && toolResultCounts.last.success;
+    if (!String(assistantText || '').trim() && !ctx.completion && !endedOnNextStepCard) { // a turn-boundary completion or the next-step card may end with no visible text
       // Successful managed-sidecar tool work gets visible fallback text;
       // no-tool and failed-only empty completions remain fail-closed.
       if (!toolResultCounts.successful) {

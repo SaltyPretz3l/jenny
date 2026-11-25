@@ -15,7 +15,7 @@ test('rea readiness appears in the summary and Details with an explicit check ac
   const h = harness(t, { initialState: discovery({ servers: [pendingServer({ name: 'rea', readiness: healthyReadiness })] }) });
   h.controller.bind();
   await flush();
-  const summary = h.extensionsCard.querySelector('[data-mcp-server-row="rea"] small');
+  const summary = h.extensionsCard.querySelector('[data-mcp-server-row="rea"] .mrow-meta');
   assert.match(summary.textContent, /170 tools · 6 prompts/);
   assert.match(summary.textContent, /ready, checked/);
   const drawer = openDrawer(h, 'details');
@@ -26,7 +26,7 @@ test('rea readiness appears in the summary and Details with an explicit check ac
   h.setState(discovery({ servers: [pendingServer({ name: 'rea', readiness: {
     ...healthyReadiness, healthy: false, reason: 'exit_nonzero' } })] }));
   await h.controller.refresh();
-  assert.match(h.extensionsCard.querySelector('[data-mcp-server-row="rea"] small').textContent,
+  assert.match(h.extensionsCard.querySelector('[data-mcp-server-row="rea"] .mrow-meta').textContent,
     /needs attention: the health check failed/);
 });
 
@@ -35,8 +35,8 @@ test('absent and null readiness produce byte-identical rows and other names have
   h.controller.bind();
   await flush();
   const before = h.extensionsCard.querySelector('[data-mcp-server-row="weather"]').innerHTML;
-  assert.equal(h.extensionsCard.querySelector('[data-mcp-server-row="weather"] small').textContent,
-    'local · 0 tools · off · turn on unavailable until its tools are reviewed');
+  assert.equal(h.extensionsCard.querySelector('[data-mcp-server-row="weather"] .mrow-meta').textContent,
+    'local · 0 tools · turn on unavailable until its tools are reviewed');
   h.setState(discovery({ servers: [pendingServer({ readiness: null })] }));
   await h.controller.refresh();
   assert.equal(h.extensionsCard.querySelector('[data-mcp-server-row="weather"]').innerHTML, before);

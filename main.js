@@ -292,8 +292,7 @@ const createBackendService = () => {
     getSystemStatsPayload: () => (systemStats ? getCurrentSystemStatsPayload() : null),
     getMainWindow: () => mainWindow,
     getPackagedSmokeController: () => packagedSmokeController,
-    getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
-    getNinferManager: () => getRuntimeShutdownController().getNinferManager(),
+    ...require('./services/main/managed-server-getters')(getRuntimeShutdownController),
     buildEffectiveFeatureFlags,
     buildFeatureStatePayload,
     refreshGpuMemorySample,
@@ -338,7 +337,7 @@ const createRuntimeServices = () => {
     probeSetupReadiness,
     sendBridgeEvent,
     getMainWindow: () => mainWindow,
-    getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
+    ...require('./services/main/managed-server-getters')(getRuntimeShutdownController),
     log,
     onCoreLoggingReady: (core) => {
       logStore = core.logStore;
@@ -408,8 +407,7 @@ const registerIpcHandlers = () => require('./services/main/ipc-handler-registrat
   clipboard: createClipboardAdapter({ clipboard, ClipboardItem }),
   nativeImage,
   log,
-  getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
-  getNinferManager: () => getRuntimeShutdownController().getNinferManager(),
+  ...require('./services/main/managed-server-getters')(getRuntimeShutdownController),
   getMainLifecycle: () => mainLifecycle,
   getWindowState: getMainWindowStatePayload,
   // A Retry after a failed boot must also finish a pending restore promotion.

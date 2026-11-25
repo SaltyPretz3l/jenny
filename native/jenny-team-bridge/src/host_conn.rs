@@ -17,7 +17,7 @@ use crate::admission::Cause;
 use crate::bulk::{mark_bulk, read_head};
 use crate::control::b64;
 use crate::host::{ConnEntry, ConnSignal, Shared};
-use crate::key_share::{share, stream_room, Share};
+use crate::key_share::{displaced, live_connections, share, stream_room, Share};
 use crate::messages::AdmitKind;
 use crate::pipe::{
     close_connection as close, closed, not_live, pipe, reset_stream, StreamMode, StreamSignal,
@@ -79,16 +79,15 @@ pub(crate) async fn run_connection(shared: Arc<Shared>, conn: Connection) {
     let key = *conn.remote_id().as_bytes();
     let registration = {
         let mut state = shared.lock();
-        let live = state.conns.len();
-        // A key at its share gives its oldest admitted connection's slot to the new one: a
-        // member who reconnects always gets in, and nobody is told refused. A key with
-        // nothing admitted replaces nothing, so its refusals still reach the cooldown.
+        // Only waiting and admitted connections hold a slot; one draining or closing is on its
+        // way out (review H11).
+        let live = live_connections(&state.conns);
+        // A key at its share of admitted connections, once the new one is admitted, gives its
+        // oldest admitted connection's slot to it (`displaced`): a member who reconnects always
+        // gets in, even into a full host, and nobody is told refused. A key with nothing
+        // admitted replaces nothing, so its refusals still reach the cooldown.
         let share = share(&state.conns, &key);
-        let victim = match share {
-            Share::Replace(old) => Some(old),
-            Share::Room | Share::Full => None,
-        };
-        let freed = usize::from(victim.is_some());
+        let freed = usize::from(share == Share::Replaces);
         let registration = if state.stopping {
             Registration::Stopping
         } else if state.admission.is_cooling(&key, std::time::Instant::now()) {
@@ -110,14 +109,6 @@ pub(crate) async fn run_connection(shared: Arc<Shared>, conn: Connection) {
             state.admission.note(Cause::WaitingCap);
             Registration::WaitingFull
         } else {
-            if let Some(old) = victim {
-                // Closed as a stop closes it; its own task removes it and reports
-                // `conn_closed`.
-                if let Some(entry) = state.conns.get(&old) {
-                    entry.signal.send_replace(ConnSignal::Close);
-                }
-                state.refused_connections += 1;
-            }
             let id = state.next_conn;
             state.next_conn += 1;
             let (signal, receiver) = watch::channel(ConnSignal::Waiting);
@@ -174,7 +165,10 @@ pub(crate) async fn run_connection(shared: Arc<Shared>, conn: Connection) {
         .send(json!({ "t": "admit", "conn": id, "key": b64(&key) }))
         .await;
     match await_decision(&shared, id, &conn, &mut signal).await {
-        Decision::Admit(kind) => admitted(&shared, id, key, &conn, signal, kind).await,
+        Decision::Admit(kind) => {
+            displace_for(&shared, id, &key);
+            admitted(&shared, id, key, &conn, signal, kind).await;
+        }
         decision @ (Decision::Refuse | Decision::TimedOut) => {
             let others = {
                 let mut state = shared.lock();
@@ -208,6 +202,21 @@ pub(crate) async fn run_connection(shared: Arc<Shared>, conn: Connection) {
         .out
         .send(json!({ "t": "conn_closed", "conn": id }))
         .await;
+}
+
+/// The admitted connection `id` takes the slot of its key's oldest other admitted connection
+/// when the key now holds more than its share. That one is closed as a stop closes it; its own
+/// task removes it and reports `conn_closed`.
+fn displace_for(shared: &Shared, id: u64, key: &[u8; 32]) {
+    let mut state = shared.lock();
+    let Some(old) = displaced(&state.conns, key, id) else {
+        return;
+    };
+    if let Some(entry) = state.conns.get(&old) {
+        entry.signal.send_replace(ConnSignal::Close);
+    }
+    state.refused_connections += 1;
+    shared.publish(&state);
 }
 
 async fn await_decision(

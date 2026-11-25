@@ -214,7 +214,6 @@ def _mcp_connect_plan(config: RuntimeConfig, workspace_root: Path | None) -> MCP
         # deadline is killed by the client regardless of the loop budget.
         request_timeout_seconds=effective_tools_execution_timeout_seconds(config),
         sse_enabled=config.mcp_sse_enabled,
-        resources_enabled=config.tools_mcp_resources_enabled,
         allow_private_addresses=config.tools_web_allow_private_addresses,
         allow_loopback=config.tools_web_allow_loopback,
     )

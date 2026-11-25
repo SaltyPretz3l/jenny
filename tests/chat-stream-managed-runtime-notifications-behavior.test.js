@@ -479,9 +479,8 @@ test('reasoning that resumes after a completed reasoning phase starts a new entr
   assert.notEqual(ctx.reasoningEntries[0].id, ctx.reasoningEntries[1].id);
 });
 
-test('delegate child agent.progress reaches the renderer with the agent_executor flag off', () => {
+test('delegate child agent.progress reaches the renderer', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags.agent_executor = false;
   handleNotification(
     ctx,
     {
@@ -504,7 +503,7 @@ test('delegate child agent.progress reaches the renderer with the agent_executor
   );
 
   const emits = callsOf(ctx, 'emitChatStream');
-  assert.equal(emits.length, 1, 'the subagent monitor ships with delegate, not with the executor rollout');
+  assert.equal(emits.length, 1, 'the subagent monitor ships with delegate');
   assert.equal(emits[0].options.channel, 'control');
   assert.equal(emits[0].payload.type, 'agent_status');
   assert.equal(emits[0].payload.toolCallId, 'call-1');

@@ -12,6 +12,8 @@
   const DEFAULT_REFRESH_OPTIONS = Object.freeze({ recentLogLimit: 25 });
 
   const normString = stringUtils.normalizeString;
+  // The model named in the control and the popover's engine block (row 194); the markup module loads first.
+  const engineUi = globalThis.rendererHealthPillGpu || require('./renderer-health-pill-gpu');
 
   function resolveLifecycleTone(state) {
     switch (normString(state).toLowerCase()) {
@@ -102,7 +104,7 @@
       label += ' · ' + Math.round(Math.max(0, Math.min(100, acquisitionPercent))) + '%';
     }
 
-    return { tone, label, summary, lifecycle, segments: [], loading, statusLabel };
+    return { tone, label, summary, lifecycle, segments: [], loading, statusLabel, lifecycleState, plain: label === lifecycleTone.label || loading };
   }
 
   function resolveMarkupHelpers(deps) {
@@ -196,15 +198,14 @@
     let unsubscribeUnattendedPause = null;
     let unsubscribeReminderFired = null;
     let unsubscribeReminderOpen = null;
-    /* Retry is latched once, in the shell status controller: the failure toast
-     * and this popover both call the same function, so clicking both fires one
-     * retryStart() instead of two. Absent injection, fall back to calling the
-     * bridge directly so the popover still works standalone (tests, harness). */
-    const retryBackendStart = typeof dependencies.retryBackendStart === 'function'
-      ? dependencies.retryBackendStart
-      : null;
-    let localRetryInFlight = false;
-    let localRestartInFlight = false;
+    /* The popover's reads and actions (default model, card reading, load, unload, retry, restart). */
+    const engineFacts = engineUi.createEngineFacts({
+      window: windowRef,
+      onChange: () => { if (!state.disposed && state.open) refreshPopoverContent(); },
+      toast: (message) => showToastMessage(message, { tone: 'warning' }),
+      refresh: () => { if (!state.disposed) void refresh({ silent: true }); },
+      retryBackendStart: typeof dependencies.retryBackendStart === 'function' ? dependencies.retryBackendStart : null,
+    });
 
     const state = {
       snapshot: null,
@@ -237,7 +238,7 @@
         deriveRuntimeHealthState, now: now(), loadingSinceMs: state.loadingSince,
       });
       state.loadingSince = signal.loading ? (state.loadingSince || now()) : 0;
-      return gpuFeed ? gpuFeed.adjustSignal(signal) : signal;
+      return engineUi.nameSignal(gpuFeed ? gpuFeed.adjustSignal(signal) : signal, state.snapshot);
     }
 
     function onGpuChange() {
@@ -263,7 +264,7 @@
         state.toneLabel = computeSignal();
         const labelNode = pillButton && pillButton.querySelector('.workbench-health-pill-label');
         if (labelNode) {
-          labelNode.textContent = state.toneLabel.label;
+          labelNode.textContent = state.toneLabel.words || state.toneLabel.label;
           state.lastPillSig = buildPillSignature();
         } else renderPill();
         const statusNode = state.open && popoverNode && popoverNode.querySelector('.workbench-health-popover-status span:last-child');
@@ -294,7 +295,7 @@
 
     function buildPillSignature() {
       const names = getRuntimeNames();
-      return state.toneLabel.tone + '|' + state.toneLabel.label + '|' + (state.toneLabel.statusLabel || '') + '|'
+      return state.toneLabel.tone + '|' + state.toneLabel.label + '|' + (state.toneLabel.statusLabel || '') + '|' + (state.toneLabel.words || '') + '|'
         + (state.toneLabel.segments?.[0]?.label || '') + '|' + getUnseenErrorCount()
         + '|' + state.runModeFacet.runMode + '|' + state.runModeFacet.pauseState
         + '|' + names.engine + '|' + names.model;
@@ -315,6 +316,7 @@
         systemStats: state.systemStats,
         titlebarLoad: isTitlebarLoadShown(),
         gpuSection: gpuFeed ? gpuFeed.sectionHtml() : '',
+        engine: engineUi.describeEngine({ signal: state.toneLabel, snapshot: state.snapshot, reading: engineFacts.reading(), facts: engineFacts.facts() }),
       };
     }
 
@@ -350,7 +352,7 @@
         server && server.stopped_by, server && server.watchdog_watts,
         logs && logs.available && Array.isArray(logs.recent_issues) ? logs.recent_issues.length : 0,
         slow && slow.available && Array.isArray(slow.items) ? slow.items.length : 0,
-        statsSignature(), isTitlebarLoadShown(), gpuFeed ? gpuFeed.signature() : '',
+        statsSignature(), isTitlebarLoadShown(), gpuFeed ? gpuFeed.signature() : '', engineFacts.signature(), state.toneLabel.words,
         getRecentErrors().map(function entrySig(entry) {
           return entry.key + ':' + entry.code + ':' + entry.at + ':' + entry.seen;
         }).join(','),
@@ -427,6 +429,10 @@
       const restorePopoverFocus = state.open && popoverNode.contains(documentRef.activeElement);
       const focusedAction = restorePopoverFocus
         && documentRef.activeElement.getAttribute('data-health-pill-action');
+      // A rebuild (the 2 s tick) keeps "Technical details" as the person left it.
+      const TECH = '.workbench-health-popover-tech', oldTech = popoverNode.querySelector(TECH), newTech = fresh.querySelector(TECH);
+      const techFocused = restorePopoverFocus && Boolean(oldTech) && oldTech.contains(documentRef.activeElement);
+      if (oldTech && newTech && oldTech.open) newTech.open = true;
       popoverNode.replaceWith(fresh);
       popoverNode = fresh;
       popoverNode.addEventListener('click', handlePopoverClick);
@@ -436,7 +442,7 @@
         if (restorePopoverFocus) {
           const nextFocus = focusedAction && Array.from(popoverNode.querySelectorAll('[data-health-pill-action]'))
             .find((node) => node.getAttribute('data-health-pill-action') === focusedAction);
-          (nextFocus || popoverNode).focus();
+          (nextFocus || (techFocused && newTech && newTech.querySelector('summary')) || popoverNode).focus();
         }
       }
     }
@@ -486,6 +492,7 @@
     function applyStats(payload) {
       if (state.disposed || !payload || typeof payload !== 'object') return;
       state.systemStats = payload;
+      engineFacts.noteReading(payload);
       if (state.open) refreshPopoverContent();
     }
 
@@ -523,6 +530,8 @@
         if (errorCenterStore) errorCenterStore.clear();
         return;
       }
+      const engineClose = engineFacts.run(action);
+      if (engineClose !== null) { if (engineClose) closePopover(); return; }
       if (action === 'toggle-titlebar-load') {
         // Settings owns the appearance record; it flips and persists the field.
         if (documentRef && windowRef && typeof windowRef.CustomEvent === 'function') {
@@ -538,32 +547,6 @@
         invokeNavigation('logs', null);
       } else if (action === 'open-models') {
         invokeNavigation('settings', 'models');
-      } else if (action === 'retry-model') {
-        if (retryBackendStart) {
-          retryBackendStart();
-        } else {
-          const retryStart = windowRef?.jennyShell?.backend?.retryStart;
-          if (!localRetryInFlight && typeof retryStart === 'function') {
-            localRetryInFlight = true;
-            Promise.resolve(retryStart.call(windowRef.jennyShell.backend))
-              .catch(function ignoreRetryFailure() {})
-              .finally(function finishRetry() { localRetryInFlight = false; });
-          }
-        }
-      } else if (action === 'restart-llama-server' || action === 'restart-ninfer') {
-        /* Crash policy: a managed server (llama-server or NInfer) is never
-         * respawned on its own; this row and the next chat are the two recovery paths. */
-        const bridge = action === 'restart-ninfer' ? windowRef?.jennyShell?.ninfer : windowRef?.jennyShell?.llamaServer;
-        const restart = bridge?.restart;
-        if (!localRestartInFlight && typeof restart === 'function') {
-          localRestartInFlight = true;
-          Promise.resolve(restart.call(bridge))
-            .catch(function ignoreRestartFailure() {})
-            .finally(function finishRestart() {
-              localRestartInFlight = false;
-              if (!state.disposed) refresh({ silent: true });
-            });
-        }
       } else if (action === 'open-logs') {
         invokeNavigation('logs', null);
       }
@@ -628,11 +611,13 @@
       /* EH-W11: opening the popover acknowledges the error badge. */
       if (errorCenterStore) errorCenterStore.markSeen();
       subscribeStats();
+      void engineFacts.load();
       refresh({ silent: false });
     }
 
     function closePopover() {
       state.open = false;
+      engineFacts.drop();
       unsubscribeStatsFeed();
       if (pillButton) pillButton.setAttribute('aria-expanded', 'false');
       if (popoverNode) popoverNode.setAttribute('data-open', 'false');

@@ -69,7 +69,7 @@ const _CLIENT_TIMING_NUMERIC_FIELDS = Object.freeze([
   'stream_reveal_patches_applied',
   'full_renders',
   'noop_renders',
-  // Ht-C reasoning-header paint-min counters (chat_stream_paint_v2). take()
+  // Ht-C reasoning-header paint-min counters. take()
   // ships these; the allowlist must include them or they are silently dropped.
   'reasoning_header_rewrites',
   'reasoning_header_morphs',
@@ -112,8 +112,14 @@ const _REASONING_PATCH_REASONS = Object.freeze([
   'sibling_missing', 'sibling_status_mismatch', 'sibling_fp_mismatch',
   'block_count_mismatch', 'block_key_mismatch', 'block_shape_mismatch',
 ]);
+// Why the surgical stream patch could not take a frame (describePatchBlock in
+// renderer/chat/renderer-stream-patch-target-utils.js).
+const _PATCH_BLOCK_REASONS = Object.freeze([
+  'no_streaming_message', 'no_timeline', 'session_mismatch', 'signature_mismatch', 'streaming_id_mismatch',
+]);
 const _ROW_LIST_REASONS = Object.freeze([
   'not_surgical', 'article_rewrite', 'no_reasoning_stack', 'answer_row_open', 'no_anchor',
+  ..._PATCH_BLOCK_REASONS.map((reason) => `article_rewrite:${reason}`),
   ..._REASONING_PATCH_REASONS,
   ...['bubble', 'anchor', 'bubble_idle'].flatMap((prefix) =>
     [..._REASONING_PATCH_REASONS, 'no_reasoning_stack'].map((reason) => `${prefix}:${reason}`)),
@@ -121,6 +127,8 @@ const _ROW_LIST_REASONS = Object.freeze([
 const _CLIENT_TIMING_REASONS = Object.freeze([
   'force', 'projection_revision', 'recap_expansion', 'thread_expansion',
   'final_full_render', 'unclassified', 'missing_streaming_article', 'streaming_article_rewrite_refused',
+  // A declined active-turn-root fast path (renderer-render-pipeline-render-effects.js).
+  'active_turn_root:fast_path_off', 'active_turn_root:root_not_in_tree',
   ...['tail_not_eligible', 'tail_error', 'tail_settled', 'no_assistant'].map((reason) => `no_live_stream:${reason}`),
   ...['no_timeline', 'session_mismatch', 'signature_mismatch', 'streaming_id_mismatch'].map((reason) => `cannot_patch:${reason}`),
   'patch_fallback',

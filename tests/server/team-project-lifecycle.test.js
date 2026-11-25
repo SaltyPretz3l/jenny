@@ -146,6 +146,48 @@ test('a rename queued behind a create is checked again: its admin removed meanwh
   assert.deepEqual(h.projectFrames(stream).filter((frame) => frame.reason === 'renamed'), []);
 });
 
+test('H3: a rename queued behind a create is checked against its live device: the device revoked meanwhile renames nothing', async (t) => {
+  const h = await createTeamProjectFixture(t);
+  const id = await h.sharedProject();
+  await h.ok(h.send('alice', 'team.project.members.setRole', { project_id: id, member_id: h.seats.carl.member_id, role: 'admin' }));
+  const turns = async (count) => { for (let i = 0; i < count; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  let release;
+  h.state.chat.hold = new Promise((resolve) => { release = resolve; });
+  const entered = h.state.chat.entered;
+  const create = h.send('alice', 'team.project.create', { name: 'Second' });
+  for (let i = 0; i < 50 && h.state.chat.entered === entered; i += 1) await turns(1);
+  assert.equal(h.state.chat.entered, entered + 1, 'the create holds in its channel step');
+  const stream = h.attach('alice');
+  const rename = h.send('carl', 'team.project.rename', { project_id: id, name: 'Late' });
+  await turns(20);
+  assert.equal((await h.store.revokeDevice({ actorMemberId: h.seats.owner.member_id, deviceId: h.seats.carl.device_id })).ok, true);
+  assert.equal(h.store.directory.projectRole(h.seats.carl.member_id, id), 'admin', 'Carl keeps his row: only the device is gone');
+  h.state.chat.hold = null;
+  release();
+  await h.ok(create, 'create');
+  assert.equal(await h.reason(rename), 'role_forbidden');
+  assert.equal(h.state.app.records.get(id).name, 'Apollo');
+  assert.deepEqual(h.projectFrames(stream).filter((frame) => frame.reason === 'renamed'), []);
+});
+
+test('role cascade: a read-only demotion, a revoke and a leave tell the clients of its projects to read the member list again', async (t) => {
+  const h = await createTeamProjectFixture(t);
+  const id = await h.sharedProject();
+  await h.ok(h.send('alice', 'team.project.members.add', { project_id: id, member_id: h.seats.bob.member_id, role: 'writer' }));
+  const members = (stream) => h.projectFrames(stream).filter((frame) => frame.project_id === id && frame.reason === 'members');
+  const alice = h.attach('alice');
+  const owner = h.attach('owner');
+  await h.ok(h.send('owner', 'team.member.setRole', { member_id: h.seats.carl.member_id, role: 'read_only' }));
+  assert.equal(h.store.directory.projectRole(h.seats.carl.member_id, id), 'reader', 'the cascade made Carl a reader');
+  assert.equal(members(alice).length, 1, 'a demotion to read-only');
+  await h.ok(h.send('owner', 'team.member.revoke', { member_id: h.seats.rae.member_id }));
+  assert.equal(members(alice).length, 2, 'a revoke');
+  assert.equal((await h.store.leave({ memberId: h.seats.bob.member_id })).ok, true);
+  assert.equal(members(alice).length, 3, 'a leave');
+  assert.equal(members(owner).length, 3, 'the owner keeps the names-only list right');
+  assert.equal(members(h.attach('bob', { cursor: 0 })).length, 0, 'a member who left hears nothing after (replay is re-checked)');
+});
+
 test('members.list answers only an active project the caller holds a row in', async (t) => {
   const h = await createTeamProjectFixture(t);
   const id = await h.sharedProject();
@@ -159,7 +201,8 @@ test('replay: a stored change goes to its audience only, re-checked at delivery'
   const cursor = h.core.events.cursor;
   await h.ok(h.send('alice', 'team.project.rename', { project_id: id, name: 'Replayed' }));
   await h.ok(h.send('owner', 'team.member.revoke', { member_id: h.seats.rae.member_id }));
-  assert.deepEqual(h.projectFrames(h.attach('carl', { cursor })), [{ project_id: id, reason: 'renamed' }], 'in the audience');
+  assert.deepEqual(h.projectFrames(h.attach('carl', { cursor })), [{ project_id: id, reason: 'renamed' }, { project_id: id, reason: 'members' }],
+    'in the audience: the rename, then the member-list change of the revoke');
   assert.deepEqual(h.projectFrames(h.attach('bob', { cursor })), [], 'never in the audience');
   assert.deepEqual(h.projectFrames(h.attach('rae', { cursor })), [], 'revoked after the publish');
 });

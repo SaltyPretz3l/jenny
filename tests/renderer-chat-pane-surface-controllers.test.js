@@ -286,9 +286,9 @@ test('the module is UMD and registers the rendererChatPaneSurfaceControllers glo
 
 /* Row 115 slice 1: the transcript utilities moved into the session bar above the stage, so the pane no
    longer measures their reach into the gutter (observeUtilityReserve and --chat-utility-reserve are gone). */
-test('the pane no longer publishes a utility reserve; the session rail reflow observer stays', () => {
+test('the pane no longer publishes a utility reserve or a session rail reflow observer', () => {
   const controllers = require('../renderer/chat/renderer-chat-pane-surface-controllers.js');
   assert.equal(controllers.observeUtilityReserve, undefined);
-  assert.equal(typeof controllers.observeSessionRailReflow, 'function');
+  assert.equal(controllers.observeSessionRailReflow, undefined);
   assert.doesNotMatch(fs.readFileSync(MODULE_PATH, 'utf8'), /chat-utility-reserve|observeUtilityReserve/);
 });

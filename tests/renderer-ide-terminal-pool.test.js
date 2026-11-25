@@ -249,6 +249,22 @@ test('hosting slot 2 releases slot 1', async () => {
   assert.equal(h.terms.get('terminal-2').opened, elB);
 });
 
+test('hosting slot 2 in the element slot 1 holds leaves one terminal there while the IDE view is hidden', async () => {
+  const h = build();
+  await h.pool.start(1);
+  await h.pool.create();
+  const el = h.chatEl('chat-host');
+  assert.equal(h.pool.host(1, el), true);
+  assert.equal(h.pool.host(2, el), true);
+  assert.equal(el.children.length, 1, 'the chat element holds exactly one terminal screen');
+  assert.equal(h.terms.get('terminal-2').element.parentNode, el);
+  assert.equal(h.terms.get('terminal').element.parentNode, null, 'slot 1 is detached, not stacked under slot 2');
+  h.showInIde('terminal');
+  assert.equal(h.terms.get('terminal').opened, h.hostOf('terminal').querySelector('[data-ide-pty-mount]'), 'slot 1 re-attaches to its own mount when the IDE renders');
+  assert.equal(el.children.length, 1);
+  assert.equal(h.terms.get('terminal').disposed, 0, 'nothing was restarted');
+});
+
 test('release() re-attaches the xterm to the IDE mount on the next render and is a no-op when nothing is hosted', async () => {
   const h = build();
   await h.pool.start(1);
@@ -270,7 +286,7 @@ test('release() while the IDE view is hidden re-attaches when it is shown again'
   const el = h.chatEl('chat-host');
   h.pool.host(1, el);
   h.pool.release();
-  assert.equal(h.terms.get('terminal').opened, el, 'still in the chat element until the IDE renders');
+  assert.equal(h.terms.get('terminal').opened, null, 'out of the chat element at once, waiting for the IDE to render');
   h.showInIde('terminal');
   assert.equal(h.terms.get('terminal').opened, h.hostOf('terminal').querySelector('[data-ide-pty-mount]'));
 });

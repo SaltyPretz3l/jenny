@@ -14,6 +14,7 @@ safe default so a diagnostic-side failure never fails a turn.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from dataclasses import replace as _replace
 from typing import Any, TypeAlias
@@ -24,6 +25,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_POLICY_DENIED,
 )
 from sidecar.ai.execution_policy import (
+    BUILTIN_MCP_SERVER_NAME,
     DESKTOP_POLICY_INVALID_REASON,
     desktop_tool_decision,
 )
@@ -618,6 +620,49 @@ def desktop_tool_dispatch_decision(tool: Any, config: Any) -> tuple[bool, str | 
     if config is None:
         return False, DESKTOP_POLICY_INVALID_REASON
     return desktop_tool_decision(tool, config)
+
+
+# Row 184 W3: a writing helper keeps one in-process tool (it reads its own earlier output),
+# and never names a path under .git: a rewritten .git pointer would repoint its worktree.
+_HELPER_SYNTHETIC_ALLOWED = frozenset({"recall_tool_output"})
+_HELPER_PATH_KEYS = frozenset({"path", "file_path", "source", "destination", "moves"})
+_GIT_SEGMENT = re.compile(r"^(?:\.git|git~\d+)$", re.IGNORECASE)
+
+
+def require_helper_write_dispatch(
+    request_context: Any, descriptor: Any, tool_id: str, arguments: dict[str, Any],
+    *, synthetic: bool,
+) -> None:
+    """A writing helper dispatches builtin tools only (they bind to its worktree root), and
+    never writes under ``.git``. ``synthetic``: the tool runs in-process in the sidecar."""
+    if not getattr(request_context, "sub_agent_write_mode", False):
+        return
+    if tool_id in _HELPER_SYNTHETIC_ALLOWED:
+        return
+    if synthetic or getattr(descriptor, "server_name", "") != BUILTIN_MCP_SERVER_NAME:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_POLICY_DENIED,
+            message="a writing helper can use only the file and git tools in its own worktree",
+            retryable=False,
+        )
+    if any(_names_git_metadata(value) for key, value in arguments.items()
+           if key in _HELPER_PATH_KEYS):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_POLICY_DENIED,
+            message="a writing helper cannot change files under .git",
+            retryable=False,
+        )
+
+
+def _names_git_metadata(value: Any) -> bool:
+    if isinstance(value, (list, tuple)):
+        return any(_names_git_metadata(item) for item in value)
+    if isinstance(value, dict):
+        return any(_names_git_metadata(item) for item in value.values())
+    if not isinstance(value, str):
+        return False
+    # Windows ignores trailing dots and spaces in a name, so ".git." is ".git".
+    return any(_GIT_SEGMENT.match(part.rstrip(" .")) for part in re.split(r"[\\/]", value))
 
 
 def require_desktop_tool_dispatch(tool: Any, config: Any) -> None:

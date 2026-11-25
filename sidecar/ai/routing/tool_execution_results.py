@@ -46,6 +46,8 @@ _JSON_PRIORITY_KEYS = (
     "full_output_complete",
     "output_counters",
     "output_truncated",
+    # Row 199 C1: the short line naming new images survives a cut of long output.
+    "new_images_note",
 )
 _TOOL_RESULT_PREAMBLE_TEMPLATE = (
     "Tool result for `{tool_id}`. The wrapped block below contains data "

@@ -504,8 +504,8 @@ test('4b member wiring: an online team gets an engine port whose forward rides t
   assert.ok(await waitUntil(() => teamEngine.teamState(me.teamId)?.portReady === true), 'the engine port');
   assert.deepEqual(changes, [me.teamId]);
   const port = teamEngine.portFor(me.teamId);
-  // The real host here runs no pool: the models read reaches it, is refused, and the list is empty.
-  assert.ok(await waitUntil(() => events.some(([event]) => event === 'team.engine.models_read')), 'the read');
+  // The real host here runs no pool: the read is refused (logged as unavailable only, row 201) and the list is empty.
+  assert.ok(await waitUntil(() => events.some(([event]) => event === 'team.engine.models_unavailable')), 'the read');
   assert.deepEqual(events.find(([event]) => event === 'team.engine.models_unavailable')?.[1],
     { team_id: me.teamId, reason: 'team_engine_models_refused' });
   assert.deepEqual(teamEngine.listTeams(), []);

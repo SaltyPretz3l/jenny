@@ -525,6 +525,7 @@ class _ToolCallPhasesMixin(_ToolCallStateMixin):
             resolution_context=self.tool_resolution_context,
         )
         if plan_mode_exited:
+            plan_mode_transition.widen_turn_tool_budget(runtime, kernel._config, next_tool_contract)
             plan_mode_transition.apply_restored_tool_contract(
                 working_messages=self.working_messages,
                 tool_statuses=next_tool_contract.status_entries,

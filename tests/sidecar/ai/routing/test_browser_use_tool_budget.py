@@ -11,6 +11,7 @@ from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.routing import tool_loop_recovery
 from sidecar.ai.routing.iteration_limits import (
     BROWSER_USE_TURN_STEPS,
+    COMPUTER_USE_TURN_STEPS,
     effective_max_tools_per_turn,
     turn_tool_call_limit,
 )
@@ -110,11 +111,19 @@ def test_a_turn_that_can_browse_gets_the_browser_steps_on_top() -> None:
     assert turn_tool_call_limit(config, None) == 20
 
 
+def test_a_turn_with_the_computer_tool_gets_its_steps_on_top_too() -> None:
+    config = _config(20)
+    assert turn_tool_call_limit(config, _contract("computer")) == 20 + COMPUTER_USE_TURN_STEPS
+    both = _contract("browser", "computer")
+    assert turn_tool_call_limit(config, both) == 20 + BROWSER_USE_TURN_STEPS + COMPUTER_USE_TURN_STEPS
+    assert turn_tool_call_limit(_config(500), both) == 530
+
+
 def test_the_raised_limit_stays_within_what_a_checkpoint_can_hold() -> None:
     browsing = _contract("browser")
-    assert turn_tool_call_limit(_config(226), browsing) == 256
-    assert turn_tool_call_limit(_config(240), browsing) == 256
-    assert turn_tool_call_limit(_config(300), browsing) == 300
+    assert turn_tool_call_limit(_config(240), browsing) == 270
+    assert turn_tool_call_limit(_config(500), browsing) == 530
+    assert turn_tool_call_limit(_config(510), browsing) == 530
 
 
 def test_an_approval_plan_from_a_browsing_turn_resumes_on_the_same_limit() -> None:
@@ -123,3 +132,72 @@ def test_an_approval_plan_from_a_browsing_turn_resumes_on_the_same_limit() -> No
 
     assert _approval_resume_tool_budget(plan, configured_limit=limit) == (limit, limit - 3, True)
     assert _approval_resume_tool_budget(plan, configured_limit=20)[2] is False
+
+
+def test_leaving_plan_mode_mid_turn_widens_the_budget_so_the_next_approval_resumes() -> None:
+    # Plan Mode is read-only, so the side-effecting browser is not offered and the turn starts on
+    # the bare limit. Build offers it: the budget must follow, or the next approval plan records
+    # the old limit and the resume check (which reads the Build tools) calls it drift.
+    from sidecar.ai.routing.iteration_limits import widen_turn_tool_budget
+
+    config = _config(20)
+    runtime = LoopRuntime(request_id="req-plan-exit")
+    runtime.ensure_tool_call_budget(turn_tool_call_limit(config, _contract("read_file")))
+    runtime.reserve_tool_calls(4)
+    build_tools = _contract("browser", "read_file")
+
+    widen_turn_tool_budget(runtime, config, build_tools)
+
+    plan = SimpleNamespace(
+        tool_call_limit=runtime.tool_call_limit, remaining_tool_calls=runtime.remaining_tool_calls
+    )
+    resume_limit = turn_tool_call_limit(config, build_tools)
+    assert (runtime.tool_call_limit, runtime.tool_calls_consumed) == (20 + BROWSER_USE_TURN_STEPS, 4)
+    assert _approval_resume_tool_budget(plan, configured_limit=resume_limit)[2] is True
+
+
+def test_widening_never_shrinks_the_budget_or_starts_one() -> None:
+    from sidecar.ai.routing.iteration_limits import widen_turn_tool_budget
+
+    config = _config(20)
+    runtime = LoopRuntime(request_id="req-widen", tool_call_limit=50, tool_calls_consumed=7)
+    widen_turn_tool_budget(runtime, config, _contract("read_file"))
+    assert (runtime.tool_call_limit, runtime.tool_calls_consumed) == (50, 7)
+
+    unstarted = LoopRuntime(request_id="req-unstarted")
+    widen_turn_tool_budget(unstarted, config, _contract("browser"))
+    assert unstarted.tool_call_limit is None
+
+
+def test_every_plan_mode_exit_site_widens_the_budget_with_the_build_tools() -> None:
+    # The three places that swap in the Build tools after exit_plan_mode (the loop, a checkpoint
+    # continuation, an approval resume) must each widen the budget in the same block.
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[4]
+    sites = (
+        "sidecar/ai/routing/tool_loop_calls.py",
+        "sidecar/runtime/chat_continuation_resume.py",
+        "sidecar/runtime/chat_resume.py",
+    )
+
+    def called(node: ast.AST) -> set[str]:
+        names = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Call):
+                func = child.func
+                names.add(func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", ""))
+        return names
+
+    for site in sites:
+        tree = ast.parse((root / site).read_text(encoding="utf-8"))
+        blocks = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.If) and "apply_restored_tool_contract" in called(
+                ast.Module(body=node.body, type_ignores=[]))
+        ]
+        assert blocks, f"{site}: no Plan Mode exit block found"
+        for block in blocks:
+            body = called(ast.Module(body=block.body, type_ignores=[]))
+            assert "widen_turn_tool_budget" in body, f"{site}:{block.lineno} does not widen the budget"

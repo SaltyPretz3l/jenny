@@ -58,6 +58,9 @@ test('an admin\'s page: rename, role selects (a read-only member capped), Add so
   assert.deepEqual(h.sent('projectSetMember').map((c) => c.payload), [{ team_id: OTHER, project_id: P2, member_id: MAYA, role: 'reader' }]);
   act(h, 'member-remove', `[data-member-id="${MAYA}"]`).click();
   await flush();
+  assert.equal(h.sent('projectRemoveMember').length, 0, 'Remove asks first');
+  act(h, 'member-remove-go').click();
+  await flush();
   assert.deepEqual(h.sent('projectRemoveMember').map((c) => c.payload), [{ team_id: OTHER, project_id: P2, member_id: MAYA }]);
   act(h, 'rename').click();
   const field = region(h).querySelector('#teamProjectRename');
@@ -66,6 +69,36 @@ test('an admin\'s page: rename, role selects (a read-only member capped), Add so
   act(h, 'rename-save').click();
   await flush();
   assert.deepEqual(h.sent('projectRename').map((c) => c.payload), [{ team_id: OTHER, project_id: P2, name: 'palette-tools 2' }]);
+});
+
+test('H21.1: Remove and Leave this project ask first with an inline confirm; Cancel and Escape put the focus back on the control and send nothing', async (t) => {
+  const { h } = await openPage(P2, { answers: { projectLeave: { ok: true } } });
+  t.after(h.restore);
+  const doc = h.window.document;
+  const confirmIn = () => pageSection(h, 'members').querySelector('.team-set-confirm');
+  assert.equal(confirmIn(), null, 'no confirm at rest');
+  const remove = act(h, 'member-remove', `[data-member-id="${MAYA}"]`);
+  remove.click();
+  assert.equal(h.sent('projectRemoveMember').length, 0, 'asking sends nothing');
+  assert.match(text(confirmIn()), /Remove Maya from palette-tools\? .*no longer see/, 'the confirm names the person and the project');
+  assert.equal(doc.activeElement, act(h, 'member-cancel'), 'the focus goes to the confirm’s Cancel');
+  act(h, 'member-cancel').click();
+  assert.equal(confirmIn(), null, 'Cancel closes it');
+  assert.equal(doc.activeElement, act(h, 'member-remove', `[data-member-id="${MAYA}"]`), 'and the focus returns to Remove');
+  act(h, 'member-remove', `[data-member-id="${MAYA}"]`).click();
+  act(h, 'member-cancel').dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(confirmIn(), null, 'Escape closes it');
+  act(h, 'leave').click();
+  assert.equal(h.sent('projectLeave').length, 0, 'Leave asks first');
+  assert.match(text(confirmIn()), /Leave palette-tools\?/);
+  act(h, 'leave-cancel').click();
+  assert.equal(confirmIn(), null);
+  assert.equal(doc.activeElement, act(h, 'leave'), 'the focus returns to Leave this project');
+  assert.equal(h.sent('projectRemoveMember').length + h.sent('projectLeave').length, 0, 'nothing was sent');
+  act(h, 'leave').click();
+  act(h, 'leave-go').click();
+  await flush();
+  assert.equal(h.sent('projectLeave').length, 1, 'Leave goes once confirmed');
 });
 
 test('Add someone offers the team members not in the project; Leave as the last admin shows the refusal', async (t) => {
@@ -80,6 +113,7 @@ test('Add someone offers the team members not in the project; Leave as the last 
   await flush();
   assert.deepEqual(h.sent('projectAddMember').map((c) => c.payload), [{ team_id: OTHER, project_id: P2, member_id: LENA, role: 'reader' }]);
   act(h, 'leave').click();
+  act(h, 'leave-go').click();
   await flush();
   assert.match(text(pageSection(h, 'members')), /A project always has an admin\. Make someone else an admin first\./);
   assert.ok(region(h), 'the page stays');
@@ -218,7 +252,7 @@ test('a losing answer to a request shows its sentence and leaves the request ans
   assert.match(text(pageSection(h, 'rules')), /That request is no longer waiting\./);
 });
 
-test('activity: one sentence per kind, newest first, 20 then Show all; past the first page the newest are found by probing', async (t) => {
+test('activity: one sentence per kind, newest first, 20 then Show all; the newest page is one call, older pages follow it', async (t) => {
   const entry = (seq, kind, over = {}) => ({ seq, at: Date.UTC(2026, 10, 12, 9, 0) + seq * 60_000, kind, project_id: P2, session_id: null, actor_member_id: MAYA, prompter_member_id: null,
     tool_name: null, decision: null, detail: null, ...over });
   const KINDS = [
@@ -231,24 +265,62 @@ test('activity: one sentence per kind, newest first, 20 then Show all; past the 
   ];
   const all = Array.from({ length: 250 }, (_v, i) => entry(i + 1, 'rule_added', { tool_name: 'write_file', detail: { rule_seq: i + 1 } }));
   for (const [e] of KINDS) all[e.seq - 1] = e;
-  const audit = (p) => { const after = all.filter((e) => e.seq > p.after_seq).slice(0, p.limit || 100); return { ok: true, entries: after, floor_seq: 1, next_cursor: after.length ? after[after.length - 1].seq : null }; };
+  // The host reads backwards: the newest page below before_seq, oldest first; next_cursor is the page's oldest seq (null: none older).
+  const audit = (p) => { const below = all.filter((e) => e.seq < p.before_seq); const found = below.slice(-(p.limit || 100)); return { ok: true, entries: found, floor_seq: 1, next_cursor: below.length > found.length ? found[0].seq : null }; };
   const { h } = await openPage(P2, { answers: { projectAudit: audit } });
   t.after(h.restore);
   await flush();
   const lines = () => [...pageSection(h, 'activity').querySelectorAll('li span')].map((el) => el.textContent);
   assert.equal(lines().length, 20);
   assert.equal(lines()[0], 'Maya always allowed write_file in this project', 'the newest (250) first');
-  assert.ok(h.sent('projectAudit').length <= 2 + 40, 'bounded probes');
+  assert.equal(h.sent('projectAudit').length, 1, 'the newest page is one call');
+  assert.deepEqual(h.sent('projectAudit')[0].payload.before_seq, Number.MAX_SAFE_INTEGER);
+  assert.equal(h.sent('projectAudit')[0].payload.after_seq, undefined);
   act(h, 'activity-more').click();
   for (let i = 0; i < 12; i += 1) await flush();
   assert.equal(lines().length, 100, 'everything read');
+  assert.equal(h.sent('projectAudit').length, 1, 'Show all activity shows what is held: no call');
   act(h, 'activity-more').click();
   await flush();
+  assert.deepEqual(h.sent('projectAudit').slice(1).map((c) => c.payload.before_seq), [151], 'the page before the oldest held');
   act(h, 'activity-more').click();
   await flush();
   const shown = lines();
   for (const [, sentence] of KINDS) assert.ok(shown.includes(sentence), sentence);
   for (const call of h.sent('projectAudit')) assert.ok(call.payload.limit >= 1 && call.payload.limit <= 100);
+});
+
+test('Show earlier activity lists each entry once, whatever overlap a host sends', async () => {
+  const { createActivity } = require('../renderer/team/renderer-team-project-activity');
+  const saved = globalThis.inventory;
+  globalThis.inventory = { actionButton: require('../renderer/inventory/action-button') };
+  try {
+    const entry = (seq) => ({ seq, at: seq, kind: 'rule_added', project_id: P2, session_id: null, actor_member_id: MAYA, prompter_member_id: null, tool_name: 'write_file', decision: null, detail: { rule_seq: seq } });
+    const all = Array.from({ length: 250 }, (_v, i) => entry(i + 1));
+    // From the second click on, the host repeats the first and the last entry of every page it answers, and the
+    // entry at before_seq itself.
+    let overlap = false;
+    const call = async (_method, p) => {
+      const below = all.filter((e) => e.seq < p.before_seq);
+      const found = below.slice(-(p.limit || 100));
+      const repeated = found.concat(found.slice(0, 1), found.slice(-1), all.filter((e) => e.seq === p.before_seq));
+      return { ok: true, entries: overlap ? repeated : found, floor_seq: 1, next_cursor: below.length > found.length ? found[0].seq : null };
+    };
+    const view = createActivity({ teamId: OTHER, projectId: P2, call, nameOf: () => 'Maya', conversationTitle: () => '', timeText: () => '', errorText: () => '', onChange() {} });
+    const lines = () => [...view.html().matchAll(/<li>/g)].length;
+    const settle = async () => { for (let i = 0; i < 4; i += 1) await flush(); };
+    await settle();
+    view.onClick({ dataset: { projectAction: 'activity-more' } });
+    await settle();
+    overlap = true;
+    view.onClick({ dataset: { projectAction: 'activity-more' } });
+    await settle();
+    view.onClick({ dataset: { projectAction: 'activity-more' } });
+    await settle();
+    assert.equal(lines(), 250, 'one line for each of the 250 entries, none twice');
+  } finally {
+    if (saved === undefined) delete globalThis.inventory; else globalThis.inventory = saved;
+  }
 });
 
 test('fix list M3: ten transfer pushes and a rules refresh keep the scroll and write the Files section only', async (t) => {
@@ -331,6 +403,7 @@ test('leave and removal close the page', async (t) => {
   const { h, push } = await openPage(P1, { answers: { projectLeave: { ok: true } } });
   t.after(h.restore);
   act(h, 'leave').click();
+  act(h, 'leave-go').click();
   await flush();
   await flush();
   assert.equal(region(h), null, 'a successful leave closes the page');

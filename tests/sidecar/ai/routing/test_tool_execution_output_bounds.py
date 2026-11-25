@@ -160,3 +160,23 @@ def test_oversized_mcp_result_object_keeps_a_bounded_prefix_instead_of_an_empty_
     assert payload["result"].startswith('{"sessions":[{"id":"session-0"')
     assert payload["result"].endswith("...[truncated]")
     assert len(payload["result"]) > tool_execution.MAX_RESPONSE_CHARS // 2
+
+
+def test_oversized_json_keeps_the_new_images_note() -> None:
+    # Row 199 C1: long output must not push out the line naming the images a call wrote.
+    note = "New images from this call: target/shots/bar-city.png. Open one with read_file."
+    raw = json.dumps(
+        {
+            "exit_code": 0,
+            # Each fits under the per-string cut, so together they fill the result.
+            "stdout": "o" * 5_320,
+            "stderr": "e" * 5_320,
+            "semantic_note": "s" * 5_320,
+            "new_images_note": note,
+        }
+    )
+
+    output, truncated = tool_execution.bounded_tool_output(raw, tool_name="run_command")
+
+    assert truncated is True
+    assert json.loads(output)["new_images_note"] == note

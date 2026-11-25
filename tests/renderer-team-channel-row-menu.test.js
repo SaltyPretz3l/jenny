@@ -186,3 +186,29 @@ test('Shift+F10 and the Menu key open the row menu, Esc closes it and the focus 
   assert.equal(menu(h).querySelector('.inv-context-menu-heading').textContent.length > 0, true);
   assert.equal(item(h, 'copy-link').disabled, true);
 });
+
+// OD-8: a project channel is a first-class human channel, so its row has the same menu, named by its project.
+test('a project channel row opens the menu: Mark read and Copy link work, Rename and Archive say why they are off, the heading is the project', async (t) => {
+  const SITE = 'chan_project_site';
+  const before = globalThis.rendererTeamProjectStore;
+  globalThis.rendererTeamProjectStore = { getProjectStore: () => ({ project: (teamId, id) => (teamId === OTHER && id === 'project_site' ? { id, name: 'Site plan', role: 'writer' } : null) }) };
+  t.after(() => { if (before === undefined) delete globalThis.rendererTeamProjectStore; else globalThis.rendererTeamProjectStore = before; });
+  const project = chatChannel({ channel_id: SITE, kind: 'project', audience: [ME, DOT], last_seq: 6, unread: 2, last_read_seq: 4 });
+  const h = await open({ team: asOwner(), channels: [...ROWS, project] });
+  t.after(h.restore);
+  const el = h.window.document.createElement('button');
+  el.dataset.teamChannel = SITE;
+  h.view.q('[data-team-region="lists"]').appendChild(el); // the projects column draws its own row; the menu reads the attribute
+  context(h, el);
+  await flush();
+  assert.equal(menu(h).querySelector('.inv-context-menu-heading').textContent, '#Site plan');
+  assert.deepEqual(values(h), ['mark-read', 'rename', 'archive', 'copy-link']);
+  assert.equal(item(h, 'mark-read').disabled, false);
+  assert.equal(item(h, 'rename').disabled, true);
+  assert.equal(reason(h, 'rename'), 'This channel cannot be changed here.');
+  assert.equal(reason(h, 'archive'), 'This channel cannot be changed here.');
+  assert.equal(item(h, 'copy-link').disabled, false);
+  item(h, 'copy-link').click();
+  await flush();
+  assert.deepEqual(h.copied, ['jenny-team:' + OTHER + '/' + SITE]);
+});

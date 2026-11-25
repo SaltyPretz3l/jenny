@@ -309,7 +309,7 @@ test('live children then an externalized result: the panel stays open, settled, 
   rig.controller.reconcile();
   assert.equal(closeCalls(rig), 0, 'the panel is not closed');
   const text = rig.doc.querySelector('#artifactReviewPanel').textContent;
-  assert.match(text, /Subagent details were too large to show here/);
+  assert.match(text, /Helper details were too large to show here/);
   assert.equal(rig.doc.querySelectorAll('#artifactReviewPanel [data-subagent-select]').length, 2, 'both children stay listed');
   assert.doesNotMatch(text, /Running/);
   rig.dispose();

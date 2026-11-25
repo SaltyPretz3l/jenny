@@ -34,12 +34,14 @@
       : String(camelKey || '');
   }
 
+  var STEP_ORDER = sceneUtils && Array.isArray(sceneUtils.STEP_ORDER) ? sceneUtils.STEP_ORDER
+    : ['workspaceRoot', 'localModel', 'endpoint', 'personality', 'skills', 'capabilities'];
+
+  function errorMessage(error) { return error && error.message ? error.message : String(error); }
+
   function makeDefaultState() {
     var defaultSteps = {};
-    var stepOrder = sceneUtils && Array.isArray(sceneUtils.STEP_ORDER)
-      ? sceneUtils.STEP_ORDER
-      : ['workspaceRoot', 'localModel', 'endpoint', 'personality', 'skills', 'capabilities'];
-    stepOrder.forEach(function seedStep(stepId) { defaultSteps[stepId] = 'pending'; });
+    STEP_ORDER.forEach(function seedStep(stepId) { defaultSteps[stepId] = 'pending'; });
     return {
       loaded: false,
       setupComplete: false,
@@ -78,9 +80,8 @@
 
   function hasCurrentMinimumReadiness(setup) {
     var readiness = setup && setup.readiness ? setup.readiness : {};
-    return readiness.workspaceRoot && readiness.workspaceRoot.ready === true
-      && ((readiness.localModel && readiness.localModel.ready === true)
-        || (readiness.endpoint && readiness.endpoint.ready === true));
+    return (readiness.localModel && readiness.localModel.ready === true)
+      || (readiness.endpoint && readiness.endpoint.ready === true);
   }
 
   function mergeSetupPayload(target, payload) {
@@ -113,10 +114,7 @@
     var readiness = plainObject(source.readiness);
     var stepStatuses = {};
     var readinessStatuses = {};
-    var stepOrder = sceneUtils && Array.isArray(sceneUtils.STEP_ORDER)
-      ? sceneUtils.STEP_ORDER
-      : ['workspaceRoot', 'localModel', 'endpoint', 'personality', 'skills', 'capabilities'];
-    stepOrder.forEach(function readStep(stepId) {
+    STEP_ORDER.forEach(function readStep(stepId) {
       var snakeKey = snakeStepKey(stepId);
       stepStatuses[snakeKey] = String(steps[snakeKey] || 'pending');
       readinessStatuses[snakeKey] = plainObject(readiness[snakeKey]);
@@ -152,7 +150,6 @@
     var appendClientLog = typeof callbacks.appendClientLog === 'function' ? callbacks.appendClientLog : noop;
     var showToastMessage = typeof callbacks.showToastMessage === 'function' ? callbacks.showToastMessage : noop;
     var showShellErrorToast = typeof callbacks.showShellErrorToast === 'function' ? callbacks.showShellErrorToast : noop;
-    var setActiveView = typeof callbacks.setActiveView === 'function' ? callbacks.setActiveView : noop;
     var renderAfterSetupChange = typeof callbacks.renderAfterSetupChange === 'function' ? callbacks.renderAfterSetupChange : noop;
 
     if (!state.setup) {
@@ -189,6 +186,41 @@
       return modalRoot;
     }
 
+    // The boot curtain marks each body child inert with STARTUP_INERT and its
+    // restore releases exactly those nodes. A modal root mounted behind the
+    // curtain joins that bookkeeping, and its dialog opens (focus, Escape) only
+    // once the curtain lets it go, so a keypress cannot answer an unseen dialog.
+    var STARTUP_INERT = 'data-startup-fatal-inert';
+    var pendingCurtainObserver = null;
+
+    function hasStartupInert(rootEl) {
+      return typeof rootEl.hasAttribute === 'function' && rootEl.hasAttribute(STARTUP_INERT);
+    }
+
+    function joinStartupInert(rootEl) {
+      if (!documentRef || typeof documentRef.querySelector !== 'function' || typeof rootEl.setAttribute !== 'function') return;
+      if (hasStartupInert(rootEl) || !documentRef.querySelector('[' + STARTUP_INERT + ']')) return;
+      rootEl.setAttribute(STARTUP_INERT, rootEl.inert ? '1' : '0');
+      rootEl.inert = true;
+    }
+
+    function cancelPendingOpen() {
+      if (pendingCurtainObserver) pendingCurtainObserver.disconnect();
+      pendingCurtainObserver = null;
+    }
+
+    function openWhenCurtainLifts(rootEl, open) {
+      cancelPendingOpen();
+      var Observer = documentRef && documentRef.defaultView && documentRef.defaultView.MutationObserver;
+      if (!hasStartupInert(rootEl) || typeof Observer !== 'function') { open(); return; }
+      pendingCurtainObserver = new Observer(function onStartupInertChange() {
+        if (hasStartupInert(rootEl)) return;
+        cancelPendingOpen();
+        open();
+      });
+      pendingCurtainObserver.observe(rootEl, { attributes: true, attributeFilter: [STARTUP_INERT] });
+    }
+
     function ensureModalLifecycle() {
       if (modalLifecycle) return modalLifecycle;
       var rootEl = ensureModalRoot();
@@ -215,7 +247,7 @@
       state.setup = mergeSetupPayload(state.setup, payload);
       maybeAutoFinishSetup(computeCanFinish(state.setup));
       try { renderAfterSetupChange(); } catch (error) {
-        appendClientLog('WARN', 'setup.render_after_change_failed', { message: error && error.message ? error.message : String(error) });
+        appendClientLog('WARN', 'setup.render_after_change_failed', { message: errorMessage(error) });
       }
       return state.setup;
     }
@@ -240,7 +272,7 @@
       }
       refresh().catch(function logRefreshFailure(error) {
         appendClientLog('WARN', 'setup.status_refresh_failed', {
-          message: error && error.message ? error.message : String(error),
+          message: errorMessage(error),
         });
       });
       return state.setup;
@@ -293,7 +325,7 @@
             if (!(state.setup.firstRunCompleted || state.setup.setupComplete)) startLinearFlow();
           } catch (error) {
             if (!disposed && generation === lifecycleGeneration) appendClientLog('WARN', 'setup.acknowledgement_persist_failed',
-              { message: error && error.message ? error.message : String(error) });
+              { message: errorMessage(error) });
             throw error;
           }
         },
@@ -316,7 +348,7 @@
         applySnapshot(fetched);
       } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
-        appendClientLog('WARN', 'setup.init_failed', { message: error && error.message ? error.message : String(error) });
+        appendClientLog('WARN', 'setup.init_failed', { message: errorMessage(error) });
         return state.setup;
       }
       maybeStartFirstRunFlow();
@@ -337,7 +369,7 @@
       } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
         appendClientLog('WARN', 'setup.refresh_failed', {
-          message: error && error.message ? error.message : String(error),
+          message: errorMessage(error),
         });
       }
       return state.setup;
@@ -363,7 +395,7 @@
         appendClientLog('WARN', 'setup.mark_step_failed', {
           step: name,
           status: nextStatus,
-          message: error && error.message ? error.message : String(error),
+          message: errorMessage(error),
         });
         throw error;
       }
@@ -380,7 +412,7 @@
       } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
         appendClientLog('WARN', 'setup.identity_update_failed', {
-          message: error && error.message ? error.message : String(error),
+          message: errorMessage(error),
         });
         throw error;
       }
@@ -402,7 +434,7 @@
         }
         if (health.state !== 'complete') {
           showShellErrorToast(
-            jt('setup.controller.notReadyMessage', 'Choose a workspace root and configure at least one model route before finishing setup.'),
+            jt('setup.controller.notReadyMessage', 'Configure a model route before finishing setup.'),
             { title: jt('setup.controller.notReadyTitle', 'Setup Not Ready') }
           );
           appendClientLog('INFO', 'setup.complete_blocked', {
@@ -423,7 +455,7 @@
             { title: jt('setup.controller.finishFailedTitle', 'Setup Finish Failed') }
           );
           appendClientLog('WARN', 'setup.complete_failed', {
-            message: error && error.message ? error.message : String(error),
+            message: errorMessage(error),
           });
           throw error;
         }
@@ -458,6 +490,7 @@
     }
 
     function disposeActiveScene() {
+      cancelPendingOpen();
       if (modalLifecycle) modalLifecycle.close();
       if (activeScene && typeof activeScene.dispose === 'function') {
         try { activeScene.dispose(); } catch (_error) { /* ignore */ }
@@ -473,7 +506,6 @@
 
     function openScene(name, overrides) {
       if (name !== 'acknowledgement' && needsAcknowledgement()) {
-        setActiveView('home');
         return startAcknowledgementGate();
       }
       var factory = sceneFactories && sceneFactories[name];
@@ -484,6 +516,7 @@
       var rootEl = ensureModalRoot();
       if (!rootEl) return null;
       disposeActiveScene();
+      joinStartupInert(rootEl);
       var sceneDeps = {
         state: state.setup,
         shellState: state,
@@ -498,7 +531,7 @@
         markStep: markStep,
         applyAssistantIdentity: applyAssistantIdentity,
         closeModal: (overrides && overrides.closeModal) || closeModal,
-        showHome: function showHome() { setActiveView('home'); },
+        reopenFirstRun: reopenFirstRun,
         showToastMessage: showToastMessage,
         showShellErrorToast: showShellErrorToast,
         appendClientLog: appendClientLog,
@@ -522,16 +555,18 @@
       } catch (error) {
         appendClientLog('ERROR', 'setup.scene_mount_failed', {
           name: name,
-          message: error && error.message ? error.message : String(error),
+          message: errorMessage(error),
         });
         disposeActiveScene();
         return null;
       }
       var lifecycle = ensureModalLifecycle();
       if (lifecycle) {
-        lifecycle.open({
-          id: 'setup-' + name,
-          onRequestClose: (overrides && overrides.onRequestClose) || requestModalClose,
+        openWhenCurtainLifts(rootEl, function openLifecycle() {
+          lifecycle.open({
+            id: 'setup-' + name,
+            onRequestClose: (overrides && overrides.onRequestClose) || requestModalClose,
+          });
         });
       }
       return scene;
@@ -576,30 +611,36 @@
       return hub;
     }
 
+    function disposeActiveFlow() {
+      if (activeFlow && typeof activeFlow.dispose === 'function') {
+        try { activeFlow.dispose(); } catch (_error) { /* ignore */ }
+      }
+      activeFlow = null;
+    }
+
+    function startHub() {
+      activeFlow = createHub();
+      if (activeFlow && typeof activeFlow.start === 'function') activeFlow.start();
+      return activeFlow;
+    }
+
     function startLinearFlow() {
       if (needsAcknowledgement()) {
-        setActiveView('home');
         return startAcknowledgementGate();
       }
       if (!hubFactory) {
         return null;
       }
-      activeFlow = createHub();
-      if (activeFlow && typeof activeFlow.start === 'function') {
-        activeFlow.start();
-      }
-      return activeFlow;
+      return startHub();
     }
 
-    // Explicit "Resume setup" entry point. A second call while the hub is
-    // active re-focuses Home without reconstructing the in-progress surface.
+    // Explicit "Resume setup" entry point. Setup opens over the current view;
+    // a second call while the hub is active keeps the in-progress surface.
     function resumeSetup() {
       if (needsAcknowledgement()) {
-        setActiveView('home');
         return startAcknowledgementGate();
       }
       if (activeFlow) {
-        setActiveView('home');
         return activeFlow;
       }
       if (!hubFactory) {
@@ -607,28 +648,28 @@
         showFromSettings();
         return null;
       }
-      activeFlow = createHub();
-      if (activeFlow && typeof activeFlow.start === 'function') {
-        activeFlow.start();
-      }
-      setActiveView('home');
-      return activeFlow;
+      return startHub();
+    }
+
+    // Reset onboarding reopens first run where the user is: acknowledgement, then the Hub.
+    function reopenFirstRun() {
+      if (disposed) return null;
+      disposeActiveFlow();
+      acknowledgementGate = null;
+      return startLinearFlow();
     }
 
     async function finishSetup(_options) {
       if (disposed) return state.setup;
       var generation = lifecycleGeneration;
-      if (activeFlow && typeof activeFlow.dispose === 'function') {
-        try { activeFlow.dispose(); } catch (_error) { /* ignore */ }
-      }
-      activeFlow = null;
+      disposeActiveFlow();
       try {
         await setupService.updateState({ firstRunCompleted: true });
         if (disposed || generation !== lifecycleGeneration) return state.setup;
       } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
         appendClientLog('WARN', 'setup.first_run_persist_failed', {
-          message: error && error.message ? error.message : String(error),
+          message: errorMessage(error),
         });
         showShellErrorToast(
           jt('setup.controller.finishLaterSaveFailed', "Couldn't save your setup choice. Setup may open again the next time you start Jenny."),
@@ -647,11 +688,7 @@
             await completeSetup();
             if (disposed || generation !== lifecycleGeneration) return state.setup;
             if (state.setup.setupComplete !== true) {
-              var finishReadiness = state.setup.readiness || {};
-              var folderReady = finishReadiness.workspaceRoot && finishReadiness.workspaceRoot.ready === true;
-              showToastMessage(folderReady
-                ? jt('setup.controller.incompleteModelMessage', "Setup isn't finished yet — Jenny still can't reach a model. Finish from Settings once the engine is up.")
-                : jt('setup.hub.noWorkspaceRoot', 'No workspace root set — file tools will be off until you set one.'));
+              showToastMessage(jt('setup.controller.incompleteModelMessage', "Setup isn't finished yet — Jenny still can't reach a model. Finish from Settings once the engine is up."));
             }
           } catch (_error) { /* already toasted */ }
         }
@@ -663,12 +700,11 @@
         } catch (error) {
           if (disposed || generation !== lifecycleGeneration) return state.setup;
           appendClientLog('WARN', 'setup.finish_incomplete_persist_failed', {
-            message: error && error.message ? error.message : String(error),
+            message: errorMessage(error),
           });
         }
       }
       closeModal();
-      setActiveView('home');
     }
 
     function openHelp() {
@@ -680,7 +716,6 @@
     }
 
     function showFromSettings() {
-      setActiveView('home');
       if (needsAcknowledgement()) return startAcknowledgementGate();
       return null;
     }
@@ -771,10 +806,7 @@
     function dispose() {
       disposed = true;
       lifecycleGeneration += 1;
-      if (activeFlow && typeof activeFlow.dispose === 'function') {
-        try { activeFlow.dispose(); } catch (_error) { /* ignore */ }
-      }
-      activeFlow = null;
+      disposeActiveFlow();
       disposeActiveScene();
       acknowledgementGate = null;
       if (modalLifecycle) modalLifecycle.dispose();

@@ -75,8 +75,6 @@
     var requestCanonicalRerender = typeof options.requestCanonicalRerender === 'function'
       ? options.requestCanonicalRerender
       : null;
-    var boundsEnabled = options.boundsEnabled !== false;
-    var contentVisibilityEnabled = options.contentVisibilityEnabled === true;
     var threshold = Number.isFinite(Number(options.threshold))
       ? Math.max(0, Number(options.threshold))
       : VIRT_THRESHOLD;
@@ -241,7 +239,6 @@
     var entryStore = entryStoreUtils?.createTimelineVirtualizerEntryStore?.({
       chatTimeline: chatTimeline,
       document: doc,
-      boundsEnabled: boundsEnabled,
       budgets: LONG_THREAD_BUDGETS,
       requestEntryMarkup: options.requestEntryMarkup,
       requestCanonicalRerender: scheduleCanonicalRerender,
@@ -262,7 +259,6 @@
       );
       stats.materializedHighWater = Math.max(stats.materializedHighWater, materialized);
       return {
-        enabled: boundsEnabled,
         strategy: strategy,
         fallbackReason: fallbackReason,
         articles: stats.articles,
@@ -654,9 +650,8 @@
 
     function chooseStrategy(entryCount, entryWeight = 0) {
       if (observerFallbackReason) return STRATEGY_NONE;
-      if (boundsEnabled && (entryCount > threshold || entryWeight > weightThreshold)) return STRATEGY_DOM_WINDOW;
-      if (contentVisibilityEnabled) return STRATEGY_CONTENT_VISIBILITY;
-      return STRATEGY_NONE;
+      if (entryCount > threshold || entryWeight > weightThreshold) return STRATEGY_DOM_WINDOW;
+      return STRATEGY_CONTENT_VISIBILITY;
     }
 
     function countPinnedExemptions(entries) {
@@ -754,9 +749,7 @@
         disconnectObserver();
         cancelUnmountQueue();
         if (entryStore.getStats().virtualizedEntries > 0) restoreAll(entries);
-        setStrategy(desiredStrategy, desiredStrategy === STRATEGY_NONE
-          ? (observerFallbackReason || 'fully_mounted')
-          : 'css_containment');
+        setStrategy(desiredStrategy, desiredStrategy === STRATEGY_NONE ? observerFallbackReason : 'css_containment');
         publishStats('rebuild');
         return;
       }

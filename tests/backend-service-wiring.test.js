@@ -720,7 +720,7 @@ test('shellConfigService changed: calls refreshManagedConfig when shouldRefreshM
   }
 });
 
-// --- companionService listSessionSummaries/listSessionRecords closures (lines 135-141) ---
+// --- companionService listSessionSummaries closure ---
 
 test('companionService.listSessionSummaries closure reads from sessionStore', () => {
   const { created } = createRecordingFixture();
@@ -730,38 +730,6 @@ test('companionService.listSessionSummaries closure reads from sessionStore', ()
     created.backendService.sessionStore = { listSessions: () => fakeSessions };
     const result = created.companionService._readSessionList().sessions;
     assert.deepEqual(result, fakeSessions);
-  } finally {
-    created.backendService.dispose?.();
-  }
-});
-
-test('companionService.listSessionRecords closure returns [] when sessionStore has no listSessionRecords', () => {
-  const { created } = createRecordingFixture();
-  try {
-    // listSessions must return a sentinel: with an empty stub, a regression that
-    // fell through to listSessions() would produce [] too and go undetected.
-    let listSessionsCalls = 0;
-    created.backendService.sessionStore = {
-      listSessions: () => { listSessionsCalls += 1; return [{ id: 'must-not-be-read' }]; },
-    }; // no listSessionRecords
-    const result = created.companionService._listSessionRecords();
-    assert.deepEqual(result, []);
-    assert.equal(listSessionsCalls, 0, 'the absent-listSessionRecords fallback must not read listSessions');
-  } finally {
-    created.backendService.dispose?.();
-  }
-});
-
-test('companionService.listSessionRecords closure returns records when sessionStore.listSessionRecords exists', () => {
-  const { created } = createRecordingFixture();
-  try {
-    const fakeRecords = [{ sessionId: 'sess-1', messages: [] }];
-    created.backendService.sessionStore = {
-      listSessions: () => [],
-      listSessionRecords: () => fakeRecords,
-    };
-    const result = created.companionService._listSessionRecords();
-    assert.deepEqual(result, fakeRecords);
   } finally {
     created.backendService.dispose?.();
   }

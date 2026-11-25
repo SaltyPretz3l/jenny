@@ -15,6 +15,7 @@ const {
   ensureManagedLlamaServerReadyForChat,
   ensureManagedNinferReadyForChat,
   ensureManagedOllamaReadyForChat,
+  ensureManagedStrataReadyForChat,
   ensureManagedSidecarReadyForChat,
   waitForManagedInitialization,
 } = require('./managed-sidecar-chat-reconnect');
@@ -62,6 +63,9 @@ async function ensureManagedEnginesReadyForChat(service, {
     sessionId: resolvedSessionId,
     streamId,
     traceId: requestTraceId,
+  });
+  await ensureManagedStrataReadyForChat(service, {
+    engineType, sessionId: resolvedSessionId, streamId, traceId: requestTraceId,
   });
   await ensureManagedSidecarReadyForChat(service, {
     sessionId: resolvedSessionId,
@@ -200,6 +204,7 @@ async function sendManagedChatTurnRequest(service, {
     });
     const runtimeOperationHandler = (params) => {
       if (params?.kind === 'continuation' && continuationBoundary) return continuationBoundary.handleOperation(params);
+      if (params?.kind === 'helper_worktree') return service.sessionExecutionAuthority.handleHelperWorktree(executionAuthority, params);
       const result = ['inference', 'tool'].includes(params?.kind) && runtimeOperationGateway
         ? runtimeOperationGateway.handle(params)
         : service.sessionExecutionAuthority.checkRuntimeOperation(executionAuthority, params);

@@ -167,6 +167,22 @@ test('live cancellation patch settles an edit row and stops its shared elapsed c
   assert.equal(settledBlock.querySelector('[data-turn-elapsed]'), null);
   assert.equal(settledBlock.classList.contains('tool-call-file-composing'), false);
   assert.equal(settledBlock.classList.contains('tool-call-file-settled'), true);
+  // The turn is still live, so the steps heading (row 192) keeps its own ticking
+  // elapsed node on the shared clock; the settled edit row contributes none.
+  const liveHeading = window.document.querySelector('#chatTimeline [data-row-kind="work_ledger"]');
+  assert.equal(liveHeading?.getAttribute('data-ledger-state'), 'live');
+  assert.deepEqual(
+    Array.from(window.document.querySelectorAll('#chatTimeline [data-turn-elapsed][data-elapsed-started-at]'))
+      .map((node) => node.closest('[data-row-kind]')?.getAttribute('data-row-kind')),
+    ['work_ledger'],
+    'only the live steps heading may still carry a ticking elapsed node'
+  );
+  assert.equal(timelineClock.isRunning(), true);
+
+  // Once the turn completes the heading settles, drops its elapsed node and the clock stops.
+  await shell.__emitChat({ type: 'complete', sessionId, streamId, content: '', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
+  await waitForUi(window, 30);
+  assert.equal(window.document.querySelectorAll('#chatTimeline [data-turn-elapsed][data-elapsed-started-at]').length, 0);
   assert.equal(timelineClock.isRunning(), false);
 
   hostRow.innerHTML = renderToolCall({

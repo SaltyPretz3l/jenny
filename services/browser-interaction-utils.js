@@ -11,7 +11,8 @@ const MAX_EVAL_RESULT_CHARS = 20_000;
 const MAX_EVAL_RESULT_DEPTH = 6;
 const MAX_EVAL_RESULT_ITEMS = 100;
 // Allowlisted keys for press, mapped to Electron sendInputEvent key codes.
-const PRESS_KEY_CODES = Object.freeze({
+const CHARACTER_KEYS = '0123456789abcdefghijklmnopqrstuvwxyz';
+const NAMED_PRESS_KEY_CODES = Object.freeze({
   Enter: 'Enter',
   Space: 'Space',
   Tab: 'Tab',
@@ -20,8 +21,25 @@ const PRESS_KEY_CODES = Object.freeze({
   ArrowDown: 'Down',
   ArrowLeft: 'Left',
   ArrowRight: 'Right',
+  Backspace: 'Backspace',
+  Delete: 'Delete',
+  Home: 'Home',
+  End: 'End',
+  PageUp: 'PageUp',
+  PageDown: 'PageDown',
 });
-const PRESS_KEYS = Object.freeze(Object.keys(PRESS_KEY_CODES));
+// Plus single digits and lowercase letters, for pages with keyboard shortcuts (games, players, demos).
+const PRESS_KEY_CODES = Object.freeze({
+  ...NAMED_PRESS_KEY_CODES,
+  ...Object.fromEntries([...CHARACTER_KEYS].map((ch) => [ch, ch])),
+});
+const PRESS_KEYS = Object.freeze([...Object.keys(NAMED_PRESS_KEY_CODES), ...CHARACTER_KEYS]);
+// How the accepted keys are named in errors (46 keys listed one by one would bury the point).
+const PRESS_KEYS_TEXT = `${Object.keys(NAMED_PRESS_KEY_CODES).join(', ')}, or one digit or lowercase letter (0-9, a-z)`;
+// Keys that also produce a character (keypress/input), not only keydown and keyup.
+function pressKeyTypesChar(key) {
+  return key === 'Enter' || key === 'Space' || key.length === 1;
+}
 // Spellings a model reaches for before the canonical name (gate recheck
 // 2026-10-05: {"action":"press","key":" "} was refused eight times before it
 // tried "Space"). Resolved on the raw value, before trimming erases " ".
@@ -67,7 +85,7 @@ function resolvePressKeyAlias(value) {
 function normalizePressKey(value) {
   const key = resolvePressKeyAlias(value);
   if (!Object.hasOwn(PRESS_KEY_CODES, key)) {
-    throw new Error(`A browser key press requires key to be one of: ${PRESS_KEYS.join(', ')}.`);
+    throw new Error(`A browser key press requires key to be one of: ${PRESS_KEYS_TEXT}.`);
   }
   return key;
 }
@@ -259,6 +277,7 @@ module.exports = {
   MAX_EVAL_SCRIPT_LENGTH,
   MAX_TYPE_TEXT_LENGTH,
   PRESS_KEYS,
+  PRESS_KEYS_TEXT,
   PRESS_KEY_ALIASES,
   PRESS_KEY_CODES,
   PRESS_KEY_SCHEMA_VALUES,
@@ -267,6 +286,7 @@ module.exports = {
   buildSelectorProbeScript,
   normalizeClickButton,
   normalizePressKey,
+  pressKeyTypesChar,
   normalizeSelector,
   resolvePressKeyAlias,
   safeBrowserReason,

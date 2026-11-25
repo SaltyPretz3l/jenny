@@ -413,7 +413,7 @@
           editor.setBoard(board, { boardId: board ? board.id : '', readOnly: Boolean(options && options.readOnly), canUndo: options && options.canUndo, canRedo: options && options.canRedo });
         } finally { forwarding = false; }
       }
-      if (chrome) { chrome.setVisible(Boolean(board)); chrome.refresh(); }
+      if (chrome) { chrome.setVisible(Boolean(board)); chrome.refresh(); if (board) chrome.layout(); }
       if (!board) {
         model = null;
         shownId = '';
@@ -515,7 +515,13 @@
         applyDim();
       },
       // The page calls this when the column's size changes: a fit that had to wait for a size happens now.
-      resized() { if (pendingFit && !disposed) fit(); },
+      resized() {
+        if (disposed) return;
+        if (chrome) chrome.layout();
+        if (pendingFit) fit();
+      },
+      // The toolbar's room changed without the column's size changing (the view switch moved into or out of its slot).
+      layoutToolbar() { if (chrome && !disposed) chrome.layout(); },
       cardIds: () => Array.from(items.keys()),
       dispose() {
         if (disposed) return;

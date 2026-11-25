@@ -57,6 +57,7 @@
 
   function createFind(o) {
     const { root } = o;
+    const popId = (typeof o.idPrefix === 'string' ? o.idPrefix : '') + 'teamTurnPop';
     const doc = root.ownerDocument;
     const st = { open: false, query: '', curKey: '', cur: 0, tried: false, region: null };
     const works = new WeakMap(); // a turn's saved messages -> its work rows
@@ -139,7 +140,7 @@
     function hostOf(m) {
       if (!m.work) return m.row.querySelector('.team-msg__text');
       const body = popBody();
-      const pop = root.querySelector('#teamTurnPop');
+      const pop = root.querySelector('[id="' + popId + '"]');
       if (!body || !pop || pop.dataset.turnId !== m.turn) return null;
       const attr = m.work.kind === 'tool' ? 'data-tool-call-id' : 'data-message-id';
       const hit = Array.from(body.querySelectorAll(m.work.kind === 'tool' ? '[data-tool-call-id]' : '[data-reasoning-toggle]')).find((n) => n.getAttribute(attr) === m.work.id);

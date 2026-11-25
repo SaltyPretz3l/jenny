@@ -148,17 +148,6 @@ test('opening the 8th chat of an open project raises that project\'s page to sho
   assert.equal(h.rowsIn(ALPHA).length, 8);
 });
 
-test('strip expansion clears the project filter with search and scope', (t) => {
-  const h = makeHarness(t);
-  h.state.ui.chatsProjectFilter = 'project_alpha';
-  h.state.ui.sidebarArchivedView = true;
-  h.doc.getElementById('search').value = 'x';
-  h.controller.prepareForStripExpansion();
-  assert.equal(h.state.ui.chatsProjectFilter, '');
-  assert.equal(h.state.ui.sidebarArchivedView, false);
-  assert.equal(h.doc.getElementById('search').value, '');
-});
-
 test('"Clear search" from the empty state also resets each project\'s Show more page', async (t) => {
   const h = makeHarness(t);
   await ready(h);

@@ -105,7 +105,8 @@ test('the live approval hands its round to the card state, and an answered call 
   assert.equal(resolveApprovalCardState(state, { callId: 'call_1' }).roundApproval, roundApproval);
   assert.equal(Object.hasOwn(resolveApprovalCardState(state, { callId: 'call_2' }), 'roundApproval'), false);
 
-  const receipt = parse(html({ cardState: 'resolved', decision: 'allowed', approvalScope: 'round', commandText: 'src/file-1.js' }));
+  // Row 192 D2 A: the chat's inline row renders empty (the step carries the answer); the card keeps the receipt line.
+  const receipt = parse(html({ cardState: 'resolved', decision: 'allowed', approvalScope: 'round', commandText: 'src/file-1.js', mode: 'card' }));
   assert.equal(receipt.querySelector('.tool-approval-receipt-label').textContent, 'Allowed together');
   assert.equal(receipt.querySelector('[data-approval-round]'), null);
 });

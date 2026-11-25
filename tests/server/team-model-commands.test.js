@@ -412,3 +412,21 @@ test('a team offer while the directory cannot be read answers host_unavailable, 
   assert.equal(reasonOf(env.send(env.actors.owner, 'team.model.offer', manifest({ requestId: 'req_down' }))), 'host_unavailable');
   assert.equal(env.published.length, 0);
 });
+
+test('H18: a revoked offering device\'s open offers are withdrawn, and the transfers on them end; the member\'s other device keeps its own', (t) => {
+  const env = makeSharing({ t });
+  const { owner, member, memberSecondDevice } = env.actors;
+  const taken = offerAndAccept(env, { from: member, to: owner });
+  const open = env.send(member, 'team.model.offer', manifest({ requestId: 'req_open', team: true }));
+  const other = env.send(memberSecondDevice, 'team.model.offer', manifest({ requestId: 'req_other' }));
+  assert.equal(reasonOf(open), 'ok');
+  assert.equal(reasonOf(other), 'ok');
+  assert.equal(env.send(owner, 'team.model.offers').offers.length, 3);
+  env.membership.emit({ kind: 'device_revoked', member_id: member.member_id, device_ids: [member.device_id], role: 'member', at: 1 });
+  const listed = env.send(owner, 'team.model.offers');
+  assert.deepEqual(listed.offers.map((entry) => entry.offer_id), [other.offer.offer_id], 'only the other device\'s offer is left');
+  assert.deepEqual(listed.transfers.filter((row) => row.transfer_id === taken.transferId).map((row) => [row.state, row.reason]),
+    [['cancelled', 'withdrawn']]);
+  // The revoked device cannot withdraw them itself any more, and the member's other device could not have either.
+  assert.equal(reasonOf(env.send(memberSecondDevice, 'team.model.withdraw', { offer_id: open.offer.offer_id })), 'team_not_found');
+});

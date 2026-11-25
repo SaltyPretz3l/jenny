@@ -12,7 +12,6 @@ import pytest
 import sidecar.runtime.chat_continuation_batch as resume_batch
 import sidecar.runtime.chat_continuation_resume as resume
 from sidecar.ai.config import ToolPolicySnapshot
-from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR
 from sidecar.ai.mcp.models import MCPToolDescriptor
 from sidecar.ai.mode_policy import policy_for_mode
 from sidecar.ai.routing import chat_decision as chat_decision_module
@@ -505,22 +504,9 @@ def test_chat_decision_uses_resume_callback_before_any_model_generation(
     assert budget_events == ["after_pending_tool"]
 
 
-def test_chat_request_decodes_and_injects_private_resume_before_executor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_chat_request_decodes_and_injects_private_resume_before_router() -> None:
     decision = ChatDecision(None, "captured", None, ())
-    brain = _build_brain_container(decision, feature_flags={FEATURE_AGENT_EXECUTOR: True})
-    captured: dict[str, Any] = {}
-
-    class _FakeExecutor:
-        def __init__(self, **_kwargs: Any) -> None:
-            pass
-
-        def execute(self, **kwargs: Any) -> ChatDecision:
-            captured.update(kwargs)
-            return decision
-
-    monkeypatch.setattr("sidecar.runtime.chat.AgentExecutor", _FakeExecutor)
+    brain = _build_brain_container(decision)
     params = {
         "request_id": "stream_b",
         "session_id": _SESSION_ID,
@@ -565,7 +551,7 @@ def test_chat_request_decodes_and_injects_private_resume_before_executor(
     )
 
     assert response.result["status"] == "completed"
-    runtime = captured["runtime"]
+    runtime = brain.stack.router.last_kwargs["runtime"]
     assert callable(runtime.continuation_resume)
     assert runtime.request_context.runtime_continuation_resume is not None
 

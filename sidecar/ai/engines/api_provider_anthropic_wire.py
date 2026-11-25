@@ -25,6 +25,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from sidecar.ai.context.context_rows import CONTEXT_ROLE, render_context_entries
 from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, EngineMessage
 from sidecar.ai.engines.vision_input import VisionImage
 
@@ -533,6 +534,48 @@ def build_request(  # noqa: PLR0913 - explicit request-shaping contract.
     return payload, headers
 
 
+# Generation-only fields the count endpoint does not take.
+_COUNT_DROPPED_FIELDS = ("max_tokens", "stream", "cache_control")
+
+
+def build_count_request(
+    *,
+    model: str,
+    messages: Sequence[Any],
+    tools: Sequence[dict[str, Any]],
+    vision: bool,
+) -> dict[str, Any] | None:
+    """The ``/messages/count_tokens`` body for these router rows (row 183 W2).
+
+    The same system blocks, history and tools a real request sends, without the generation
+    fields or thinking. ``context`` rows (linked chats, handoffs) count as their user entries.
+    ``None`` with no messages, or with an image: the ladder budgets images itself.
+    """
+    rows: list[Any] = []
+    for message in messages:
+        if isinstance(message, dict) and str(message.get("role", "")).lower() == CONTEXT_ROLE:
+            rows.extend(render_context_entries(message))
+        else:
+            rows.append(message)
+    if not rows:
+        return None
+    payload, _headers = build_request(
+        model=model, max_tokens=1, system="", prompt="", messages=rows, tools=tools,
+        thinking=_NO_THINKING, vision=vision, replay={},
+    )
+    if any(
+        isinstance(block, dict) and block.get("type") == "image"
+        for message in payload["messages"]
+        for block in (message.get("content") if isinstance(message.get("content"), list) else ())
+    ):
+        return None
+    for field_name in _COUNT_DROPPED_FIELDS:
+        payload.pop(field_name, None)
+    for tool in payload.get("tools", ()):
+        tool.pop("eager_input_streaming", None)  # a streaming field the count does not need
+    return payload if payload["messages"] else None
+
+
 __all__ = [
     "ANTHROPIC_VERSION",
     "DEFAULT_OUTPUT_CEILING",
@@ -540,6 +583,7 @@ __all__ = [
     "THINKING_BETA",
     "ThinkingPlan",
     "ThinkingReplayCache",
+    "build_count_request",
     "build_messages",
     "build_request",
     "build_tools",

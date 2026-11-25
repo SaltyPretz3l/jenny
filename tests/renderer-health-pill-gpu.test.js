@@ -328,3 +328,201 @@ test('the real pill without the bridge is exactly as before', async (t) => {
   assert.equal(window.document.querySelector('[data-health-gpu]'), null);
   assert.equal(controller.getState().tone, 'success');
 });
+
+// ── Row 194: the engine and graphics memory block of the popover ─────────────
+const { combineHealthSignal } = require('../renderer/shell/renderer-health-pill-utils.js');
+
+const READING = { gpuMemory: { available: true, usedMb: 6451, totalMb: 24576 } };
+const FACTS = { defaultModel: 'qwen3:14b', card: 'RTX 4090', fits: [{ modelId: 'gemma3:27b', vramRequiredMb: 21709 }] };
+const CLOUD = { engine: 'chatgpt', model: 'gpt-x', model_loaded: false, local_runtime: { model: { residency: 'remote', configured: true, loaded: null } } };
+
+function enginePopover(runtime = {}, { reading = READING, facts = FACTS } = {}) {
+  const snapshot = { runtime: { engine: 'ollama', model: 'qwen3:14b', model_loaded: true, ...runtime, lifecycle: { available: true, state: 'ready', model_state: 'ready', ...runtime.lifecycle } } };
+  const signal = gpuModule.nameSignal(combineHealthSignal(snapshot, { now: 12_000 }), snapshot);
+  const engine = gpuModule.describeEngine({ signal, snapshot, reading, facts });
+  const host = new JSDOM('<!doctype html><body></body>').window.document.createElement('div');
+  host.innerHTML = buildPopoverMarkup({ error: '', toneLabel: signal }, snapshot, { engine });
+  return host.firstElementChild;
+}
+const heading = (pop) => pop.querySelector('.workbench-health-popover-status span:last-child').textContent;
+const summaryOf = (pop) => pop.querySelector('.workbench-health-popover-summary').textContent;
+const actionsOf = (pop) => [...pop.querySelectorAll('.workbench-health-popover-actions [data-health-pill-action]')].map((node) => node.textContent);
+const legendOf = (pop) => [...pop.querySelectorAll('.mm-legend > span')].map((node) => node.textContent);
+const TAIL = ['Models', 'Diagnostics', 'Logs', 'Show load in title bar'];
+
+test('popover, a local model loaded: heading, summary, the shared bar and legend, the fold', () => {
+  const pop = enginePopover();
+  assert.equal(pop.getAttribute('aria-label'), 'Engine and graphics memory');
+  assert.ok(pop.classList.contains('workbench-health-popover--engine'));
+  assert.equal(pop.dataset.healthTone, 'success');
+  assert.equal(heading(pop), 'qwen3:14b is loaded');
+  assert.equal(summaryOf(pop), 'On this PC, on ollama. This is your default for new chats.');
+  assert.equal(pop.querySelector('.workbench-health-popover-gpu-title').textContent, 'Graphics memory · RTX 4090, 24 GB');
+  assert.equal(pop.querySelector('.mm-bar').getAttribute('aria-label'), 'GPU memory: 6.3 GB in use of 24 GB');
+  assert.equal(pop.querySelector('.mm-fill').style.width, '26.2%');
+  assert.deepEqual(legendOf(pop), ['6.3 GB in use · measured', '17.7 GB free']);
+  const caveat = pop.querySelector('.workbench-health-popover-gpu-caveat');
+  assert.match(caveat.textContent, /^Read when you opened this\./);
+  assert.equal(caveat.querySelector('[data-health-pill-action]').textContent, 'Recheck');
+  assert.equal(caveat.querySelector('[data-health-pill-action]').dataset.healthPillAction, 'recheck-gpu');
+  assert.deepEqual(actionsOf(pop), ['Unload', ...TAIL]);
+  const fold = pop.querySelector('details.workbench-health-popover-tech');
+  assert.equal(fold.hasAttribute('open'), false, 'closed');
+  assert.equal(fold.querySelector('summary').textContent, 'Technical details');
+  assert.match(fold.querySelector('.workbench-health-popover-facts').textContent, /ollama · qwen3:14b · loaded/, 'today’s fact lines move into the fold');
+});
+
+test('popover, a local model that is not the default offers to load the default', () => {
+  const pop = enginePopover({}, { facts: { ...FACTS, defaultModel: 'gemma3:27b' } });
+  assert.equal(summaryOf(pop), 'On this PC, on ollama. New chats still use gemma3:27b.');
+  assert.deepEqual(actionsOf(pop), ['Unload', 'Load gemma3:27b', ...TAIL]);
+  assert.equal(pop.querySelector('[data-health-pill-action="load-default"]').textContent, 'Load gemma3:27b');
+});
+
+test('popover, a cloud model active', () => {
+  const pop = enginePopover(CLOUD);
+  assert.equal(heading(pop), 'gpt-x is loaded');
+  assert.equal(summaryOf(pop), 'A cloud model on ChatGPT. Messages in chats that picked it leave this PC. New chats use qwen3:14b.');
+  assert.deepEqual(actionsOf(pop), ['Load qwen3:14b', ...TAIL]);
+  assert.deepEqual(legendOf(pop), ['6.3 GB in use · measured', '17.7 GB free']);
+});
+
+test('popover, a model loading: the reservation, and the last time when one is known', () => {
+  const loading = (last) => ({ model_loaded: false, lifecycle: { model_state: 'model_loading', model_acquisition: { requested_model: 'gemma3:27b', stage: 'model_loading', last_load_ms: last } } });
+  const pop = enginePopover(loading(41_000));
+  assert.equal(pop.dataset.healthTone, 'pending');
+  assert.equal(heading(pop), 'Loading gemma3:27b · 0:00');
+  assert.equal(summaryOf(pop), 'On this PC, on ollama. Last time it took 0:41.');
+  assert.equal(pop.querySelector('.mm-bar').getAttribute('aria-label'), 'GPU memory: reserving about 21.2 GB of 24 GB');
+  assert.deepEqual(legendOf(pop), ['Reserving about 21.2 GB', '2.8 GB will stay free']);
+  assert.deepEqual(actionsOf(pop), TAIL, 'no own actions while loading');
+  assert.equal(summaryOf(enginePopover(loading(null))), 'On this PC, on ollama.', 'no earlier time: the second sentence is left out');
+});
+
+test('popover, nothing loaded', () => {
+  const pop = enginePopover({ model: '', model_loaded: false });
+  assert.equal(pop.dataset.healthTone, 'muted');
+  assert.equal(heading(pop), 'Nothing is loaded');
+  assert.equal(summaryOf(pop), 'Jenny loads qwen3:14b, your default, with your next message.');
+  assert.deepEqual(actionsOf(pop), ['Load qwen3:14b', ...TAIL]);
+  assert.deepEqual(legendOf(pop), ['6.3 GB in use · measured', '17.7 GB free']);
+});
+
+test('popover, a load that failed: for memory, and for any other reason', () => {
+  const failed = (status) => ({ model_loaded: false, lifecycle: { model_state: 'model_unavailable', model_acquisition: { requested_model: 'gemma3:27b', stage: 'unavailable', status } } });
+  const pop = enginePopover(failed('out of memory'));
+  assert.equal(pop.dataset.healthTone, 'danger');
+  assert.equal(heading(pop), 'gemma3:27b did not load');
+  assert.equal(summaryOf(pop), 'It needs about 21.2 GB of graphics memory and 17.7 GB is free. Nothing is loaded now.');
+  assert.equal(pop.querySelector('.mm-ghost--over') !== null, true, 'the failed model is drawn past the end');
+  assert.deepEqual(legendOf(pop), ['gemma3:27b would use about 21.2 GB · 3.5 GB more than is free', '17.7 GB free']);
+  assert.deepEqual(actionsOf(pop), ['Retry', 'Load qwen3:14b instead', ...TAIL]);
+  assert.equal(pop.querySelector('[data-health-pill-action="retry-model"]').textContent, 'Retry');
+  const other = enginePopover(failed('Could not start the server.'), { facts: { ...FACTS, fits: [] } });
+  assert.equal(summaryOf(other), 'Could not start the server. Nothing is loaded now.');
+});
+
+test('popover, a card that cannot be read: the existing wording replaces the bar, the summary stays', () => {
+  const pop = enginePopover({}, { reading: { gpuMemory: { available: false } } });
+  assert.equal(pop.querySelector('.mm-bar'), null);
+  assert.equal(pop.querySelector('.mm-legend'), null);
+  assert.match(pop.querySelector('.workbench-health-popover-gpu').textContent, /GPU memory can’t be confirmed right now/);
+  assert.equal(summaryOf(pop), 'On this PC, on ollama. This is your default for new chats.');
+  assert.equal(enginePopover({}, { reading: null }).querySelector('.mm-bar'), null, 'no reading yet: no bar');
+});
+
+function engineHarness(t, { diagnostics, loaded = true } = {}) {
+  const dom = new JSDOM('<!doctype html><body><div id="slot"></div></body>', { pretendToBeVisual: true });
+  const { window } = dom;
+  const calls = { diagnostics: 0, refresh: 0, load: [], unload: 0, watches: [] };
+  const listeners = new Set();
+  window.jennyShell = {
+    diagnostics: { getJennyStatus: async () => ({ runtime: { engine: 'ollama', model: 'qwen3:14b', model_loaded: loaded, lifecycle: { available: true, state: 'ready', model_state: 'ready' } } }) },
+    offline: { getDiagnostics: async () => { calls.diagnostics += 1; return diagnostics || { preferredLocalModel: 'gemma3:27b', hardwareProfile: { gpu: { name: 'RTX 4090' } }, modelFitEstimates: [] }; } },
+    system: {
+      getStats: async () => ({ cpuPercent: 1, ramPercent: 2, gpuMemory: { available: true, usedMb: 6451, totalMb: 24576 } }),
+      refreshStats: async () => { calls.refresh += 1; return { cpuPercent: 1, ramPercent: 2, gpuMemory: { available: true, usedMb: 7475, totalMb: 24576 } }; },
+      onStats: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+      setStatsWatch: async (payload) => { calls.watches.push(payload); return { watched: payload.watched }; },
+    },
+    models: { load: async (id) => { calls.load.push(id); return {}; }, unload: async () => { calls.unload += 1; return {}; } },
+  };
+  globalThis.rendererHealthPillGpu = gpuModule;
+  const controller = createHealthPillController({ window, document: window.document, slot: window.document.getElementById('slot') });
+  t.after(() => { controller.dispose(); window.close(); delete globalThis.rendererHealthPillGpu; });
+  return { window, controller, calls };
+}
+
+test('the real pill: opening reads the default and the card name once, shows the block, and registers as a watcher', async (t) => {
+  const h = engineHarness(t);
+  await h.controller.refresh({ silent: true });
+  assert.equal(h.calls.diagnostics, 0, 'nothing is read while the popover is closed');
+  h.window.document.querySelector('#workbenchHealthPillButton').click();
+  await flush();
+  const pop = h.window.document.getElementById('workbenchHealthPopover');
+  assert.equal(h.calls.diagnostics, 1);
+  assert.deepEqual(h.calls.watches, [{ source: 'popover', watched: true }]);
+  assert.equal(pop.getAttribute('aria-label'), 'Engine and graphics memory');
+  assert.equal(pop.querySelector('.workbench-health-popover-gpu-title').textContent, 'Graphics memory · RTX 4090, 24 GB');
+  assert.equal(summaryOf(pop), 'On this PC, on ollama. New chats still use gemma3:27b.');
+  assert.equal(h.calls.refresh, 1, 'opening reads the card once: nothing read it while idle, so a pushed reading could be old');
+  assert.deepEqual(legendOf(pop), ['7.3 GB in use · measured', '16.7 GB free']);
+});
+
+test('the real pill: Recheck reads the card again, Unload and Load the default call the model controls', async (t) => {
+  const h = engineHarness(t);
+  await h.controller.refresh({ silent: true });
+  h.window.document.querySelector('#workbenchHealthPillButton').click();
+  await flush();
+  h.window.document.querySelector('[data-health-pill-action="recheck-gpu"]').click();
+  await flush();
+  assert.equal(h.calls.refresh, 2, 'one read on open, one for Recheck');
+  assert.equal(h.controller.isPopoverOpen(), true, 'Recheck keeps the popover open');
+  assert.deepEqual(legendOf(h.window.document.getElementById('workbenchHealthPopover')), ['7.3 GB in use · measured', '16.7 GB free']);
+  h.window.document.querySelector('[data-health-pill-action="unload-model"]').click();
+  await flush();
+  assert.equal(h.calls.unload, 1);
+  assert.equal(h.controller.isPopoverOpen(), false);
+  h.window.document.querySelector('#workbenchHealthPillButton').click();
+  await flush();
+  h.window.document.querySelector('[data-health-pill-action="load-default"]').click();
+  await flush();
+  assert.deepEqual(h.calls.load, ['gemma3:27b']);
+});
+
+// Row 201 C1 / OD-1: a team model is on a teammate's GPU: its formatted name, the team, and no Unload.
+const TEAM_RUNTIME = { engine: 'openai-compatible', model: 'team/team_alpha1/qwen3:8b', model_loaded: true };
+
+test('popover, a team model: formatted name, the team named, the notice, and no Unload', () => {
+  const pop = enginePopover(TEAM_RUNTIME, { facts: { ...FACTS, teams: { team_alpha1: 'Alpha crew' } } });
+  assert.equal(heading(pop), 'qwen3:8b is loaded');
+  assert.match(summaryOf(pop), /^On Alpha crew \(shared GPU\)\. /);
+  assert.doesNotMatch(summaryOf(pop), /On this PC|OpenAI-compatible|openai-compatible/);
+  pop.querySelector('details.workbench-health-popover-tech').remove(); // the fold is the one place the raw id stays
+  assert.doesNotMatch(pop.textContent, /team\/team_alpha1/);
+  assert.equal(actionsOf(pop).includes('Unload'), false);
+  assert.equal(pop.querySelector('[data-health-pill-action="unload-model"]'), null);
+});
+
+test('the title-bar words for a team model are its formatted name', () => {
+  const snapshot = { runtime: { ...TEAM_RUNTIME, lifecycle: { available: true, state: 'ready', model_state: 'ready' } } };
+  const signal = gpuModule.nameSignal(combineHealthSignal(snapshot, { now: 12_000 }), snapshot);
+  assert.equal(signal.words, 'qwen3:8b');
+  assert.equal(signal.kind, 'team');
+});
+
+test('row 201: facts ask for team names only after the pill named a team model, so a Team-off PC builds no Team service', async () => {
+  let asked = 0;
+  const window = { jennyShell: { offline: { getDiagnostics: async () => ({ preferredLocalModel: 'qwen3:8b' }) },
+    system: { refreshStats: async () => null },
+    team: { status: async () => { asked += 1; return { teams: [{ team_id: 'team_a', team_name: 'Alpha' }] }; } } } };
+  const facts = gpuModule.createEngineFacts({ window, onChange: () => {} });
+  const ready = { plain: true, lifecycleState: 'ready' };
+  gpuModule.nameSignal(ready, { runtime: { model: 'qwen3:8b', model_loaded: true } });
+  await facts.load();
+  assert.equal(asked, 0, 'a local model: no team call');
+  gpuModule.nameSignal(ready, { runtime: { model: 'team/team_a/qwen3:8b' } });
+  await facts.load();
+  assert.equal(asked, 1);
+  assert.deepEqual(facts.facts().teams, { team_a: 'Alpha' });
+});

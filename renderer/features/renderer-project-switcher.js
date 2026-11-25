@@ -536,9 +536,9 @@
 
     // New chats land in the Workspace project; a chat for another project is
     // created there and then assigned (a fresh chat is idle). It asks for a
-    // real record (requireRecord): while another send is busy a plain New Chat
-    // is a local draft, which would later land in the Workspace project. The
-    // filter follows so the new chat is visible (D7).
+    // real record (requireRecord). For the Workspace project a busy send makes
+    // a local draft instead, which carries that project. The filter follows so
+    // the new chat is visible (D7).
     async function newChatInProject(projectId) {
       const id = String(projectId || '').trim() || GENERAL_PROJECT_ID;
       if (!newChat) return null;
@@ -620,7 +620,9 @@
       const failed = [];
       for (const entry of entries) {
         if (disposed) return;
-        const result = await assign(entry.id, entry.from);
+        // A draft sent since the move has a backend record now, so it is assigned like any chat.
+        const stillDraft = entry.local && (findSession(entry.id) || {}).local_draft === true;
+        const result = stillDraft ? { ok: true } : await assign(entry.id, entry.from);
         if (result && result.ok !== false) setLocalProject(entry.id, entry.from);
         else failed.push(resultMessage(result));
       }
@@ -644,6 +646,14 @@
         const from = session ? sessionProjectId(session) : '';
         if (from === target) { outcome.unchanged.push(id); continue; }
         if (session && !isSessionIdle(session)) { outcome.skipped.push(id); continue; }
+        if (session && session.local_draft === true) {
+          // A local draft has no backend record yet: its project is the one it
+          // materializes into on its first send, so the move is a local edit.
+          outcome.moved.push(id);
+          setLocalProject(id, target);
+          if (from) undo.push({ id, from, local: true });
+          continue;
+        }
         const result = await assign(id, target);
         if (result && result.ok !== false) {
           outcome.moved.push(id);

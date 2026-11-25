@@ -95,7 +95,7 @@ test('auto-index and folder rows reflect saved policy and disclose folder contro
   assert.equal(disclosure.querySelector('[data-skills-scope="project"]').disabled, true);
 });
 
-test('skipped files collapse to one bounded warning and kill-switch off has no master toggle', () => {
+test('skipped files collapse to one bounded warning and a switched-off skills system shows one Managed row', () => {
   const warningPayload = skillsPayload({ warnings: [
     { message: 'First warning' }, { message: 'Second warning' },
   ] });
@@ -105,9 +105,17 @@ test('skipped files collapse to one bounded warning and kill-switch off has no m
     '2 skill files skipped: First warning');
 
   const off = renderHarness(skillsPayload({ featureEnabled: false })).doc;
-  assert.match(off.getElementById('skillsRowsHost').textContent,
-    /JENNY_ENABLE_SKILLS_SYSTEM kill switch/);
-  assert.equal(off.querySelector('[data-inv-toggle]'), null);
+  const row = off.querySelector('#skillsRowsHost [data-settings-field="skillsUserToggle"]');
+  assert.equal(row.querySelector('.settings-field-tag').textContent, 'Managed');
+  assert.equal(row.querySelector('.settings-field-tag').getAttribute('data-tone'), 'managed');
+  assert.equal(row.querySelector('.settings-field-reason').firstChild.textContent,
+    'Skills are switched off for this PC by a start-up setting. Remove it and restart Jenny to use skills.');
+  assert.equal(row.getAttribute('data-setting-managed'), 'true');
+  assert.equal(row.querySelector('[data-inv-toggle]').getAttribute('aria-checked'), 'false');
+  assert.equal(row.querySelector('[data-inv-toggle]').disabled, true, 'read-only');
+  assert.equal(row.classList.contains('settings-field--unavailable'), false, 'not faded');
+  assert.equal(off.querySelectorAll('[data-inv-toggle]').length, 1, 'no master toggle beyond the one Managed row');
+  assert.doesNotMatch(off.body.textContent, /JENNY_ENABLE/, 'the internal switch name is never printed');
   assert.equal(off.getElementById('skillsFoldersHost').textContent, '');
 });
 

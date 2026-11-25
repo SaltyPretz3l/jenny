@@ -64,8 +64,8 @@ _PATH_METADATA_KEYS = {
     "generated_artifacts",
     "preview_image", "previewImage", "data_base64", "trusted_attachments",
 }
-# Tools whose bounded PNG may reach a vision chat model; see preview_vision.
-_PREVIEW_IMAGE_TOOLS = frozenset({"preview_test", "image_generate", "browser"})
+_PREVIEW_IMAGE_TOOLS = frozenset({  # a bounded PNG may reach a vision model; see preview_vision
+    "preview_test", "image_generate", "browser", "run_view_look", "computer"})
 # Electron owns message consent inside its producer and command consent in prepare.
 # Match chat-stream-tool-approval.js: 10 minutes normally, extendible to 4 hours
 # by the existing unattended guard. Reserve that bounded window up front since
@@ -345,8 +345,8 @@ def _response_wait_timeout(request: ElectronToolBridgeRequest) -> float:
     )
     message_consent = (request.tool_name == "session_message"
                        and request.arguments.get("action") == "send" and producer_response)
-    # The browser tool may ask the user inside Electron (any action can need consent).
-    browser_consent = request.tool_name == "browser"
+    # The browser and computer tools may ask the user inside Electron (any action can need consent).
+    browser_consent = request.tool_name in ("browser", "computer")
     command_consent = (request.tool_name == "run_command"
                        and request.before_resource_start is not None and not producer_response)
     if message_consent or command_consent or browser_consent:
@@ -463,10 +463,10 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
                 fallback_tool_name=request.tool_name,
                 preview_call_id=(
                     request.tool_call_id
-                    if request.tool_name == "image_generate"
+                    if request.tool_name in ("image_generate", "run_view_look", "computer")
                     or request.arguments.get("screenshot") is True
                     or (request.tool_name == "browser"
-                        and request.arguments.get("action") == "screenshot")
+                        and request.arguments.get("action") in ("screenshot", "wait"))
                     else ""
                 ),
             )

@@ -63,8 +63,7 @@ class HostedWorkspaceStore(GuardedWorkspaceStore):
         return self._entry(ref) is not None
 
     def stat(self, ref: StoreRef) -> StoreEntry | None:
-        found = self._entry(ref)
-        described = _describe(found) if found is not None else None
+        described = self._entry(ref)
         if described is None:
             return None
         is_directory, size, mtime_ns = described
@@ -175,14 +174,18 @@ class HostedWorkspaceStore(GuardedWorkspaceStore):
             raise _store_failure("workspace store reference is invalid", retryable=False)
         return self._jenny().joinpath(ref.kind.value, *ref.parts)
 
-    def _entry(self, ref: StoreRef) -> Any:
-        """The parent's listing entry for `ref`, or None when absent (or behind a link)."""
+    def _entry(self, ref: StoreRef) -> tuple[bool, int, int] | None:
+        """(is directory, size, mtime ns) of the parent's listing entry for `ref`, or None when
+        absent, behind a link or special. The entry is described inside the directory scope: its
+        `stat` is descriptor-relative and a closed descriptor reads nothing (or another directory).
+        A Windows name matches case-insensitively, as its file system does."""
         path = self._path(ref)
+        wanted = os.path.normcase(path.name)
         try:
             with hosted.open_hosted_directory(path.parent) as directory:
                 for entry in directory.scan(MAX_STORE_LIST_ENTRIES + 1):
-                    if entry.name == path.name:
-                        return entry
+                    if os.path.normcase(entry.name) == wanted:
+                        return _describe(entry)
         except ToolExecutionFailure as error:
             if error.code != CMP_TOOL_INVALID_PATH:
                 raise

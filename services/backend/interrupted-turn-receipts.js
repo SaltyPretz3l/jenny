@@ -18,7 +18,7 @@
 const { finalizeCommit, hasDurableProof } = require('./conversation-store-port');
 const { normalizeString } = require('../shared/normalize');
 
-// Keep these three bounds in sync with sidecar/ai/context/runtime_overlays.py's
+// Keep these three bounds in sync with sidecar/ai/context/interruption_overlay.py's
 // INTERRUPTED_TURN_MAX_ENTRIES_PER_SECTION / _INTERRUPTED_TURN_MAX_TOOL_NAME /
 // _INTERRUPTED_TURN_MAX_SUMMARY -- both sides bound the same Electron-computed
 // receipts payload as it crosses the process boundary, and the sidecar side
@@ -296,6 +296,8 @@ function computeInterruptedTurnReceipts({ journal, sessionId, currentTurnId, cap
 
 module.exports = {
   DEFAULT_RECEIPTS_CAP,
+  MAX_SUMMARY,
+  MAX_TOOL_NAME,
   acknowledgeInterruptedTurnReceipts,
   computeInterruptedTurnReceipts,
   summarizeInterruptedTurnEvents,

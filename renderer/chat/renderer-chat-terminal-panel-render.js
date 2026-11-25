@@ -23,8 +23,6 @@
     add: svg('<path d="M8 3v10M3 8h10"/>'),
     more: svg('<circle cx="3.5" cy="8" r=".9"/><circle cx="8" cy="8" r=".9"/><circle cx="12.5" cy="8" r=".9"/>'),
     workspace: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 10.5h12M9 13V10.5"/>'),
-    max: svg('<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>'),
-    min: svg('<path d="M13.5 2.5 9 7m0-3.5V7h3.5M2.5 13.5 7 9m0 3.5V9H3.5"/>'),
   });
 
   /* A folder as a comparison key: slashes unified, no trailing slash, case-insensitive (Windows paths). */
@@ -57,22 +55,24 @@
   }
 
   /* The panel's header row, shown in the side-panel chrome's title slot. model: { tabs: [{ slot, label, tooltip, starting,
-     selected }] | null, canAdd, actions, maximized }. Without tabs only Maximize shows; the chrome's own Close follows. */
+     selected }] | null, canAdd, limit (the terminal limit, named in the + tooltip once reached), actions }. The chrome's own Close follows. */
   function headHtml(model) {
     const m = model || {};
     const tabs = Array.isArray(m.tabs) ? m.tabs : null;
     const anySelected = Boolean(tabs && tabs.some((tab) => tab.selected));
     let strip = '';
     if (tabs) {
+      const limit = Number(m.limit);
+      const addLabel = m.canAdd === true || !(limit > 0) ? jt('chatTerminal.new', 'New terminal')
+        : limit === 4 ? jt('chatTerminal.limitReached', 'Four terminals is the limit. Close one to open another.')
+          : jt('chatTerminal.limitReachedCount', '{count} terminals is the limit. Close one to open another.', { count: limit });
       strip = tabs.map((tab, index) => tabHtml(tab, index, !anySelected)).join('')
-        + button({ plain: true, className: 'chat-terminal-add', ariaLabel: jt('chatTerminal.new', 'New terminal'), title: jt('chatTerminal.new', 'New terminal'),
+        + button({ plain: true, className: 'chat-terminal-add', ariaLabel: addLabel, title: addLabel,
           disabled: m.canAdd !== true, dataset: { 'ct-add': '' }, trustedHtml: GLYPH.add });
     }
     const icon = (data, label, glyph, extra) => button({ plain: true, className: 'chat-terminal-icon', ariaLabel: label, title: label, dataset: { [data]: '' }, trustedHtml: glyph, ...extra });
-    const restoreLabel = m.maximized ? jt('chatTerminal.restore', 'Restore') : jt('chatTerminal.maximize', 'Maximize');
-    const actions = (m.actions ? icon('ct-more', jt('chatTerminal.more', 'Terminal menu'), GLYPH.more, { ariaHaspopup: 'menu' })
-      + icon('ct-workspace', jt('chatTerminal.showInWorkspace', 'Show in Workspace'), GLYPH.workspace) : '')
-      + icon('ct-max', restoreLabel, m.maximized ? GLYPH.min : GLYPH.max, { ariaPressed: m.maximized === true });
+    const actions = m.actions ? icon('ct-more', jt('chatTerminal.more', 'Terminal menu'), GLYPH.more, { ariaHaspopup: 'menu' })
+      + icon('ct-workspace', jt('chatTerminal.showInWorkspace', 'Show in Workspace'), GLYPH.workspace) : '';
     return `<div class="chat-terminal-head"><div class="chat-terminal-tabs" role="tablist" aria-label="${escapeHtml(jt('chatTerminal.tabs', 'Terminals'))}">${strip}</div>`
       + `<div class="chat-terminal-actions">${actions}</div></div>`;
   }

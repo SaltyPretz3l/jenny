@@ -1,8 +1,9 @@
 /**
  * renderer/features/renderer-subagent-rail.js
  *
- * The Subagent Monitor as the `subagents` mode of the artifact review panel
- * (Subagent monitor v2 plan, section 3). Built like the `tasks` rail:
+ * The Helper monitor (once the Subagent Monitor) as the `subagents` mode of the artifact review panel
+ * (Subagent monitor v2 plan, section 3). Row 195: it is reached from a row of the Runs tab and shows with one back
+ * control, "Runs", in place of its own header and Close; the back control (and Escape) return to the Runs list. Built like the `tasks` rail:
  * the shell artifact bridge creates one, wires it to the surface controller and
  * lets `renderSplitDetail` PULL its markup through `renderSubagentsSurface`.
  *
@@ -35,6 +36,8 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const MODE = 'subagents';
+  const RUNS_MODE = 'background_tasks';
+  const RUNS_BACK = '[data-subagent-runs-back]';
   const PANEL_ID = 'artifactReviewPanel';
   const OPEN_FILE_EVENT = 'ide:open-file-at-line';
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
@@ -99,7 +102,7 @@
     function applyLabel() {
       if (!panelEl?.setAttribute) return;
       if (originalLabel === null) originalLabel = panelEl.getAttribute('aria-label') || '';
-      panelEl.setAttribute('aria-label', jt('chat.subagentMonitor.panelLabel', 'Subagent monitor'));
+      panelEl.setAttribute('aria-label', jt('chat.subagentMonitor.panelLabel', 'Helper monitor'));
     }
 
     function restoreLabel() {
@@ -210,15 +213,17 @@
       const host = surface.previewContent;
       if (!host) return;
       const page = normalizePage(record.page);
-      const html = `<div class="subagent-monitor-shell" data-subagent-page="${page}">${parts.header || ''}${parts.body || ''}${parts.footer || ''}</div>`;
+      const html = `<div class="subagent-monitor-shell" data-subagent-page="${page}">${parts.runsHeader || parts.header || ''}${parts.body || ''}${parts.footer || ''}</div>`;
       const shell = host.querySelector(':scope > .subagent-monitor-shell');
       if (html === lastMarkup && shell) return;
+      const enteredDetail = page === 'detail' && shell?.getAttribute('data-subagent-page') !== 'detail';
       if (activeHandle?.preserveLiveState) activeHandle.preserveLiveState(host, () => {
         if (activeHandle.updateMarkup) activeHandle.updateMarkup(host, html);
         else host.innerHTML = html;
       });
       else host.innerHTML = html;
       lastMarkup = html;
+      if (enteredDetail) host.querySelector(RUNS_BACK)?.focus?.({ preventScroll: true }); // the row that was clicked is gone: land on Back
 
     }
 
@@ -293,8 +298,23 @@
       activeHandle.close();
     }
 
+    // Back to the Runs list, focused on the helper's row. The list owner closes this record through the layout sync.
+    function backToRuns(helperId) {
+      const record = getRecord();
+      if (!record) return;
+      const runs = windowRef.rendererBackgroundTasksPanel;
+      if (typeof runs?.open === 'function') { void runs.open({ sessionId: record.sessionId, focusTaskId: helperId }); return; }
+      if (openArtifactRail(RUNS_MODE) === RUNS_MODE) renderArtifactReviewPanel();
+    }
+
     function handlePanelClick(event) {
       if (!isActive() || !panelEl?.querySelector?.('.subagent-monitor-shell')?.contains?.(event.target)) return;
+      const back = event.target.closest?.(RUNS_BACK);
+      if (back) {
+        event.preventDefault();
+        backToRuns(back.getAttribute('data-subagent-runs-back'));
+        return;
+      }
       const link = event.target.closest?.('[data-chat-path-open]');
       if (link) {
         event.preventDefault();
@@ -359,5 +379,18 @@
     return api;
   }
 
-  return { MODE, PANEL_ID, createSubagentRail };
+  // Row 195: a helper's row in Runs opens that helper's page. The pane's own monitor owns the open, so this presses
+  // the helper's card in the chat that runs it (its controller listens for exactly that), then picks the helper.
+  function openHelperRun({ doc, panes, panel, sessionId, key, childKey }) {
+    const paneId = String(Math.max(0, (Array.isArray(panes) ? panes : []).findIndex((entry) => entry?.sessionId === sessionId)));
+    const cards = [...(doc?.querySelectorAll?.('[data-subagent-open]') || [])].filter((card) => card.getAttribute('data-subagent-open') === String(key));
+    const card = cards.find((entry) => String(entry.closest?.('.chat-pane[data-pane-id]')?.dataset?.paneId || '0') === paneId) || cards[0];
+    if (!card) return false;
+    card.click();
+    const row = childKey ? [...(panel()?.querySelectorAll?.('[data-subagent-select]') || [])].find((entry) => entry.getAttribute('data-subagent-select') === String(childKey)) : null;
+    row?.click?.();
+    return true;
+  }
+
+  return { MODE, PANEL_ID, createSubagentRail, openHelperRun };
 });

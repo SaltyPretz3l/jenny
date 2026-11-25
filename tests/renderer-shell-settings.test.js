@@ -271,48 +271,6 @@ test('renderer retires the history disclosure without deleting the rollback pref
   });
 });
 
-test('renderer sidebar resizer ignores non-primary drags and supports keyboard reset', async (t) => {
-  const { window } = await loadRendererTestApp(t);
-  // The sidebar belongs to the chat view; the loader left the app on Settings.
-  window.document.querySelector('[data-tab-id="chat"]').click();
-  await waitForUi(window, 20);
-  const doc = window.document;
-  const workspace = doc.getElementById('workspace');
-  const sidebarResizer = doc.getElementById('sidebarResizer');
-  workspace.getBoundingClientRect = () => ({ top: 0, left: 0, right: 1600, bottom: 900, width: 1600, height: 900 });
-  sidebarResizer.setPointerCapture = () => {};
-  sidebarResizer.releasePointerCapture = () => {};
-
-  function pointer(type, detail) {
-    const event = new window.Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperties(event, {
-      button: { value: detail.button ?? 0 },
-      pointerId: { value: detail.pointerId ?? 1 },
-      clientX: { value: detail.clientX ?? 0 },
-    });
-    sidebarResizer.dispatchEvent(event);
-  }
-
-  sidebarResizer.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
-  await waitForUi(window, 20);
-  assert.equal(workspace.style.getPropertyValue('--sidebar-current-width'), '320px');
-
-  pointer('pointerdown', { button: 2, pointerId: 99, clientX: 320 });
-  pointer('pointermove', { button: 2, pointerId: 99, clientX: 420 });
-  assert.equal(workspace.classList.contains('panel-resizing'), false);
-  assert.equal(workspace.style.getPropertyValue('--sidebar-current-width'), '320px');
-
-  sidebarResizer.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-  await waitForUi(window, 20);
-  assert.equal(sidebarResizer.getAttribute('aria-valuenow'), '344');
-  assert.equal(workspace.style.getPropertyValue('--sidebar-current-width'), '344px');
-
-  sidebarResizer.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
-  await waitForUi(window, 20);
-  assert.equal(sidebarResizer.getAttribute('aria-valuenow'), '320');
-  assert.equal(workspace.style.getPropertyValue('--sidebar-current-width'), '320px');
-});
-
 test('renderer tools workspace line reports the missing workspace', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     shell: {
@@ -463,8 +421,8 @@ test('Session Tools renders and saves the default run mode for new chats', async
   assert.deepEqual(segmentedOptions(doc, 'defaultRunModeSelect').map((option) => option.label), ['Ask', 'Auto', 'Plan']);
   const row = doc.querySelector('[data-settings-field="defaultRunModeSelect"]');
   assert.match(row.querySelector('.settings-field-help').textContent, /For new chats\. Ask checks before changes/);
-  assert.match(row.querySelector('.settings-field-detail').dataset.tooltip, /In Auto, Python and explicit denies still ask and blocked commands are refused\./);
-  assert.match(row.querySelector('.settings-field-detail').dataset.tooltip, /The composer switcher changes the current chat\./);
+  assert.match(row.querySelector('.settings-field-detail').dataset.tooltip, /In Auto, Python outside a project and denies ask; blocked commands are refused\./);
+  assert.match(row.querySelector('.settings-field-detail').dataset.tooltip, /The composer switcher changes this chat\./);
   assert.equal(doc.querySelector('[data-default-run-mode-field]'), null);
 
   group.querySelector('[data-value="plan"]').click();
@@ -800,8 +758,8 @@ test('phase7D Settings account row opens Help and bounded factory reset modal', 
   assert.equal(shell.__state.setupFactoryResetCalls, 1);
   assert.equal(window.__rendererState.setup.setupComplete, false);
   assert.equal(window.__rendererState.setup.assistantIdentity.agentName, 'Jenny');
-  assert.equal(window.__rendererState.ui.activeView, 'home');
-  assert.match(doc.body.textContent, /Onboarding reset complete — setup tiles reopened on Home\./);
+  assert.equal(window.__rendererState.ui.activeView, 'settings', 'first run reopens in place: no jump to Home');
+  assert.match(doc.body.textContent, /Onboarding reset\. Setup has reopened\./);
 });
 
 test('Settings relocates standalone MCP management into Extensions', async (t) => {

@@ -205,10 +205,10 @@ test('a load that succeeds after the soft notice runs the full success continuat
   await flush();
 
   assert.equal(h.actions.activationState().status, 'idle');
-  assert.deepEqual(h.toasts, ['Now chatting with "model-a"']);
+  assert.deepEqual(h.toasts, ['Loaded "model-a"']);
   assert.ok(h.logs.includes('models.loaded'));
   assert.equal(h.counts.refresh, 1);
-  assert.equal(h.statuses[h.statuses.length - 1], 'Now chatting with "model-a".');
+  assert.equal(h.statuses[h.statuses.length - 1], 'Loaded model-a.');
   assert.equal(h.clock.pending(), 0);
 });
 
@@ -339,4 +339,42 @@ test('Use on an NInfer row says the switch stops llama-server first (C7) and loa
   assert.equal(h.statuses[0], 'Switching to Qwen3.8 27B on NInfer… llama-server stops first so the GPU is free.');
   await flush();
   assert.deepEqual(h.loads, [{ model: 'qwen3.8-27b-nvfp4', engine_type: 'openai-compatible' }]);
+});
+
+// Row 194 C1/C2: Load only loads; Set as default is its own action and never takes a cloud model.
+function defaultHarness(t, model, offline = {}) {
+  const saved = [];
+  const statuses = [];
+  const state = { offline };
+  const actions = createModelLibraryRuntimeActions({
+    windowRef: { setTimeout, clearTimeout, jennyShell: {
+      models: { load: async () => ({ status: 'ok' }) },
+      offline: { updateSettings: async (payload) => { saved.push(payload); return payload; } },
+    } },
+    state, findModel: (id) => (model && (id === model.tag || id === model.key) ? model : null), activeModel: () => '',
+    refresh: async () => null, refreshModelPickers: async () => null, render: () => {},
+    setStatusMessage: (message) => statuses.push(message), showToastMessage: () => {}, appendClientLog: () => {},
+  });
+  t.after(() => actions.dispose());
+  return { actions, saved, statuses, state };
+}
+
+test('a load leaves the default alone and says which model new chats still use', async (t) => {
+  const h = defaultHarness(t, { tag: 'model-a', key: 'model-a', displayName: 'Model A', engineType: 'ollama' }, { preferredLocalModel: 'model-b' });
+  h.actions.handleUse('model-a');
+  await flush();
+  assert.deepEqual(h.saved, [], 'no default is written by a load');
+  assert.equal(h.statuses[h.statuses.length - 1], 'Loaded Model A. New chats still use model-b.');
+});
+
+test('Set as default writes the default and says so; a cloud model is refused before any save', async (t) => {
+  const h = defaultHarness(t, { tag: 'model-a', key: 'model-a', displayName: 'Model A', engineType: 'ollama' });
+  await h.actions.handleSetDefault('model-a');
+  assert.deepEqual(h.saved, [{ preferredLocalModel: 'model-a' }]);
+  assert.equal(h.state.offline.preferredLocalModel, 'model-a');
+  assert.equal(h.statuses[h.statuses.length - 1], 'New chats now use Model A.');
+  const cloud = defaultHarness(t, { tag: 'api-provider/openrouter/x', key: 'x', engineType: 'api-provider' });
+  cloud.actions.handleSetDefault('api-provider/openrouter/x');
+  assert.deepEqual(cloud.saved, []);
+  assert.equal(cloud.statuses[0], 'The default is always a model on this PC.');
 });

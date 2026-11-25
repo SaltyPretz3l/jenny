@@ -12,9 +12,9 @@ const inventory = {
   statusRow: require('../renderer/inventory/status-row'),
 };
 const settle = () => new Promise((resolve) => setImmediate(resolve));
-function harness({ fail = false, catalogs, delay } = {}) {
+function harness({ fail = false, catalogs, delay, routing } = {}) {
   const dom = new JSDOM('<div id="toolsConfigFieldList"><div data-subagent-routing-host></div></div>');
-  let features = { subagentRouting: normalizeSubagentRouting(), subagentModelCatalogs: catalogs || {
+  let features = { subagentRouting: normalizeSubagentRouting(routing), subagentModelCatalogs: catalogs || {
     chatgpt: { available: true, stale: false, models: [{ id: 'astra', label: 'Astra', reasoning_efforts: ['low', 'high'] },
       { id: 'luna', label: 'Luna', reasoning_efforts: ['medium'] }] },
     'codex-cli': { available: true, models: [{ id: 'codex-cli/default', reasoning_efforts: ['low', 'high'] }] },
@@ -44,29 +44,63 @@ function harness({ fail = false, catalogs, delay } = {}) {
   return { controller, container, windowRef, change, click, writes, getFeatures: () => features };
 }
 
-test('catalog-backed model and effort selection, ordered preferences and provider switching save through features', async () => {
-  const h = harness();
+test('every change saves as it is made: effort, ordered preferences, provider switching and reset', async () => {
+  const h = harness({ routing: { chatgpt: { defaultModel: 'astra' } } });
   await settle();
-  h.change('model', 'astra');
+  assert.equal(h.container.querySelector('#subagent-model'), null, 'the default model moved to Settings > Models');
+  assert.equal(h.container.querySelector('[data-subagent-action="save"]'), null, 'there is no Save routing button');
   assert.deepEqual([...h.container.querySelector('#subagent-effort').options].map((row) => row.value), ['', 'low', 'high']);
   h.change('effort', 'high');
-  h.change('preferred', 'astra');
-  h.change('preferred', 'luna');
-  h.click('up', 1);
+  await settle();
+  assert.deepEqual(h.writes[0], { subagentRouting: { chatgpt: { defaultModel: 'astra', defaultEffort: 'high', preferredModels: [], allowedModels: [], maxEffort: '' } } });
+  h.change('preferred', 'astra'); await settle();
+  h.change('preferred', 'luna'); await settle();
+  h.click('up', 1); await settle();
+  assert.deepEqual(h.writes.at(-1).subagentRouting.chatgpt.preferredModels, ['luna', 'astra']);
+  const count = h.writes.length;
   h.change('provider', 'codex-cli');
-  h.change('model', 'codex-cli/default');
-  h.click('save');
   await settle();
+  assert.equal(h.writes.length, count, 'switching the provider writes nothing');
+  assert.equal(h.container.querySelector('#subagent-provider').value, 'codex-cli');
+  h.change('maximum', 'low'); await settle();
+  assert.deepEqual(h.writes.at(-1).subagentRouting['codex-cli'].maxEffort, 'low');
   h.change('provider', 'chatgpt');
-  assert.equal(h.container.querySelector('#subagent-model').value, 'astra');
   assert.equal(h.container.querySelector('#subagent-effort').value, 'high');
-  h.click('save');
-  await settle();
-  assert.deepEqual(h.writes[1], { subagentRouting: { chatgpt: { defaultModel: 'astra', defaultEffort: 'high', preferredModels: ['luna', 'astra'], allowedModels: [], maxEffort: '' } } });
   h.click('reset');
   await settle();
   assert.deepEqual(h.getFeatures().subagentRouting.chatgpt, normalizeSubagentRouting().chatgpt);
-  assert.equal(h.getFeatures().subagentRouting['codex-cli'].defaultModel, 'codex-cli/default');
+  assert.equal(h.getFeatures().subagentRouting['codex-cli'].maxEffort, 'low');
+  h.controller.dispose();
+});
+
+test('Tools keeps the switch, then a read-only Helper models row that names the helper model and links to Models', async () => {
+  const h = harness({ routing: { chatgpt: { defaultModel: 'luna' } } });
+  await settle();
+  const pointer = h.container.querySelector('.roles-pointer');
+  assert.equal(h.container.querySelector('[data-subagent-routing-host] .settings-field'), pointer, 'first row of the routing host');
+  assert.equal(pointer.querySelector('.settings-field-title').textContent, 'Helper models');
+  assert.equal(pointer.querySelector('.settings-field-help').textContent, 'ChatGPT chats hand side work to Luna.');
+  assert.equal(pointer.querySelector('[data-open-model-roles]').textContent, 'Change in Models');
+  const provider = h.container.querySelector('[data-settings-field="subagent-routing-provider"]');
+  assert.equal(provider.querySelector('.settings-field-title').textContent, 'Limits for');
+  assert.equal(provider.querySelector('.settings-field-help').textContent, 'These apply to helpers under this provider. Changes save as you make them.');
+  h.change('provider', 'codex-cli');
+  assert.equal(h.container.querySelector('.roles-pointer .settings-field-help').textContent, 'Codex CLI chats hand side work to the same model as the chat.');
+  assert.deepEqual([...h.container.querySelectorAll('[data-settings-field] .settings-field-title')].map((el) => el.textContent).slice(0, 6),
+    ['Helper models', 'Limits for', 'Default effort', 'Preferred models in order', 'Allowed models', 'Maximum effort']);
+  assert.deepEqual([...h.container.querySelectorAll('[data-subagent-action]')].map((el) => el.dataset.subagentAction), ['reset', 'refresh']);
+  h.controller.dispose();
+});
+
+test('Change in Models opens Settings > Models', async () => {
+  const h = harness();
+  await settle();
+  const doc = h.windowRef.document;
+  doc.body.insertAdjacentHTML('beforeend', '<button id="settingsNav-models"></button>');
+  let opened = 0;
+  doc.getElementById('settingsNav-models').addEventListener('click', () => { opened += 1; });
+  h.container.querySelector('[data-open-model-roles]').click();
+  assert.equal(opened, 1);
   h.controller.dispose();
 });
 
@@ -78,22 +112,12 @@ test('a late catalog refresh cannot overwrite a newer routing save', async () =>
   h.windowRef.jennyShell.features.getState = () => new Promise((resolve) => { finishRefresh = resolve; });
   const refreshing = h.controller.refresh();
   await settle();
-  h.change('model', 'astra');
-  await h.controller.save();
+  h.change('maximum', 'low');
+  await settle();
   finishRefresh(stale);
   await refreshing;
-  assert.equal(h.getFeatures().subagentRouting.chatgpt.defaultModel, 'astra');
-  assert.equal(h.container.querySelector('#subagent-model').value, 'astra');
-  assert.equal(h.container.querySelector('[data-subagent-action="save"]').disabled, true);
-  h.controller.dispose();
-});
-
-test('changing model clears an effort unsupported by its selected model', async () => {
-  const h = harness();
-  await settle();
-  h.change('model', 'astra'); h.change('effort', 'high'); h.change('model', 'luna');
-  assert.equal(h.container.querySelector('#subagent-effort').value, '');
-  assert.match(h.container.textContent, /primary agent can override/);
+  assert.equal(h.getFeatures().subagentRouting.chatgpt.maxEffort, 'low');
+  assert.equal(h.container.querySelector('#subagent-maximum').value, 'low');
   h.controller.dispose();
 });
 
@@ -107,27 +131,28 @@ test('empty, stale and unavailable catalogs have truthful states and preserve dr
     'codex-cli': { available: false, models: [{ id: 'codex-cli/default', available: false }] } } });
   await settle();
   assert.match(stale.container.textContent, /cached model catalog/);
-  stale.change('model', 'a');
-  stale.container.querySelector('#subagent-model').focus();
+  stale.container.querySelector('#subagent-maximum').focus();
   sync(stale.container);
-  assert.equal(stale.container.querySelector('#subagent-model').value, 'a');
-  assert.equal(stale.windowRef.document.activeElement.id, 'subagent-model');
+  assert.equal(stale.windowRef.document.activeElement.id, 'subagent-maximum');
   stale.change('provider', 'codex-cli');
   assert.match(stale.container.textContent, /provider is unavailable/);
   stale.controller.dispose();
 });
 
-test('save failure retains draft and late completion after disposal cannot repaint', async () => {
+test('a failed save restores the earlier value and says so in that row; a late completion after disposal cannot repaint', async () => {
   const h = harness({ fail: true });
-  await settle(); h.change('model', 'astra'); h.click('save'); await settle();
-  assert.equal(h.container.querySelector('#subagent-model').value, 'astra');
-  assert.match(h.container.textContent, /Your draft is kept/);
+  await settle(); h.change('maximum', 'low'); await settle();
+  assert.equal(h.container.querySelector('#subagent-maximum').value, '');
+  const row = h.container.querySelector('[data-settings-field="subagent-routing-maximum"] .settings-field-error');
+  assert.equal(row.hidden, false);
+  assert.equal(row.textContent, 'Could not save this change. The earlier value is restored.');
+  assert.equal(h.container.querySelector('[data-settings-field="subagent-routing-effort"] .settings-field-error').hidden, true);
   h.controller.dispose();
   let resolve;
   const delayed = harness({ delay: new Promise((done) => { resolve = done; }) });
-  await settle(); delayed.change('model', 'astra'); delayed.click('save');
-  delayed.click('save');
-  assert.equal(delayed.writes.length, 1);
+  await settle(); delayed.change('maximum', 'low');
+  delayed.change('maximum', 'high');
+  assert.equal(delayed.writes.length, 1, 'a change while a save is in flight is not sent');
   delayed.controller.dispose();
   const before = delayed.container.innerHTML;
   resolve(); await settle();
@@ -144,7 +169,7 @@ test('real Tools binder mounts the lazy controller, cleanup releases it, and fea
   binders.bindSection('tools', context); binders.bindSection('tools', context);
   assert.equal(cleanup.length, 1, 'binding Tools twice keeps one routing controller');
   await settle();
-  assert.ok(h.container.querySelector('#subagent-model'));
+  assert.ok(h.container.querySelector('#subagent-maximum'));
   assert.equal(normalizeFeatureState(h.getFeatures()).subagentModelCatalogs.chatgpt.models.length, 2);
   assert.match(buildToolConfigFieldListMarkup({ fields: [{ key: 'subagents', label: 'Subagents', default: true, fieldType: 'toggle', storage: 'config' }] }), /data-subagent-routing-host/);
   cleanup.forEach((fn) => fn()); binders.dispose();
@@ -169,51 +194,49 @@ test('production renderer navigation loads routing controls and saves through th
   await openSettingsView(app.window);
   app.window.document.getElementById('settingsNav-tools').click();
   await waitForUi(app.window, 60);
-  const model = app.window.document.getElementById('subagent-model');
-  assert.ok(model, 'Tools navigation mounts the lazy routing controller');
-  model.value = 'gpt-6-astra';
-  model.dispatchEvent(new app.window.Event('change', { bubbles: true }));
-  app.window.document.querySelector('[data-subagent-action="save"]').click();
+  const maximum = app.window.document.getElementById('subagent-maximum');
+  assert.ok(maximum, 'Tools navigation mounts the lazy routing controller');
+  maximum.value = 'low';
+  maximum.dispatchEvent(new app.window.Event('change', { bubbles: true }));
   await waitForUi(app.window, 40);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].subagentRouting.chatgpt.defaultModel, 'gpt-6-astra');
-  assert.equal(app.window.__rendererState.features.subagentRouting.chatgpt.defaultModel, 'gpt-6-astra');
+  assert.equal(writes.length, 1, 'the change saves without a Save button');
+  assert.equal(writes[0].subagentRouting.chatgpt.maxEffort, 'low');
+  assert.equal(app.window.__rendererState.features.subagentRouting.chatgpt.maxEffort, 'low');
 });
 
 
 test('owner limits survive feature normalization, save, and tool disablement', async () => {
   const h = harness(); await settle();
-  h.change('allowed', 'luna'); h.change('maximum', 'low');
-  h.click('save'); await settle();
+  h.change('allowed', 'luna'); await settle(); h.change('maximum', 'low'); await settle();
   const row = normalizeFeatureState(h.getFeatures()).subagentRouting.chatgpt;
   assert.deepEqual(row.allowedModels, ['luna']); assert.equal(row.maxEffort, 'low');
   h.getFeatures().tools = { subagents: false }; sync(h.container);
-  assert.ok([...h.container.querySelectorAll('select,button')].every((el) => el.disabled));
-  const count = h.writes.length; await h.controller.save(); assert.equal(h.writes.length, count);
+  assert.ok([...h.container.querySelectorAll('select,button:not([data-open-model-roles])')].every((el) => el.disabled), 'the link to Models stays usable');
+  const count = h.writes.length; await h.controller.save(normalizeSubagentRouting().chatgpt, 'subagent-routing-actions'); assert.equal(h.writes.length, count);
   h.controller.dispose();
 });
 
 test('malicious labels are escaped and stale defaults explain automatic fallback', async () => {
   const h = harness({ catalogs: { chatgpt: { models: [{ id: 'astra', label: '<img src=x onerror=alert(1)>', reasoning_efforts: ['low'] }] } } });
   await settle(); assert.equal(h.container.querySelector('img'), null);
+  h.getFeatures().subagentRouting.chatgpt.defaultModel = 'astra'; sync(h.container);
+  assert.equal(h.container.querySelector('img'), null, 'the helper model is named in the pointer row, escaped');
+  assert.match(h.container.querySelector('.roles-pointer .settings-field-help').textContent, /<img src=x onerror=alert\(1\)>/);
   h.getFeatures().subagentRouting.chatgpt.defaultModel = 'missing'; sync(h.container);
   assert.match(h.container.textContent, /Saved default is no longer available/);
-  assert.equal(h.container.querySelector('#subagent-model').value, 'missing');
   h.controller.dispose();
 });
 
 test('stable action IDs preserve keyboard focus and the persistent status node', async () => {
   const h = harness(); await settle();
-  h.change('provider', 'codex-cli'); h.change('preferred', 'codex-cli/default');
+  h.change('provider', 'codex-cli'); h.change('preferred', 'codex-cli/default'); await settle();
   let button = h.container.querySelector('[data-subagent-action=remove]');
   assert.ok(button.id); assert.equal(h.windowRef.document.getElementById(button.id), button);
-  h.change('provider', 'chatgpt'); h.change('preferred', 'astra'); h.change('preferred', 'luna');
-  button = h.container.querySelector('[data-subagent-action=up][data-index="1"]'); button.focus(); button.click();
+  h.change('provider', 'chatgpt'); h.change('preferred', 'astra'); await settle(); h.change('preferred', 'luna'); await settle();
+  button = h.container.querySelector('[data-subagent-action=up][data-index="1"]'); button.focus(); button.click(); await settle();
   assert.notEqual(h.windowRef.document.activeElement, h.windowRef.document.body);
   const status = h.container.querySelector('[role=status]');
-  h.change('model', 'astra'); button = h.container.querySelector('[data-subagent-action=save]'); button.focus();
-  h.click('save'); await settle();
-  assert.ok(h.container.contains(h.windowRef.document.activeElement));
+  h.change('maximum', 'low'); await settle();
   assert.equal(h.container.querySelector('[role=status]'), status);
   assert.match(status.textContent, /Routing saved/);
   const refresh = h.container.querySelector('[data-subagent-action=refresh]'); refresh.focus(); refresh.click(); await settle();
@@ -223,9 +246,9 @@ test('stable action IDs preserve keyboard focus and the persistent status node',
 
 test('double binding and disposed listeners do not duplicate or persist writes', async () => {
   const h = harness(); await settle(); h.controller.bind();
-  h.change('model', 'astra'); h.click('save'); await settle(); assert.equal(h.writes.length, 1);
-  h.change('model', 'luna'); h.controller.dispose();
-  h.click('save'); await settle(); assert.equal(h.writes.length, 1);
+  h.change('maximum', 'low'); await settle(); assert.equal(h.writes.length, 1);
+  h.controller.dispose();
+  h.change('maximum', 'high'); await settle(); assert.equal(h.writes.length, 1);
 });
 
 
@@ -235,10 +258,10 @@ test('delayed Settings actions do not steal focus after the user moves elsewhere
     const pending = new Promise((done) => { resolve = done; });
     const h = harness({ delay: action === 'save' ? pending : undefined });
     await settle();
-    if (action === 'save') h.change('model', 'astra');
-    else h.windowRef.jennyShell.features.getState = async () => { await pending; return h.getFeatures(); };
-    const button = h.container.querySelector(`[data-subagent-action=${action}]`);
-    button.focus(); button.click();
+    if (action !== 'save') h.windowRef.jennyShell.features.getState = async () => { await pending; return h.getFeatures(); };
+    const button = h.container.querySelector(action === 'save' ? '#subagent-maximum' : `[data-subagent-action=${action}]`);
+    button.focus();
+    if (action === 'save') h.change('maximum', 'low'); else button.click();
     const outside = h.windowRef.document.createElement('button');
     h.windowRef.document.body.append(outside); outside.focus();
     resolve(); await settle();
@@ -247,21 +270,19 @@ test('delayed Settings actions do not steal focus after the user moves elsewhere
   }
 });
 
-test('the provider select offers API providers and saves a namespaced default model', async () => {
+test('the provider select offers API providers and saves a namespaced allowed model', async () => {
   const full = 'api-provider/anthropic-api/claude-sonnet-5-5';
   const h = harness({ catalogs: {
     chatgpt: { available: false, models: [] },
     'api-provider': { available: true, stale: false, models: [
       { id: full, label: 'Anthropic API · claude-sonnet-5-5', reasoning_efforts: ['default', 'low', 'high'] }] },
-  } });
+  }, routing: { 'api-provider': { defaultModel: full } } });
   await settle();
   const options = [...h.container.querySelector('#subagent-provider').options].map((row) => row.value);
   assert.deepEqual(options, ['chatgpt', 'codex-cli', 'api-provider']);
   h.change('provider', 'api-provider');
-  assert.deepEqual([...h.container.querySelector('#subagent-model').options].map((row) => row.value), ['', full]);
-  h.change('model', full);
+  assert.equal(h.container.querySelector('.roles-pointer .settings-field-help').textContent, 'API providers chats hand side work to Anthropic API · claude-sonnet-5-5.');
   h.change('effort', 'low');
-  h.click('save');
   await settle();
   assert.deepEqual(h.writes[0].subagentRouting['api-provider'],
     { defaultModel: full, defaultEffort: 'low', preferredModels: [], allowedModels: [], maxEffort: '' });

@@ -4,6 +4,7 @@ const {
   TERMINAL_STATUS_TIMEOUT,
 } = require('./chat-stream-terminal-utils');
 const { TOOL_ERROR_CODES } = require('./error-codes');
+const { savedComputerOutput } = require('./computer-use-chat-fields');
 const {
   REDACTED_PATH_TOKEN,
   redactPathLikeText,
@@ -93,6 +94,13 @@ function browserApprovalFields(params) {
 const BROWSER_STEP_FALLBACK = 'Browser step finished.';
 const BROWSER_STEP_FAILED = 'Browser step failed.';
 function savedToolOutput(toolName, output, metadata) {
+  // Row 197: a Live picture is seen during the turn only; history keeps its one line.
+  if (toolName === 'run_view_look') {
+    const line = metadata && typeof metadata === 'object' ? metadata.step_summary : '';
+    return typeof line === 'string' && line.trim() ? line : 'Live picture.';
+  }
+  // Row 196: a computer step's picture and text are seen during the turn only.
+  if (toolName === 'computer') return savedComputerOutput(metadata);
   if (toolName !== 'browser') return String(output || '');
   const summary = metadata && typeof metadata === 'object' ? metadata.step_summary : '';
   if (typeof summary === 'string' && summary.trim()) return summary;

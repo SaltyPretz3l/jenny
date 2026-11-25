@@ -75,9 +75,6 @@
     'terminal-4': () => jt('ide.workbench.view.terminalN', 'Terminal {n}', { n: 4 }),
     chat: () => jt('ide.workbench.view.chat', 'Chat'),
     changes: () => jt('ide.workbench.view.changes', 'Changes'),
-    // The second Workspace chat (W6b): split view's second pane and its own Changes.
-    'chat-2': () => jt('ide.workbench.view.chatN', 'Chat {n}', { n: 2 }),
-    'changes-2': () => jt('ide.workbench.view.changesN', 'Changes {n}', { n: 2 }),
   });
   const BOTTOM_HOME = 'terminal';
 
@@ -129,6 +126,7 @@
         onShow: typeof onShow[id] === 'function' ? onShow[id] : undefined,
         labelOverride: typeof d.labelOverride === 'function' ? () => d.labelOverride(id) : undefined,
         actions: typeof d.viewActions === 'function' ? () => d.viewActions(id) : undefined,
+        onActiveTabClick: typeof d.onActiveTabClick?.[id] === 'function' ? d.onActiveTabClick[id] : undefined, // row 190 W4: the chat picker
         onAction: typeof d.onViewAction === 'function' ? (name, el) => d.onViewAction(id, name, el) : undefined,
       };
     });
@@ -263,6 +261,7 @@
     // Palette "Reset Layout": today's arrangement (the model's default tree).
     // Open terminals 2-4 rejoin the terminal stack, so a reset never kills a running shell.
     function resetLayout() {
+      roomStack?.releaseViews(); // the side panel goes home before its tab's host leaves the document
       let next = layoutModel?.createDefaultLayout?.();
       let near = 'terminal';
       listViews().filter((id) => /^terminal-\d$/.test(id)).forEach((id) => {
@@ -289,6 +288,16 @@
     const addView = (viewId, nearViewId) => changeLayout((ops, layout) => ops.addView?.(layout, viewId, nearViewId));
     const removeView = (viewId) => changeLayout((ops, layout) => ops.removeView?.(layout, viewId));
 
+    // Row 190 Wave 4, row 195: the side panel's Artifacts, Project and Runs beside the dock (renderer-chat-right-stack.js).
+    // Each tab joins the chat's stack when its panel opens here and leaves on its Close.
+    const rightStackUtils = globalThis.rendererChatRightStack || null;
+    const roomStack = workbench && layoutModel && layoutOps && rightStackUtils?.createRoomStack ? rightStackUtils.createRoomStack({
+      workbench, getLayout, commit: commitLayout, model: layoutModel, ops: layoutOps, jt,
+      modeViews: { artifact: 'artifacts', tasks: 'project', notes: 'project', background_tasks: 'runs', subagents: 'runs' }, near: ['runs', 'project', 'artifacts', 'changes', 'chat'],
+    }) : null;
+    if (roomStack) Object.assign(views, roomStack.views());
+    const leaveRoom = roomStack ? rightStackUtils.registerRoom('ide', () => roomStack) : () => {};
+
     function render() {
       adoptChatDock();
       workbench?.render();
@@ -296,6 +305,7 @@
 
     function dispose() {
       if (zen) setZen(false); // never leave the status bar hidden behind a dead wiring
+      leaveRoom();
       workbench?.dispose();
       if (active === api) active = null;
     }

@@ -9,6 +9,7 @@ const LOCAL_ENDPOINT_ENGINES = Object.freeze(['ollama', 'vllm', 'openai-compatib
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_TIMEOUT_MS = 30_000;
 const MAX_CATALOG_BYTES = 1024 * 1024;
+const MAX_HEALTH_BYTES = 64 * 1024;
 const LOCAL_ENDPOINT_SUFFIXES = Object.freeze([
   '.localhost', '.local', '.lan', '.internal', '.home.arpa',
 ]);
@@ -158,29 +159,60 @@ class SetupEndpointService {
     fetchImpl = globalThis.fetch,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     logger = null,
-    // Managed llama-server manager getter (may return null). Its keyed server
-    // answers 401 to an anonymous probe, so validation of ITS origin — and
-    // only its origin — carries the key.
+    // Managed server manager getters (each may return null). A keyed managed
+    // server answers 401 to an anonymous probe, so validation of ITS origin —
+    // and only its origin — carries that server's key. llama-server first,
+    // then NInfer and Strata (row 200) through getManagedServerManagers.
     getLlamaServerManager = () => null,
+    getManagedServerManagers = () => [],
   } = {}) {
     this.configService = configService || null;
     this.fetchImpl = typeof fetchImpl === 'function' ? fetchImpl : null;
     this.timeoutMs = normalizeTimeoutMs(timeoutMs);
     this.logger = typeof logger === 'function' ? logger : null;
     this.getLlamaServerManager = typeof getLlamaServerManager === 'function' ? getLlamaServerManager : () => null;
+    this.getManagedServerManagers = typeof getManagedServerManagers === 'function' ? getManagedServerManagers : () => [];
   }
 
   _managedAuthorizationFor(checkedUrl) {
+    let managers;
     try {
-      const manager = this.getLlamaServerManager();
-      const apiKey = typeof manager?.getApiKey === 'function' ? String(manager.getApiKey() || '') : '';
-      if (apiKey && sameLocalOrigin(checkedUrl, manager.getBaseUrl?.())) {
-        return { Authorization: `Bearer ${apiKey}` };
-      }
+      const others = this.getManagedServerManagers();
+      managers = [this.getLlamaServerManager(), ...(Array.isArray(others) ? others : [])];
     } catch (_error) {
-      // A broken manager must not change validation of unrelated endpoints.
+      return {};
+    }
+    for (const manager of managers) {
+      try {
+        if (!manager || !sameLocalOrigin(checkedUrl, manager.getBaseUrl?.())) continue;
+        const apiKey = typeof manager.getApiKey === 'function' ? String(manager.getApiKey() || '') : '';
+        return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+      } catch (_error) {
+        // A broken manager must not change validation of unrelated endpoints.
+      }
     }
     return {};
+  }
+
+  // An empty catalog from a server that is still starting: its root /health
+  // answers `loaded: false`. Any other outcome means "not known to be loading".
+  async _isStillLoading(checkedUrl, controller) {
+    try {
+      const healthUrl = new URL(checkedUrl);
+      healthUrl.pathname = '/health';
+      healthUrl.search = '';
+      const response = await this.fetchImpl(healthUrl.toString(), {
+        method: 'GET',
+        redirect: 'error',
+        headers: { Accept: 'application/json', ...this._managedAuthorizationFor(checkedUrl) },
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response?.ok !== true) return false;
+      const health = await readCatalog(response, MAX_HEALTH_BYTES);
+      return !!health && typeof health === 'object' && !Array.isArray(health) && health.loaded === false;
+    } catch (_error) {
+      return false;
+    }
   }
 
   _log(level, event, details) {
@@ -226,6 +258,14 @@ class SetupEndpointService {
         return publicFailure(code, 'Endpoint returned an invalid model catalog.', engineType, status);
       }
       if (!catalogHasModels(engineType, catalog)) {
+        if (engineType === 'openai-compatible' && await this._isStillLoading(checkedUrl, controller)) {
+          return publicFailure(
+            'model_loading',
+            t('main.setup.endpointModelLoading', 'The server is still loading its model. Wait for it to finish, then validate again.'),
+            engineType,
+            status
+          );
+        }
         return publicFailure('empty_catalog', 'Endpoint returned no usable models.', engineType, status);
       }
   return { ok: true, engineType, checkedUrl, status, code: 'ok', error_code: '', message: t('main.setup.endpointReady', 'Endpoint is ready.'), retryable: false };

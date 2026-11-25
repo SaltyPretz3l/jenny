@@ -140,36 +140,6 @@ class MCPTransport(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_resources(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def read_resource(
-        self,
-        uri: str,
-        *,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def list_resource_templates(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        raise NotImplementedError
-
-    @abstractmethod
     def close(self) -> None:
         raise NotImplementedError
 

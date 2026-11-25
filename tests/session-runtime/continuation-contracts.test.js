@@ -12,6 +12,7 @@ const {
   ContinuationContractError,
   MAX_CONTINUATION_BYTES,
   MAX_CONTINUATION_TOOL_CALLS,
+  MAX_CONTINUATION_TOOL_CALL_LIMIT,
   decodeContinuation,
   encodeContinuation,
   normalizeContinuation,
@@ -233,6 +234,20 @@ test('position counters encode the actual pre-dispatch whole-batch reservation',
   maximum.pending_call.call_id = maximum.position.ordered_call_ids[0];
   maximum.wait.operation_id = maximum.pending_call.call_id;
   assert.equal(normalizeContinuation(maximum).position.ordered_call_ids.length, 256);
+});
+
+test('a turn budget may reach the largest tools-per-turn setting plus the browser steps', () => {
+  // Settings offer up to 500 calls per turn and a browsing chat adds 30 (iteration_limits.py).
+  const { ENGINE_TUNING_FIELDS } = require('../../renderer/shared/engine-tuning-schema');
+  const largest = Math.max(...ENGINE_TUNING_FIELDS
+    .filter(field => /^(cloudM|m)axToolsPerTurn$/u.test(field.key)).map(field => field.max));
+  assert.equal(MAX_CONTINUATION_TOOL_CALL_LIMIT, largest + 30);
+  const atCap = fixture();
+  atCap.position.tool_call_limit = MAX_CONTINUATION_TOOL_CALL_LIMIT;
+  assert.equal(normalizeContinuation(atCap).position.tool_call_limit, 530);
+  const over = fixture();
+  over.position.tool_call_limit = MAX_CONTINUATION_TOOL_CALL_LIMIT + 1;
+  assertCode(() => normalizeContinuation(over), 'invalid_tool_call_limit');
 });
 
 test('later-call, outcome, execution, preview, approval and mutation state is refused', () => {

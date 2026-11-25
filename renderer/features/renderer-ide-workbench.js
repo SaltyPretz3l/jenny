@@ -46,6 +46,8 @@
     const getFontScale = typeof d.getFontScale === 'function' ? d.getFontScale : function () { return 1; };
     const now = typeof d.now === 'function' ? d.now : Date.now;
     const isViewAvailable = typeof d.isViewAvailable === 'function' ? d.isViewAvailable : function () { return true; };
+    // Row 190: the centre's width floor the owner supplies (Chat: 360 per pane); absent, the model's constant.
+    const getCentreMin = typeof d.getCentreMinWidth === 'function' ? d.getCentreMinWidth : function () { return undefined; };
 
     const hosts = new Map();
     const lastUsed = Object.create(null);
@@ -184,6 +186,8 @@
           views: node.views.map(function (id) {
             return Object.assign({ id: id, label: viewLabel(id), icon: views[id] && views[id].icon }, viewBadge(id));
           }),
+          // Row 190: a folded stack's own buttons after its views (Chat: New chat under Chats).
+          actions: chrome.viewActions(views, active, 'stripActions'),
         });
       } else {
         html = chrome.headerMarkup({
@@ -203,12 +207,28 @@
         });
       }
       const key = kind + '\u0001' + label + '\u0001' + html;
-      if (ref.chromeKey === key) return;
-      const el = chrome.createChromeEl(doc, kind, html, label);
-      if (ref.chromeEl) ref.el.replaceChild(el, ref.chromeEl);
-      else ref.el.insertBefore(el, ref.body);
-      ref.chromeEl = el;
-      ref.chromeKey = key;
+      if (ref.chromeKey !== key) {
+        const el = chrome.createChromeEl(doc, kind, html, label);
+        // Row 195: a rebuilt header keeps where its tabs were scrolled to.
+        const oldTabs = ref.chromeEl && kind === 'header' ? ref.chromeEl.querySelector('.wb-tabs') : null;
+        const scrolled = oldTabs ? oldTabs.scrollLeft : 0;
+        if (ref.chromeEl) ref.el.replaceChild(el, ref.chromeEl);
+        else ref.el.insertBefore(el, ref.body);
+        if (scrolled) el.querySelector('.wb-tabs').scrollLeft = scrolled;
+        ref.chromeEl = el;
+        ref.chromeKey = key;
+      }
+      // The open tab is brought into view once per change of tab; the More button's dot follows every render.
+      if (kind !== 'header') ref.revealed = null;
+      else overflowQueue.push({ ref: ref, active: active });
+    }
+
+    // Measured once all of a render's sizes are written, so reading the strips forces one layout, not one per stack.
+    const overflowQueue = [];
+    function flushOverflow() {
+      overflowQueue.splice(0).forEach(function (item) {
+        if (chrome.syncTabOverflow(item.ref.chromeEl, jt, item.ref.revealed !== item.active)) item.ref.revealed = item.active;
+      });
     }
 
     function patchStack(doc, node, parent, refs, folded, firstEditor) {
@@ -315,7 +335,7 @@
 
       const rect = rootEl.getBoundingClientRect();
       const usable = rect.width > 0 && rect.height > 0;
-      const solveOpts = { fontScale: getFontScale(), lastUsed: lastUsed };
+      const solveOpts = { fontScale: getFontScale(), lastUsed: lastUsed, centreMinWidth: getCentreMin() };
       if (usable) {
         solveOpts.width = rect.width;
         solveOpts.height = rect.height;
@@ -330,6 +350,7 @@
       rendered.folded = folded;
       rendered.usable = usable;
       patchNode(doc, visible.root, null, rendered.refs, solved, folded, idx.editors[0] || null);
+      flushOverflow();
 
       focus.restore(rootEl, doc, snap);
       applyPending(rootEl);
@@ -430,9 +451,20 @@
 
     /* ------------------------------------------------------------ menu */
 
-    function openMenu(viewId, anchor) {
+    // Row 195: the stack's tabs, first in its More menu, so a tab past the strip's edge is one click away.
+    function tabItems(stackId) {
+      const entry = stackId && rendered ? rendered.idx.nodes.get(stackId) : null;
+      const list = entry && entry.node.t === 'stack' && entry.node.kind === 'views' ? entry.node.views : [];
+      if (list.length < 2) return [];
+      return list.map(function (id) {
+        const badge = viewBadge(id);
+        return { label: chrome.nameWithCount(jt, viewLabel(id), badge.count, badge.unread, badge.unreadLabel), checked: id === entry.node.active, action: function () { activateView(id, true); } };
+      }).concat([{ separator: true }]);
+    }
+
+    function openMenu(viewId, anchor, stackId) {
       if (!contextMenu || typeof contextMenu.show !== 'function' || !viewId) return false;
-      const items = treeOps.menuItems({ model: model, ops: ops, tr: jt, viewId: viewId, getLayout: currentLayout, commit: commit, viewLabel: viewLabel, getVisible: visibleLayout, besideFits: besideFits, rtl: Boolean(boundRoot && sashLib.isRtl(boundRoot)), resetLayout: d.resetLayout }).concat(typeof d.extraMenuItems === 'function' ? d.extraMenuItems(viewId) || [] : []);
+      const items = tabItems(stackId).concat(treeOps.menuItems({ model: model, ops: ops, tr: jt, viewId: viewId, getLayout: currentLayout, commit: commit, viewLabel: viewLabel, getVisible: visibleLayout, besideFits: besideFits, rtl: Boolean(boundRoot && sashLib.isRtl(boundRoot)), resetLayout: d.resetLayout })).concat(typeof d.extraMenuItems === 'function' ? d.extraMenuItems(viewId) || [] : []);
       if (!items.length) return false;
       const where = anchor.el ? { anchorEl: anchor.el } : { anchorX: anchor.x, anchorY: anchor.y };
       contextMenu.show(Object.assign({ rootEl: boundRoot, items: items, ariaLabel: jt('ide.commands.moveView', 'Move View to…') }, where));
@@ -474,8 +506,9 @@
 
     function onClick(event) {
       const tab = closestIn(event, '[data-wb-tab]');
-      if (tab) {
-        activateView(tab.getAttribute('data-wb-tab'), false);
+      if (tab) { // row 190 Wave 4: a view may act on a click on its own already-active tab (the dock's chat switcher)
+        const id = tab.getAttribute('data-wb-tab');
+        if (typeof views[id]?.onActiveTabClick === 'function' && isViewVisible(id) && getActiveView(id) === id) views[id].onActiveTabClick(tab); else activateView(id, false);
         return;
       }
       const strip = closestIn(event, '[data-wb-strip]');
@@ -489,7 +522,7 @@
       const name = action.getAttribute('data-wb-action');
       if (name === 'collapse') collapseStack(stackId);
       else if (name === 'maximize') toggleMaximize(stackId);
-      else if (name === 'more' || name === 'bind') openMenu((name === 'bind' && chrome.boundView(ops, currentLayout(), (rendered.idx.nodes.get(stackId) || {}).node)) || activeViewOfStackId(stackId), { el: action });
+      else if (name === 'more' || name === 'bind') openMenu((name === 'bind' && chrome.boundView(ops, currentLayout(), (rendered.idx.nodes.get(stackId) || {}).node)) || activeViewOfStackId(stackId), { el: action }, name === 'more' ? stackId : null);
       else if (name.indexOf('view:') === 0) chrome.runViewAction(views, activeViewOfStackId(stackId), name.slice(5), action);
     }
 
@@ -557,6 +590,7 @@
       ops: ops,
       getRendered: function () { return rendered; },
       getFontScale: getFontScale,
+      getCentreMin: getCentreMin,
       currentLayout: currentLayout,
       commit: commit,
     });
@@ -577,9 +611,16 @@
       ['focusin', onFocusIn],
     ];
 
+    // Scrolling a tab strip by hand changes which tabs are past its edge (scroll does not bubble: captured).
+    function onTabsScroll(event) {
+      const at = event && event.target;
+      if (at && at.classList && at.classList.contains('wb-tabs')) chrome.syncTabOverflow(at.parentNode, jt, false);
+    }
+
     function unbind() {
       if (!boundRoot) return;
       LISTENERS.forEach(function (pair) { boundRoot.removeEventListener(pair[0], pair[1]); });
+      boundRoot.removeEventListener('scroll', onTabsScroll, true);
       boundRoot = null;
     }
 
@@ -587,6 +628,7 @@
       if (boundRoot === rootEl) return;
       unbind();
       LISTENERS.forEach(function (pair) { rootEl.addEventListener(pair[0], pair[1]); });
+      rootEl.addEventListener('scroll', onTabsScroll, { capture: true, passive: true });
       boundRoot = rootEl;
     }
 

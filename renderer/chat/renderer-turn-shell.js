@@ -46,7 +46,7 @@
   // renderer-turn-reducer-approval-gap.js), so only a gap row without one is
   // the unresolved-gate signal. Bottom-2 is a separate pure-CSS
   // structural selector (styles/chat-thread.css) and needs no JS.
-  function isChatContentVisibilityFlagOn() {
+  function isContentVisibilityRootOn() {
     return typeof document !== 'undefined'
       && !!document.documentElement
       && document.documentElement.dataset.chatContentVisibility === 'on';
@@ -67,7 +67,7 @@
     if (!article || typeof article.setAttribute !== 'function' || typeof article.removeAttribute !== 'function') {
       return;
     }
-    if (!isChatContentVisibilityFlagOn()) {
+    if (!isContentVisibilityRootOn()) {
       article.removeAttribute('data-cv-exempt');
       return;
     }
@@ -351,7 +351,7 @@
       // Ht-D: build-time exemption. Flag-gated at this single choke point so
       // every article-producing call site stays byte-identical when the flag
       // is off, without needing its own gate.
-      const cvExemptAttr = shellOptions.cvExempt === true && isChatContentVisibilityFlagOn()
+      const cvExemptAttr = shellOptions.cvExempt === true && isContentVisibilityRootOn()
         ? ' data-cv-exempt="true"'
         : '';
       const selectionHandleHtml = selectionMode

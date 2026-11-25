@@ -54,12 +54,14 @@ test('applyApprovalReceipt settles the row payload and clears a stale scope', ()
   assert.deepEqual(payload, { state: 'resolved', status: 'resolved', decision: 'denied' });
 });
 
+// The card mode keeps the one-line receipt; the inline row (the chat) renders
+// empty and speaks it (row 192 D2 A, below).
 function receiptDom(options) {
   const html = renderApprovalBlock({
     toolCallId: 'call-1', toolName: 'run_command', displayToolName: 'Run command',
-    mode: 'inline', cardState: 'resolved', ...options,
+    mode: 'card', cardState: 'resolved', ...options,
   });
-  return new JSDOM(`<body>${html}</body>`).window.document.querySelector('.approval-gap-row');
+  return new JSDOM(`<body>${html}</body>`).window.document.querySelector('.approval-gap-row, .tool-approval-block');
 }
 
 test('a resolved approval renders one receipt line with no actions', () => {
@@ -89,6 +91,16 @@ test('a resolved approval renders one receipt line with no actions', () => {
   assert.equal(noCommand.getAttribute('data-approval-decision'), 'closed', 'an unknown decision reads as closed');
   assert.equal(noCommand.querySelector('span.tool-approval-receipt-subject').textContent, 'Run command');
   assert.equal(noCommand.querySelector('.tool-approval-receipt-mark'), null);
+
+  // Inline (the chat): no receipt line, nothing visible, the live region still says it.
+  const inline = receiptDom({ mode: 'inline', decision: 'allowed', approvalScope: 'once', commandText: 'python -m pytest -q\necho second line' });
+  assert.ok(inline.classList.contains('approval-gap-row'));
+  assert.equal(inline.getAttribute('data-approval-status'), 'resolved');
+  assert.equal(inline.getAttribute('aria-live'), 'polite');
+  assert.equal(inline.querySelector('.tool-approval-receipt'), null, 'no receipt paragraph');
+  assert.equal(inline.querySelectorAll('button').length, 0);
+  assert.equal(inline.querySelector('.sr-only').textContent, 'Allowed once · python -m pytest -q');
+  assert.equal(inline.children.length, 1, 'the spoken receipt is all it holds');
 });
 
 function streamPayloads(callId, resolution) {
@@ -222,7 +234,45 @@ test('the receipt row renders through the transcript markup builder', () => {
   const html = renderer.buildApprovalGapMarkup(receiptRow, [], { sessionId: 'session-r' });
   const row = new JSDOM(`<body>${html}</body>`).window.document.querySelector('.approval-gap-row');
   assert.equal(row.getAttribute('data-approval-status'), 'resolved');
-  assert.equal(row.textContent.replace(/\s+/g, ' ').trim(), '✓Allowed once·python -m pytest -q');
+  assert.equal(row.querySelector('.sr-only').textContent, 'Allowed once · python -m pytest -q');
+});
+
+// Row 192 D2 A: the answer rides on the step's own row; the approval row stays
+// in the row model at its position, rendered visually empty, so nothing moves.
+test('an answered approval puts its answer on the step and keeps its row in place, visually empty', () => {
+  const { createTurnRowListUtils } = require('../renderer/chat/renderer-turn-row-list-utils');
+  const escapeHtml = (value) => String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const tools = createTurnRowToolRenderUtils({
+    escapeHtml, renderApprovalBlock,
+    getApprovalCardState() { throw new Error('a resolved row must not read the live card state'); },
+  });
+  const list = createTurnRowListUtils({
+    escapeHtml,
+    buildRowId: (row) => `${row.turn_id}:${row.kind}:${row.tool_call_id || row.row_id}`,
+    buildRowBodyMarkup(row, messages, options) {
+      if (row.kind === 'approval_gap') return tools.buildApprovalGapMarkup(row, messages, options);
+      return row.kind === 'tool_call' ? tools.buildToolCallRowMarkup(row, messages, options) : '';
+    },
+  });
+  for (const [resolution, label, mark] of [
+    [{ status: 'approved', approvalState: 'approved', approvalScope: 'once' }, 'Allowed once', '✓ '],
+    [{ status: 'approved', approvalState: 'approved', approvalScope: 'always' }, 'Always allowed', '✓ '],
+    [{ status: 'denied', approvalState: 'denied' }, 'Denied', ''],
+  ]) {
+    const { liveRows } = replay(streamPayloads('call-n', resolution));
+    const doc = new JSDOM(`<body>${list.buildTurnRowListMarkup(liveRows, [], { sessionId: 'session-r' })}</body>`).window.document;
+    const kinds = [...doc.querySelectorAll('.chat-row')].map((row) => row.getAttribute('data-row-kind'));
+    assert.deepEqual(kinds, ['tool_call', 'approval_gap'], 'the approval row keeps its place');
+    const gapRow = doc.querySelector('.chat-row[data-row-kind="approval_gap"]');
+    assert.equal(gapRow.getAttribute('data-row-visually-empty'), 'true', label);
+    assert.equal(gapRow.querySelector('.approval-gap-row').getAttribute('data-approval-status'), 'resolved');
+    assert.equal(doc.querySelector('.tool-approval-receipt'), null, 'no receipt paragraph');
+    const note = doc.querySelector('.chat-row[data-row-kind="tool_call"] .tool-call-status-cluster > .tool-call-meta.tool-call-approval-note');
+    assert.ok(note, `${label}: the step carries the note`);
+    assert.equal(note.textContent, `${mark}${label}`);
+    assert.equal(note.getAttribute('data-approval-decision'), resolution.status === 'denied' ? 'denied' : 'allowed');
+    assert.ok(note.compareDocumentPosition(note.parentNode.querySelector('.tool-call-status')) & 4, 'the note sits before the status and duration');
+  }
 });
 
 test('the approval waiter records the reader\'s scope on the resolution', async () => {

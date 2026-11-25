@@ -90,6 +90,10 @@ test('Permissions: saved rules render only while Permissions is open, and a rule
   assert.equal(list.querySelectorAll('.tools-approval-rule').length, 1);
   list.querySelector('[data-action="tools-approval-rule-remove"]').click();
   await waitForUi(window, 40);
+  assert.equal(calls.length, 1, 'Remove only opens the confirm strip; nothing is cleared yet');
+  assert.equal(list.querySelectorAll('.tools-approval-rule').length, 1);
+  list.querySelector('[data-action="tools-approval-rule-confirm"]').click();
+  await waitForUi(window, 40);
   assert.equal(calls[1], 'clear:run_command');
   assert.equal(list.querySelectorAll('.tools-approval-rule').length, 0);
 });
@@ -215,7 +219,7 @@ test('Data & privacy holds the conversation transfer, About and setup moved out,
   const headings = [...account.querySelectorAll(':scope > .settings-group > .settings-group-heading')].map((h) => h.textContent);
   assert.deepEqual(headings, ['Your data', 'Backup and restore', 'Copy a conversation', 'Remove Jenny']);
   assert.equal(card(doc, 'models').querySelector('#conversationTransferHost'), null);
-  for (const id of ['localProfileSettingsMount', 'accountSummary', 'backendSummary']) assert.ok(card(doc, 'general').contains(doc.getElementById(id)), id);
+  for (const id of ['localProfileSettingsMount', 'accountSummary']) assert.ok(card(doc, 'general').contains(doc.getElementById(id)), id);
   for (const id of ['setupSettingsSummary', 'setupSettingsActions', 'setupProgressContainer']) assert.ok(card(doc, 'readiness').contains(doc.getElementById(id)), id);
   await openSection(window, 'general');
   assert.ok(doc.getElementById('localProfileDisplayName'), 'the profile name field renders in General');

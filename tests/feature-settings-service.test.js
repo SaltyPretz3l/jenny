@@ -35,7 +35,7 @@ test('feature settings payload exposes declarative tool config fields', () => {
 
   assert.equal(payload.toolConfig.schemaVersion, 2);
   assert.deepEqual(payload.tools, {
-    imageRead: false,
+    imageRead: true,
     fileTools: true,
     web: true,
     pythonRuntime: false,
@@ -44,6 +44,7 @@ test('feature settings payload exposes declarative tool config fields', () => {
     richFiles: true,
     subagents: true,
     lsp: false,
+    computer: true,
   });
   const web = payload.toolConfig.fields.find((field) => field.key === 'web');
   assert.ok(web);

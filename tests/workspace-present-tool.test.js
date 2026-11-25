@@ -182,6 +182,47 @@ test('preview content gates: directory, unsupported, missing, binary, too-large'
   assert.equal(events.length, 0);
 });
 
+test('image previews: a .png (NUL bytes and all) passes the gates; svg, oversized and fake images do not', async (t) => {
+  const { context, events, workspaceRoot } = makeContext(t, {});
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]), Buffer.alloc(64)]);
+  fs.writeFileSync(path.join(workspaceRoot, 'shot.png'), png);
+  fs.writeFileSync(path.join(workspaceRoot, 'photo.JPG'), png);
+  fs.writeFileSync(path.join(workspaceRoot, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  fs.writeFileSync(path.join(workspaceRoot, 'huge.png'), Buffer.alloc(11 * 1024 * 1024));
+  fs.writeFileSync(path.join(workspaceRoot, 'mid.png'), Buffer.alloc(2 * 1024 * 1024));
+  fs.mkdirSync(path.join(workspaceRoot, 'folder.png'));
+
+  const ok = await tool.execute({ view: 'preview', path: 'shot.png' }, context);
+  assert.equal(ok.isError, false, 'a png with NUL bytes is not treated as a binary text file');
+  assert.equal(events.length, 1);
+  assert.equal(events[0].path, 'shot.png');
+  const upper = await tool.execute({ view: 'preview', path: 'photo.JPG' }, context);
+  assert.equal(upper.isError, false, 'extension match is case-insensitive');
+  const mid = await tool.execute({ view: 'preview', path: 'mid.png' }, context);
+  assert.equal(mid.isError, false, 'an image over the 1.5 MB text cap is fine up to 10 MiB');
+
+  const cases = [
+    ['icon.svg', 'unsupported_file'],
+    ['huge.png', 'too_large'],
+    ['missing.png', 'file_missing'],
+    ['folder.png', 'is_directory'],
+  ];
+  for (const [file, reason] of cases) {
+    const result = await tool.execute({ view: 'preview', path: file }, context);
+    assert.equal(result.isError, true, `${file} must fail`);
+    assert.equal(result.metadata.reason, reason, file);
+  }
+  assert.equal(events.length, 3, 'only the three valid previews dispatched');
+
+  const unsupported = await tool.execute({ view: 'preview', path: 'icon.svg' }, context);
+  assert.match(unsupported.content, /\.png, \.jpg, \.jpeg, \.gif, \.webp/, 'the supported list names the image extensions');
+  // The text sniff still guards text kinds and the file view is unchanged.
+  const binaryMd = await tool.execute({ view: 'preview', path: 'blob.md' }, context);
+  assert.equal(binaryMd.metadata.reason, 'binary_file');
+  const fileView = await tool.execute({ view: 'file', path: 'shot.png' }, context);
+  assert.equal(fileView.metadata?.reason, 'binary_file', 'view=file keeps its text sniff for a png');
+});
+
 test('a directory with a previewable extension still fails as a directory', async (t) => {
   const { context, workspaceRoot } = makeContext(t, {});
   fs.mkdirSync(path.join(workspaceRoot, 'folder.md'));

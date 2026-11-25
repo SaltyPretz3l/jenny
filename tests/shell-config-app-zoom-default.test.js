@@ -14,7 +14,7 @@ test('v57 app zoom migration changes exactly the prior 100 percent default', () 
   for (const [stored, expected] of [[100, 110], [125, 125], [110, 110], [90, 90]]) {
     const state = normalizeState({ version: 56, windowUi: { appZoomPercent: stored } });
     assert.equal(state.windowUi.appZoomPercent, expected, `stored zoom ${stored}`);
-    assert.equal(state.version, 59);
+    assert.equal(state.version, 60);
   }
   assert.equal(normalizeState({ version: 56 }).windowUi.appZoomPercent, 110);
   // Accepted representations of 100 migrate too (the normalizer reads them as 100).
@@ -22,7 +22,7 @@ test('v57 app zoom migration changes exactly the prior 100 percent default', () 
   assert.equal(normalizeState({ version: 56, window_ui: { app_zoom_percent: 100 } }).windowUi.appZoomPercent, 110);
   assert.equal(normalizeState({ version: 56, window_ui: { app_zoom_percent: 125 } }).windowUi.appZoomPercent, 125);
   assert.equal(normalizeState({ version: CONFIG_VERSION, windowUi: { appZoomPercent: 100 } }).windowUi.appZoomPercent, 100);
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
 });
 
 for (const [label, config, expected] of [
@@ -39,10 +39,10 @@ for (const [label, config, expected] of [
     fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
     const service = new ShellConfigService({ userDataPath });
     assert.equal(service.getWindowUiState().appZoomPercent, expected);
-    assert.equal(service.getState().version, 59);
+    assert.equal(service.getState().version, 60);
     service.updateWindowUiSettings({ notifications: { enabled: false } });
     const stored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    assert.equal(stored.version, 59);
+    assert.equal(stored.version, 60);
     assert.equal(stored.windowUi.appZoomPercent, expected);
     assert.equal(new ShellConfigService({ userDataPath }).getWindowUiState().appZoomPercent, expected);
   });

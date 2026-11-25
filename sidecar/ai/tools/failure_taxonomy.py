@@ -78,6 +78,8 @@ TAXONOMY: Mapping[str, str] = {
     # Deferred tools tell the model to tool_search first and then retry, so the
     # honest disposition is after_fix, never "unavailable: never retry".
     error_codes.CMP_TSRCH_DEFERRED_TOOL: "precondition_unmet",
+    # A second changing `computer` step in one message: look at the new picture, then retry.
+    error_codes.CMP_TOOL_COMPUTER_LOOK_FIRST: "precondition_unmet",
     # Named entities do not exist.
     error_codes.CMP_TOOL_UNKNOWN: "not_found",
     error_codes.CMP_TOOL_BACKGROUND_NOT_FOUND: "not_found",

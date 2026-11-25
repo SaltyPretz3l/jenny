@@ -10,10 +10,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const {
-  morphChildren,
-  setOuterHtmlPreservingCodeScroll,
-} = require('../renderer/chat/renderer-stream-dom-patch-utils');
+const streamDomPatchUtils = require('../renderer/chat/renderer-stream-dom-patch-utils');
+const { morphChildren, setOuterHtmlPreservingCodeScroll } = streamDomPatchUtils;
 const {
   createRenderPipelineMessageRenderer,
 } = require('../renderer/chat/renderer-render-pipeline-message-renderer');
@@ -207,7 +205,7 @@ function installDocumentForRenderer(t, documentRef) {
   });
 }
 
-function buildStreamingArticleHarness(t, options = {}) {
+function buildStreamingArticleHarness(t) {
   const dom = new JSDOM(`<!doctype html><html><body>
     <div id="scroll"><div id="timeline">
       <article class="chat-entry message-shell assistant"
@@ -224,9 +222,6 @@ function buildStreamingArticleHarness(t, options = {}) {
   installDocumentForRenderer(t, doc);
   const chatTimeline = doc.getElementById('timeline');
   const chatThreadScroll = doc.getElementById('scroll');
-  const featureFlags = {
-    chat_timeline_streaming_article_morph: options.morphEnabled === true,
-  };
   const messages = [{
     id: 'assistant_stream',
     role: 'assistant',
@@ -244,7 +239,7 @@ function buildStreamingArticleHarness(t, options = {}) {
     ui: { chatMode: 'thread', animateNextChatActivation: false },
     auth: { authenticated: true },
     backend: { phase: 'ready' },
-    features: { featureFlags },
+    features: { featureFlags: {} },
   };
   const uiRuntime = {
     recapExpansionSignature: 'recap',
@@ -315,8 +310,8 @@ function buildStreamingArticleHarness(t, options = {}) {
   };
 }
 
-test('streaming article morph flag preserves keyed row nodes across structural rebuilds', (t) => {
-  const harness = buildStreamingArticleHarness(t, { morphEnabled: true });
+test('streaming article structural rebuild preserves keyed row nodes', (t) => {
+  const harness = buildStreamingArticleHarness(t);
   const stableRow = harness.row('turn_1:assistant_text:0');
 
   harness.renderer.renderMessages();
@@ -324,57 +319,39 @@ test('streaming article morph flag preserves keyed row nodes across structural r
   assert.strictEqual(
     harness.row('turn_1:assistant_text:0'),
     stableRow,
-    'flag-on structural streaming rebuild should reuse the stable row element'
+    'a structural streaming rebuild should reuse the stable row element'
   );
   assert.equal(stableRow.textContent, 'new text');
   assert.ok(harness.row('turn_1:tool_call:call_1'));
+  assert.equal(harness.signalCalls[0].details.outcome, 'morph_applied');
 });
 
-test('streaming article morph flag off keeps the raw innerHTML replacement baseline', (t) => {
-  const harness = buildStreamingArticleHarness(t, { morphEnabled: false });
-  const stableRow = harness.row('turn_1:assistant_text:0');
-
-  harness.renderer.renderMessages();
-
-  assert.notStrictEqual(
-    harness.row('turn_1:assistant_text:0'),
-    stableRow,
-    'flag-off structural streaming rebuild documents the historical raw-swap baseline'
-  );
-});
-
-// The rollback path reconciles the article's ATTRIBUTES as well as its
-// children, and nothing covered that until this test: the hand-rolled two-loop
-// diff it used to carry could be deleted outright with every suite still green.
-// It now delegates to the shared syncElementAttributes, so this asserts both
-// halves of that contract -- write through what the next markup carries, remove
-// what it does not.
-test('streaming article morph flag off still reconciles the article attributes', (t) => {
-  const harness = buildStreamingArticleHarness(t, { morphEnabled: false });
+// Without the DOM patch module's morph helper the rebuild falls back to a raw
+// innerHTML swap, which still reconciles the article's ATTRIBUTES through the
+// shared syncElementAttributes: write through what the next markup carries,
+// remove what it does not.
+test('streaming article rebuild without the morph helper swaps innerHTML and reconciles attributes', (t) => {
+  const originalSetOuter = streamDomPatchUtils.setOuterHtmlPreservingCodeScroll;
+  streamDomPatchUtils.setOuterHtmlPreservingCodeScroll = undefined;
+  t.after(() => { streamDomPatchUtils.setOuterHtmlPreservingCodeScroll = originalSetOuter; });
+  const harness = buildStreamingArticleHarness(t);
   const article = harness.article();
+  const stableRow = harness.row('turn_1:assistant_text:0');
   article.setAttribute('data-stale-rollout', 'yes');
   article.setAttribute('data-message-status', 'stale');
 
   harness.renderer.renderMessages();
 
   const rebuilt = harness.article();
-  assert.strictEqual(rebuilt, article, 'the rollback path keeps the article node identity');
-  assert.equal(
-    rebuilt.getAttribute('data-stale-rollout'),
-    null,
-    'an attribute the next markup does not carry must be removed'
-  );
-  assert.equal(
-    rebuilt.getAttribute('data-message-status'),
-    'streaming',
-    'an attribute the next markup carries must be written through'
-  );
+  assert.strictEqual(rebuilt, article, 'the last-resort path keeps the article node identity');
+  assert.notStrictEqual(harness.row('turn_1:assistant_text:0'), stableRow, 'the raw swap replaces the rows');
+  assert.equal(rebuilt.getAttribute('data-stale-rollout'), null, 'an attribute the next markup does not carry must be removed');
+  assert.equal(rebuilt.getAttribute('data-message-status'), 'streaming', 'an attribute the next markup carries must be written through');
+  assert.equal(harness.signalCalls[0].details.outcome, 'raw_innerhtml');
 });
 
 test('streaming article rebuild telemetry emits once per structural rebuild', (t) => {
-  const harness = buildStreamingArticleHarness(t, {
-    morphEnabled: true,
-  });
+  const harness = buildStreamingArticleHarness(t);
 
   harness.renderer.renderMessages();
   harness.setArticleRows(`<div class="turn-row-list" data-turn-row-list="true">

@@ -429,3 +429,34 @@ test('NInfer settings backfill, bound the watchdog thresholds, and persist a dee
   // An unchanged patch writes nothing and returns the current slice.
   assert.deepEqual(service.updateNinferSettings({ mtp: false }), updated);
 });
+
+test('Strata settings backfill, bound every field, and deep-merge the watchdog and learned windows (row 200)', () => {
+  const fresh = normalizeState({});
+  assert.deepEqual(fresh.localEngines.strata, {
+    slots: 4, kv: 'k8v8', context: null, vision: true, drafting: 'off', lastUsed: false, learnedFits: {},
+    watchdog: { enabled: false, maxWatts: 460, maxTempC: 83 },
+  });
+  const bounded = normalizeState({ localEngines: { strata: {
+    slots: 3, kv: 'fp16', context: 12, vision: 'yes', drafting: 'auto', lastUsed: 1, exe: 'C:\\evil.exe',
+    learnedFits: { '4:k8v8': 40960, '8:auto': 9999, '1:auto': 'big', '2:k8v4': 512 },
+    watchdog: { enabled: 'yes', maxWatts: 5000, maxTempC: 20 },
+  } } }).localEngines.strata;
+  assert.deepEqual(bounded, {
+    slots: 4, kv: 'k8v8', context: null, vision: true, drafting: 'off', lastUsed: false, learnedFits: { '4:k8v8': 40960 },
+    watchdog: { enabled: false, maxWatts: 460, maxTempC: 83 },
+  });
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-strata-settings-'));
+  trackDirectory(userDataPath);
+  const service = new ShellConfigService({ userDataPath, env: {} });
+  assert.deepEqual(service.updateStrataSettings({ learnedFits: { '2:k8v4': 65536 } }).learnedFits, { '2:k8v4': 65536 });
+  assert.deepEqual(service.updateStrataSettings({ learnedFits: { '1:k8v4': 131072 } }).learnedFits, { '2:k8v4': 65536, '1:k8v4': 131072 });
+  service.updateStrataSettings({ watchdog: { enabled: true, maxWatts: 430 } });
+  assert.deepEqual(service.updateStrataSettings({ watchdog: { enabled: false } }).watchdog, { enabled: false, maxWatts: 430, maxTempC: 83 });
+  const updated = service.updateStrataSettings({ slots: 1, kv: 'auto', context: 200000, drafting: 'dspark', lastUsed: true });
+  assert.equal(updated.slots, 1);
+  assert.equal(updated.kv, 'auto');
+  assert.equal(updated.context, 200000);
+  assert.equal(updated.drafting, 'dspark');
+  assert.equal(service.updateStrataSettings({ context: null }).context, null, 'back to largest that fits');
+  assert.equal(new ShellConfigService({ userDataPath, env: {} }).getLocalEngines().strata.lastUsed, true);
+});

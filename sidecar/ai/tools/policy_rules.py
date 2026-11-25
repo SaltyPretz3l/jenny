@@ -42,6 +42,11 @@ _DEFAULT_TOOL_DEFAULTS = {
     "session_message": "auto",
     # Consent is asked inside the tool (Electron), so per-call policy stays out of the way.
     "browser": "auto",
+    # Row 196: the same for the computer tool (grants, opens and file dialogs ask inside it).
+    "computer": "auto",
+    # Row 197 D5 A / D6 A: only the owner's confirmed run command, and a picture; no card.
+    "run_view_look": POLICY_DECISION_AUTO,
+    "run_view_restart": POLICY_DECISION_AUTO,
     "read_file": POLICY_DECISION_AUTO,
     "glob_files": POLICY_DECISION_AUTO,
     "grep_search": POLICY_DECISION_AUTO,

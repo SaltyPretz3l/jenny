@@ -292,6 +292,41 @@ def test_container_emitted_argv_parses_in_main_without_systemexit(
     assert captured["skills_auto_index"] == "off"
 
 
+# Options the container emits only when their feature is configured. Every other
+# option the subprocess parses must be on the command line the container builds
+# for a default config, so an option added to the parser and never threaded from
+# the container fails here instead of silently keeping its default.
+_CONDITIONALLY_EMITTED_OPTIONS = frozenset(
+    {
+        "--connections-mcp-server",
+        "--hosted-root-boundary",
+        "--hosted-win32-files",
+        "--knowledge-root",
+        "--semantic-catalog-db",
+        "--semantic-catalog-dims",
+        "--semantic-catalog-model-key",
+        "--semantic-catalog-query-template",
+        "--semantic-catalog-url",
+        "--skill-disabled-id",
+    }
+)
+
+
+def test_every_option_the_subprocess_parses_is_emitted_by_the_container(tmp_path) -> None:
+    from sidecar.ai.mcp.builtin_server_cli import build_argument_parser
+
+    parsed = {
+        option
+        for action in build_argument_parser()._actions
+        for option in action.option_strings
+        if option.startswith("--") and option != "--help"
+    }
+    argv = list(_default_mcp_servers(RuntimeConfig(), tmp_path)[0].args)
+    emitted = {argument for argument in argv if argument.startswith("--")}
+
+    assert parsed - emitted == _CONDITIONALLY_EMITTED_OPTIONS
+
+
 # ── load_skill scope-root threading ────────────────────────────────────
 
 

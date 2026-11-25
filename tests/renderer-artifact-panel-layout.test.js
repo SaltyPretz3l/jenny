@@ -472,21 +472,9 @@ describe('Artifact Panel V3 actions', () => {
       assert.equal(deleteItem, undefined, current.artifactType);
     }
   });
-
-  test('maximize is a no-op in overlay mode', () => {
-    const dom = new JSDOM('<!doctype html><body><aside id="panel" class="artifact-review-overlay"></aside></body>');
-    let calls = 0;
-    const actions = createArtifactPanelActions({
-      panelEl: dom.window.document.getElementById('panel'),
-      windowRef: dom.window,
-      toggleMaximize: () => { calls += 1; return true; },
-    });
-    assert.equal(actions.toggleMaximize(), false);
-    assert.equal(calls, 0);
-  });
 });
 
-describe('Artifact Panel V3 maximized preferences and layout', () => {
+describe('Artifact Panel V3 layout', () => {
   // Owner restyle 2026-08-20 (Option A): the diff/text viewer is FULL BLEED —
   // the half-rounded floating frame (1px border + top-only radius + inset
   // fill) and the wrapping content padding are gone; only the toolbar's
@@ -564,52 +552,9 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
     );
   });
 
-  test('maximized map normalizes, persists, and prunes removed sessions', () => {
-    const value = prefs.normalizeArtifactReviewPreferences({ maximizedBySession: { a: true, b: false, '': true } });
-    assert.deepEqual(value.maximizedBySession, { a: true });
-    prefs.recordArtifactReviewMaximized(value, 'b', true);
-    assert.equal(prefs.resolveArtifactReviewMaximized(value, 'b'), true);
-    prefs.pruneArtifactReviewSessionPreferences(value, ['b']);
-    assert.deepEqual(value.maximizedBySession, { b: true });
-  });
-
-  test('maximize stamps the chat view per session, Escape restores, and narrow width stamps data-panel-narrow', (t) => {
-    const dom = new JSDOM('<!doctype html><body><div id="workspace"><section id="chat"><div id="resizer"></div><aside id="panel"></aside></section></div></body>', { url: 'https://jenny.test/' });
-    const previousWindow = globalThis.window;
-    globalThis.window = dom.window;
-    t.after(() => { if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow; });
-    dom.window.localStorage.setItem('jenny.artifactReview.v1', JSON.stringify({ enabled: true, width: 340 }));
-    const active = { id: 's1' };
-    const state = { ui: { activeView: 'chat', artifactReview: {} }, artifacts: { autoOpenedSessionIds: [], deletedArtifactIds: [], viewModeByKind: {} }, messagesBySession: new Map(), features: { featureFlags: {} } };
-    const workspace = dom.window.document.getElementById('workspace');
-    workspace.getBoundingClientRect = () => ({ width: 1400 });
-    const chatView = dom.window.document.getElementById('chat');
-    const panel = dom.window.document.getElementById('panel');
-    const resizer = dom.window.document.getElementById('resizer');
-    const manager = artifactsUtils.createArtifactManager({ state, dom: { workspace, chatView, artifactReviewPanel: panel, artifactReviewResizer: resizer }, callbacks: { getActiveSession: () => ({ id: active.id }), updateComposerSafeOffset: () => {}, renderAll: () => {}, escapeHtml: String, appendClientLog: () => {}, showToastMessage: () => {} } });
-    manager.bind();
-    t.after(() => manager.dispose());
-    assert.equal(panel.dataset.panelNarrow, 'true');
-    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-review-panel\[data-panel-narrow="true"\] \.artifact-panel-copy \{ display: none; \}/);
+  test('the danger styling lives in the inventory', () => {
     assert.doesNotMatch(ARTIFACT_PANEL_CSS, /\.inv-context-menu-item--danger/);
     assert.match(INVENTORY_CSS, /\.inv-context-menu-item--danger\s*\{/);
-    manager.toggleArtifactReviewMaximized(true);
-    assert.equal(chatView.classList.contains('artifact-review-maximized'), true);
-    active.id = 's2';
-    manager.syncArtifactReviewLayout();
-    assert.equal(chatView.classList.contains('artifact-review-maximized'), false);
-    active.id = 's1';
-    manager.syncArtifactReviewLayout();
-    assert.equal(chatView.classList.contains('artifact-review-maximized'), true);
-    panel.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    assert.equal(chatView.classList.contains('artifact-review-maximized'), false);
-    // The header button toggles with no argument (the value is read first).
-    assert.equal(manager.toggleArtifactReviewMaximized(), true);
-    assert.equal(chatView.classList.contains('artifact-review-maximized'), true);
-    assert.equal(manager.toggleArtifactReviewMaximized(), false);
-    assert.equal(chatView.classList.contains('artifact-review-maximized'), false);
-    active.id = '';
-    assert.equal(manager.toggleArtifactReviewMaximized(true), false, 'missing-session calls cannot report success');
   });
 });
 

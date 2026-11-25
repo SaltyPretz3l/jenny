@@ -286,3 +286,17 @@ test('host names are text: escaped where drawn, dir auto, never an element', asy
   assert.equal(column(h).querySelectorAll('.team-preview__head img, .team-preview__body b').length, 0);
   assert.equal(globalThis.pwned, undefined);
 });
+
+test('H23.3: switching Rendered and Source keeps the focus on the segment control, not on Close', async (t) => {
+  const { h } = await openTree(t, { projectFileRead: (p) => textRead(p.path, '# Title\n\nbody') });
+  rowOf(h, 'README.md').click();
+  await flush();
+  const segment = () => column(h).querySelector('[data-inv-segmented="team-files-view-column"]');
+  segment().querySelector('[data-value="rendered"]').focus();
+  globalThis.inventory.segmentedControl.select(segment(), 'source');
+  const now = segment().querySelector('[role="radio"][aria-checked="true"]');
+  assert.equal(now.dataset.value, 'source', 'the view switched');
+  assert.equal(active(h), now, 'and the focus is on the chosen option of the same control');
+  globalThis.inventory.segmentedControl.select(segment(), 'rendered');
+  assert.equal(active(h), segment().querySelector('[role="radio"][aria-checked="true"]'), 'back again, still there');
+});

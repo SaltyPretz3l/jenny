@@ -25,7 +25,7 @@ test('shell config state migrates codex CLI defaults and drops active frontier c
     frontierDiagnostics: { enabled: true, model: 'gpt-5-mini' },
   });
 
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
   assert.deepEqual(state.codexCli, DEFAULT_CODEX_CLI);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'frontierDiagnostics'), false);
 });
@@ -192,7 +192,7 @@ test('shell config state v20 migration drops legacy jen-e config without throwin
     },
   });
 
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'jenE'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'jen_e'), false);
 });
@@ -206,7 +206,7 @@ test('shell config state v21 migration drops legacy local_speech config without 
     },
   });
 
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
   assert.equal(Object.prototype.hasOwnProperty.call(state, 'speech'), false);
 });
 
@@ -476,7 +476,7 @@ test('v58 migration deletes the stored token_budget override and keeps the other
     version: 57,
     featureOverrides: { token_budget: false, skills_system: false },
   });
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.equal(Object.hasOwn(state.featureOverrides, 'token_budget'), false);
   assert.equal(state.featureOverrides.skills_system, false);
 });
@@ -486,7 +486,7 @@ test('v58 migration deletes the four retired engine-tuning overrides only', () =
     version: 57,
     engineTuning: { ...RETIRED_ENGINE_TUNING, tokenBudgetWarningRatio: 0.75, maxBudgetUsd: 5 },
   });
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.deepEqual(state.engineTuning, { tokenBudgetWarningRatio: 0.75, maxBudgetUsd: 5 }, 'the spend cap is not a retired key');
   assert.equal(state.maxBudgetUsd, 5);
   assert.deepEqual(normalizeState(state), state, 'a migrated state loads unchanged');
@@ -506,7 +506,7 @@ test('v58 migration changes only the version when no retired key is stored', () 
     featureOverrides: { skills_system: false },
     engineTuning: { tokenBudgetWarningRatio: 0.75 },
   });
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.deepEqual(state.featureOverrides, { skills_system: false });
   assert.deepEqual(state.engineTuning, { tokenBudgetWarningRatio: 0.75 });
 });
@@ -514,7 +514,7 @@ test('v58 migration changes only the version when no retired key is stored', () 
 test('v58 migration tolerates missing or malformed containers', () => {
   for (const stored of [{}, { featureOverrides: null, engineTuning: 'x' }, { featureOverrides: [], engineTuning: [] }]) {
     const state = normalizeState({ version: 57, ...stored });
-    assert.equal(state.version, 59);
+    assert.equal(state.version, 60);
     assert.deepEqual(state.featureOverrides, {});
     assert.deepEqual(state.engineTuning, {});
   }
@@ -526,7 +526,7 @@ test('a state already at v58 keeps its stored token_budget override', () => {
     featureOverrides: { token_budget: false },
   });
   assert.equal(state.featureOverrides.token_budget, false);
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
 });
 
 test('a state already at v58 keeps stored engine-tuning keys', () => {
@@ -541,7 +541,7 @@ test('the apiProviders block defaults empty, normalizes, and round trips without
     lastSelected: null,
   };
   const state = normalizeState({ version: 59, apiProviders: stored });
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.equal(state.apiProviders.instances[0].id, 'groq');
   assert.equal(state.apiProviders.instances[0].endpoint, 'https://api.groq.com/openai/v1');
   assert.deepEqual(normalizeState(serializeState(state)).apiProviders, state.apiProviders);

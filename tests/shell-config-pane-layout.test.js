@@ -17,9 +17,17 @@ const { PANE_LAYOUT_PERSIST_DELAY_MS, createWorkspaceStateController } = require
 
 const layoutOf = ({ panes, focusedPaneId, splitRatio }) => ({ panes, focusedPaneId, splitRatio });
 const panesOf = (...sessionIds) => sessionIds.map((sessionId, paneId) => ({ paneId, sessionId }));
-// The full stored workspace shape, in stored key order.
+// The full stored workspace shape, in stored key order. A second pane that
+// holds a tab also stores it in the sparse `tabPanes` map (schema v60).
 const full = (activeSessionId, openSessionIds, panes, focusedPaneId = 0, splitRatio = 0.5) => (
-  { activeSessionId, openSessionIds, panes, focusedPaneId, splitRatio });
+  {
+    activeSessionId,
+    openSessionIds,
+    panes,
+    focusedPaneId,
+    splitRatio,
+    ...(panes[1] && panes[1].sessionId ? { tabPanes: { [panes[1].sessionId]: 1 } } : {}),
+  });
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function makeUserData(t, config) {
@@ -122,7 +130,7 @@ test('normalizer: snake_case aliases are read and camelCase is written', () => {
     activeSessionId: 'a', openSessionIds: ['a', 'b'], pane_layout: { panes: ['a', 'b'], focused_pane_id: 1, split_ratio: 0.7 },
   });
   assert.deepEqual(layoutOf(nested), { panes: panesOf('a', 'b'), focusedPaneId: 1, splitRatio: 0.7 });
-  assert.deepEqual(Object.keys(workspace), ['activeSessionId', 'openSessionIds', 'panes', 'focusedPaneId', 'splitRatio']);
+  assert.deepEqual(Object.keys(workspace), ['activeSessionId', 'openSessionIds', 'panes', 'focusedPaneId', 'splitRatio', 'tabPanes']);
 });
 
 test('normalizer: output is plain objects, never the frozen pane-model value', () => {
@@ -172,15 +180,15 @@ function withoutVersionAndWorkspace(document) {
   return rest;
 }
 
-test('migration: CONFIG_VERSION is 58', () => {
-  assert.equal(CONFIG_VERSION, 59);
+test('migration: CONFIG_VERSION is 60', () => {
+  assert.equal(CONFIG_VERSION, 60);
 });
 
 test('migration: a v55 document gains one pane seeded from activeSessionId and nothing else moves', () => {
   const v55 = buildV55Document();
   const migrated = serializeState(normalizeState(clone(v55)));
 
-  assert.equal(migrated.version, 59);
+  assert.equal(migrated.version, 60);
   assert.deepEqual(migrated.workspace, full('sess_b', ['sess_a', 'sess_b', 'sess_c'], [{ paneId: 0, sessionId: 'sess_b' }]));
   assert.deepEqual(clone(withoutVersionAndWorkspace(migrated)), withoutVersionAndWorkspace(v55));
 });

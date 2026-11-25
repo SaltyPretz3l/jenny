@@ -29,12 +29,20 @@
   // The Tune steps below an attempted window; the retry picks the first one under it.
   const CONTEXT_STEPS = [4096, 8192, 16384, 32768, 65536, 131072];
 
+  // The Live-tab program holding the card (row 197), when the record names one: both fields, bounded.
+  function readLiveRun(value) {
+    const projectId = typeof value?.project_id === 'string' ? value.project_id.trim() : '';
+    const program = typeof value?.program === 'string' ? value.program.trim() : '';
+    return projectId && program && projectId.length <= 200 && program.length <= 200 ? { projectId, program } : null;
+  }
+
   function readModelLoadFailure(backend) {
     if (!backend || typeof backend !== 'object' || backend.phase !== 'model_unavailable') return null;
     const failure = backend.model_lifecycle?.failure;
     if (!failure || typeof failure !== 'object' || !CAUSES.has(failure.cause)) return null;
     const model = String(failure.model || backend.model_lifecycle?.requested_model || '').trim();
     if (!model) return null;
+    const liveRun = readLiveRun(failure.live_run);
     return {
       cause: failure.cause,
       message: String(failure.message || '').trim(),
@@ -44,6 +52,7 @@
       model,
       // Which managed server the failure belonged to, when Electron stamped one.
       ...(failure.managed === 'ninfer' || failure.managed === 'llama-server' ? { managed: failure.managed } : {}),
+      ...(liveRun ? { liveRun } : {}),
     };
   }
 
@@ -54,7 +63,8 @@
     const key = String(engine || '').trim().toLowerCase();
     if (key === 'ollama') return 'Ollama';
     if (key === 'openai-compatible') {
-      const kind = managed === 'ninfer' || managed === 'llama-server' ? managed : snapshot?.runtime?.managed_server?.kind;
+      const kind = ['ninfer', 'llama-server', 'strata'].includes(managed) ? managed : snapshot?.runtime?.managed_server?.kind;
+      if (kind === 'strata') return 'Strata';
       return kind === 'ninfer' ? 'NInfer' : 'llama-server';
     }
     return key || jt('loadFailure.engineGeneric', 'The engine');
@@ -72,6 +82,10 @@
   // Plain words, as a sentence (library note, Diagnostics reason).
   function causeSentence(failure) {
     const engine = engineLabel(failure?.engine, null, failure?.managed);
+    if (failure?.liveRun) {
+      return jt('loadFailure.cause.liveRun', '{program}, started from the Live tab, is using the GPU memory this model needs.',
+        { program: failure.liveRun.program });
+    }
     switch (failure?.cause) {
       case 'out_of_memory':
         return jt('loadFailure.cause.outOfMemory', 'Not enough memory to load it. A smaller context needs less.');
@@ -89,6 +103,9 @@
   // The same cause as a short phrase (the composer line: "qwen3:8b didn't load · not enough memory").
   function causePhrase(failure) {
     const engine = engineLabel(failure?.engine, null, failure?.managed);
+    if (failure?.liveRun) {
+      return jt('loadFailure.phrase.liveRun', '{program} from the Live tab is using the GPU', { program: failure.liveRun.program });
+    }
     switch (failure?.cause) {
       case 'out_of_memory': return jt('loadFailure.phrase.outOfMemory', 'not enough memory');
       case 'engine_unreachable': return jt('loadFailure.phrase.engineUnreachable', "{engine} isn't responding", { engine });
@@ -100,6 +117,8 @@
   // The recovery that matches the cause, in display order. Ids are the library
   // row actions; the composer line shows the first one and "Other models".
   function recoveryActions(failure) {
+    // A smaller context does not help when another program holds the card: stop it, then retry.
+    if (failure?.liveRun) return ['stopLiveRun', 'retry'];
     switch (failure?.cause) {
       case 'out_of_memory':
         // An attempt at or under the lowest Tune step has no smaller window to offer.
@@ -112,10 +131,19 @@
 
   // What "Copy details" puts on the clipboard: the facts, one per line.
   function failureDetails(failure) {
-    return ['model', 'engine', 'cause', 'context', 'at', 'message']
+    const lines = ['model', 'engine', 'cause', 'context', 'at', 'message']
       .filter((key) => failure && failure[key])
-      .map((key) => `${key}: ${failure[key]}`)
-      .join('\n');
+      .map((key) => `${key}: ${failure[key]}`);
+    if (failure?.liveRun) lines.push(`live_run: ${failure.liveRun.program}`);
+    return lines.join('\n');
+  }
+
+  // "Stop <program>" (row 197): asks the Live tab's program to close. It does not retry the load; a refusal or
+  // a throw changes nothing. `deps.stopLiveRun` replaces the bridge call in tests.
+  function stopLiveRun(failure, deps = {}) {
+    if (!failure?.liveRun) return undefined;
+    const stop = deps.stopLiveRun || ((request) => deps.windowRef?.jennyShell?.runView?.stop?.(request));
+    return stop({ projectId: failure.liveRun.projectId, mode: 'ask' });
   }
 
   return {
@@ -127,5 +155,6 @@
     readModelLoadFailure,
     recoveryActions,
     retryContext,
+    stopLiveRun,
   };
 });

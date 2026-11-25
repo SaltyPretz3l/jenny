@@ -16,7 +16,7 @@ const FRAGMENT = [
   '<!doctype html><html><body>',
   '<div class="chat-view" id="chatView">',
   '<div class="chat-pane" id="chatPane0" data-pane-id="0"></div>',
-  '<div class="chat-pane-resizer artifact-review-resizer" id="chatPaneResizer" role="separator"',
+  '<div class="chat-pane-resizer" id="chatPaneResizer" role="separator"',
   ' aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" aria-valuenow="50" tabindex="-1"></div>',
   '<div class="chat-pane" data-pane-id="1"></div>',
   '</div>',

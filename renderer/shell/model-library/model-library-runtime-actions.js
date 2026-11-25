@@ -183,7 +183,30 @@
           model: modelId,
           message: message,
         });
-        return jt('models.library.runtime.nowChattingPreferenceSaveFailed', 'Now chatting with "{model}", but the local preference could not be saved.', { model: modelId });
+        return message;
+      });
+    }
+
+    function modelName(modelId) {
+      var model = findModel(modelId);
+      return String((model && model.displayName) || modelId);
+    }
+
+    // Row 194: making a model the default is its own action; a load never changes it.
+    function handleSetDefault(tag) {
+      var modelId = String(tag || '').trim();
+      if (!modelId) return;
+      var model = findModel(modelId);
+      var engine = String((model && model.engineType) || '').toLowerCase();
+      if (engine === 'chatgpt' || engine === 'codex-cli' || engine === 'api-provider') {
+        setStatusMessage(jt('models.library.runtime.defaultMustBeLocal', 'The default is always a model on this PC.'));
+        return;
+      }
+      var operationId = runtimeOperationId;
+      return updatePreferredLocalModel(modelId, operationId).then(function (failure) {
+        if (disposed || operationId !== runtimeOperationId) return;
+        setStatusMessage(failure || jt('models.library.runtime.defaultSet', 'New chats now use {model}.', { model: modelName(modelId) }));
+        render();
       });
     }
 
@@ -227,15 +250,13 @@
       ).then(function () {
         if (disposed || operationId !== runtimeOperationId) return;
         activation = { status: 'idle', key: '', message: '' };
-        return updatePreferredLocalModel(modelId, operationId).then(function (preferenceNote) {
-          if (disposed || operationId !== runtimeOperationId) return;
-          showToastMessage(jt('models.library.runtime.nowChattingWith', 'Now chatting with "{model}"', { model: modelId }), { tone: 'success' });
-          appendClientLog('INFO', 'models.loaded', { model: modelId });
-          return resyncThen(
-            operationId,
-            preferenceNote || jt('models.library.runtime.nowChattingWithPeriod', 'Now chatting with "{model}".', { model: modelId })
-          );
-        });
+        showToastMessage(jt('models.library.runtime.loadedToast', 'Loaded "{model}"', { model: modelId }), { tone: 'success' });
+        appendClientLog('INFO', 'models.loaded', { model: modelId });
+        var chosen = String((state.offline && state.offline.preferredLocalModel) || '').trim();
+        var name = modelName(modelId);
+        return resyncThen(operationId, !chosen || canonicalOllamaTag(chosen) === canonicalOllamaTag(modelId)
+          ? jt('models.library.runtime.loaded', 'Loaded {model}.', { model: name })
+          : jt('models.library.runtime.loadedNotDefault', 'Loaded {model}. New chats still use {defaultModel}.', { model: name, defaultModel: modelName(chosen) }));
       }, function (error) {
         failRuntimeAction(
           operationId,
@@ -324,6 +345,7 @@
 
     return {
       handleUse: handleUse,
+      handleSetDefault: handleSetDefault,
       handleUnload: handleUnload,
       activationState: activationState,
       clearActivationMessage: clearActivationMessage,

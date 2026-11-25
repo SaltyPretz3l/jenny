@@ -182,15 +182,6 @@ def test_reinitialize_still_reuses_the_live_builtin_transport(
         def call_tool(self, tool_name: str, arguments: dict[str, Any], **_kwargs: Any) -> Any:
             return {"content": [{"type": "text", "text": "ok"}]}
 
-        def list_resources(self, **_kwargs: Any) -> dict[str, Any]:
-            return {"resources": []}
-
-        def read_resource(self, uri: str, **_kwargs: Any) -> dict[str, Any]:
-            return {"contents": []}
-
-        def list_resource_templates(self, **_kwargs: Any) -> dict[str, Any]:
-            return {"resourceTemplates": []}
-
         def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
             return []
 
@@ -260,15 +251,6 @@ def test_a_replanned_reinitialize_hands_adopted_transports_back_before_closing(
 
         def call_tool(self, tool_name: str, arguments: dict[str, Any], **_kwargs: Any) -> Any:
             return {"content": [{"type": "text", "text": "ok"}]}
-
-        def list_resources(self, **_kwargs: Any) -> dict[str, Any]:
-            return {"resources": []}
-
-        def read_resource(self, uri: str, **_kwargs: Any) -> dict[str, Any]:
-            return {"contents": []}
-
-        def list_resource_templates(self, **_kwargs: Any) -> dict[str, Any]:
-            return {"resourceTemplates": []}
 
         def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
             return []

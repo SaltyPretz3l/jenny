@@ -332,14 +332,14 @@
     }
 
     // Split view (gate D14, 2026-09-26): with two panes on the chat view the stack starts below
-    // pane 1's kicker row (styles/toast.css reads --toast-split-top). Measured per render: the
-    // kicker's position follows the font scale, and toasts are rare.
+    // pane 1's header row (styles/toast.css reads --toast-split-top). Measured per render: the
+    // row's position follows the font scale, and toasts are rare.
     function syncSplitOffset() {
       const doc = toastViewport.ownerDocument;
-      const kicker = doc?.documentElement?.dataset?.activeView === 'chat'
-        ? doc.querySelector('#chatView[data-pane-count="2"] > .chat-pane[data-pane-id="1"] > .chat-pane-kicker:not([hidden])')
+      const headerRow = doc?.documentElement?.dataset?.activeView === 'chat'
+        ? doc.querySelector('#chatView[data-pane-count="2"] > .chat-pane[data-pane-id="1"] > .chat-timeline-utility-cluster')
         : null;
-      const bottom = kicker ? kicker.getBoundingClientRect().bottom : 0;
+      const bottom = headerRow ? headerRow.getBoundingClientRect().bottom : 0;
       if (bottom > 0) toastViewport.style.setProperty('--toast-split-top', `${Math.ceil(bottom) + 8}px`);
       else toastViewport.style.removeProperty('--toast-split-top');
     }

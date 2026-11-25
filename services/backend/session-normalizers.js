@@ -15,6 +15,8 @@ const ACTIVE_TURN_STATUSES = new Set(['awaiting_assistant', 'streaming']);
 const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
   'files', 'web', 'local_browser', 'python', 'terminal', 'git', 'code',
   'checks', 'artifacts', 'images', 'knowledge', 'home', 'helpers', 'browser_use',
+  // Row 196: the Computer switch.
+  'computer_use',
 ]);
 const TOOL_CONNECTION_OVERRIDES_MAX = 64;
 const COMPOSER_DRAFT_CLIP_MARKER = '\n\n[clipped]';

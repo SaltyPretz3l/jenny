@@ -164,6 +164,20 @@ test('[9] a project channel reads names, three at most; one-to-one reads Seen', 
   few.h.restore();
 });
 
+// H22.3: a custom channel has the team channel's audience (everyone on the team), so it shows Seen by like #team does.
+test('[9] a custom channel reads Seen by n of m over the other members, like #team', async (t) => {
+  const design = 'chan_c_aaaaaaaaaaaaaaaa';
+  const reads = [{ member_id: ME, seq: 2 }];
+  const channels = [chatChannel(), chatChannel({ channel_id: design, kind: 'channel', name: 'design', topic: '', created_by: ME, archived: false, archived_by: null, changes: [], reads })];
+  const { h } = await open({ members: THREE, answers: { chatOverview: overview({ channels, members: THREE }) } });
+  t.after(h.restore);
+  h.view.q(`[data-team-channel="${design}"]`).click();
+  await flush();
+  assert.equal(h.view.q('.team-seen').textContent, 'Seen by 1 of 2', 'Olive of Olive and Maya');
+  h.view.q('.team-seen').click();
+  assert.deepEqual([...h.view.qa('.team-pop--seen p')].map((p) => p.textContent), ['Seen by Olive Owner', 'Not yet Maya Okafor']);
+});
+
 // Slice 2b-3: a project row that names its audience gets 2b-2's n of m; m leaves out you and anyone not listed.
 test('[9] a project channel with an audience reads n of m over its other listed members', async (t) => {
   const reads = [ME, MAYA].map((member_id) => ({ member_id, seq: 2 }));

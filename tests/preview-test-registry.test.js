@@ -62,7 +62,7 @@ test('preview_test carries the manifest input schema', () => {
   );
   assert.deepEqual(
     schema.properties.events.items.properties.key.enum,
-    ['Enter', 'Space', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Spacebar']
+    [...require('../services/browser-interaction-utils').PRESS_KEY_SCHEMA_VALUES],
   );
   assert.deepEqual(schema.properties.events.items.required, ['action']);
   assert.equal(schema.properties.observe.type, 'array');

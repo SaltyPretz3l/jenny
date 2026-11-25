@@ -9,7 +9,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
-  // Always loaded: the Notes toggle, its accent dot, the chat result row and the
+  // Always loaded: the Notes toggle, the changed-note signal, the chat result row and the
   // lazy loader of the notes rail. The rail itself (and the host it publishes as
   // windowRef.rendererProjectNotesHost) loads on first open.
   const NOTES_RAIL_SCRIPTS = Object.freeze([
@@ -136,13 +136,15 @@
     const reviewPanel = dom.artifactReviewPanel || doc?.getElementById?.('artifactReviewPanel') || null;
     const appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : () => {};
     const showToastMessage = typeof d.showToastMessage === 'function' ? d.showToastMessage : () => {};
+    // The Project tab's dot reads noteChanged(); this tells the strip when it flips.
+    const onSignalsChanged = typeof d.onSignalsChanged === 'function' ? d.onSignalsChanged : () => {};
     const getHost = typeof d.getHost === 'function' ? d.getHost : () => windowRef.rendererProjectNotesHost || null;
     const seenRevision = loadSeen();
     const latestRevision = {};
     const journalState = {}; // projectId -> { entryId: 'live' | 'undone' | 'stale' }; dropped on every change push
     const observers = [];
     let toggleEl = null;
-    let dotEl = null;
+    let changed = false;
     let bound = false;
     let disposed = false;
     let inflightOpen = null;
@@ -176,8 +178,10 @@
       try { storage()?.setItem(SEEN_STORAGE_KEY, JSON.stringify(seenRevision)); } catch (_error) { /* the dot is cosmetic */ }
     }
 
-    function setDot(visible) {
-      if (dotEl && dotEl.hidden === visible) dotEl.hidden = !visible;
+    function setChanged(value) {
+      if (changed === value) return;
+      changed = value;
+      try { onSignalsChanged(); } catch (_error) { /* the signal is cosmetic */ }
     }
 
     function markSeen(projectId, revision) {
@@ -185,10 +189,10 @@
       if (!id) return;
       const known = Number.isFinite(revision) ? revision : latestRevision[id];
       if (known !== undefined) { delete seenRevision[id]; seenRevision[id] = known; persistSeen(); }
-      if (id === currentProjectId()) setDot(false);
+      if (id === currentProjectId()) setChanged(false);
     }
 
-    // One place decides the dot: an assistant write the user has not seen yet.
+    // One place decides the signal: an assistant write the user has not seen yet.
     function applyWrite(projectId, revision, updatedBy) {
       if (Number.isFinite(revision)) latestRevision[projectId] = revision;
       if (projectId !== currentProjectId()) return;
@@ -196,7 +200,7 @@
         markSeen(projectId, revision);
         return;
       }
-      setDot(updatedBy === ASSISTANT_WRITER && revision !== seenRevision[projectId]);
+      setChanged(updatedBy === ASSISTANT_WRITER && revision !== seenRevision[projectId]);
     }
 
     async function fetchNote(projectId) {
@@ -216,13 +220,13 @@
       lastProjectId = id;
       const token = ++refreshToken;
       if (!id) {
-        setDot(false);
+        setChanged(false);
         return;
       }
       const note = await fetchNote(id);
       if (disposed || token !== refreshToken) return;
       if (note) { rememberJournal(note); applyWrite(id, Number(note.revision), note.updatedBy); }
-      else setDot(false);
+      else setChanged(false);
       await syncUndoButtons(id);
     }
 
@@ -295,14 +299,13 @@
           id: TOGGLE_ID, domId: TOGGLE_ID, plain: true,
           className: 'chat-timeline-utility-button chat-timeline-notes-toggle',
           ariaLabel: jt('projectNotes.toggle', 'Notes'), title: jt('projectNotes.toggle', 'Notes'), ariaPressed: false,
-          trustedHtml: `${NOTES_ICON}<span class="chat-timeline-notes-dot" hidden aria-hidden="true"></span>`,
+          trustedHtml: NOTES_ICON,
         });
         toggleEl = mount.firstElementChild;
         const anchor = doc.getElementById('chatTimelineTasksToggle') || utilityCluster.querySelector('#artifactSplitViewToggle');
         const parent = anchor?.parentNode || utilityCluster;
         parent.insertBefore(toggleEl, anchor ? anchor.nextSibling : parent.firstChild);
       }
-      dotEl = toggleEl.querySelector('.chat-timeline-notes-dot');
       return toggleEl;
     }
 
@@ -456,7 +459,12 @@
       if (activeEntry === api) activeEntry = null;
     }
 
-    const api = { bind, dispose, refresh, syncToggle, checkSession, currentProjectId, markSeen, entryState, settleLater };
+    // open(): loads the rail's modules on first use and opens it (the Chat room's Project tab).
+    // noteChanged(): Jenny changed this project's note and the owner has not opened it since.
+    const api = {
+      bind, dispose, refresh, syncToggle, checkSession, currentProjectId, markSeen, entryState, settleLater, open: () => openRail(false),
+      noteChanged: () => changed,
+    };
     activeEntry = api;
     return api;
   }

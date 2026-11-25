@@ -73,3 +73,72 @@ test('applyNote sets text and collapses (hidden) when empty', () => {
 
 // ── T9 — non-colour verdict signal ──────────────────────────────────────
 // ── T3 / T6 — read-only status list ─────────────────────────────────────
+
+// ── Row 193 C2: the restart list and its bar ────────────────────────────
+function barDocument() {
+  const dom = new JSDOM('<!doctype html><body><div class="settings-content-frame"><div class="settings-content-scroll"></div></div></body>');
+  return { dom, doc: dom.window.document };
+}
+
+test('restart list: add, remove, list and a change callback that can be dropped', () => {
+  const list = foundation.createRestartList();
+  const seen = [];
+  const off = list.onChange((items) => seen.push(items.map((i) => i.id)));
+  list.add('lang', 'Language');
+  list.add('lang', 'Language');
+  list.add('ctx', 'Context size');
+  assert.deepEqual(list.list(), [{ id: 'lang', label: 'Language' }, { id: 'ctx', label: 'Context size' }]);
+  assert.equal(list.has('lang'), true);
+  list.remove('lang');
+  list.remove('missing');
+  assert.deepEqual(seen, [['lang'], ['lang', 'ctx'], ['ctx']], 'one call per real change');
+  off();
+  list.remove('ctx');
+  assert.equal(seen.length, 3);
+  assert.deepEqual(list.list(), []);
+});
+
+test('restart list: track keeps a setting waiting only while it differs from the value at app start', () => {
+  const list = foundation.createRestartList();
+  list.track('lang', 'Language', 'en', 'fr');
+  assert.equal(list.has('lang'), true);
+  list.track('lang', 'Language', 'fr', 'de');
+  assert.equal(list.has('lang'), true, 'the start value stays the first one');
+  list.track('lang', 'Language', 'de', 'en');
+  assert.equal(list.has('lang'), false, 'back at the start value, nothing is owed');
+});
+
+test('restart bar: absent when empty, singular and plural words, gone when the list empties', () => {
+  const { dom, doc } = barDocument();
+  const list = foundation.createRestartList();
+  foundation.paintRestartBar(doc, list.list());
+  assert.equal(doc.querySelector('.settings-restart-bar'), null);
+  list.add('lang', 'Language');
+  foundation.paintRestartBar(doc, list.list());
+  const bar = doc.querySelector('.settings-restart-bar');
+  assert.equal(bar.nextElementSibling.className, 'settings-content-scroll', 'the bar sits above the scrolling pages');
+  assert.equal(bar.textContent.trim(), '1 setting takes effect after a restart: Language.');
+  assert.equal(bar.getAttribute('role'), 'status');
+  list.add('ctx', 'Context size');
+  foundation.paintRestartBar(doc, list.list());
+  assert.equal(doc.querySelectorAll('.settings-restart-bar').length, 1, 'one bar, repainted in place');
+  assert.equal(doc.querySelector('.settings-restart-bar').textContent.trim(), '2 settings take effect after a restart: Language, Context size.');
+  list.remove('lang');
+  list.remove('ctx');
+  foundation.paintRestartBar(doc, list.list());
+  assert.equal(doc.querySelector('.settings-restart-bar'), null);
+  dom.window.close();
+});
+
+test('restart bar: Restart now shows only when a restart handler exists and calls it', () => {
+  const { dom, doc } = barDocument();
+  foundation.paintRestartBar(doc, [{ id: 'lang', label: 'Language' }]);
+  assert.equal(doc.querySelector('.settings-restart-bar button'), null, 'no button without a way to restart');
+  let calls = 0;
+  foundation.paintRestartBar(doc, [{ id: 'lang', label: 'Language' }], { onRestart: () => { calls += 1; } });
+  const button = doc.querySelector('.settings-restart-bar button');
+  assert.equal(button.textContent.trim(), 'Restart now');
+  button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(calls, 1);
+  dom.window.close();
+});

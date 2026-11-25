@@ -132,3 +132,20 @@ test('past the floor cap the lowest floor is forgotten, and that project reads t
   assert.equal(audit.read({ projectId: 'project_f0' }).floor_seq, 1);
   assert.equal(audit.read({ projectId: 'project_f1' }).floor_seq, 3);
 });
+
+// OD-10: the size of each held entry is kept, so an append stringifies only the new entry and the header, and the
+// bound it reaches is the one the serialized document gives.
+test('an append on a held log does not stringify the held entries again, and the byte bound still holds', (t) => {
+  let written = null;
+  const maxBytes = 40_000;
+  const audit = new ProjectAudit({ filePath: 'memory://audit', clock: () => 1, readJson: () => null,
+    writeJson: (_file, doc) => { written = doc; }, maxBytes });
+  for (let index = 0; index < 400; index += 1) assert.equal(audit.append(ruleAdded(index % 2 ? P : Q)).ok, true);
+  const stringify = t.mock.method(JSON, 'stringify');
+  assert.equal(audit.append(decided(P)).ok, true);
+  const calls = stringify.mock.callCount();
+  stringify.mock.restore();
+  assert.ok(calls <= 6, `an append stringified ${calls} times`);
+  assert.ok(Buffer.byteLength(JSON.stringify(written)) <= maxBytes, 'the document fits its byte bound');
+  assert.ok(written.entries.length < 401, 'entries were dropped to fit');
+});

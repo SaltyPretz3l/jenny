@@ -36,9 +36,6 @@
     || (typeof require === 'function' ? require('./renderer-render-pipeline-projection-cache') : null)
     || {};
   const LONG_THREAD_BUDGETS = longThreadBudget.BUDGETS || { rootMarkupEntries: 128 };
-  const isLongThreadBoundsEnabled = typeof longThreadBudget.isLongThreadBoundsEnabled === 'function'
-    ? longThreadBudget.isLongThreadBoundsEnabled
-    : () => true;
   const pruneMapOldestFirst = typeof longThreadBudget.pruneMapOldestFirst === 'function'
     ? longThreadBudget.pruneMapOldestFirst
     : () => ({ evicted: [], remaining: 0 });
@@ -396,13 +393,11 @@
         sessionGlobals,
         messageFingerprintById,
       });
-      if (isLongThreadBoundsEnabled(state.features?.featureFlags)) {
-        pruneMapOldestFirst(uiRuntime.threadRootMarkupCache, LONG_THREAD_BUDGETS.rootMarkupEntries, {
-          isPinned(rootId) {
-            return String(rootId || '').trim() === String(projectionContext?.activeTurnRootMessageId || '').trim();
-          },
-        });
-      }
+      pruneMapOldestFirst(uiRuntime.threadRootMarkupCache, LONG_THREAD_BUDGETS.rootMarkupEntries, {
+        isPinned(rootId) {
+          return String(rootId || '').trim() === String(projectionContext?.activeTurnRootMessageId || '').trim();
+        },
+      });
       const longThreadBudgetStats = {
         ...(state.ui?.longThreadBudgetStats || {}),
         ...(uiRuntime.longThreadBudgetStats || {}),

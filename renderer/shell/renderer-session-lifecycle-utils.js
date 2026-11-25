@@ -32,6 +32,26 @@
       }));
   }
 
+  // A switch back to a chat that is still streaming refetches main's copy,
+  // which holds the turn's assistant rows only as they settle. This renderer's
+  // streaming rows for that live stream (text, thinking, phases) are newer: keep
+  // them, or the thinking stays blank until the next thinking delta re-merges it.
+  function keepLiveStreamingMessages(previous, loaded, liveStreamId) {
+    const streamId = String(liveStreamId || '').trim();
+    const rows = Array.isArray(loaded) ? loaded : [];
+    if (!streamId || !Array.isArray(previous)) return loaded;
+    const live = previous.filter((message) => message && message.role === 'assistant'
+      && message.status === 'streaming' && String(message.streamId || '').trim() === streamId);
+    if (!live.length) return loaded;
+    const merged = rows.slice();
+    for (const message of live) {
+      const index = merged.findIndex((row) => row && row.id === message.id);
+      if (index !== -1) merged[index] = { ...merged[index], ...message };
+      else merged.push(message);
+    }
+    return merged;
+  }
+
   function createSessionLifecycleController(deps) {
     const { state } = deps;
     // F37: a sessions.list() response older than one already applied is stale.
@@ -523,7 +543,9 @@
       const activeSession = getActiveSession();
       if (!(activeSession?.local_draft === true && activeSession?.optimistic_local === true)) {
         const payload = await jennyShell.sessions.getMessages(sessionId);
-        setSessionMessages(sessionId, payload.data || [], `session_${sessionId}`);
+        const liveStreamId = getMultiStreamController()?.getStreamIdForSession?.(sessionId);
+        setSessionMessages(sessionId,
+          keepLiveStreamingMessages(getSessionMessages(sessionId), payload.data || [], liveStreamId), `session_${sessionId}`);
         setSessionTurnEventState(sessionId, {
           turnEventLogVersion: Number(payload?.turn_event_log_version || 0),
           turnEvents: Array.isArray(payload?.turn_events) ? payload.turn_events : [],

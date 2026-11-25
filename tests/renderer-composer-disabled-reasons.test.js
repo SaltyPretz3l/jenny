@@ -43,6 +43,7 @@ function createComposerRenderHarness(t, {
   runtimeSendController = null,
   mountPause = true,
   activeStreamId = 'stream-1',
+  extraCallbacks = {},
 } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <div id="composerWrap"></div>
@@ -135,6 +136,7 @@ function createComposerRenderHarness(t, {
         if (ownsActiveStream) return 'streaming';
         return sendBusy ? 'preflight' : 'idle';
       },
+      ...extraCallbacks,
     },
   });
   harnessExtras.set(pipeline, { mountPauseButton });
@@ -185,7 +187,7 @@ test('while the turn is actually streaming, both selectors stay usable', (t) => 
   assert.equal(document.getElementById('composerEffortSelect').disabled, false);
   // Send/stop keep their real streaming behaviour: the send control becomes the
   // one-deep queue affordance and stop is live.
-  assert.equal(document.getElementById('sendButton').textContent, 'Queue — runs in Ask');
+  assert.equal(document.getElementById('sendButton').getAttribute('aria-label'), 'Queue follow-up prompt — runs in Ask');
   assert.equal(document.getElementById('stopStreamButton').disabled, false);
 });
 
@@ -418,4 +420,21 @@ test('Pause hides while the reply waits on its own, and Stop stays', (t) => {
   waiting = false;
   pipeline.renderComposerState();
   assert.equal(document.getElementById('pauseTurnButton').classList.contains('hidden'), false);
+});
+
+test('composer render repaints the attachment tray before measuring the composer', (t) => {
+  // Send consumes state.attachments.queued without touching the tray; renderComposerState is the repaint
+  // every send, queue and draft-restore path calls, so the thumbnail must clear (or come back) there.
+  const calls = [];
+  const { pipeline, state } = createComposerRenderHarness(t, {
+    extraCallbacks: {
+      renderAttachmentTray: () => calls.push(['tray', state.attachments.queued.length]),
+      updateComposerSafeOffset: () => calls.push(['offset']),
+    },
+  });
+  state.attachments.queued = [{ id: 'img-1', kind: 'image' }];
+  pipeline.renderComposerState();
+  state.attachments.queued = [];
+  pipeline.renderComposerState();
+  assert.deepEqual(calls, [['tray', 1], ['offset'], ['tray', 0], ['offset']]);
 });

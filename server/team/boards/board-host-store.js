@@ -395,7 +395,7 @@ function createBoardHostStore({ files, clock, makeId, log, limits, onChange = nu
       if (!persistIndex(opened.projectId, opened.boards)) stop(UNAVAILABLE());
       forget(opened.projectId, opened.boardId);
       log('INFO', 'team_board.removed', { project_id: opened.projectId, board_id: opened.boardId });
-      announce({ kind: 'list', projectId: opened.projectId });
+      announce({ kind: 'list', projectId: opened.projectId, boardId: opened.boardId, removed: true });
       return { ok: true };
     }, { project: true });
   }

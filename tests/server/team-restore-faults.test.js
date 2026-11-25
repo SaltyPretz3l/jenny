@@ -344,3 +344,41 @@ test('the other refusals, and a cut inside the project step ends clean', async (
     assert.deepEqual(fs.readdirSync(fresh.data).sort(), ['projects', 'trash']);
   });
 });
+
+test('C4: a staged trash folder that cannot be listed fails before the restore marker and before any project moves', async (t) => {
+  const { name, file, want } = await exportedTeam(t, { projects: 2 });
+  const fresh = freshWith(t, file);
+  const before = fresh.volumes();
+  const realReaddir = fs.readdirSync;
+  const mock = t.mock.method(fs, 'readdirSync', function readdirSync(dir, ...rest) {
+    if (rest.length === 0 && /\.jenny-restoring-[a-f0-9]{12}[\\/]trash$/u.test(String(dir))) {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    }
+    return realReaddir.call(this, dir, ...rest);
+  });
+  assert.deepEqual(await restore(fresh, name), { ok: false, reason: 'team_restore_failed' });
+  assertUntouched(fresh, before);
+  assert.equal(fs.existsSync(path.join(fresh.profile, '.jenny-team-restoring')), false, 'no restore marker');
+  assert.deepEqual(fs.readdirSync(fresh.projects), [], 'no project folder was moved in');
+  mock.mock.restore();
+  assert.equal((await restore(fresh, name)).ok, true, 'the next run restores');
+  assertSameTeam(fresh.volumes(), want);
+});
+
+test('the restore marker that cannot be removed at the end is reported, not claimed as a success; the next run finishes it', async (t) => {
+  const { name, file, want } = await exportedTeam(t);
+  const fresh = freshWith(t, file);
+  const realUnlink = fs.unlinkSync;
+  const mock = t.mock.method(fs, 'unlinkSync', function unlinkSync(target, ...rest) {
+    if (String(target).endsWith('.jenny-team-restoring')) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    return realUnlink.call(this, target, ...rest);
+  });
+  const output = fresh.terminal();
+  assert.deepEqual(await restore(fresh, name, { output }), { ok: false, reason: 'team_restore_failed' });
+  assert.equal(output.text().includes('Restored the team'), false, 'no success line');
+  assert.equal(fs.existsSync(path.join(fresh.profile, '.jenny-team-restoring')), true, 'the marker stays for the next run');
+  mock.mock.restore();
+  assert.deepEqual(await restore(fresh, name, { answers: [] }), { ok: true });
+  assert.equal(fs.existsSync(path.join(fresh.profile, '.jenny-team-restoring')), false);
+  assertSameTeam(fresh.volumes(), want);
+});

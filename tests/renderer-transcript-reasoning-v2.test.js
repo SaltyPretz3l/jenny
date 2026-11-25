@@ -791,7 +791,7 @@ test('renderPhase derives the header from the prettified reasoning body', (t) =>
   });
   const dom = new JSDOM(makeV2Renderer().renderThinkingWidget(message, 'msg_1'));
   t.after(() => dom.window.close());
-  assert.equal(dom.window.document.querySelector('.reasoning-row-main').textContent, 'Okay the user wants the cache fixed.');
+  assert.equal(dom.window.document.querySelector('.reasoning-row-main').textContent, 'Okay the user wants the cache fixed. Let me check the loader. So we start there.');
 });
 
 test('renderPhase opts into tail rewrites and reports the message stream identity', (t) => {

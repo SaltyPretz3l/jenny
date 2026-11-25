@@ -6,6 +6,7 @@ import base64
 import hashlib
 import itertools
 import json
+import logging
 import math
 import re
 import time
@@ -19,13 +20,16 @@ from sidecar.ai.routing.tool_resource_deferral import BeforeToolDispatchContinua
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.protocol import API_VERSION, JSONRPC_VERSION, RUNTIME_OPERATION_METHOD
 from sidecar.runtime.continuation_context import ContinuationContext
+from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.multiplexer import ApprovalResponseCancelledError
 
 MAX_CHECKPOINT_REQUEST_BYTES = 1024 * 1024
 MAX_CHECKPOINT_SNAPSHOT_BYTES = 1024 * 1024
 MIN_CHECKPOINT_SNAPSHOT_BYTES = 2
 _MAX_REASON_CHARS = 200
-_MAX_TOOL_CALLS = 256
+_MAX_TOOL_CALLS = 256  # calls in one batch
+# A turn's budget: the largest tools-per-turn setting (500) plus the browser's 30 steps.
+_MAX_TOOL_CALL_LIMIT = 530
 _MAX_ITERATIONS = 10_000
 _MAX_ACTIVE_BUDGET_MS = 7 * 24 * 60 * 60 * 1000
 _RPC_IDS = itertools.count(70_000_000)
@@ -66,8 +70,25 @@ def _fail(reason: str, *, retryable: bool = False) -> NoReturn:
     raise _failure(reason, retryable=retryable)
 
 
+logger = logging.getLogger(__name__)
+
+
 def _counter(value: Any, name: str, *, minimum: int = 0, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        # The reason code alone cannot say which bound failed; numbers only, never content.
+        log_event(
+            logger,
+            logging.WARNING,
+            component="runtime.continuation_checkpoint",
+            event="runtime.continuation_checkpoint.counter_invalid",
+            message="A continuation position counter was out of range.",
+            data={
+                "field": name,
+                "value": value if isinstance(value, int) else type(value).__name__,
+                "minimum": minimum,
+                "maximum": maximum,
+            },
+        )
         _fail(f"continuation_{name}_invalid")
     return value
 
@@ -184,7 +205,7 @@ def _position(continuation: BeforeToolDispatchContinuation) -> dict[str, Any]:
         minimum=1, maximum=_MAX_ITERATIONS,
     )
     limit = _counter(
-        continuation.tool_call_limit, "tool_call_limit", minimum=1, maximum=_MAX_TOOL_CALLS,
+        continuation.tool_call_limit, "tool_call_limit", minimum=1, maximum=_MAX_TOOL_CALL_LIMIT,
     )
     consumed = _counter(
         continuation.tool_calls_consumed, "tool_calls_consumed",

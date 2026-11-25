@@ -26,7 +26,7 @@ const QUESTION = { question_ref: 'q_ref_1', stream_id: 'stream_1', call_id: 'cal
 const stream = (m, type, extra = {}) => m.event('chat_stream', { stream_id: 'stream_1', event: { type, ...extra } });
 const click = (m, el) => el.dispatchEvent(new m.window.MouseEvent('click', { bubbles: true, cancelable: true }));
 const liveChip = (m) => m.q('[data-conv-region="live"] .team-turn-chip');
-const pop = (m) => m.q('#teamTurnPop');
+const pop = (m) => m.q('[id$="teamTurnPop"]');
 const snap = (m, over) => m.conv.push({ kind: 'snapshot', session_id: S1, snapshot: snapshot(over) });
 // Past the 100 ms text and reasoning window, then the frame that paints what waited.
 const settle = (m) => { m.advance(100); m.frame(); };
@@ -62,12 +62,12 @@ test('(D1) reasoning deltas with the popover open paint at most once per 100 ms 
 
 test('(D3) the tick draws the popover head and not its body; the questions sync only when the live row or the popover markup changed', async (t) => {
   const m = await openPop(t, { open: { ok: true, snapshot: snapshot({ messages: [] }) } });
-  const scroll = m.q('#teamTurnPop .team-turn-pop__scroll');
+  const scroll = m.q('[id$="teamTurnPop"] .team-turn-pop__scroll');
   const watch = new m.window.MutationObserver(() => {});
   watch.observe(scroll, { childList: true, subtree: true, characterData: true, attributes: true });
   watch.takeRecords();
   m.advance(3000);
-  assert.match(m.q('#teamTurnPop .team-turn-pop__title span').textContent, /3s/, 'the head ticks');
+  assert.match(m.q('[id$="teamTurnPop"] .team-turn-pop__title span').textContent, /3s/, 'the head ticks');
   assert.equal(watch.takeRecords().length, 0, 'the body is left alone');
   watch.disconnect();
 });
@@ -78,7 +78,7 @@ test('(D3) a popover repaint that changes no card does not run the questions syn
   const tl = require('../renderer/team/renderer-team-project-timeline');
   await flush();
   click(m, liveChip(m));
-  assert.ok(m.q('#teamTurnPop .team-conv__question'), 'the card is in the popover');
+  assert.ok(m.q('[id$="teamTurnPop"] .team-conv__question'), 'the card is in the popover');
   const real = tl.lockQuestion;
   let locks = 0;
   tl.lockQuestion = (...args) => { locks += 1; return real(...args); };

@@ -21,8 +21,8 @@ test('the bar stylesheet is imported right after the rail stylesheet', () => {
   assert.ok(rail >= 0 && imports[rail + 1].includes('chat-session-bar.css'));
 });
 
-test('one pane: a 40px row spanning every column, buttons clickable, stage and panels offset by the bar', () => {
-  assert.match(block('.chat-view'), /--session-bar-h:\s*40px;/);
+test('one pane: a 36px row spanning every column, buttons clickable, stage offset by the bar', () => {
+  assert.match(block('.chat-view'), /--session-bar-h:\s*36px;/);
   const bar = block('.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster');
   for (const declaration of [/grid-column:\s*1 \/ -1;/, /grid-row:\s*1;/, /justify-self:\s*stretch;/, /display:\s*flex;/, /flex-direction:\s*row;/, /block-size:\s*var\(--session-bar-h\);/, /margin:\s*0;/, /pointer-events:\s*none;/]) {
     assert.match(bar, declaration);
@@ -31,9 +31,7 @@ test('one pane: a 40px row spanning every column, buttons clickable, stage and p
   assert.match(css, /> \*\s*\{\s*order:\s*80;\s*pointer-events:\s*auto;/, 'buttons keep pointer-events auto');
   const offset = css.match(/(\.chat-view:not\(\[data-pane-count="2"\]\) > :is\([^)]*\)[^{]*)\{\s*margin-block-start:\s*var\(--session-bar-h\);/);
   assert.ok(offset, 'the offset rule exists');
-  for (const name of ['.hero-stage', '.chat-thread-stage', '.chat-context-panel', '.artifact-review-resizer', '.artifact-review-panel:not(.artifact-review-overlay)']) {
-    assert.ok(offset[1].includes(name), `${name} starts below the bar`);
-  }
+  for (const name of ['.hero-stage', '.chat-thread-stage']) assert.ok(offset[1].includes(name), `${name} starts below the bar`);
 });
 
 test('fixed visual order by CSS order, independent of mount order', () => {
@@ -42,13 +40,10 @@ test('fixed visual order by CSS order, independent of mount order', () => {
     assert.ok(match, selectorEnd);
     return Number(match[1]);
   };
-  assert.equal(orderOf('.session-bar-title'), 0);
   assert.equal(orderOf('[data-chat-node="artifactSplitViewToggle"]'), 20);
   assert.equal(orderOf('#chatTimelineTasksToggle'), 30);
   assert.equal(orderOf('#chatTimelineNotesToggle'), 40);
-  assert.equal(orderOf('.session-rail-toggle'), 60);
-  assert.match(block('.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .session-rail-toggle'), /margin-inline-start:\s*var\(--space-4\);/);
-  assert.match(block('.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .session-bar-title'), /flex:\s*1 1 auto;[\s\S]*min-inline-size:\s*0;[\s\S]*font-size:\s*var\(--font-size-footnote\);[\s\S]*color:\s*var\(--text-secondary\);[\s\S]*text-overflow:\s*ellipsis;[\s\S]*white-space:\s*nowrap;/);
+  assert.doesNotMatch(css, /session-bar-title|session-rail-toggle/, 'row 190: no title or rail toggle in the bar');
 });
 
 test('the diff control: order 10, inline-flex text with the space-3 gap, a truncating branch, tabular counts', () => {
@@ -65,10 +60,7 @@ test('the diff control: order 10, inline-flex text with the space-3 gap, a trunc
   assert.doesNotMatch(diffCss, /(?:^|[\s;{])(?:border|background)(?:-[a-z-]+)?\s*:/m, 'no border or fill at rest');
 });
 
-test('the title hides in an empty chat and in a split; the IDE dock and a hosted pane keep the floating column', () => {
-  assert.match(css, /\.chat-view\.chat-empty > \.chat-pane\[data-pane-id="0"\] > \.chat-timeline-utility-cluster > \.session-bar-title,\s*\.chat-view > \.chat-pane\.chat-empty > \.chat-timeline-utility-cluster > \.session-bar-title\s*\{\s*display:\s*none;/);
-  assert.match(block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster > .session-bar-title'), /display:\s*none;/);
-  assert.match(block('.session-bar-title'), /display:\s*none;/, 'outside the bar (dock, hosted pane) there is no title');
+test('the IDE dock keeps the floating column', () => {
   const floating = block('.chat-timeline-utility-cluster');
   assert.match(floating, /flex-direction:\s*column;/);
   assert.match(floating, /justify-self:\s*end;/);
@@ -76,17 +68,12 @@ test('the title hides in an empty chat and in a split; the IDE dock and a hosted
   assert.match(floating, /margin-inline-end:\s*var\(--space-4\);/);
 });
 
-test('split: the kicker row is the bar, with the close glyph pinned to the pane end', () => {
-  const kicker = block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker');
-  assert.match(kicker, /padding-inline-end:\s*var\(--split-bar-reserve,\s*232px\);/); // row 156: +32 for the find toggle
-  assert.match(kicker, /min-block-size:\s*var\(--session-bar-h\);/);
-  const close = block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker > .chat-pane-close');
-  assert.match(close, /position:\s*absolute;/);
-  assert.match(close, /inset-inline-end:\s*var\(--space-4\);/);
+test('split: each pane row sits in row 1 of its column; the branch name is capped', () => {
   const cluster = block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster');
-  for (const declaration of [/grid-column:\s*1;/, /grid-row:\s*1;/, /justify-self:\s*end;/, /align-self:\s*center;/, /block-size:\s*auto;/, /padding-inline:\s*0;/, /margin-inline-end:\s*var\(--split-bar-close-room\);/]) {
-    assert.match(cluster, declaration);
-  }
+  assert.match(cluster, /grid-column:\s*1;/);
+  assert.match(cluster, /grid-row:\s*1;/);
+  assert.match(block('.chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster > .session-bar-diff'), /max-inline-size:\s*140px;/);
+  assert.doesNotMatch(css, /chat-pane-kicker|split-bar-/, 'row 190: the kicker row is gone');
 });
 
 test('the bar styles use logical properties, existing tokens and no side-border accents', () => {

@@ -520,3 +520,48 @@ async fn each_finished_relayed_handshake_gives_its_share_back() {
         "no relayed dial was turned away for want of a slot"
     );
 }
+
+/// Part III transport: outside loopback-only sockets a relay that is `localhost` or an address
+/// literal is `start_invalid` before anything binds, in both modes, and never echoed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_local_relay_is_start_invalid_outside_loopback_only() {
+    let real = jenny_team_bridge::RunOptions::default;
+    for url in [
+        "https://localhost",
+        "https://127.0.0.1:3340",
+        "https://[::1]",
+    ] {
+        for host_mode in [true, false] {
+            let (mut bridge, mut start) = if host_mode {
+                (
+                    Bridge::host_with(real()),
+                    host_start(&random32(), &random32(), 9, host_limits()),
+                )
+            } else {
+                (
+                    Bridge::member_with(real()),
+                    member_start(
+                        &random32(),
+                        &keys().public,
+                        &dead_address(),
+                        &random32(),
+                        member_limits(),
+                    ),
+                )
+            };
+            start["relay"] = relay_field(url, Some(TOKEN));
+            bridge.send(start).await;
+            let error = bridge.expect("error").await;
+            assert_eq!(error["reason"], "start_invalid", "{url}");
+            let (_code, rest) = bridge.finish().await;
+            for line in rest.iter().chain([&error]) {
+                let text = line.to_string();
+                assert!(!text.contains(TOKEN), "token echoed: {text}");
+                assert!(
+                    !text.contains("localhost") && !text.contains("3340"),
+                    "{text}"
+                );
+            }
+        }
+    }
+}

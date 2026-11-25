@@ -436,3 +436,57 @@ test('slice 2b-2: the overview\'s reaction_emoji is kept per team for the picker
   assert.deepEqual(h.chat.emoji(TEAM), ['👍', '🎉'], 'a copy');
   assert.equal(h.chat.emoji('team_nobody'), null);
 });
+
+// C9.1: a `reset` push replaces the window, so a page asked for before it describes a window that is gone.
+test('C9.1: an older page that lands after a reset push is dropped, and live delivery goes on', async (t) => {
+  const gate = heldAnswers();
+  const h = open({ answers: { chatOverview: overview({ channels: [chatChannel({ last_seq: 4 })] }),
+    chatHistory: (p) => (p.before_seq ? gate.answer(p) : { ok: true, messages: [message(3), message(4)], has_more: true }) } });
+  t.after(h.restore);
+  h.chat.sync([snapshot()]);
+  await flush();
+  await h.chat.openChannel(TEAM, CHAN);
+  const older = h.chat.loadOlder(TEAM, CHAN);
+  push(h, { team_id: TEAM, type: 'messages', channel_id: CHAN, reset: true, messages: [message(10), message(11)] });
+  gate.release({ ok: true, messages: [message(1), message(2)], has_more: false, floor_seq: 1 });
+  await older;
+  assert.deepEqual(seqs(h), [10, 11], 'rows from before the reset are not put in front of the new window');
+  push(h, { team_id: TEAM, type: 'messages', channel_id: CHAN, reset: false, messages: [message(12)] });
+  assert.deepEqual(seqs(h), [10, 11, 12], 'a live message after the reset is still drawn');
+});
+
+test('C9.1: a newer page that lands after a reset push cannot turn live delivery off', async (t) => {
+  const gate = heldAnswers();
+  const range = (from, to) => Array.from({ length: to - from + 1 }, (_v, i) => message(from + i));
+  const h = open({ answers: { chatOverview: overview({ channels: [chatChannel({ last_seq: 100 })] }),
+    chatHistory: (p) => (p.before_seq === 121 ? gate.answer(p) : { ok: true, messages: range(1, 70), has_more: false }) } });
+  t.after(h.restore);
+  h.chat.sync([snapshot()]);
+  await flush();
+  await h.chat.openChannel(TEAM, CHAN, 20);
+  assert.equal(h.chat.timeline(TEAM, CHAN).hasNewer, true, 'a jump leaves the newest unloaded');
+  const newer = h.chat.loadNewer(TEAM, CHAN);
+  push(h, { team_id: TEAM, type: 'messages', channel_id: CHAN, reset: true, messages: [message(99), message(100)] });
+  push(h, { team_id: TEAM, type: 'messages', channel_id: CHAN, reset: false, messages: [message(101)] });
+  push(h, { team_id: TEAM, type: 'channels', partial: true, channels: [chatChannel({ last_seq: 101 })] });
+  gate.release({ ok: true, messages: range(71, 75), has_more: true });
+  await newer;
+  assert.deepEqual(seqs(h), [99, 100, 101]);
+  assert.equal(h.chat.timeline(TEAM, CHAN).hasNewer, false, 'the reset window holds the newest');
+  push(h, { team_id: TEAM, type: 'messages', channel_id: CHAN, reset: false, messages: [message(102)] });
+  assert.deepEqual(seqs(h), [99, 100, 101, 102], 'live delivery continues');
+});
+
+test('C9.1: a reset that lands while the channel is being opened is the window; the late answer does not undo it', async (t) => {
+  const gate = heldAnswers();
+  const h = open({ answers: { chatOverview: overview({ channels: [chatChannel({ last_seq: 12 })] }), chatHistory: (p) => gate.answer(p) } });
+  t.after(h.restore);
+  h.chat.sync([snapshot()]);
+  await flush();
+  const opening = h.chat.openChannel(TEAM, CHAN);
+  push(h, { team_id: TEAM, type: 'messages', channel_id: CHAN, reset: true, messages: [message(11), message(12)] });
+  gate.release({ ok: true, messages: [message(1), message(2)], has_more: false });
+  await opening;
+  assert.deepEqual(seqs(h), [11, 12]);
+  assert.equal(h.chat.timeline(TEAM, CHAN).loaded, true, 'the reset window is a loaded one');
+});

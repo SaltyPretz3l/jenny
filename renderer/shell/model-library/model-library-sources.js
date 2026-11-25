@@ -53,7 +53,7 @@
       var id = String(model.id || '').trim();
       if (!id) return null;
       var size = Number(model.size);
-      return {
+      var row = {
         id: id,
         size: Number.isFinite(size) && size > 0 ? size : 0,
         engine_type: String(model.engine_type || model.engineType || '').trim().toLowerCase(),
@@ -63,6 +63,13 @@
         quantizationLevel: String(model.quantizationLevel || model.quantization_level || '').trim(),
         digest: String(model.digest || '').trim(),
       };
+      // Row 201 C1: a team model row (a teammate's GPU) keeps its team, which the library lists apart.
+      if (typeof model.team_id === 'string' && model.team_id.trim()) {
+        row.team_id = model.team_id.trim();
+        row.team_name = String(model.team_name || '').trim();
+        if (Number.isSafeInteger(model.context_length) && model.context_length > 0) row.context_length = model.context_length;
+      }
+      return row;
     }).filter(Boolean);
   }
 

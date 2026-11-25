@@ -189,6 +189,10 @@ test('main.js passes every null-defaulting getter that registerMainIpcHandlers r
   const callStart = mainSource.indexOf('registerMainIpcHandlers({');
   const call = mainSource.slice(callStart, mainSource.indexOf('\n});', callStart));
   const passed = new Set(Array.from(call.matchAll(/^\s*(\w+)\s*[,:]/gm), (match) => match[1]));
+  // The managed-server getters arrive through one spread (main.js hotspot cap).
+  if (call.includes("...require('./services/main/managed-server-getters')")) {
+    for (const name of Object.keys(require('../services/main/managed-server-getters')(() => ({})))) passed.add(name);
+  }
   const missing = nullDefaults.filter((name) => !passed.has(name));
   assert.deepEqual(missing, []);
 });

@@ -479,25 +479,32 @@
     if (!models.length || provenance.some((item) => !String(item.model_used || '').trim())) {
       models.push(jt('chat.footer.modelUnknown', 'Model unknown'));
     }
-    return { prefix, succeeded, terminalTime, formattedTime, models: models.join(', ') };
+    return { prefix, succeeded, terminalTime, formattedTime, models: models.join(', '), duration: formatTurnDuration(turnMessages || [message], terminalTime) };
+  }
+
+  // Row 192: time taken, first assistant message to terminal time, in the steps heading's format.
+  function formatTurnDuration(messages, terminalTime) {
+    const elapsed = Date.parse(terminalTime) - Math.min(...messages.map((item) => Date.parse(item?.timestamp)).filter(Number.isFinite));
+    const utils = globalThis.toolCallUtils || (typeof require === 'function' ? require('./tool-call-utils') : null);
+    return elapsed > 0 ? utils?.formatToolRunDuration?.(elapsed) || '' : '';
   }
 
   function buildAssistantMetaLabel(message, formatTime, turnMessages, turn) {
     const parts = resolveAssistantMetaParts(message, formatTime, turnMessages, turn);
     if (!parts) return '';
-    const { prefix, terminalTime, formattedTime, models } = parts;
+    const { prefix, terminalTime, formattedTime, models, duration } = parts;
     const base = formattedTime
       ? `${prefix}${terminalTime ? '' : ' · ' + jt('chat.footer.messageTime', 'message time')} ${formattedTime}`
       : `${prefix} · ${jt('chat.footer.timeUnknown', 'time unknown')}`;
-    return `${base} · ${models}`;
+    return `${base} · ${models}${duration ? ' · ' + jt('chat.footer.tookDuration', 'took {duration}', { duration }) : ''}`;
   }
 
-  // The hover row's line, "3:41 PM · model": no "Completed", other statuses lead.
-  function buildShortAssistantMetaLabel(message, formatTime, turnMessages, turn) {
+  // Row 192 details line: "model · time taken · tokens · clock time"; a status other than Completed leads.
+  function buildShortAssistantMetaLabel(message, formatTime, turnMessages, turn, tokensLabel) {
     const parts = resolveAssistantMetaParts(message, formatTime, turnMessages, turn);
     if (!parts) return '';
-    const lead = [parts.succeeded ? '' : parts.prefix, parts.formattedTime].filter(Boolean).join(' ');
-    return [lead, parts.models].filter(Boolean).join(' · ');
+    return [parts.succeeded ? '' : parts.prefix, parts.models, parts.duration, tokensLabel, parts.formattedTime]
+      .filter(Boolean).join(' · ');
   }
 
   return {

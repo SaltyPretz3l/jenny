@@ -4,12 +4,14 @@
 // files a project, 8 GiB over every project, and the disk reserve on the staging and projects roots. Checked at
 // begin and again at commit, both on the host's one project chain, so no install runs during a measure.
 //
-// - The byte measure (project-folder-io.js `measure`) is held per project. The first check after a start
-//   measures every active project the member store lists once; after that a check measures its own project
-//   again when its measure is missing, failed, capped or ten minutes old (not when that first pass just did it),
-//   and any other project only when it has none. An install adds its bytes and files to the held measure.
-// - A project whose walk fails or stops at the entry cap is full: it refuses only its own begins, counts as the
-//   project byte limit in the all-projects total, and is measured again only at its own next check.
+// - The byte measure (project-folder-io.js `measure`) is held per project. A check measures its own project when
+//   its measure is missing, failed, capped or ten minutes old, and every other active project the member store
+//   lists when it has none (so a project made after the start counts from its first check), when its walk failed
+//   a minute ago or more, or when its measure is an hour old (not what that check just measured). An install adds
+//   its bytes and files to the held measure.
+// - A project whose walk fails or stops at the entry cap is full: it refuses only its own begins and counts as the
+//   project byte limit in the all-projects total. A capped one is measured again only at its own next check; a
+//   failed walk (a root that could not be read) is tried again after a minute at any check.
 // - Install folders a stopped install left are swept before a measure.
 // - Open uploads count their declared bytes and files against their project and the total until they finish.
 
@@ -18,6 +20,9 @@ const { createDiskAdmission } = require('../resource-limits');
 const { GENERAL_PROJECT_ID } = require('./member-schema');
 
 const MEASURE_AGE_MS = 10 * 60 * 1000;
+// Another project's measure counts in the total: refreshed when this old, and a failed walk sooner.
+const OTHER_AGE_MS = 60 * 60 * 1000;
+const FAILED_RETRY_MS = 60 * 1000;
 
 const quotaFull = () => hostFailure('limit', 'team_project_quota');
 
@@ -28,15 +33,14 @@ const quotaFull = () => hostFailure('limit', 'team_project_quota');
  */
 function createProjectQuota({ folders, store, limits, openUploads, held, roots = [], statfs, clock, log }) {
   const measures = new Map();
-  let measuredAll = false;
   let diskExtra = 0;
   const admitDisk = createDiskAdmission(roots, { ...(statfs ? { statfs } : {}), logger: log, extraBytes: () => diskExtra });
 
   async function measureOne(projectId) {
     const result = await folders.measure(projectId);
     const value = result.ok && !result.capped
-      ? { bytes: result.bytes, files: result.files, full: false, at: clock() }
-      : { bytes: limits.projectBytes, files: 0, full: true, at: clock() };
+      ? { bytes: result.bytes, files: result.files, full: false, failed: false, at: clock() }
+      : { bytes: limits.projectBytes, files: 0, full: true, failed: !result.ok, at: clock() };
     measures.set(projectId, value);
     return value;
   }
@@ -50,17 +54,21 @@ function createProjectQuota({ folders, store, limits, openUploads, held, roots =
     }
   }
 
+  // Another project's held measure is missing, or too old to trust in the total.
+  function staleElsewhere(value) {
+    if (!value) return true;
+    const age = clock() - value.at;
+    return age >= OTHER_AGE_MS || (value.failed && age >= FAILED_RETRY_MS);
+  }
+
   // The held measures, brought up to date for a check on `projectId`; the set of projects measured just now.
   async function refresh(projectId) {
     await folders.sweepInstalls();
     const done = new Set();
-    if (!measuredAll) {
-      for (const id of activeProjects()) {
-        if (measures.has(id)) continue;
-        await measureOne(id);
-        done.add(id);
-      }
-      measuredAll = true;
+    for (const id of activeProjects()) {
+      if (!staleElsewhere(measures.get(id))) continue;
+      await measureOne(id);
+      done.add(id);
     }
     const own = measures.get(projectId);
     if (!done.has(projectId) && (!own || own.full || clock() - own.at >= MEASURE_AGE_MS)) {

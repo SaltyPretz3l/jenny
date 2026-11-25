@@ -22,7 +22,14 @@
 // one stops before its claim numbers come within a quarter margin of the mark on disk.
 // A saved mark of 0 means the sharer's notice was never confirmed for the team, so the first switch
 // on asks for it (`team_share_confirm_needed`); confirming saves a mark of at least 1.
-// Nothing else is saved: no prompt, reply, job, URL or key.
+// Nothing else is saved: no prompt, reply, job, URL or key; and, once the sharer chose them, the names of the
+// Ollama models this PC shares (`ollama_models`; absent means the default share set, share-set.js).
+//
+// The engine (row 201): it is the configured local engine whatever the owner's chat runs on (local-engine.js), so a
+// cloud or team chat leaves an idle local GPU registered; busy_own shows only while a chat that can use the local
+// engine runs. While idle the agent's offer is read again every REFRESH_MS (`/v1/models` and the capabilities) and the
+// agent restarts, through stop and a new register, only when the offer changed. A switch or stop of the local engine
+// while requests run pauses the agent (no new claim) until they end, then it registers against the new engine.
 //
 // Lifecycle: sharing starts when its team is online and active, resumes at the next launch when
 // it was on, and ends when the team is left, removed or revoked, when its connection ends for
@@ -34,11 +41,12 @@
 
 const http = require('node:http');
 
-const { FINAL_REASONS, createEngineClient } = require('./engine-forward');
+const { FINAL_REASONS, checkEngineUrl, createEngineClient, readModels } = require('./engine-forward');
 const { createNodeAgent } = require('./node-agent');
 const { createTeamLink } = require('./team-link');
-const { readModelCapabilities, resolveLocalEngine } = require('./local-engine');
-const { loadSharing, saveSharing } = require('./sharing-file');
+const { ownInferenceUsesLocalEngine, readModelCapabilities, resolveLocalEngine } = require('./local-engine');
+const { createOllamaShareSet, createShareClient, modelSignature } = require('./share-set');
+const { cleanShareSet, loadSharing, saveSharing } = require('./sharing-file');
 
 const LOOK_MS = 1000;
 const STOP_BOUND_MS = 12_000; // the agent's own stop: running jobs' fails (5 s), then unregister (5 s)
@@ -47,6 +55,8 @@ const SAVE_RETRY_START_MS = 1000;
 const SAVE_RETRY_MAX_MS = 60_000;
 const MARK_BLOCK = 10_000;
 const MARK_MARGIN = 2_000;
+const REFRESH_MS = 45_000; // how often an idle offer is read again (30 to 60 s)
+const CAPABILITIES_BOUND_MS = 3_000;
 const ENDED = new Set(['revoked', 'update_required']);
 const ENGINE_REASONS = new Set(['engine_unreachable', 'engine_error', 'engine_no_models', 'node_engine_not_local']);
 
@@ -59,14 +69,19 @@ function keyedRequest(key) {
   return (options, ...rest) => http.request({ ...options, headers: { ...options.headers, Authorization: `Bearer ${key}` } }, ...rest);
 }
 
+// The capabilities of the engine that is shared: Ollama's list or the openai-compatible one (a cloud chat's own engine is not it).
+const defaultReadCapabilities = (backend, forEngine) => readModelCapabilities(backend, undefined, forEngine);
+const capabilitiesEngine = (engine) => (engine.kind === 'Ollama' ? 'ollama' : 'openai-compatible');
+
 function createTeamSharing({
   userDataPath, getBackend = () => null, isBusy = () => false, log = () => {}, now = Date.now,
   timers = { setTimeout, clearTimeout }, createAgent = createNodeAgent, resolveEngine = resolveLocalEngine,
-  readCapabilities = readModelCapabilities, load = loadSharing, save = saveSharing, markBlock = MARK_BLOCK, markMargin = MARK_MARGIN,
+  readCapabilities = defaultReadCapabilities, load = loadSharing, save = saveSharing, markBlock = MARK_BLOCK, markMargin = MARK_MARGIN,
 } = {}) {
   const managers = new Map(); // team id -> connection manager
-  let wanted = null; // the team whose setting is on: { teamId, mark (the mark on disk) }
-  let active = null; // { teamId, agent, engine: { url, kind, key }, since, after }
+  let wanted = null; // the team whose setting is on: { teamId, mark (the mark on disk), ollamaModels (the chosen share set or null) }
+  // { teamId, agent, engine: { url, kind, key }, since, after, client, draining, probing, probedAt, baseline, probeAbort }
+  let active = null;
   let failedUrl = null; // an engine URL the agent refused as not local: not tried again until it changes
   let seenEngine = null; // the engine the last look resolved
   let lookTimer = null;
@@ -116,6 +131,23 @@ function createTeamSharing({
     return engine && typeof engine.url === 'string' && engine.url ? engine : null;
   }
 
+  // The owner's own work for the agent: a chat stream that cannot be using this PC's engine (cloud, a team model) is not it.
+  function ownBusy() {
+    const streaming = isBusy();
+    return streaming === false ? false : ownInferenceUsesLocalEngine(getBackend());
+  }
+
+  // The Ollama share set (share-set.js): the sharer's choice, else the owner's current Ollama model, else the loaded ones.
+  function engineClientFor(engine) {
+    const base = createEngineClient({ request: engine.key ? keyedRequest(engine.key) : http.request });
+    if (engine.kind !== 'Ollama') return base;
+    const current = () => {
+      const backend = getBackend();
+      return backend && String(backend.currentEngineType || '').trim().toLowerCase() === 'ollama' ? String(backend.currentModel || '') : '';
+    };
+    return createShareClient({ base, allowed: createOllamaShareSet({ base, chosen: () => wanted?.ollamaModels ?? null, current }) });
+  }
+
   function rowOf(teamId) {
     try { return managers.get(teamId)?.snapshot() || null; } catch { return null; }
   }
@@ -163,14 +195,16 @@ function createTeamSharing({
     const floor = Math.max(Math.trunc(Number(now()) || 0), wanted.mark);
     if (!persist(teamId, true, floor + markBlock)) return;
     wanted.mark = floor + markBlock;
+    const client = engineClientFor(engine);
     const agent = createAgent({
-      link: createTeamLink(managers.get(teamId)), resolveEngineUrl: () => engine.url, isBusy, seqFloor: floor,
-      engine: createEngineClient({ request: engine.key ? keyedRequest(engine.key) : http.request }),
+      link: createTeamLink(managers.get(teamId)), resolveEngineUrl: () => engine.url, isBusy: ownBusy, seqFloor: floor,
+      engine: client,
       engineInfo: { kind: engine.kind === 'local' ? 'openai-compatible' : engine.kind, version: 'unknown' },
       logger: (level, event, fields) => say(level, event, { team_id: teamId, ...fields }),
-      readCapabilities: () => readCapabilities(getBackend()),
+      readCapabilities: () => readCapabilities(getBackend(), capabilitiesEngine(engine)),
     });
-    active = { teamId, agent, engine, since: null, after: false };
+    active = { teamId, agent, engine, since: null, after: false, client, draining: false, probing: false, probedAt: 0,
+      baseline: null, probeAbort: new AbortController() };
     say('INFO', 'team.sharing.started', { team_id: teamId, engine: engine.kind === 'local' ? 'local' : engine.kind });
     void Promise.resolve(agent.start()).then((answer) => {
       if (active?.agent === agent && answer?.reason === 'node_engine_not_local') failedUrl = engine.url;
@@ -183,6 +217,7 @@ function createTeamSharing({
     const current = active;
     if (!current) return Promise.resolve();
     active = null;
+    current.probeAbort.abort();
     let done;
     if (how === 'dispose') {
       current.agent.dispose();
@@ -241,6 +276,54 @@ function createTeamSharing({
     }
     const moved = !engine || engine.url !== active.engine.url || engine.key !== active.engine.key;
     if (moved && status.jobs === 0) void end('stop');
+    else if (moved) drain();
+    else if (status.state === 'idle' && status.jobs === 0) refresh();
+  }
+
+  // H14: the engine this agent forwards to is gone or another one while requests run: nothing new is claimed (a claim made
+  // at the end of the last request would run against the old engine) until they end; then the agent stops and a new one registers.
+  function drain() {
+    if (active.draining) return;
+    active.draining = true;
+    say('INFO', 'team.sharing.draining', { team_id: active.teamId });
+    void Promise.resolve(active.agent.pause({ on: true })).catch(() => {});
+  }
+
+  // What the engine offers now: the names, and a text that changes when a name, a context length or a capability does.
+  async function survey(current) {
+    const target = checkEngineUrl(current.engine.url);
+    if (!target.ok) return null;
+    const read = await readModels({ engine: current.client, target, timers, signal: current.probeAbort.signal });
+    if (!read.ok) return null;
+    let bound = null;
+    const capabilities = await Promise.race([
+      Promise.resolve().then(() => readCapabilities(getBackend(), capabilitiesEngine(current.engine))).catch(() => null),
+      new Promise((resolve) => { bound = timers.setTimeout(() => resolve(null), CAPABILITIES_BOUND_MS); bound?.unref?.(); })]);
+    timers.clearTimeout(bound);
+    return { names: read.models.map((entry) => entry.name).sort(), signature: modelSignature(read.models, capabilities) };
+  }
+
+  // OD-4: while idle, the offer is read again every REFRESH_MS. The first read after a register is the baseline (its names
+  // are checked against what the register sent); a later read that differs ends the agent, and the next one registers the new offer.
+  function refresh() {
+    const current = active;
+    if (current.probing || now() - current.probedAt < REFRESH_MS) return;
+    current.probing = true;
+    current.probedAt = now();
+    void survey(current).then((found) => {
+      current.probing = false;
+      if (active !== current || !found) return;
+      const status = current.agent.status();
+      if (status.state !== 'idle' || status.jobs > 0) { current.probedAt = 0; return; }
+      const offered = [...status.models].sort();
+      const changed = JSON.stringify(offered) !== JSON.stringify(found.names)
+        || (current.baseline !== null && current.baseline !== found.signature);
+      current.baseline = found.signature;
+      if (changed) {
+        say('INFO', 'team.sharing.offer_changed', { team_id: current.teamId, models: found.names.length });
+        void end('stop');
+      }
+    }, () => { current.probing = false; });
   }
 
   function look() {
@@ -268,7 +351,7 @@ function createTeamSharing({
     checked.add(teamId);
     const saved = loaded(teamId);
     if (!saved?.ok || !saved.on) return;
-    if (!wanted) { wanted = { teamId, mark: saved.claim_seq }; return; }
+    if (!wanted) { wanted = { teamId, mark: saved.claim_seq, ollamaModels: saved.ollama_models ?? null }; return; }
     persist(teamId, false, saved.claim_seq);
     say('INFO', 'team.sharing.second_team_off', { team_id: teamId });
   }
@@ -318,7 +401,7 @@ function createTeamSharing({
         // A mark of at least 1 records that the notice was confirmed (it is only ever a floor for claim numbers).
         const mark = Math.max(saved.claim_seq, 1);
         if (!persist(teamId, true, mark)) return refusal('team_client_write_failed');
-        wanted = { teamId, mark };
+        wanted = { teamId, mark, ollamaModels: saved.ollama_models ?? null };
         checked.add(teamId);
       }
       look();
@@ -340,10 +423,35 @@ function createTeamSharing({
   // Pause keeps the hardware registered (the team sees it paused) and lets a running request finish;
   // with `stopRunning` (the page's "Stop now" beside Pause, the spec's "Stop sharing now") it ends it at once.
   async function pause(teamId, on, stopRunning = false) {
-    if (!active || active.teamId !== teamId || active.after) return refusal('node_agent_state');
+    if (!active || active.teamId !== teamId || active.after || active.draining) return refusal('node_agent_state');
     const answer = await active.agent.pause(on && stopRunning ? { on: true, stopRunning: true } : { on });
     tell();
     return answer?.ok ? { ok: true, sharing: stateOf() } : refusal(answer?.reason || 'node_agent_state');
+  }
+
+  // OD-4: the Ollama models this PC shares for the team (a list of names; null returns to the default share set), saved and
+  // applied at the next read of the offer (within the refresh interval at the latest; a running request is never cut).
+  function setOllamaModels(teamId, names) {
+    if (stopped) return refusal('team_connection_stopped');
+    if (!managers.has(teamId)) return refusal('team_not_found');
+    const next = names === null ? null : cleanShareSet(names);
+    if (names !== null && next === null) return refusal('team_sharing_invalid');
+    const saved = wanted?.teamId === teamId ? { ok: true, on: true, claim_seq: wanted.mark } : loaded(teamId);
+    if (!saved?.ok) return refusal(saved?.reason || 'team_sharing_invalid');
+    let answer;
+    try { answer = save(userDataPath, teamId, { on: saved.on, claim_seq: saved.claim_seq, ollama_models: next }); } catch { answer = null; }
+    if (answer?.ok !== true) return refusal(answer?.reason || 'team_client_write_failed');
+    if (wanted?.teamId === teamId) wanted.ollamaModels = next;
+    if (active?.teamId === teamId) active.probedAt = 0;
+    look();
+    return { ok: true, ollama_models: next };
+  }
+
+  // The chosen Ollama share set of a team, or null (the default).
+  function ollamaModels(teamId) {
+    if (wanted?.teamId === teamId) return wanted.ollamaModels;
+    const saved = managers.has(teamId) ? loaded(teamId) : null;
+    return saved?.ok && Array.isArray(saved.ollama_models) ? saved.ollama_models : null;
   }
 
   // The team is forgotten (left or removed) or its manager stopped: sharing ends without a word to the host.
@@ -371,7 +479,7 @@ function createTeamSharing({
 
   return {
     attach({ onChange: next }) { if (typeof next === 'function') onChange = next; },
-    connectionChanged, drop, set, pause, stopNow: stopSharing, stopAll,
+    connectionChanged, drop, set, pause, stopNow: stopSharing, stopAll, setOllamaModels, ollamaModels,
     snapshot() { try { return stateOf(); } catch { return null; } },
     resources: () => ({ agents: active ? 1 : 0, timers: (lookTimer === null ? 0 : 1) + (saves.timer === null ? 0 : 1),
       ending: ending.size, agent: active ? active.agent.resources() : null }),

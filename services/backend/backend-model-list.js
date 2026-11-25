@@ -17,6 +17,7 @@ const {
 } = require('./api-provider-runtime');
 const { teamCatalogKey, teamModelEntries } = require('./team-engine-models');
 const { ninferModelEntries } = require('./ninfer-model-entries');
+const { strataModelEntries } = require('./strata-load-path');
 const { resolveManagedServerOwner } = require('./managed-server-owner');
 const { resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config-model');
 
@@ -89,7 +90,7 @@ function normalizeModelListEntry(entry) {
   if (typeof entry.digest === 'string' && entry.digest.trim()) {
     normalized.digest = entry.digest.trim().slice(0, 128);
   }
-  if (entry.managed === 'ninfer' || entry.managed === 'llama-server') normalized.managed = entry.managed;
+  if (['ninfer', 'llama-server', 'strata'].includes(entry.managed)) normalized.managed = entry.managed;
   return normalized;
 }
 
@@ -247,9 +248,9 @@ function listModels(service) {
       }
     }
     // A downloaded NInfer model is listed while its server is stopped (a running one listed its own row).
-    const ninferRows = await ninferModelEntries(service);
-    if (ninferRows.length > 0) {
-      data = mergeModelListEntries(data, ninferRows);
+    const managedRows = [...await ninferModelEntries(service), ...strataModelEntries(service)];
+    if (managedRows.length > 0) {
+      data = mergeModelListEntries(data, managedRows);
       available = true;
     }
     // Cloud models (stage 2): signed-in ChatGPT models sit next to the local

@@ -6,8 +6,7 @@ const assert = require('node:assert/strict');
 const {
   normalizeAgentStatusEvent,
   normalizeAgentProgressNotification,
-  agentExecutorLifecycleEnabled,
-  isAgentStatusSurfaceEnabled,
+  isDelegateChildProgress,
   coordinateWorkLifecycle,
   mirrorAgentStatusToActiveTurn,
 } = require('../services/backend/work-lifecycle-coordinator');
@@ -247,36 +246,21 @@ test('normalizeAgentProgressNotification preserves bounded subagent monitor tele
 });
 
 // ---------------------------------------------------------------------------
-// agentExecutorLifecycleEnabled / isAgentStatusSurfaceEnabled
+// isDelegateChildProgress
 // ---------------------------------------------------------------------------
 
-test('agentExecutorLifecycleEnabled returns true when featureFlags.agent_executor===true', () => {
-  assert.equal(agentExecutorLifecycleEnabled({ featureFlags: { agent_executor: true } }), true);
+test('isDelegateChildProgress is false for no event and for an event that is not delegate child progress', () => {
+  assert.equal(isDelegateChildProgress(undefined), false);
+  assert.equal(isDelegateChildProgress(null), false);
+  assert.equal(isDelegateChildProgress({ taskType: 'coder', source: 'local_agent' }), false);
 });
 
-test('agentExecutorLifecycleEnabled returns false when featureFlags is empty', () => {
-  assert.equal(agentExecutorLifecycleEnabled({ featureFlags: {} }), false);
-});
-
-test('agentExecutorLifecycleEnabled returns false when service is undefined', () => {
-  assert.equal(agentExecutorLifecycleEnabled(undefined), false);
-});
-
-test('isAgentStatusSurfaceEnabled returns true when featureFlags.agent_executor===true', () => {
-  assert.equal(isAgentStatusSurfaceEnabled({ featureFlags: { agent_executor: true } }), true);
-});
-
-test('isAgentStatusSurfaceEnabled returns false when featureFlags is empty', () => {
-  assert.equal(isAgentStatusSurfaceEnabled({ featureFlags: {} }), false);
-});
-
-test('isAgentStatusSurfaceEnabled passes delegate child progress without the agent_executor flag', () => {
-  const service = { featureFlags: {} };
+test('isDelegateChildProgress passes delegate child progress', () => {
   for (const source of ['delegate', 'subagent_run', 'subagent_batch']) {
-    assert.equal(isAgentStatusSurfaceEnabled(service, { taskType: 'sub_agent', source }), true, source);
+    assert.equal(isDelegateChildProgress({ taskType: 'sub_agent', source }), true, source);
   }
-  assert.equal(isAgentStatusSurfaceEnabled(service, { taskType: 'build', source: 'delegate' }), false);
-  assert.equal(isAgentStatusSurfaceEnabled(service, { taskType: 'sub_agent', source: 'local_agent' }), false);
+  assert.equal(isDelegateChildProgress({ taskType: 'build', source: 'delegate' }), false);
+  assert.equal(isDelegateChildProgress({ taskType: 'sub_agent', source: 'local_agent' }), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -284,37 +268,33 @@ test('isAgentStatusSurfaceEnabled passes delegate child progress without the age
 // ---------------------------------------------------------------------------
 
 test('coordinateWorkLifecycle returns null when event is null', () => {
-  const service = { featureFlags: { agent_executor: true } };
   const calls = [];
   const adapter = makeAdapter(calls);
-  assert.equal(coordinateWorkLifecycle(service, adapter, null), null);
+  assert.equal(coordinateWorkLifecycle(adapter, null), null);
 });
 
-test('coordinateWorkLifecycle returns null when flag is OFF even with a valid event', () => {
-  const service = { featureFlags: {} };
+test('coordinateWorkLifecycle returns null for a valid event that is not delegate child progress', () => {
   const calls = [];
   const adapter = makeAdapter(calls);
   const event = normalizeAgentStatusEvent(validInput());
   assert.notEqual(event, null);
-  assert.equal(coordinateWorkLifecycle(service, adapter, event), null);
+  assert.equal(coordinateWorkLifecycle(adapter, event), null);
 });
 
-test('coordinateWorkLifecycle returns the same event object when flag is ON', () => {
-  const service = { featureFlags: { agent_executor: true } };
+test('coordinateWorkLifecycle returns the same event object for delegate child progress', () => {
   const calls = [];
   const adapter = makeAdapter(calls);
-  const event = normalizeAgentStatusEvent(validInput());
+  const event = normalizeAgentStatusEvent(validInput({ taskType: 'sub_agent', source: 'delegate' }));
   assert.notEqual(event, null);
-  const result = coordinateWorkLifecycle(service, adapter, event);
+  const result = coordinateWorkLifecycle(adapter, event);
   assert.equal(result, event);
 });
 
-test('coordinateWorkLifecycle with flag ON invokes touchActiveTurn on the adapter', () => {
-  const service = { featureFlags: { agent_executor: true } };
+test('coordinateWorkLifecycle for delegate child progress invokes touchActiveTurn on the adapter', () => {
   const calls = [];
   const adapter = makeAdapter(calls);
-  const event = normalizeAgentStatusEvent(validInput());
-  coordinateWorkLifecycle(service, adapter, event);
+  const event = normalizeAgentStatusEvent(validInput({ taskType: 'sub_agent', source: 'delegate' }));
+  coordinateWorkLifecycle(adapter, event);
   assert.equal(calls.length, 1, 'coordinateWorkLifecycle invokes touchActiveTurn exactly once');
 });
 

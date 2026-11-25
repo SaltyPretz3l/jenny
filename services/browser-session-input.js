@@ -14,6 +14,7 @@ const {
   PRESS_KEY_CODES,
   boundedPositiveInt,
   normalizePressKey,
+  pressKeyTypesChar,
   normalizeSelector,
 } = require('./browser-interaction-utils');
 
@@ -223,7 +224,7 @@ async function pressKey(service, session, signal, options) {
       return notReadyResult(service, session, focused, { selector, key });
     }
   }
-  await sendKeyPress(service, session, signal, PRESS_KEY_CODES[key], { withChar: key === 'Enter' || key === 'Space' });
+  await sendKeyPress(service, session, signal, PRESS_KEY_CODES[key], { withChar: pressKeyTypesChar(key) });
   return service._browserActionResult(session, 'pressed', { selector, key });
 }
 

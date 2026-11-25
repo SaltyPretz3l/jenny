@@ -44,7 +44,7 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'complete_session_handoff',
   'session_message', 'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'session_prioritize', 'jenny_help',
   'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'project_create', 'projects_list', 'app_view', 'schedule_list', 'schedule_change', 'away_digest',
-  'session_export', 'terminal_read', 'terminal_run', 'browser',
+  'session_export', 'terminal_read', 'terminal_run', 'browser', 'run_view_look', 'run_view_restart', 'computer',
 ]);
 
 function normalizeBridgeArguments(value) {
@@ -531,7 +531,9 @@ async function executeElectronToolRequest(
   });
   const metadata = sanitizeBridgeMetadata(rawMetadata);
   // preview_test screenshots and image_generate pictures reach a vision chat model.
-  const carriesPreviewImage = toolName === 'image_generate' || (toolName === 'browser' && input.action === 'screenshot')
+  // Row 196: a computer step carries the window's picture when it has one.
+  const carriesPreviewImage = toolName === 'image_generate' || toolName === 'run_view_look' || toolName === 'computer'
+    || (toolName === 'browser' && (input.action === 'screenshot' || input.action === 'wait'))
     || (toolName === 'preview_test' && input.screenshot === true);
 
   return {

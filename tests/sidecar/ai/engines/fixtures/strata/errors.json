@@ -1,0 +1,76 @@
+{
+ "_note": "Recorded 2026-11-24 from Strata v0.2.21 unless an entry says source: synthetic (see README.md).",
+ "model_not_found": {
+  "status": 404,
+  "source": "recorded",
+  "body": {
+   "error": {
+    "message": "The model 'inkling-2-mini-sq-15' is not loaded; currently serving 'inkling-2-mini-sq-20'",
+    "type": "invalid_request_error",
+    "param": "model",
+    "code": "model_not_found"
+   }
+  }
+ },
+ "context_overflow": {
+  "status": 400,
+  "source": "recorded",
+  "body": {
+   "error": {
+    "type": "invalid_request_error",
+    "message": "request exceeds the context window: prompt (80016 tokens) leaves no room to answer in the context (49152); requests are never truncated"
+   }
+  }
+ },
+ "logprobs": {
+  "status": 400,
+  "source": "recorded",
+  "body": {
+   "error": {
+    "type": "invalid_request_error",
+    "message": "logprobs: not supported by the Inkling-2-Mini engine"
+   }
+  }
+ },
+ "structured_output_failed": {
+  "status": 502,
+  "body": {
+   "error": {
+    "type": "structured_output_failed",
+    "code": "structured_output_failed",
+    "message": "model did not return valid JSON: Expecting value: line 1 column 1 (char 0)"
+   }
+  },
+  "source": "synthetic"
+ },
+ "admission_full": {
+  "status": 429,
+  "source": "recorded",
+  "body": {
+   "error": {
+    "type": "rate_limit_error",
+    "code": "admission_full",
+    "message": "the inference admission limit is full; retry later"
+   }
+  }
+ },
+ "engine_starting": {
+  "status": 503,
+  "body": {
+   "error": {
+    "type": "server_error",
+    "message": "the engine is starting (a minute or two); try again shortly"
+   }
+  },
+  "source": "synthetic"
+ },
+ "props_not_running": {
+  "status": 503,
+  "source": "recorded",
+  "body": {
+   "error": {
+    "message": "the engine is not running"
+   }
+  }
+ }
+}

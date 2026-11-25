@@ -41,6 +41,9 @@
 // the check after the second redeem may meet that cooldown: once the host has answered a redeem, a refusal inside the
 // window is waited out once (abort() and cancel() cut the wait) and the device key checked again. A recovery whose
 // wait the app's quit cuts keeps the answered redeem, so the owner is never left without the key the host now holds.
+// Team review fixes (row 201, H11): the bridge's own `host_cooldown` on that check is waited out the same way (once,
+// after an answered redeem), not read as an unreachable host; a cooldown still there after the wait is unreachable,
+// so the answered redeem is kept (R11-F01).
 
 const crypto = require('node:crypto');
 
@@ -58,10 +61,11 @@ const LINK_REASONS = Object.freeze({ host_refused: 'invite_not_valid', host_cool
 // The same, once the invite's name did not resolve: an unreachable host then says so.
 const UNRESOLVED_REASONS = Object.freeze({ ...LINK_REASONS, host_unreachable: 'host_name_unresolved' });
 // The device-key check's reading of a bridge reason: only the host's own refusal is `refused`; the bridge's own
-// cooldown or admit timeout is `unreachable`, so an answered redeem is kept (review round two, R11-F01).
+// admit timeout is `unreachable`, so an answered redeem is kept (review round two, R11-F01); its own cooldown is
+// `cooling`, which an answered redeem waits out once (H11).
 const VERIFY_REASONS = Object.freeze({ host_refused: 'refused', host_unreachable: 'unreachable', closed: 'unreachable',
   team_bridge_unavailable: 'unreachable',
-  ...Object.fromEntries(BRIDGE_OWN_REFUSALS.map((reason) => [reason, 'unreachable'])) });
+  ...Object.fromEntries(BRIDGE_OWN_REFUSALS.map((reason) => [reason, 'unreachable'])), host_cooldown: 'cooling' });
 
 // The refusal for an invite that does not parse: a newer Jenny's invite says so, anything else is malformed.
 function inviteRefusal(parsed) {
@@ -184,7 +188,8 @@ function createJoin(deps) {
     }
   }
 
-  // Connects with the device key and reads team.status. Resolves { status, working } or { refused | unreachable }.
+  // Connects with the device key and reads team.status. Resolves { status, working } or { refused | unreachable |
+  // cooling }.
   async function verifyDevice(parsed, seed, addresses, relay, halt) {
     let greeted;
     try {
@@ -194,7 +199,7 @@ function createJoin(deps) {
     } catch (error) {
       if (error instanceof Halted) return { halted: error.answer };
       const reason = error.answer?.error?.reason;
-      if (reason === 'refused' || reason === 'unreachable') return { [reason]: true };
+      if (reason === 'refused' || reason === 'unreachable' || reason === 'cooling') return { [reason]: true };
       throw error;
     }
     try {
@@ -216,13 +221,18 @@ function createJoin(deps) {
     const dial = () => cleanAddresses([...parsed.hints, ...extraAddresses, ...redeemed.reported]);
     const check = async () => verifyDevice(parsed, seed, (await dialAddresses(parsed, dial())).addresses, relay, halt);
     const refusals = createRefusalWindow({ now, cooldownMs: refusedCooldownMs });
-    // After an answered redeem, a refusal inside the bridge's cooldown of the key's first one is waited out once.
+    // After an answered redeem, a refusal inside the bridge's cooldown of the key's first one, or the bridge's own
+    // cooldown of it (H11; at most the whole window when the first refusal was not seen here), is waited out once.
+    // A cooldown not waited out, or met again, is read as unreachable (R11-F01).
+    const settled = (verified) => (verified.cooling ? { unreachable: true } : verified);
     const verify = async () => {
       const verified = await check();
-      const wait = verified.refused ? refusals.note() : null;
-      if (!wait || !redeemed.answer) return verified;
+      let wait = null;
+      if (verified.refused) wait = refusals.note();
+      else if (verified.cooling) wait = refusals.note() ?? refusals.windowMs;
+      if (!wait || !redeemed.answer) return settled(verified);
       await waits.wait(wait);
-      return aborted ? { unreachable: true } : check();
+      return aborted ? { unreachable: true } : settled(await check());
     };
     let verified = await verify();
     if (redeemed.lost && verified.refused) {

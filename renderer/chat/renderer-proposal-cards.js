@@ -115,6 +115,7 @@
     lockdown: jt('chat.proposal.runLockdown', "Run isn't available while this chat is in offline lockdown."),
     sandbox_not_ready: jt('chat.proposal.runSandboxNotReady', "Run isn't available until the command sandbox is ready (Settings)."),
     sandbox_mode_changed: jt('chat.proposal.runSandboxModeChanged', "Run isn't available because the command sandbox mode changed since this was proposed (Settings)."),
+    long_running: jt('chat.proposal.runLongRunning', "Run isn't available because this command keeps running (a server or watcher), so Run would wait until it times out. Copy it into your own terminal."),
   });
 
   function choiceUnavailableText(action, reason) {
@@ -408,6 +409,8 @@
     const actions = proposal ? proposal.actions : {};
     const can = (name) => pending && !lookup.busy && Boolean(actions[name] && actions[name].available);
     const summary = display.summary ? `<p class="proposal-summary">${escapeHtml(display.summary)}</p>` : '';
+    const nc = display.not_checked;
+    const unchecked = nc && nc.length ? `<p class="proposal-purpose">${escapeHtml(`${jt('chat.proposal.notChecked', 'Not checked')}: ${nc.join('; ')}`)}</p>` : '';
     const buttons = !proposal || pending
       ? deps.actionButton({ variant: 'primary', size: 'sm', label: jt('chat.proposal.commit', 'Commit'), disabled: !can('commit'), dataset: { 'proposal-action': 'commit' }, ...choiceTitle(actions, 'commit') })
         + deps.actionButton({ variant: 'secondary', size: 'sm', label: jt('chat.proposal.testFirst', 'Test first'), disabled: !can('test_first'), dataset: { 'proposal-action': 'test_first' }, ...choiceTitle(actions, 'test_first') })
@@ -422,7 +425,7 @@
         tail = simpleStatus(deps, 'muted', choiceUnavailableText(blocked[0], actions[blocked[0]].reason), jt('chat.proposal.dismissStill', 'You can still dismiss this.'));
       }
     }
-    return `${cardOpen(deps, ctx, 'git', state, 'proposal-decision')}${eyebrow}${summary}${question}`
+    return `${cardOpen(deps, ctx, 'git', state, 'proposal-decision')}${eyebrow}${summary}${unchecked}${question}`
       + `<div class="proposal-actions">${buttons}${pathsDisclosure(deps, display)}</div>`
       + `${pending || !proposal ? dismissButton(deps, !can('dismiss')) : ''}${tail}${noticeMarkup(deps, lookup.notice)}</section>`;
   }

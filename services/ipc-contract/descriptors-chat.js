@@ -53,13 +53,14 @@ module.exports = Object.freeze({
   // backgroundJobs.*: visibility, kill, the output tail (live while running,
   // row 138) and Clear finished for backgrounded run_command jobs (W2-2).
   // Snapshots push over the bridge-event bus (main-workspace window only);
-  // kill, readOutput and clearFinished are trusted-sender-authorized in
+  // kill, readOutput, clearFinished and restoreFinished are trusted-sender-authorized in
   // services/main/ipc-registration/workspace-ipc.js.
   // Live snapshots carry `serving` ({ url, host, port, sinceMs } or null): a loopback address the job printed that answers a TCP probe (row 176).
   'backgroundJobs.getState': invokeMethod('background-jobs:get-state'),
   'backgroundJobs.kill': invokeMethod('background-jobs:kill'),
   'backgroundJobs.readOutput': invokeMethod('background-jobs:read-output'),
   'backgroundJobs.clearFinished': invokeMethod('background-jobs:clear-finished'),
+  'backgroundJobs.restoreFinished': invokeMethod('background-jobs:restore-finished'),
   'backgroundJobs.onChanged': subscribeMethod('background-jobs:changed'),
   // sketch.openFile: may a drawing's file node open this path? Checked against the session's own project root
   // (services/main/sketch-ipc-registration.js); resolves { ok, relativePath, line, projectId } or { ok: false, reason }.

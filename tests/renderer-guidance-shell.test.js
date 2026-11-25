@@ -424,7 +424,7 @@ test('tools card keeps authority and internal guardrail controls out of Settings
 
   const groups = card.querySelectorAll('#toolsConfigFieldList > .settings-group');
   assert.deepEqual(Array.from(groups, (group) => group.getAttribute('aria-labelledby')), [
-    'toolsFilesHeading', 'toolsWebHeading', 'toolsCodeHeading',
+    'toolsFilesHeading', 'toolsWebHeading', 'toolsComputerHeading', 'toolsCodeHeading',
   ]);
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
@@ -545,7 +545,6 @@ test('the local profile editor is General\'s labelled You group; data, setup and
   assert.ok(readinessCard.querySelector('.settings-setup-row #setupSettingsActions'));
   assert.equal(card.querySelector('#setupSettingsActions'), null);
   assert.equal(doc.getElementById('accountSummary').getAttribute('aria-live'), 'polite');
-  assert.equal(doc.getElementById('backendSummary').getAttribute('aria-live'), 'polite');
 });
 
 test('profile copy states local-profile truth, not the old cloud-features claim', async (t) => {

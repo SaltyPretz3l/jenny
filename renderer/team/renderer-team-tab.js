@@ -4,8 +4,9 @@
  * from the join notice (for this run of the app), the open menus, the narrow-width screen, busy keys and one error
  * sentence per place.
  *
- * Drawing: a connected team gets a frame per shown channel (the column, and the header, banner, notice, timeline and
- * composer regions; the composer and the message actions since slice 2a-5b, with one set of writes). The column, the
+ * Drawing: a connected team gets one frame (row 201, OD-10: renderer-team-tab-frame.js; the column with its search, and the
+ * header, banner, export and notice slots) whose main pane a channel switch swaps (the timeline and composer, a project
+ * page or conversation, the Overview, the New message view; one set of writes per pane since slice 2a-5b). The column, the
  * header, the banner and the notice are rewritten only when their markup changed; the timeline patches itself by
  * message id; none of it replaces another region, so a push never resets scroll, selection or focus. A team behind a
  * gate is one whole-view state. Nothing destructive runs from here: Invite, Team settings and Join open Settings >
@@ -22,13 +23,14 @@
  * frame (`data-preview="side"`, `data-screen="preview"` under 720 px); it hides an open thread, never closes it, and
  * closing it shows that thread again. Opening a thread closes it; a frame change, a lock and `cleared` close it too.
  *
- * Search and jump: the column's search region (renderer-team-search.js) lives with the frame, so a team change, a
- * lock and hiding end it; a `cleared` team resets it. Ctrl+F anywhere in the view and the header's search button
+ * Search and jump: the column's search region (renderer-team-search.js) lives with the team's frame, so a channel switch
+ * and a jump into another channel keep its query and results (C10.2); a team change, a lock and hiding end it; a
+ * `cleared` team resets it. Ctrl+F anywhere in the view and the header's search button
  * focus its field (under 720 px on the list screen). Results and message-link chips jump through one jumper per
  * frame (renderer-team-link.js); a jump shows the channel screen, or the thread; a `cleared` team cancels a jump in
  * flight; a jump into another channel of the team shows that channel first.
- * Slice 2d: the shown channel per team (renderer-team-channels.js) keys the frame; the New message view
- * (renderer-team-dm-picker.js) is a frame of its own whose Start shows the conversation chatDmOpen answers.
+ * Slice 2d: the shown channel per team (renderer-team-channels.js) keys the main pane; the New message view
+ * (renderer-team-dm-picker.js) is a pane of its own whose Start shows the conversation chatDmOpen answers.
  * Slice 2a-6c: Export ends the team menu, its line fills the export slot; the tab runs palette and toast intents.
  * Slice 3-10: shared projects (renderer-team-project-tab.js): the project store is held while the tab is shown; the
  * column's Projects section, the project page and a shared conversation (frames keyed by `proj:` and `conv:`) follow
@@ -43,15 +45,15 @@
       require('./renderer-team-chat-store'), require('./renderer-team-timeline'), require('./renderer-team-notice'), require('./renderer-team-message-row'),
       require('./renderer-team-chat-writes'), require('./renderer-team-composer'), require('./renderer-team-thread'), require('./renderer-team-search'), require('./renderer-team-link'),
       require('./renderer-team-channels'), require('./renderer-team-dm-picker'), require('./renderer-team-gpus'),
-      require('./renderer-team-notify'), require('./renderer-team-export'), require('./renderer-team-tab-focus'), require('./renderer-team-project-tab'), require('./renderer-team-preview'), require('./renderer-team-start'), require('./renderer-team-overview'), require('./renderer-team-channel-form'), require('./renderer-team-channel-menu'), require('./renderer-team-tab-notify-menu'));
+      require('./renderer-team-notify'), require('./renderer-team-export'), require('./renderer-team-tab-focus'), require('./renderer-team-project-tab'), require('./renderer-team-preview'), require('./renderer-team-start'), require('./renderer-team-overview'), require('./renderer-team-channel-form'), require('./renderer-team-channel-menu'), require('./renderer-team-tab-notify-menu'), require('./renderer-team-tab-frame'));
     return;
   }
   root.rendererTeamTab = factory(root.rendererSettingsTeamStrings, root.rendererTeamTabView, root.rendererTeamStore,
     root.rendererTeamChatStore, root.rendererTeamTimeline, root.rendererTeamNotice, root.rendererTeamMessageRow,
     root.rendererTeamChatWrites, root.rendererTeamComposer, root.rendererTeamThread, root.rendererTeamSearch, root.rendererTeamLink,
     root.rendererTeamChannels, root.rendererTeamDmPicker, root.rendererTeamGpus, root.rendererTeamNotify, root.rendererTeamExport, root.rendererTeamTabFocus,
-    root.rendererTeamProjectTab, root.rendererTeamPreview, root.rendererTeamStart, root.rendererTeamOverview, root.rendererTeamChannelForm, root.rendererTeamChannelMenu, root.rendererTeamTabNotifyMenu);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (words, tabView, teamStore, chatStore, timelines, notices, rows, chatWrites, composers, threads, searches, link, channels, pickers, gpus, intents, exporting, focuser, projectTab, previews, startPage, overviewPage, channelForm, channelMenu, notifyMenus) {
+    root.rendererTeamProjectTab, root.rendererTeamPreview, root.rendererTeamStart, root.rendererTeamOverview, root.rendererTeamChannelForm, root.rendererTeamChannelMenu, root.rendererTeamTabNotifyMenu, root.rendererTeamTabFrame);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (words, tabView, teamStore, chatStore, timelines, notices, rows, chatWrites, composers, threads, searches, link, channels, pickers, gpus, intents, exporting, focuser, projectTab, previews, startPage, overviewPage, channelForm, channelMenu, notifyMenus, tabFrames) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -115,7 +117,8 @@
     tab: { container: () => container, frame: () => frame, live: () => live, turn: () => teamTurn, render: (options) => render(options), renderLists: () => renderLists() } });
   const channelUi = channelMenu.createChannelUi({ container: () => container, frame: () => frame, live: () => live, chat, team: selectedTeam, channels, show: (teamId, id) => showChannel(teamId, id),
     render: () => render(), exportChannel: (teamId, id) => startExport(teamId, 'one', id), syncHead: () => { if (frame) frame.last.head = tabView.headHtml(viewModel()); } });
-  // Slice 6-7: the notice's model offers (renderer-team-notice.js), from the gate's model store, held here while shown.
+  // Slice 6-7: the notice's model offers (renderer-team-notice.js), from the gate's model store, held here while shown. Row 201 H24:
+  // a join request and an offer each have their own card in the notice slot, the join card first; one never hides the other.
   const modelStore = () => (globalThis.rendererTeamModelStore ? globalThis.rendererTeamModelStore.getModelStore() : null);
   const offers = notices.createOffers({ models: modelStore, openSettings: () => openSettings, render: () => render() });
 
@@ -176,54 +179,14 @@
     if (open) render({ change });
   }
 
-  function destroyFrame() {
-    if (frame && frame.search) { frame.search.dispose(); frame.jumper.dispose(); }
-    if (frame && frame.picker) frame.picker.dispose();
-    if (frame && frame.project) frame.project.dispose();
-    if (frame && frame.overview) frame.overview.dispose(); if (frame && frame.preview) frame.preview.dispose();
-    if (frame) frame.shell.removeEventListener('team:file-preview', openPreview);
-    if (frame && frame.thread) frame.thread.dispose();
-    if (live.screen === 'thread' || live.screen === 'preview') live.screen = 'channel';
-    if (frame && frame.composer) frame.composer.dispose();
-    if (frame && frame.timeline) frame.timeline.dispose();
-    if (frame && frame.writes) frame.writes.dispose();
-    frame = null;
-  }
+  // The team's frame and its swappable main pane (renderer-team-tab-frame.js).
+  const frames = tabFrames.createTabFrames({ tabView, chatWrites, link, searches, timelines, composers, pickers, channelForm, overviewPage, exporting, glue, channels, rows, words,
+    channelUi, container: () => container, live: () => live, store, chat, data, render: () => render(), viewModel: () => viewModel(), timelineContext, openSettings: () => openSettings,
+    openThread: (message, openerId) => openThread(message, openerId), openPreview, showElsewhere, startDirect, closeNew });
 
-  function buildFrame(vm, key) {
-    destroyFrame();
-    container.innerHTML = tabView.frameHtml(vm);
-    const q = (selector) => container.querySelector(selector);
-    const teamId = vm.team.team_id;
-    const shown = { teamId, channelId: vm.channelId, chat: chat(), ctx: () => timelineContext(teamId, vm.channelId) };
-    const writes = chatWrites.createWrites({ teamId: shown.teamId, onBusy: () => { if (frame && frame.writes === writes) frame.timeline.update({ type: 'busy' }); } });
-    const own = { key, shown, shell: q('.team-shell'), panel: q('nav.team-panel'), last: {}, timeline: null, composer: null, thread: null, preview: null, search: null, picker: null, openerId: '', writes,
-      regions: { panelHead: q('[data-team-region="panel-head"]'), lists: q('[data-team-region="lists"]'), head: q('[data-team-region="head"]'),
-        banner: q('[data-team-region="banner"]'), notice: q('[data-team-region="notice"]') } };
-    frame = own;
-    exporting.tabLine().mount(q('[data-team-region="export"]'), teamId, () => (frame === own && own.timeline ? own.timeline.logRoot : null));
-    own.shell.addEventListener('team:file-preview', openPreview);
-    own.jumper = link.createJumper({ chat: shown.chat, teamId, channelId: vm.channelId, call: writes.call, timeline: () => (frame === own ? own.timeline : null),
-      openThread: (root) => { openThread(root, root.id); return frame === own ? own.thread : null; },
-      showScreen: (name) => { if (frame === own && live.screen !== name) { live.screen = name; render(); } },
-      holdEdit: () => Boolean(frame === own && own.timeline && own.timeline.backToEdit()), rowOf: rows.rowOf, elsewhere: (target) => showElsewhere(teamId, target) });
-    own.search = searches.createSearch({ root: q('[data-team-region="search"]'), lists: own.regions.lists, panel: own.panel, ctx: shown.ctx, call: writes.call,
-      hostWords: () => { const team = data().teams.find((t) => t.team_id === teamId); return team ? tabView.hostWords(team) || words.errorText({ reason: 'team_not_connected' }) : ''; },
-      onJump: (match) => own.jumper.jump(match),
-      onState: () => { void Promise.resolve().then(() => { if (frame === own) render(); }); } });
-    if (glue.isPage(vm.channelId)) { own.project = glue.mount(q('[data-team-region="project"]'), teamId, vm.channelId); return; }
-    if (vm.channelId === channels.OVERVIEW) { own.overview = overviewPage.createOverview({ root: q('[data-team-region="overview"]'), teamId, store: store(), viewNow: () => viewModel(), openSettings: () => openSettings, peopleRows: tabView.peopleRows }); return; }
-    if (channels.NEW === vm.channelId || channels.NEW_CHANNEL === vm.channelId) {
-      own.picker = (vm.channelId === channels.NEW ? pickers.createPicker : channelForm.createForm)({ root: q('[data-team-region="picker"]'), ctx: shown.ctx, rows: () => (chat().team(teamId) || {}).channels || [],
-        lastSeen: rows.lastSeenText, onStart: (ids) => startDirect(teamId, ids), create: (name, topic) => channelUi.create(teamId, name, topic), onClose: () => closeNew(teamId) });
-      return;
-    }
-    frame.timeline = timelines.createTimeline({ ...shown, root: q('[data-team-region="timeline"]'), writes, focusComposer: () => Boolean(frame && frame.composer && frame.composer.focus()),
-      onReply: (message) => openThread(message, message.id) });
-    frame.composer = composers.createComposer({ ...shown, root: q('[data-team-region="composer"]'), writes, onEditLast: () => frame.timeline.editLast() });
-  }
-
-  // Writes only what changed. A change under an open menu closes the menu first: its rows may be out of date.
+  // Writes only what changed. A change to the region that holds an open menu's button, a team change, or a pane change
+  // under the notify menu (its level is the shown channel's) closes the menu first; a presence or unread push only writes
+  // the lists, so an open menu stays open with its focus (row 201 H23.2).
   function render({ keepMenu = false, change = null } = {}) {
     if (!container) return;
     const vm = viewModel();
@@ -234,7 +197,7 @@
       const html = page ? startPage.html(store(), page) : tabView.shellHtml(vm);
       if (frame || html !== live.wholeHtml) {
         if ((live.menuOpen || live.notifyOpen) && !keepMenu) { closeMenus(false, change); return; }
-        destroyFrame();
+        frame = frames.destroy();
         container.innerHTML = html;
         live.wholeHtml = html;
         startPage.fill(container, () => render()); // the start page's typed text, back in its new fields; the server page's facts
@@ -244,12 +207,14 @@
     }
     live.wholeHtml = null;
     const key = vm.team.team_id + '|' + vm.channelId;
-    const next = { panelHead: tabView.panelHeadHtml(vm), lists: tabView.panelHtml(vm), head: tabView.headHtml(vm), banner: tabView.bannerHtml(vm), notice: notices.noticeHtml(noticeState(vm)) || offers.html(offeredTeams(), vm.team.team_id) };
-    if (frame && frame.key === key && (live.menuOpen || live.notifyOpen) && !keepMenu
-      && ['panelHead', 'lists', 'head'].some((name) => next[name] !== frame.last[name])) { closeMenus(false, change); return; }
-    // A page switch in the same team builds a new frame; the column keeps its scroll.
-    const panelTop = frame && frame.key !== key && frame.key.startsWith(vm.team.team_id + '|') ? frame.panel.scrollTop : null;
-    if (!frame || frame.key !== key) buildFrame(vm, key);
+    const next = { panelHead: tabView.panelHeadHtml(vm), lists: tabView.panelHtml(vm), head: tabView.headHtml(vm), banner: tabView.bannerHtml(vm), notice: notices.noticeHtml(noticeState(vm)) + offers.html(offeredTeams(), vm.team.team_id) };
+    const anchor = live.menuOpen ? 'panelHead' : live.notifyOpen ? 'head' : '';
+    if (frame && anchor && !keepMenu && (frame.teamId !== vm.team.team_id || next[anchor] !== frame.last[anchor] || (live.notifyOpen && frame.key !== key))) {
+      closeMenus(false, change);
+      return;
+    }
+    // A page switch in the same team swaps the main pane only: the column keeps its scroll, search and focus.
+    frame = frames.ensure(vm, key);
     if (frame.preview && (frame.shown.ctx().locked || (change && change.type === 'cleared'))) closePreview({ render: false });
     if (frame.thread && (frame.shown.ctx().locked || (change && change.type === 'cleared'))) closeThread({ render: false });
     if (change && change.type === 'cleared') frame.jumper.cancel();
@@ -264,7 +229,6 @@
       frame.last[name] = html;
       if (name === 'lists') glue.afterWrite(frame.regions.lists);
     }
-    if (panelTop !== null) frame.panel.scrollTop = panelTop;
     // A project page or conversation draws member names: a roster change reaches it.
     if (frame.project && (!change || change.type === 'members' || change.type === 'team')) frame.project.update({ type: 'roster', team_id: vm.team.team_id });
     if (frame.overview && (!change || change.type !== 'typing')) frame.overview.update(vm);
@@ -403,11 +367,12 @@
     if (answer.ok && team && team.team_id === teamId && channels.shownOf(teamId) === channels.NEW) showChannel(teamId, answer.channel_id, ids);
     return answer;
   }
-  // A search result or chip in #team, a channel or a listed conversation of this team: that channel first, then the jump there.
+  // A search result or chip in #team, a channel, a project channel (OD-8) or a listed conversation of this team: that channel
+  // first, then the jump there.
   function showElsewhere(teamId, target) {
     const state = chat().team(teamId);
     const id = target.channel_id;
-    if (!state || !(id === CHANNEL || state.channels.some((c) => (channels.isDirect(c) || channels.isCustom(c)) && c.channel_id === id))) return false;
+    if (!state || !(id === CHANNEL || state.channels.some((c) => channels.isShowable(c) && c.channel_id === id))) return false;
     showChannel(teamId, id);
     if (frame && frame.shown.channelId === id) frame.jumper.jump(target);
     return true;
@@ -532,8 +497,13 @@
     render(team && change && change.team_id === team.team_id ? { change } : {});
   }
 
-  // One export at a time (renderer-team-export.js); the New message view exports #team.
-  const startExport = (teamId, scope, id = channels.shownOf(teamId)) => void exporting.getExporter().start({ teamId, scope, channelId: channels.asChannel(id) });
+  // One export at a time (renderer-team-export.js); the New message view exports #team. Row 201 C10.3: `id` is the target named;
+  // without one, what the frame shows for this team (a project conversation by its page id), never a channel shown before it.
+  // A project page has no conversation to export.
+  function startExport(teamId, scope, id = frame && frame.shown.teamId === teamId ? frame.shown.channelId : channels.shownOf(teamId)) {
+    if (scope === 'one' && String(id).startsWith('proj:')) return;
+    void exporting.getExporter().start({ teamId, scope, channelId: channels.asChannel(id) });
+  }
 
   // `quiet` (E50, no team data yet): nothing is asked of main and the chat push listener waits for the first team (`holdChat`).
   function showTeamTab({ container: next, openSettings: open, quiet = false } = {}) {
@@ -561,14 +531,15 @@
     if (!quiet) void store().refreshAll();
   }
 
-  // Hiding drops the listeners, the store holds, the timeline and the page state; the markup stays as it was.
+  // Hiding drops the listeners, the store holds, the timeline and the page state; the markup stays as it was, except a project
+  // page or conversation's, which is emptied so no hidden copy of its element ids is left for the Board (row 201 C9.3).
   function hideTeamTab() {
     if (!container) return;
     const menu = menuApi();
     const menuOpen = live.menuOpen || live.notifyOpen;
     container = null;
     if (menuOpen && menu && typeof menu.hide === 'function') menu.hide({ restoreFocus: false });
-    destroyFrame();
+    frame = frames.destroy({ clear: true });
     channels.closeAllNew();
     releases.splice(0).forEach((fn) => { try { fn(); } catch (_error) { /* best effort */ } });
     live = freshLive();

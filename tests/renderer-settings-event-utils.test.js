@@ -75,7 +75,6 @@ function createBaseDeps(overrides = {}) {
     callbacks: {
       renderSettings() {},
       renderSessions() {},
-      setSidebarCollapsed() {},
       upsertApprovedMemoryDraft() {},
       getApprovedMemoryById() { return null; },
       hasApprovedMemoryDraftChanges() { return false; },

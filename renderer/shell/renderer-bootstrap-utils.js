@@ -530,7 +530,6 @@
     const getArtifactDom = createLazyDomResolver(document, {
       artifacts: {
         artifactSplitViewToggle: 'artifactSplitViewToggle',
-        artifactReviewResizer: 'artifactReviewResizer',
         artifactReviewPanel: 'artifactReviewPanel',
         artifactReviewCollapseButton: 'artifactReviewCollapseButton',
         artifactReviewDetailEmpty: 'artifactReviewDetailEmpty',
@@ -606,14 +605,6 @@
       },
       constants: {
         APPEARANCE_STORAGE_KEY: appearanceUtils.STORAGE_KEY || 'jenny.appearance.v2',
-        SIDEBAR_STORAGE_KEY: 'jenny.sidebar.v1',
-        PANEL_STORAGE_KEY: 'jenny.panels.v2',
-        SIDEBAR_DEFAULT_WIDTH: 320,
-        SIDEBAR_MIN_WIDTH: 248,
-        SIDEBAR_MAX_WIDTH: 420,
-        SIDEBAR_COLLAPSED_WIDTH: 84,
-        SIDEBAR_MAIN_STAGE_MIN_WIDTH: 720,
-        SIDEBAR_KEYBOARD_STEP: 24,
       },
     };
   }

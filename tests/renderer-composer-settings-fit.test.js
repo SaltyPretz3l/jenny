@@ -37,7 +37,7 @@ const MARKUP = `
   <textarea id="outside"></textarea>
   <div class="composer-popover hidden" id="attachMenu"><button type="button" id="attachAction"></button></div>`;
 
-function mount(t, { html = MARKUP, reading = { available: 900, needed: 600 }, deps = {} } = {}) {
+function mount(t, { html = MARKUP, reading = { available: 900, needed: 600 }, deps = {}, getRunMode } = {}) {
   const dom = new JSDOM(`<!doctype html><body>${html}</body>`, { pretendToBeVisual: true });
   const { window } = dom;
   const doc = window.document;
@@ -59,6 +59,7 @@ function mount(t, { html = MARKUP, reading = { available: 900, needed: 600 }, de
     groupEl: doc.getElementById('composerSettingsGroup'),
     paneRoot: doc.getElementById('chatPane0'),
     documentRef: doc,
+    getRunMode,
     deps: {
       toolbarFit,
       chip,
@@ -415,6 +416,43 @@ test('the plain chip without an icon shows the tag and no icon span', async (t) 
   await ctx.settle();
   assert.equal(ctx.summary.querySelector('.composer-settings-summary-mode').textContent, 'Auto ·');
   assert.equal(ctx.summary.querySelector('.composer-settings-summary-mode-icon'), null);
+});
+
+// Row 192 C12: every mode but Ask is named; Full auto is a display mode over a stored Auto.
+test('the pill names Propose and an armed Full auto, and its name and tooltip follow', async (t) => {
+  const ctx = mount(t);
+  const chipEl = ctx.group.querySelector('[data-inv-chip="composer-run-mode"]');
+  chipEl.classList.replace('composer-run-mode-ask', 'composer-run-mode-propose');
+  await ctx.settle();
+  assert.equal(ctx.summary.querySelector('.inv-chip-label').textContent, 'Propose · qwen3.5 · 9b · High');
+  assert.equal(ctx.summary.getAttribute('title'), 'Composer settings: Propose · qwen3.5 · 9b · High');
+  chipEl.classList.replace('composer-run-mode-propose', 'composer-run-mode-full_auto');
+  await ctx.settle();
+  assert.equal(ctx.summary.querySelector('.composer-settings-summary-mode').textContent, 'Full auto ·');
+  assert.match(ctx.summary.getAttribute('aria-label'), /: Full auto · qwen3\.5/);
+  // Pane 1 reads its session's stored mode (Auto); the chip shows Full auto armed over it.
+  const paneOne = mount(t, { html: MARKUP.replace('composer-run-mode-ask', 'composer-run-mode-full_auto'), getRunMode: () => 'auto' });
+  assert.equal(paneOne.summary.querySelector('.composer-settings-summary-mode').textContent, 'Full auto ·');
+});
+
+// Row 192 C14: the folded pill carries the model pill's cloud marking.
+test('a cloud model pill marks the folded pill with its class, cloud icon and provider label', async (t) => {
+  const ctx = mount(t);
+  const pill = ctx.group.querySelector('[data-inv-chip="composer-model"]');
+  pill.classList.add('composer-model-pill--cloud');
+  pill.insertAdjacentHTML('afterbegin', '<span class="inv-chip-icon composer-model-pill-cloud-icon" aria-hidden="true"><svg viewBox="0 0 16 16"></svg></span>');
+  pill.querySelector('.inv-chip-label').textContent = 'OpenRouter · qwen3.8-72b';
+  await ctx.settle();
+  assert.equal(ctx.summary.classList.contains('composer-model-pill--cloud'), true);
+  const icon = ctx.summary.querySelector(':scope > .inv-chip-icon');
+  assert.ok(icon && icon.querySelector('svg'), 'the cloud icon');
+  assert.equal(icon.nextElementSibling, ctx.summary.querySelector('.inv-chip-label'));
+  assert.equal(ctx.summary.querySelector('.inv-chip-label').textContent, 'OpenRouter · qwen3.8-72b');
+  pill.classList.remove('composer-model-pill--cloud');
+  pill.querySelector('.composer-model-pill-cloud-icon').remove();
+  await ctx.settle();
+  assert.equal(ctx.summary.classList.contains('composer-model-pill--cloud'), false);
+  assert.equal(ctx.summary.querySelector(':scope > .inv-chip-icon'), null, 'a local model carries no cloud icon');
 });
 
 // Gate N2 (2026-09-27): a row focused on open showed its tooltip over the list's header.

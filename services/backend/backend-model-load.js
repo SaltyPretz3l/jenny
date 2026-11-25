@@ -22,6 +22,7 @@ const { assertTeamModelUsable, isReservedTeamModelId, liveTeamSelection } = requ
 const { pickInstalledDefaultModel } = require('./backend-chat-model-resolution');
 const { checkOllamaLoad, refusalMessageForStatus, vramRefusalError } = require('./vram-load-preflight');
 const { localSubagentEngineLoadPlan, startLocalSubagentEngine } = require('./local-subagent-engine');
+const { isStrataModel, persistStrataBootTarget } = require('./strata-load-path');
 
 // A managed launch the VRAM check refused carries its user copy in the preflight.
 function managedLaunchError(service, kind, model, status) {
@@ -164,7 +165,8 @@ async function switchModel(service, model, options = {}) {
     // tag can exist on Ollama too.
     const managedKind = loadRequest.engineSource
       ? '' : managedServerKindForModel(service, requestedModelName, { routing: true });
-    if ((managedKind === 'llama-server' || managedKind === 'ninfer') && requestedEngineType !== 'openai-compatible') {
+    // Every managed server (llama-server, NInfer, Strata) is an openai-compatible endpoint.
+    if (managedKind && requestedEngineType !== 'openai-compatible') {
       service._emitServiceLog?.('INFO', 'backend.model_load_engine_hint_overridden', {
         model: requestedModelName,
         requested_engine: requestedEngineType,
@@ -201,6 +203,11 @@ async function switchModel(service, model, options = {}) {
       ? findNinferArtifactForModel(service, requestedModelName) : null;
     const ninferLoad = Boolean(ninferArtifact);
     const stopsNinfer = !ninferLoad && helper?.kind !== 'ninfer' && ninferServerStops(ninferManager);
+    // Managed Strata (row 200), the highest GPU rank: its model loads through its
+    // manager, which stops NInfer and llama-server first; every other load stops it first.
+    const strataManager = service.options?.getStrataManager?.() || null;
+    const strataLoad = Boolean(strataManager) && requestedEngineType === 'openai-compatible' && isStrataModel(service, requestedModelName);
+    const stopsStrata = !strataLoad && ninferServerStops(strataManager);
     // Starting or stopping llama-server takes the GPU over. Doing that under a live
     // response starves the engine still generating on it (2026-09-04: Ollama fell to
     // 2.58 t/s and its blocking HTTP calls then wedged the sidecar loop), so the
@@ -234,7 +241,7 @@ async function switchModel(service, model, options = {}) {
     // A team load, or one that leaves a team model, re-initialises the sidecar under any other live stream.
     const teamSwitch = Boolean(teamSelection || liveTeamSelection(service));
     // A helper launch counts as a managed launch; one already serving its model does not.
-    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer || teamSwitch || helper?.starts)
+    if ((managedLoad || stopsManagedServer || ninferLoad || stopsNinfer || strataLoad || stopsStrata || teamSwitch || helper?.starts)
       && otherActiveStreams > 0) {
       service._emitServiceLog?.('WARN', 'backend.engine_switch_refused_stream_active', {
         active_stream_count: otherActiveStreams,
@@ -252,14 +259,24 @@ async function switchModel(service, model, options = {}) {
     if (requestedEngineType === 'ollama' && !teamSelection) {
       // Checked before anything is stopped: the managed servers this load stops count as free.
       const verdict = await checkOllamaLoad(service, requestedModelName, {
-        reclaimPids: [stopsManagedServer && llamaServerStatus?.pid, stopsNinfer && ninferManager?.getStatus?.()?.pid],
+        // Strata's engine is a child of its server, so the server pid covers both.
+        reclaimPids: [stopsManagedServer && llamaServerStatus?.pid, stopsNinfer && ninferManager?.getStatus?.()?.pid,
+          stopsStrata && strataManager?.getStatus?.()?.pid],
       });
       if (!verdict.ok) throw vramRefusalError(verdict, { error_code: AI_ERROR_CODES.ENGINE_CONNECTION });
     }
     // The team selection follows this load from here, before anything is switched: every refusal above
     // left it, and the running engine, as they were.
     service._teamEngineSelection = teamSelection;
-    if (managedLoad || ninferLoad) {
+    // The lower managers' launch gates refuse while Strata is up: stop it with proof first.
+    if (stopsStrata) await stopManagedServerOrAbort(service, strataManager, 'strata', requestedEngineType);
+    if (strataLoad) {
+      await evictPreviousOllamaModel(service);
+      const strataStatus = await strataManager.ensureRunning(null);
+      if (strataStatus?.state !== 'ready') {
+        throw Object.assign(managedLaunchError(service, 'Strata', requestedModelName, strataStatus), { strata_status: strataStatus || null });
+      }
+    } else if (managedLoad || ninferLoad) {
       await evictPreviousOllamaModel(service);
       if (ninferLoad) {
         const ninferStatus = await ninferManager.ensureRunning({ artifactId: ninferArtifact.id });
@@ -315,6 +332,7 @@ async function switchModel(service, model, options = {}) {
     // The two managed boot targets are mutually exclusive: a load on either
     // managed server clears the other's.
     const ninferSettings = ninferManager ? service.configService?.getLocalEngines?.()?.ninfer || null : null;
+    if (strataManager) persistStrataBootTarget(service, { strataLoad, teamSelection });
     if (ninferLoad) {
       service.configService?.updatePreferredEngineType?.('openai-compatible');
       service.configService?.updateNinferSettings?.({ lastUsedArtifactId: ninferArtifact.id });
@@ -341,7 +359,7 @@ async function switchModel(service, model, options = {}) {
         // one initialized) recorded its own target, and keeps it.
         service.configService?.updateManagedLlamaServer?.({ lastUsedTag: '' });
       }
-    } else if (manager && managed && !ninferLoad && !teamSelection) {
+    } else if (manager && managed && !ninferLoad && !strataLoad && !teamSelection) {
       // A team load leaves both managed boot targets alone: it never changes what starts at boot.
       if (managed.lastUsedTag) {
         // Forget the boot autostart target so the next launch cannot reverse this.

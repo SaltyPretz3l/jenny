@@ -29,7 +29,7 @@
     const { workspaceRailShell } = dom;
     const {
       openSession, renderAll, renderSessions, renderSettings,
-      showToastMessage, showSessionActionError, patchSessionSummary, syncChatsStrip, patchChatsStripRuntime,
+      showToastMessage, showSessionActionError, patchSessionSummary,
     } = callbacks;
     const getOpenSessionsInNewTab = typeof callbacks.getOpenSessionsInNewTab === 'function'
       ? callbacks.getOpenSessionsInNewTab
@@ -85,13 +85,6 @@
     function revealSessionInChats(sessionId) {
       const doc = workspaceRailShell?.ownerDocument;
       const panel = controllers.getChatsPanelController?.() || null;
-      // A collapsed panel shows only the strip, so the row cannot take focus:
-      // open it the way the strip's own expand does, filters cleared.
-      if (callbacks.isChatsPanelCollapsed?.() === true) {
-        panel?.prepareForStripExpansion?.();
-        callbacks.expandChatsPanel?.();
-        panel?.renderNow?.();
-      }
       let row = findChatsRow(doc, sessionId);
       if (!row) {
         panel?.revealSession?.(sessionId);
@@ -375,18 +368,20 @@
         '#conversationGroups .conversation-item[data-session-id]'
       ) || [];
       paintSidebarBadges(sessionElements, undefined, options.runtimeOnly === true);
-      if (options.runtimeOnly === true) {
-        patchChatsStripRuntime?.();
-        // A background stream's only signal for a collapsed project's dot or a
-        // collapsed parent's chip: structural passes re-render the panel.
-        controllers.getChatsPanelController?.()?.patchRuntimeState?.();
-      } else {
-        syncChatsStrip?.();
-      }
+      // A background stream's only signal for a collapsed project's dot or a
+      // collapsed parent's chip: structural passes re-render the panel.
+      if (options.runtimeOnly === true) controllers.getChatsPanelController?.()?.patchRuntimeState?.();
       const visible = options.visible !== false && state.ui.activeView === 'chat';
       workspaceRailShell.classList.toggle('hidden', !visible);
       workspaceRailShell.hidden = !visible;
       if (!visible) return getWorkspaceChromeController()?.hideLinkedSessionPopover({ keepRowAnchored: true });
+      // Row 190 Wave 3: each chat pane's header row shows its own tabs (renderer-chat-pane-rows.js); without it
+      // (its script not loaded) the one tab row renders on its own.
+      const rows = globalThis.rendererChatPaneRowsLive;
+      if (rows?.isActive?.()) {
+        const openIds = state.workspace?.openSessionIds || [];
+        return rows.render({ runtimeOnly: options.runtimeOnly === true, openIds, sessions: state.sessions, streaming: getStreamingSessionIds(), approvals: getApprovalSessionIds(), attention: getAttentionStates(openIds) });
+      }
       if (options.runtimeOnly === true) {
         return getWorkspaceChromeController()?.patchRailRuntime(
           state.workspace?.activeSessionId || state.currentSessionId,
@@ -428,6 +423,7 @@
       if (event.key === 'Tab') {
         if (event.defaultPrevented || state.ui?.activeView !== 'chat' || event.target?.closest?.(MODAL_SELECTOR)) return;
         event.preventDefault();
+        if (globalThis.rendererChatPaneRowsLive?.cycle?.(event.shiftKey ? -1 : 1) === true) return; // two panes: the focused pane's tabs only
         const wsc = getWorkspaceStateController();
         if (!wsc) return; // guard: applyWorkspaceSnapshot(undefined) would wipe state.workspace
         const previousSessionId = normalizeSessionId(state.workspace?.activeSessionId);

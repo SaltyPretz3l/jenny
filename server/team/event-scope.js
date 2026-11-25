@@ -23,6 +23,8 @@ const PRESENCE_EVENT = 'team_presence';
 const PROJECT_CHANGED_EVENT = 'team_project_changed';
 // Slice 4e: the team's GPU list (server/team/node-commands.js), to every active member, ephemeral.
 const POOL_NODES_EVENT = 'team_pool_nodes';
+// Row 201: the owner renamed the team (team-commands.js), to every active member, ephemeral: `{ name }`.
+const TEAM_RENAMED_EVENT = 'team_renamed';
 // Slice 5-6: the owner deleted the team (server/team/team-deleted-notice.js), to every active member, under the
 // #team channel's chat bucket so the stream predicate admits it as it does #team's messages.
 const TEAM_DELETED_EVENT = 'team_deleted';
@@ -54,7 +56,7 @@ const SESSION_SCOPED = new Set(['session_changed', 'control_changed', 'decision_
 // (project-files.js), the uploading member only, live only, under the project's bucket.
 // Slice 6-3: `team_model_offer` and `team_model_transfer` (model-sharing.js), the relay's audience only, live only.
 const PUBLISHER_SCOPED = new Set(['team_chat_channel', 'team_chat_message', 'team_chat_read', 'team_chat_typing',
-  PRESENCE_EVENT, PROJECT_CHANGED_EVENT, POOL_NODES_EVENT, TEAM_DELETED_EVENT, 'team_upload_progress',
+  PRESENCE_EVENT, PROJECT_CHANGED_EVENT, POOL_NODES_EVENT, TEAM_RENAMED_EVENT, TEAM_DELETED_EVENT, 'team_upload_progress',
   'team_model_offer', 'team_model_transfer', RULES_CHANGED_EVENT, RULE_REQUESTS_EVENT, BOARD_CHANGED_EVENT,
   BOARD_LIST_EVENT, BOARD_VIEWERS_EVENT, BOARD_CURSOR_EVENT, BOARD_LOCK_EVENT, BOARD_PROPOSALS_EVENT,
   // Row 175 F13 (command-router-redo.js): the asked member's devices only.
@@ -106,5 +108,5 @@ function createEventScope({ sessionScope, logger } = {}) {
 module.exports = {
   BOARD_CHANGED_EVENT, BOARD_CURSOR_EVENT, BOARD_LIST_EVENT, BOARD_LOCK_EVENT, BOARD_PROPOSALS_EVENT, BOARD_VIEWERS_EVENT,
   DEFAULT_BUCKET, POOL_NODES_EVENT, PRESENCE_EVENT, PROJECT_BUCKET, PROJECT_CHANGED_EVENT, SESSION_BUCKET, TEAM_DELETED_EVENT,
-  RULE_ANSWERED_EVENT, RULE_REQUESTS_EVENT, RULES_CHANGED_EVENT, createEventScope,
+  RULE_ANSWERED_EVENT, RULE_REQUESTS_EVENT, RULES_CHANGED_EVENT, TEAM_RENAMED_EVENT, createEventScope,
 };

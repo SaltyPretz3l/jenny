@@ -750,7 +750,7 @@
   }
 
   // In-place child morph for a small already-parsed subtree (the reasoning
-  // header, chat_stream_paint_v2): text nodes and attributes update in place,
+  // header): text nodes and attributes update in place,
   // so child element identity — and any running CSS animation on it — survives
   // a summary-only delta. Returns false when the inputs are unusable or the
   // morph throws, so callers can fall back to the historical innerHTML

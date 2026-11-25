@@ -201,10 +201,9 @@
     return null;
   }
 
-  // An approval verdict on a call still awaiting it, or any event for a call
-  // that still shows an unresolved approval_gap row, must reach a structural
-  // render: a field patch would settle the call row and leave the Allow/Deny
-  // block behind. A timeout or stop of a running call still patches in place.
+  // A verdict on a call awaiting approval, or any event for a call with an open
+  // approval_gap row, needs a structural render (a patch would strand the
+  // Allow/Deny block). A timeout or stop of a running call still patches.
   function needsApprovalGapRender(chatTimeline, callId, payload, eventType, targets) {
     const status = resolvePatchStatus(payload, eventType);
     const currentStatus = (targets.toolCallRow || targets.block)?.getAttribute?.('data-tool-status') || '';
@@ -246,13 +245,9 @@
     }
   }
 
-  /* UIUX-029 ("tool activity" is currently visual-only): terminal outcomes get exactly one
-     announcement through the shared live-announcer channel (renderer/shared/renderer-live-announcer.js).
-     Intermediate statuses (requested/running/approved/executing) stay silent -- announcing every
-     lifecycle hop would spam a multi-tool turn. awaiting_approval is deliberately excluded too: it
-     already gets its own role="status" region from renderApprovalBlock
-     (renderer/chat/renderer-approval-block.js), and duplicating it here is exactly the
-     "conflicting and nested announcements" UIUX-029 flags. */
+  /* UIUX-029: terminal outcomes get one announcement through the shared live
+     announcer. Intermediate statuses stay silent (a multi-tool turn would spam),
+     and awaiting_approval has its own role="status" region in the approval block. */
   const TERMINAL_ANNOUNCE_SPECS = {
     completed: { politeness: 'polite', phrase: (name) => jt('chat.toolCall.finishedAnnouncement', '{tool} finished', { tool: name }) },
     errored: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.failedAnnouncement', '{tool} failed', { tool: name }) },
@@ -314,7 +309,7 @@
     if (targets.toolResultRow) {
       targets.toolResultRow.setAttribute('data-is-error', status === 'errored' ? 'true' : 'false');
     }
-    // A command that exited non-zero reads "exit N" here too (HB-035).
+    // A non-zero exit reads "exit N" here too (HB-035).
     const statusLabel = resultPayload && typeof toolCallUtils.getResultStatusLabel === 'function'
       ? toolCallUtils.getResultStatusLabel(status, {
         exit_code: resultPayload.exit_code ?? resultPayload.tool_result?.exit_code,
@@ -375,19 +370,77 @@
     return true;
   }
 
-  // Answers tool run (renderer-turn-row-list-utils): a status patch on a
-  // member row re-derives its run's summary from the members' patched DOM
-  // state, through the same summarizeToolRun a full render uses, so the live
-  // label and done count never wait for the next structural render.
-  // A step that turned running through a patch has no elapsed anchor: the run
-  // remembers when it first saw it running, keyed by the member node, which
-  // the keyed morph reuses (an attribute stamp would be dropped by it).
+  // Tool run: a status patch on a member re-derives its run's summary from the
+  // patched DOM through summarizeToolRun, as a full render does. A step that
+  // turned running in a patch has no elapsed anchor: the run remembers when it
+  // first saw it, keyed by the member node the keyed morph reuses.
   const toolRunRunningSince = new WeakMap();
+
+  // The turn clock owns a ticking label: keep its text when the anchor is the
+  // same, so a patch that lands on a new second does not rebuild the row.
+  function writeToggleInner(toggle, markup) {
+    const template = toggle.ownerDocument?.createElement?.('template');
+    if (!template) return false;
+    template.innerHTML = markup;
+    const liveElapsed = toggle.querySelector('[data-elapsed-started-at]');
+    const nextElapsed = template.content.querySelector('[data-elapsed-started-at]');
+    if (liveElapsed && nextElapsed
+      && liveElapsed.getAttribute('data-elapsed-started-at') === nextElapsed.getAttribute('data-elapsed-started-at')) {
+      nextElapsed.textContent = liveElapsed.textContent;
+    }
+    if (toggle.innerHTML !== template.innerHTML) toggle.innerHTML = template.innerHTML;
+    return true;
+  }
+
+  // Steps heading (row 192): a status patch re-derives the heading and what a
+  // closed heading keeps in view from the patched DOM, as a full render does.
+  function refreshWorkLedger(memberRow, durationMs) {
+    const list = memberRow?.hasAttribute?.('data-ledger-member') ? memberRow.closest?.('.turn-row-list') : null;
+    const heading = list ? Array.from(list.children).find((node) => node.getAttribute('data-row-kind') === 'work_ledger') : null;
+    const toggle = heading?.querySelector?.('[data-tool-run-toggle]');
+    if (!toggle || typeof toolCallUtils.summarizeWorkLedger !== 'function') return;
+    if (Number(durationMs) > 0 && memberRow.getAttribute('data-ledger-member') === 'step') {
+      memberRow.setAttribute('data-ledger-duration-ms', String(Number(durationMs)));
+    }
+    const rows = Array.from(list.children).filter((node) => node.hasAttribute('data-ledger-member'));
+    const members = rows.map((node) => {
+      const toolRow = node.querySelector('[data-tool-status]');
+      const kind = node.getAttribute('data-ledger-member');
+      return {
+        ...(kind === 'step' ? toolCallUtils.readToolRunMemberAttributes(node, 'ledger') : {}),
+        kind,
+        pinned: node.getAttribute('data-ledger-pin') === 'true',
+        text: node.getAttribute('data-row-kind') === 'assistant_text' && node.hasAttribute('data-ledger-pin'),
+        inRun: node.hasAttribute('data-run-member'),
+        status: toolRow?.getAttribute('data-tool-status') || node.getAttribute('data-row-state') || '',
+        isError: toolRow?.getAttribute('data-is-error') === 'true',
+      };
+    });
+    const priorState = heading.getAttribute('data-ledger-state');
+    const live = priorState === 'live' || priorState === 'waiting';
+    const model = toolCallUtils.summarizeWorkLedger(members.filter((member) => member.kind === 'step'), {
+      live, failed: priorState === 'failed', startedAtMs: Number(heading.getAttribute('data-ledger-started-at')) || 0,
+    });
+    streamDomPatchUtils?.invalidateRowStamp?.(heading);
+    writeToggleInner(toggle, toolCallUtils.buildWorkLedgerToggleInner(model));
+    heading.setAttribute('data-ledger-state', model.state);
+    heading.setAttribute('data-ledger-step', String(model.stepNumber));
+    heading.querySelector('.tool-run-row')?.setAttribute('data-tool-run-state', model.state === 'failed' ? 'ok' : model.state);
+    const expanded = heading.getAttribute('data-ledger-expanded') === 'true';
+    const tail = toolCallUtils.workLedgerTail(members, live);
+    rows.forEach((node, index) => {
+      if (toolCallUtils.applyWorkLedgerShow(node, expanded, tail[index])) streamDomPatchUtils?.invalidateRowStamp?.(node);
+    });
+  }
+
   function refreshToolRunSummary(memberRow, durationMs) {
+    refreshWorkLedger(memberRow, durationMs);
     const runId = memberRow?.getAttribute?.('data-run-id');
     const list = runId ? memberRow.closest?.('.turn-row-list') : null;
     if (!list || typeof toolCallUtils.summarizeToolRun !== 'function') return;
-    if (Number(durationMs) > 0) memberRow.setAttribute('data-run-duration-ms', String(Number(durationMs)));
+    // Under the steps heading a step carries its descriptor as data-ledger-* (C15).
+    const prefix = memberRow.hasAttribute('data-ledger-tool') ? 'ledger' : 'run';
+    if (prefix === 'run' && Number(durationMs) > 0) memberRow.setAttribute('data-run-duration-ms', String(Number(durationMs)));
     const rows = toolCallUtils.getToolRunRows(list, runId);
     const summaryRow = rows.find((node) => node.getAttribute('data-row-kind') === 'tool_run');
     const toggle = summaryRow?.querySelector?.('[data-tool-run-toggle]');
@@ -403,25 +456,16 @@
         toolRunRunningSince.set(node, startedAtMs);
       }
       return {
-        ...toolCallUtils.readToolRunMemberAttributes(node),
+        ...toolCallUtils.readToolRunMemberAttributes(node, prefix),
         status,
         isError: toolRow?.getAttribute('data-is-error') === 'true',
         startedAtMs,
       };
     });
     const summary = toolCallUtils.summarizeToolRun(members);
-    const template = toggle.ownerDocument?.createElement?.('template');
-    if (!template) return;
-    template.innerHTML = toolCallUtils.buildToolRunToggleInner(summary);
-    // The turn clock owns the ticking label: keep its text so a patch that
-    // lands on a new second does not rebuild the row and restart the shimmer.
-    const liveElapsed = toggle.querySelector('[data-elapsed-started-at]');
-    const nextElapsed = template.content.querySelector('[data-elapsed-started-at]');
-    if (liveElapsed && nextElapsed
-      && liveElapsed.getAttribute('data-elapsed-started-at') === nextElapsed.getAttribute('data-elapsed-started-at')) {
-      nextElapsed.textContent = liveElapsed.textContent;
-    }
-    if (toggle.innerHTML !== template.innerHTML) toggle.innerHTML = template.innerHTML;
+    // Keeping the clock's text also keeps the live row's shimmer from restarting.
+    if (!writeToggleInner(toggle, toolCallUtils.buildToolRunToggleInner(summary))) return;
+    streamDomPatchUtils?.invalidateRowStamp?.(summaryRow);
     summaryRow.querySelector('.tool-run-row')?.setAttribute('data-tool-run-state', toolCallUtils.toolRunState(summary));
   }
 
@@ -485,8 +529,7 @@
       };
     const chatTimeline = options.chatTimeline || null;
     const timelineVirtualizer = options.timelineVirtualizer || null;
-    // Optional (UIUX-029): shared live-announcer instance (renderer/shared/renderer-live-announcer.js).
-    // Absent in callers/tests that don't wire it -- patchStatus no-ops the announce call in that case.
+    // Optional shared live announcer (UIUX-029); without it patchStatus does not announce.
     const announcer = options.announcer || null;
     const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : () => {};
     const isVisibleChatSession = typeof options.isVisibleChatSession === 'function' ? options.isVisibleChatSession : () => true;
@@ -662,9 +705,7 @@
         logFallback('detached_target', entry);
         return false;
       }
-      // Stash the validated targets so the flush rAF reuses them instead of
-      // re-running findTargets a second time per tool event.
-      // mergePatchEntry spreads the new entry last, so the latest targets win.
+      // The flush reuses these validated targets; the latest entry's win.
       entry._cachedTargets = targets;
       const key =`${sessionId}\u001f${callId}`;
       pendingByKey.set(key, mergePatchEntry(pendingByKey.get(key), entry));

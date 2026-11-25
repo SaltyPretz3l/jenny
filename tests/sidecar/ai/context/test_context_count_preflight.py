@@ -299,5 +299,31 @@ def test_preview_compact_point_follows_the_scaled_count_source() -> None:
 
     # 183_500 - 20_480 = 163_020 -> x0.9 = 146_718 on the estimate path.
     assert plain == 146_718
-    # Raw window: 262_144 - 20_480 = 241_664 -> x0.9 = 217_497 calibrated.
-    assert scaled == 217_497
+    # Raw window, calibrated: min(int(262_144 * 0.9), 262_144 - 20_480) = 235_929 (row 183 D1).
+    assert scaled == 235_929
+
+
+
+# -- compaction ahead of the edge at turn start (row 183 D2) --------------------------------------
+
+
+@pytest.mark.parametrize(("share", "compacts"), [(0.95, True), (0.85, False)])
+def test_a_provider_counted_turn_near_its_trigger_compacts_first(
+    _quiet_preflight: None, share: float, compacts: bool
+) -> None:
+    history = _long_history(20)
+    inner = estimate_messages_tokens(history, CharEstimationBackend())
+    # 8,000 window, fitted 512-token reply: the provider trigger is min(7,200, 7,488) = 7,200.
+    engine = _PreflightEngine(window=8_000, exact_scale=7_200 * share / inner)
+    engine.fits_output_to_window = True  # type: ignore[attr-defined]
+    emitted: list[object] = []
+
+    result = _prepare(_preflight_context(engine, emitted=emitted), history)
+
+    tracker = result.budget_tracker
+    assert tracker is not None and tracker.budget.provider_units
+    assert tracker.budget.auto_compact_threshold(0) == 7_200
+    events = [event for event in emitted if isinstance(event, ContextCompactedEvent)]
+    assert len(events) == (1 if compacts else 0)
+    if compacts:
+        assert len(result.working_messages) < len(history)

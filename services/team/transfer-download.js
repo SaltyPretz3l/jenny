@@ -86,17 +86,26 @@ async function readManifest(manager, ids, signal) {
 
 // The entries this download may write: well formed, inside the host's rules, none with a segment on the sensitive
 // list (E69: the host never lists one; a hand-made manifest's is skipped and counted), no two landing on one name.
+// A file over the per-file limit is not skipped quietly: it is named in `failed` (at most FAILED_LISTED, the rest only
+// counted in `failedTotal`) and the other files still land.
+const FAILED_LISTED = 20;
 function writable(entries) {
   const kept = [];
   const names = createCollisionSet();
+  const failed = [];
+  let failedTotal = 0;
   let bad = 0;
   for (const entry of entries) {
-    const ok = entry && Number.isSafeInteger(entry.index) && typeof entry.path === 'string' && pathAllowed(entry.path)
-      && sensitiveName(entry.path) === null
-      && isCount(entry.size) && entry.size <= LIMITS.maxFileBytes && typeof entry.sha256 === 'string' && SHA256.test(entry.sha256);
-    if (ok && names.add(entry.path)) kept.push(entry); else bad += 1;
+    const named = entry && Number.isSafeInteger(entry.index) && typeof entry.path === 'string' && pathAllowed(entry.path)
+      && sensitiveName(entry.path) === null && isCount(entry.size)
+      && typeof entry.sha256 === 'string' && SHA256.test(entry.sha256);
+    if (!named || !names.add(entry.path)) bad += 1;
+    else if (entry.size > LIMITS.maxFileBytes) {
+      failedTotal += 1;
+      if (failed.length < FAILED_LISTED) failed.push({ path: entry.path, reason: 'team_download_file_too_large' });
+    } else kept.push(entry);
   }
-  return { kept, bad };
+  return { kept, bad, failed, failedTotal };
 }
 
 // Makes each folder of `relative` under `root`, each a real directory at its own real path; answers the file's path.
@@ -176,13 +185,14 @@ async function writeAll(handle, bytes, position) {
 
 /**
  * Runs a download into `folder` (already checked empty). deps: { manager, projectId, folder, signal, progress,
- * waitReconnect, stopped }. Resolves { ok: true, files, bytes, skipped, path } or throws a TransferEnd.
+ * waitReconnect, stopped }. Resolves { ok: true, files, bytes, skipped, path } (plus `failed: [{ path, reason }]` and
+ * `failed_files` when a listed file was over the per-file limit) or throws a TransferEnd.
  */
 async function runDownload({ manager, projectId, folder, signal, progress, waitReconnect, stopped }) {
   progress({ state: 'checking', files_done: 0, bytes_done: 0 }, true);
   const pages = await readManifest(manager, { project_id: projectId }, signal);
   const page = pages[pages.length - 1];
-  const { kept, bad } = writable(pages.flatMap((one) => one.entries));
+  const { kept, bad, failed, failedTotal } = writable(pages.flatMap((one) => one.entries));
   const totals = { files_total: kept.length, bytes_total: kept.reduce((sum, entry) => sum + entry.size, 0),
     skipped: page.skipped + bad };
   let filesDone = 0;
@@ -209,7 +219,8 @@ async function runDownload({ manager, projectId, folder, signal, progress, waitR
     bytesDone += entry.size;
     progress({ ...totals, state: 'running', files_done: filesDone, bytes_done: bytesDone });
   }
-  return { ok: true, files: filesDone, bytes: bytesDone, skipped: totals.skipped, path: folder };
+  return { ok: true, files: filesDone, bytes: bytesDone, skipped: totals.skipped, path: folder,
+    ...(failedTotal > 0 ? { failed, failed_files: failedTotal } : {}) };
 }
 
 module.exports = { MAX_MANIFEST_PAGES, folderRefusal, runDownload };

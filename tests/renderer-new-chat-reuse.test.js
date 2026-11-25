@@ -235,3 +235,12 @@ test('a local draft chat (created while another chat streams) is reused', async 
   assert.equal(await controller.handleCreateSessionWithWorkspace(), 'draft_1');
   assert.equal(createCalls.length, 0);
 });
+
+test('a local draft made for another project is not reused by a bare New chat', async () => {
+  const { controller, createCalls } = setup({
+    sessions: [{ ...emptyChat('draft_other'), project_id: 'project_other', local_draft: true }],
+    workspaceRoot: 'G:/code/app',
+  });
+  assert.notEqual(await controller.handleCreateSessionWithWorkspace(), 'draft_other');
+  assert.equal(createCalls.length, 1);
+});

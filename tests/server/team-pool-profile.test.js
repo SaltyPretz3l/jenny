@@ -116,9 +116,11 @@ function assertTokenNowhere(f, token) {
 // ---------------------------------------------------------------------------
 // 1. The gateway's /props.
 
-test('/props reports the largest model length, capped by the owner value; an empty pool reports the cap', async (t) => {
+test('/props reports the largest model length, capped by the owner value; an empty pool reports the 32K stand-in', async (t) => {
   const empty = await startPool(t, { cap: 65536 });
-  assert.equal((await empty.props()).default_generation_settings.n_ctx, 65536, 'empty pool: the cap alone');
+  // Row 201 (OD-5): no node length known, so the old 32K default stands in, never above the cap.
+  assert.equal((await empty.props()).default_generation_settings.n_ctx, 32768, 'empty pool: the stand-in under the cap');
+  assert.equal((await (await startPool(t, { cap: 16384 })).props()).default_generation_settings.n_ctx, 16384, 'a lower cap wins');
   const mixed = await startPool(t, { cap: 1048576, nodes: [[model('alpha', { contextLength: 16384 })],
     [model('beta', { contextLength: 131072 })]] });
   assert.equal((await mixed.props()).default_generation_settings.n_ctx, 131072, 'the largest, not the smallest');
@@ -278,6 +280,16 @@ test('the member chat.send carries the team model profile, and none on a local m
 test('a model whose context length changes makes a new catalog key, so the member list refreshes', () => {
   const row = { id: 'team/team_alpha1/alpha', team_name: 'Alpha crew', context_length: 32768 };
   assert.notEqual(teamCatalogKey([row]), teamCatalogKey([{ ...row, context_length: 65536 }]));
+  assert.notEqual(teamCatalogKey([row]), teamCatalogKey([{ ...row, capabilities: { vision: true, thinking: false } }]), 'row 201: capabilities too');
+});
+
+test('row 201: a team model row carries the host vision and thinking flags; a model with none has no capabilities', () => {
+  const service = memberService();
+  const engine = service.options.getTeamEngine();
+  service.options = { getTeamEngine: () => ({ ...engine, listTeams: () => engine.listTeams().map((team) => ({ ...team, capabilities: { alpha: { vision: true, thinking: false } } })) }) };
+  const rows = teamModelEntries(service);
+  assert.deepEqual(rows[0].capabilities, { vision: true, thinking: false });
+  assert.equal(Object.hasOwn(rows[1], 'capabilities'), false);
 });
 
 // A member's send on a live team model: the profile buildChatSendOptionalFields adds survives a route

@@ -26,6 +26,7 @@ const FIXTURE = `<!doctype html><html><body>
     </div>
     <div data-chat-node="composerStatusNotice"></div>
     <div data-chat-node="composerV2FailedSendNotice"></div>
+    <div class="composer-mode-chips" data-chat-node="composerModeChips"></div>
     <div class="hero-stack"></div>
   </div>
 </body></html>`;
@@ -110,9 +111,19 @@ test('syncPaneComposer drives Send/Stop/queued copy from the pane session', (t) 
   buildPane(rig);
   rig.pane.dom.chatInput.value = 'hello';
   rig.chrome.syncPaneComposer(rig.pane);
-  assert.equal(rig.pane.sendButton.textContent, 'Queue');
+  // Row 192 C11: the pane's shorter Queue is the same fixed-size icon button.
+  assert.equal(rig.pane.sendButton.textContent, '');
+  assert.ok(rig.pane.sendButton.querySelector(':scope > svg'), 'the queue icon');
+  assert.equal(rig.pane.sendButton.getAttribute('aria-label'), 'Queue');
   assert.equal(rig.pane.sendButton.disabled, false);
   assert.ok(rig.pane.sendButton.classList.contains('composer-send-queue'));
+  assert.ok(rig.pane.sendButton.classList.contains('composer-send-queue--icon'));
+  const line = rig.rootEl.querySelector('[data-chat-node="composerModeChips"] > .composer-status-line');
+  assert.equal(line.getAttribute('role'), 'status');
+  assert.equal(line.textContent, 'Jenny is working · Enter queues your message (runs in Ask)', 'the status line, in the pane\'s own row');
+  rig.pane.dom.chatInput.value = '';
+  rig.chrome.syncPaneComposer(rig.pane);
+  assert.equal(line.textContent, 'Jenny is working');
   assert.ok(!rig.pane.stopButton.classList.contains('hidden'));
   assert.equal(rig.pane.stopButton.disabled, false);
   assert.equal(rig.pane.queuedNotice.textContent, '2 queued');
@@ -128,6 +139,12 @@ test('syncPaneComposer disables Send without a draft, enables it for a queued fi
   assert.equal(rig.pane.sendButton.disabled, true, 'empty draft, no files');
   assert.equal(rig.pane.sendButton.textContent, '↑');
   assert.ok(rig.pane.stopButton.classList.contains('hidden'));
+  assert.equal(rig.rootEl.querySelector('.composer-status-line'), null, 'no reply running, no status line');
+  const waitingRig = makeRig(t, { calls: { isSessionStreaming: () => true, hasPendingToolApproval: () => true } });
+  buildPane(waitingRig);
+  waitingRig.chrome.syncPaneComposer(waitingRig.pane);
+  assert.equal(waitingRig.rootEl.querySelector('.composer-status-line').textContent, 'Waiting for your answer above.');
+  assert.ok(waitingRig.rootEl.querySelector('.composer-status-line .status-dot--pending'));
   rig.state.backend.phase = 'ready';
   const filesRig = makeRig(t, { calls: { getQueuedAttachments: () => [{ id: 'f' }] } });
   buildPane(filesRig);

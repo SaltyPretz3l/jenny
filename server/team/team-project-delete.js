@@ -165,7 +165,10 @@ function createProjectDeleter({
         counts: { conversations: held.ids.length, ...fileCount(projectId) } });
       if (!marked.ok) return marked;
     }
-    const removed = await finish(projectId, held, () => (row ? removeRowAs(target) : { ok: true }));
+    // H19: a conversation made while the mark was awaited is the project's too: list them again, now the row is marked.
+    const current = row ? tools(projectId) : held;
+    if (!current) return stop(projectId, 'conversations', unavailable());
+    const removed = await finish(projectId, current, () => (row ? removeRowAs(target) : { ok: true }));
     return removed.ok ? { ok: true, project_id: projectId, deleted: true } : removed;
   }
 

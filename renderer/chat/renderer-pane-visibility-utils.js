@@ -92,8 +92,6 @@
     if (!wanted) return false;
     for (var index = 0; index < panes.length; index += 1) {
       if (paneSessionId(panes[index]) !== wanted) continue;
-      // Row 40 W6b: the Workspace hosts the second pane as Chat 2, live whatever the dock does.
-      if (index > 0 && state.ui && state.ui.activeView === 'ide' && state.ui.ideSecondChatHosted === true) return true;
       return isChatSurfaceLive(state);
     }
     return false;

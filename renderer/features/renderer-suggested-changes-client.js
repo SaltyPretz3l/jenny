@@ -359,6 +359,8 @@
       decide,
       dispose,
       get,
+      // The cached list or null, with no load started (the Chat room's Changes tab count reads this on every render).
+      peek: (sessionId) => lists.get(String(sessionId || '')) || null,
       getCurrent,
       isBusy,
       isDirty,

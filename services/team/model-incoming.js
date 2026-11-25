@@ -155,12 +155,15 @@ function createModelIncoming({
     current = take;
     const started = new Promise((resolve) => { take.onFirst = () => { take.onFirst = null; resolve({ running: true }); }; });
     const ended = run().then((outcome) => ({ outcome }), () => ({ outcome: { ok: false, reason: 'model_staging_failed' } }));
-    void ended.then(({ outcome }) => settle(take, outcome));
+    const settled = ended.then(({ outcome }) => settle(take, outcome)).catch(() => {});
     const first = await Promise.race([started, ended]);
     take.onFirst = null;
     // The answer carries no folder name (E82); the take keeps it for the announce and the provenance file records it.
     const done = () => ({ ok: true });
     if (first.running) return done();
+    // The run ended before it ran: the answer waits for its settling (a fresh accept the host refused cancels its
+    // staging), so the caller's claim is not given back while the receiver is still held.
+    await settled;
     const { outcome } = first;
     if (outcome.state === undefined) { forget(take); return modelRefusal(outcome.reason); }
     // The host refused a fresh accept (the sender offline, the offer taken): the call answers that refusal.

@@ -31,7 +31,7 @@ function createApprovalDom() {
   return dom;
 }
 
-test('approval batch makes one-off approval primary and names persistent approval explicitly', async (t) => {
+test('approval batch offers exactly two answers: Allow all once and Deny all (row 192 C7)', async (t) => {
   const dom = createApprovalDom();
   const { window } = dom;
   const controller = bindApprovalBatchUx({
@@ -53,13 +53,13 @@ test('approval batch makes one-off approval primary and names persistent approva
     className: button.className,
   })), [
     { action: 'approve-all-once', text: 'Allow all once', className: 'approval-batch-action approval-batch-action--allow-once' },
-    { action: 'approve-all', text: 'Always allow all', className: 'approval-batch-action approval-batch-action--allow' },
     { action: 'deny-all', text: 'Deny all', className: 'approval-batch-action approval-batch-action--deny' },
   ]);
+  assert.equal(window.document.querySelector('[data-approval-batch-action="approve-all"]'), null, 'no Always allow all');
 });
 
-for (const [action, alwaysAllow] of [['approve-all-once', false], ['approve-all', true]]) {
-  test('approval batch ' + action + ' preserves the alwaysAllow payload for every pending row', async (t) => {
+for (const [action, alwaysAllow] of [['approve-all-once', false]]) {
+  test('approval batch ' + action + ' sends a one-time approval for every pending row', async (t) => {
     const dom = createApprovalDom();
     const { window } = dom;
     const approvals = [];
@@ -149,7 +149,7 @@ test('approval batch resolves only successful rows when mixed batch results occu
 
   controller.sync();
   await flush();
-  window.document.querySelector('[data-approval-batch-action="approve-all"]').click();
+  window.document.querySelector('[data-approval-batch-action="approve-all-once"]').click();
   await flush();
 
   assert.equal(
@@ -197,17 +197,17 @@ test('replacement batch banners stay busy while slower rows are still in flight'
   });
 
   await flush();
-  window.document.querySelector('[data-approval-batch-action="approve-all"]').click();
+  window.document.querySelector('[data-approval-batch-action="approve-all-once"]').click();
   await flush();
 
   const replacementBanner = window.document.querySelector('.approval-batch-banner');
   assert.equal(replacementBanner.getAttribute('data-pending-count'), '2');
   assert.equal(replacementBanner.getAttribute('data-approval-batch-busy'), 'true');
   assert.equal(
-    replacementBanner.querySelector('[data-approval-batch-action="approve-all"]').disabled,
+    replacementBanner.querySelector('[data-approval-batch-action="approve-all-once"]').disabled,
     true
   );
-  replacementBanner.querySelector('[data-approval-batch-action="approve-all"]').click();
+  replacementBanner.querySelector('[data-approval-batch-action="approve-all-once"]').click();
   await Promise.resolve();
   assert.deepEqual(calls, [
     'approval-stream-a-call-1',
@@ -283,7 +283,7 @@ test('CTR-007: a successful batch row stays busy and is released; a claim in fli
 
   controller.sync();
   await flush();
-  window.document.querySelector('[data-approval-batch-action="approve-all"]').click();
+  window.document.querySelector('[data-approval-batch-action="approve-all-once"]').click();
   await flush();
 
   assert.deepEqual(busy, [['call-1', true], ['call-2', true]], 'success leaves the row busy; the resolved flow removes it');
@@ -514,7 +514,7 @@ test('approval reconciliation clears bounded work on settlement, session switch,
   assert.ok(cleared.includes(3), 'disposal clears its timer');
 });
 
-test('the banner offers the one-time answer first and names the standing permission', async () => {
+test('the banner offers the one-time answer first and no standing permission', async () => {
   const dom = createApprovalDom();
   const { window } = dom;
   const controller = bindApprovalBatchUx({
@@ -527,7 +527,6 @@ test('the banner offers the one-time answer first and names the standing permiss
   const buttons = Array.from(window.document.querySelectorAll('.approval-batch-action'));
   assert.deepEqual(buttons.map((button) => [button.getAttribute('data-approval-batch-action'), button.textContent]), [
     ['approve-all-once', 'Allow all once'],
-    ['approve-all', 'Always allow all'],
     ['deny-all', 'Deny all'],
   ]);
   controller.dispose();

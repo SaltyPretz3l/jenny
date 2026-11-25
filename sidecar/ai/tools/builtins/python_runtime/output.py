@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from sidecar.ai.tools.builtins import new_image_note
 from sidecar.ai.tools.builtins.python_runtime.output_scratch import (
     scratch_keeper,
     scratch_renderer,
@@ -273,6 +274,19 @@ def format_python_output(
             payload["full_output_path"] = spill_path
             payload["full_output_note"] = spill_note(spill_path)
     return payload, tuple(attachments)
+
+
+def attach_new_image_note(
+    payload: dict[str, object], *, code: str, workspace_root: Path, started_at: float
+) -> None:
+    """Name the images the code wrote in the workspace (row 199 C1); never raises."""
+    note = new_image_note.new_image_note(
+        workspace_root,
+        texts=(code, str(payload.get("stdout") or ""), str(payload.get("stderr") or "")),
+        started_at=started_at,
+    )
+    if note:
+        payload[new_image_note.NOTE_KEY] = note
 
 
 def _router_cuts_stdout(

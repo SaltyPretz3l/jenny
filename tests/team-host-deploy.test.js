@@ -14,7 +14,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { HOST_KEY_NAME, createHostKeyStore } = require('../services/team/host/host-key-store');
-const { DEPLOY_POOL_CONTEXT_LENGTH, buildHostConfig, prepareHostLayout, writeHostConfig } = require('../services/team/host/host-layout');
+const { POOL_CONTEXT_AUTO, buildHostConfig, prepareHostLayout, writeHostConfig } = require('../services/team/host/host-layout');
 const { TEAM_ERROR_CODES } = require('../services/backend/error-codes');
 const { loadHostConfig } = require('../server/config');
 const { deriveTeamId, keyPairFromSeed } = require('../server/team/ids');
@@ -86,7 +86,7 @@ test('first Deploy: real-path config with no secret, --config and --team-init, s
   const projects = fs.realpathSync.native(path.join(root, 'projects'));
   // Slice 4a-5 (E65): Deploy turns the GPU pool on; the owner's own Jenny shares into it like any member.
   assert.deepEqual(config.team, { name: 'Studio', key_source: 'parent_channel', direct_port: DIRECT_PORT, projects_root: projects,
-    pool: { context_length: DEPLOY_POOL_CONTEXT_LENGTH } });
+    pool: { context_length: POOL_CONTEXT_AUTO } });
   assert.equal(fs.lstatSync(path.join(root, 'trash')).isDirectory(), true, 'the trash folder is made too');
   assert.equal(loadHostConfig(configPath).team.projectsRoot, projects, 'the written root passes the desktop rule');
   assert.equal(config.workspace_root, null);
@@ -97,7 +97,7 @@ test('first Deploy: real-path config with no secret, --config and --team-init, s
   assert.equal(config.python_executable, process.execPath);
   const loaded = loadHostConfig(configPath);
   assert.equal(loaded.modelEndpoint, null, 'the host loader accepts the written config');
-  assert.deepEqual(loaded.team.pool, { contextLength: DEPLOY_POOL_CONTEXT_LENGTH });
+  assert.deepEqual(loaded.team.pool, { contextLength: POOL_CONTEXT_AUTO });
 
   const forbidden = [stored, Buffer.from(stored, 'base64url').toString('hex')];
   const everything = [raw, JSON.stringify(call.args), JSON.stringify(call.options), JSON.stringify(logs),
@@ -121,7 +121,7 @@ test('from a source checkout the config names the desktop sidecar interpreter, a
     const config = JSON.parse(fs.readFileSync(path.join(hostDir(userDataPath), 'host-config.json'), 'utf8'));
     assert.equal(config.python_executable, expected, label);
     assert.equal(Object.hasOwn(config, 'model_endpoint'), false, label);
-    assert.deepEqual(config.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH }, label);
+    assert.deepEqual(config.team.pool, { context_length: POOL_CONTEXT_AUTO }, label);
   }
 });
 
@@ -152,7 +152,7 @@ for (const engine of ['codex-cli', 'llama-server', 'ninfer', 'chatgpt', '']) {
   test(`Deploy works with the desktop engine set to ${engine || 'nothing'}`, async (t) => {
     const config = await deployThroughRegistration(t, { currentEngineType: engine });
     assert.equal(Object.hasOwn(config, 'model_endpoint'), false);
-    assert.deepEqual(config.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH }, 'the pool whatever the engine');
+    assert.deepEqual(config.team.pool, { context_length: POOL_CONTEXT_AUTO }, 'the pool whatever the engine');
     // This fake backend has no sidecar manager, so there is no interpreter to name.
     assert.equal(Object.hasOwn(config, 'python_executable'), false);
   });
@@ -177,7 +177,7 @@ test('a lockPython getter that answers a path with no file writes no python_exec
   assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
   const config = JSON.parse(fs.readFileSync(path.join(hostDir(userDataPath), 'host-config.json'), 'utf8'));
   assert.equal(Object.hasOwn(config, 'python_executable'), false);
-  assert.deepEqual(config.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
+  assert.deepEqual(config.team.pool, { context_length: POOL_CONTEXT_AUTO });
 });
 
 test('Deploy after a stop reuses the stored key and the direct port; a second Deploy while running is refused', async (t) => {
@@ -275,24 +275,24 @@ test('a relaunch of a host deployed before 4a-5 (no pool block) writes the pool'
   assert.equal(Object.hasOwn(loadHostConfig(configPath).team, 'pool'), false, 'a host from before loads with no pool');
   assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
   const rewritten = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  assert.deepEqual(rewritten.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
+  assert.deepEqual(rewritten.team.pool, { context_length: POOL_CONTEXT_AUTO });
   assert.equal(rewritten.python_executable, process.execPath);
-  assert.deepEqual(loadHostConfig(configPath).team.pool, { contextLength: DEPLOY_POOL_CONTEXT_LENGTH });
+  assert.deepEqual(loadHostConfig(configPath).team.pool, { contextLength: POOL_CONTEXT_AUTO });
 });
 
 test('buildHostConfig always writes the pool and never a model endpoint, and the loader takes it', (t) => {
   const userDataPath = tempProfile(t, 'jenny-host-layout-');
   const layout = prepareHostLayout(userDataPath);
-  assert.equal(DEPLOY_POOL_CONTEXT_LENGTH, 32768);
+  assert.equal(POOL_CONTEXT_AUTO, 1048576, 'Auto is the top of the host range: the pool follows the serving node');
   for (const options of [{}, { lockPython: process.execPath }, { internet: { relay_url: null } }]) {
     const written = buildHostConfig({ layout, name: 'Studio', directPort: 4242, ...options });
-    assert.deepEqual(written.team.pool, { context_length: DEPLOY_POOL_CONTEXT_LENGTH });
+    assert.deepEqual(written.team.pool, { context_length: POOL_CONTEXT_AUTO });
     assert.equal(Object.hasOwn(written, 'model_endpoint'), false);
     assert.equal(Object.hasOwn(written.team, 'file_tools'), false, 'I11: a new deploy has file tools off');
   }
   writeHostConfig(layout, buildHostConfig({ layout, name: 'Studio', directPort: 4242 }));
   const loaded = loadHostConfig(layout.configPath);
-  assert.deepEqual([loaded.modelEndpoint, loaded.team.pool], [null, { contextLength: DEPLOY_POOL_CONTEXT_LENGTH }]);
+  assert.deepEqual([loaded.modelEndpoint, loaded.team.pool], [null, { contextLength: POOL_CONTEXT_AUTO }]);
 });
 
 test('over a saved config a stored key is never regenerated: key mismatch is reported and nothing changes', async (t) => {
@@ -337,6 +337,8 @@ for (const [platform, isPackaged] of [['darwin', false], ['darwin', true], ['lin
     assert.equal(fake.calls.length, 0);
     assert.equal(fs.existsSync(hostDir(userDataPath)), false);
     assert.deepEqual(secureStore.sets, []);
+    // OD-7: the page learns it before any click.
+    assert.equal((await controller.handle('hostStatus', {})).host.desktop_hosting, false);
   });
 }
 

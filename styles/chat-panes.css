@@ -16,17 +16,13 @@
    - --composer-width is for the composer, which is not inside that container:
      the same arithmetic in percentages of its own grid area, which is also the
      pane's width. Equal results, one per unit system.
-   - --chat-measure-lock (a px length) is set on a pane while a side panel moves
-     (renderer-side-panel-motion.js): both tokens then use exactly that width,
-     so the text reflows once instead of per frame.
-   The IDE chat dock sets its own widths: the main dock is not a .chat-pane, and a pane hosted in the
-   Workspace (renderer-app-pane-composition.js setPaneHost adds .ide-chat-dock-body to its root) is
-   excluded here so the dock's tokens in ide-chat-dock.css keep applying. */
+   The IDE chat dock sets its own widths: its body is excluded here so the dock's tokens in
+   ide-chat-dock.css keep applying. */
 .chat-pane:not(.ide-chat-dock-body) {
   --chat-gutter-min: 16px;
   --chat-reading-floor: 320px;
-  --content-column-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100cqi - 2 * max(clamp(var(--chat-gutter-min), 3cqi, 40px), var(--chat-sprite-rail-offset)))));
-  --composer-width: var(--chat-measure-lock, min(var(--chat-measure-cap), calc(100% - 2 * max(clamp(var(--chat-gutter-min), 3%, 40px), var(--chat-sprite-rail-offset)))));
+  --content-column-width: min(var(--chat-measure-cap), calc(100cqi - 2 * max(clamp(var(--chat-gutter-min), 3cqi, 40px), var(--chat-sprite-rail-offset))));
+  --composer-width: min(var(--chat-measure-cap), calc(100% - 2 * max(clamp(var(--chat-gutter-min), 3%, 40px), var(--chat-sprite-rail-offset))));
 }
 
 /* Split panes may be as narrow as the 320px resizer floor, where the streaming
@@ -49,61 +45,12 @@
   display: contents;
 }
 
-/* The pane kicker: one line (state dot, title, close), filled by W1-4 and
-   shown only with two panes. */
-.chat-pane-kicker {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-inline-size: 0;
-  padding-block: var(--space-2);
-  padding-inline: var(--space-4);
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.chat-pane[data-pane-focused="true"] > .chat-pane-kicker {
-  color: var(--text-primary);
-}
-
-.chat-pane-kicker[hidden] {
-  display: none;
-}
-
-/* "· project" after the title when the two panes sit in different projects:
-   one line that ellipsizes beside the title (gate N3: it wrapped one word
-   per line in a narrow pane). */
-.chat-pane-kicker-project {
-  min-inline-size: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* W1-4c: the title truncates; the close glyph (the rail tab's glyph) sits at
-   the end of the line. */
-.chat-pane-kicker-title {
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-pane-kicker > .chat-pane-close {
-  margin-inline-start: auto;
-}
-
 /* ── Two panes: pane | divider | pane | artifact/context columns ──
    W1-3's divider writes --chat-pane-a / --chat-pane-b as fractional fr values
    (calc() cannot produce fr, hence two properties). */
 .chat-view[data-pane-count="2"] {
   --chat-pane-resizer-width: 10px;
   grid-template-columns: minmax(0, var(--chat-pane-a, 1fr)) var(--chat-pane-resizer-width) minmax(0, var(--chat-pane-b, 1fr)) auto;
-}
-
-.chat-view[data-pane-count="2"].artifact-review-open {
-  grid-template-columns: minmax(0, var(--chat-pane-a, 1fr)) var(--chat-pane-resizer-width) minmax(0, var(--chat-pane-b, 1fr)) var(--artifact-review-resizer-width, 10px) auto;
 }
 
 .chat-view[data-pane-count="2"] > .chat-pane {
@@ -121,7 +68,7 @@
   grid-column: 1;
 }
 
-/* Placement only: the look comes from the shared .artifact-review-resizer. */
+/* Placement only: the look comes from .chat-pane-resizer in context-panel.css. */
 .chat-view[data-pane-count="2"] > .chat-pane-resizer {
   grid-column: 2;
   grid-row: 1 / -1;
@@ -131,14 +78,8 @@
   grid-column: 3;
 }
 
-/* Inside a pane: kicker row 1 (the session bar, see chat-session-bar.css; column 1 is explicit
-   because the cluster shares its cell); hero and thread overlap in row 2 as they do in the view
-   today; composer row 3. */
-.chat-view[data-pane-count="2"] > .chat-pane > .chat-pane-kicker {
-  grid-column: 1;
-  grid-row: 1;
-}
-
+/* Inside a pane: row 1 is the header row (see chat-session-bar.css); hero and thread overlap in
+   row 2 as they do in the view today; composer row 3. */
 .chat-view[data-pane-count="2"] > .chat-pane > .hero-stage,
 .chat-view[data-pane-count="2"] > .chat-pane > .chat-thread-stage {
   grid-column: 1;
@@ -154,12 +95,7 @@
   transform: none;
 }
 
-/* The one-pane columns (context panel 2, artifact resizer 2, artifact panel 3)
-   shifted by +2. */
-.chat-view[data-pane-count="2"] > .artifact-review-resizer:not(.chat-pane-resizer) {
-  grid-column: 4;
-}
-
+/* The one-pane columns (context panel 2, artifact panel 3) shifted by +2. */
 .chat-view[data-pane-count="2"] > .artifact-review-panel {
   grid-column: 5;
 }
@@ -247,85 +183,6 @@
 .chat-view[data-pane-count="2"][data-pane-drop="right"] > .chat-pane[data-pane-id="1"] {
   outline: 1px solid var(--border-subtle);
   outline-offset: -1px;
-}
-
-/* Narrow windows fold the split to the focused pane; the other conversation
-   keeps its runtime and stays a rail tab. Widening restores the split. */
-@media (min-width: 1181px) {
-  .chat-view[data-pane-count="2"].artifact-review-open:not(.artifact-review-maximized) > .artifact-review-panel {
-    min-width: 0;
-    max-width: max(0px, calc(100vw - var(--sidebar-current-width, 0px) - var(--artifact-review-resizer-width, 10px) - 650px));
-  }
-}
-
-/* Split view, row 34 S5 (v2 §6): when the panes can't each keep about 40rem
-   beside the side panel, the code review opens over the pane of the chat that
-   owns it (renderer-artifact-review-rail.js stamps data-side-panel-pane), so
-   the other chat stays usable. Same grid cell as that pane, stacked above its
-   composer. */
-.chat-view[data-pane-count="2"][data-side-panel-pane] > .artifact-review-panel {
-  grid-row: 1 / -1;
-  justify-self: stretch;
-  width: auto;
-  min-width: 0;
-  max-width: none;
-  border-inline-start: 0;
-  box-shadow: var(--shadow-float);
-  z-index: calc(var(--z-raised) + 1);
-}
-
-.chat-view[data-pane-count="2"][data-side-panel-pane="0"] > .artifact-review-panel {
-  grid-column: 1;
-}
-
-.chat-view[data-pane-count="2"][data-side-panel-pane="1"] > .artifact-review-panel {
-  grid-column: 3;
-}
-
-@media (max-width: 1180px) {
-  .chat-view[data-pane-count="2"] {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .chat-view[data-pane-count="2"].artifact-review-open {
-    grid-template-columns: minmax(0, 1fr) var(--artifact-review-resizer-width, 10px) auto;
-  }
-
-  .chat-view[data-pane-count="2"] > .chat-pane[data-pane-focused="false"],
-  .chat-view[data-pane-count="2"] > .chat-pane-resizer {
-    display: none;
-  }
-
-  .chat-view[data-pane-count="2"] > .chat-pane[data-pane-focused="true"] {
-    grid-column: 1;
-  }
-
-  .chat-view[data-pane-count="2"] > .artifact-review-resizer:not(.chat-pane-resizer) {
-    grid-column: 2;
-  }
-
-  .chat-view[data-pane-count="2"] > .artifact-review-panel {
-    grid-column: 3;
-  }
-
-  .chat-view[data-pane-count="2"] > .chat-context-panel {
-    grid-column: 2;
-  }
-}
-
-/* Artifact review maximized with two panes: both panes go (they are grid
-   boxes, so hiding their children would leave empty columns) and the panel
-   spans the single column. After the fold block so these win its ties. */
-.chat-view[data-pane-count="2"].artifact-review-maximized {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.chat-view[data-pane-count="2"].artifact-review-maximized > .chat-pane {
-  display: none;
-}
-
-.chat-view[data-pane-count="2"].artifact-review-maximized > .artifact-review-panel {
-  grid-column: 1 / -1;
 }
 
 /* Split view W3-2 (2026-09-26): the side panel names the chat that owns it

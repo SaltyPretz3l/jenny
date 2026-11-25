@@ -1,9 +1,7 @@
 'use strict';
 
-/* Row 115 slice 1: the session bar. The title controller (renderer/chat/renderer-session-bar.js) in
-   jsdom, its wiring and script tag, and the stylesheet contract (styles/chat-session-bar.css) read
-   from the real files. The geometry (never changes orientation, the Session button does not move,
-   split kicker row) is gated in headless Chromium by tests/renderer-session-rail-layout.test.js. */
+/* Row 115 slice 1: the session bar. The diff control (renderer/chat/renderer-session-bar.js) in jsdom,
+   its wiring and script tag. The stylesheet contract is tests/renderer-session-bar-css.test.js. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,18 +22,16 @@ function fixture({ paneClass = 'chat-pane', paneAttrs = '' } = {}) {
   dom.window.stringUtils = stringUtils;
   let hidden = false; // jsdom reports hidden=true by default; the tests drive visibility themselves
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
-  const sessions = { sess_a: 'First chat', sess_b: 'Second chat', sess_none: '' };
   const state = { id: 'sess_a' };
   return {
-    dom, document, sessions, state,
+    dom, document, state,
     pane: document.getElementById('pane'), cluster: document.getElementById('cluster'), timeline: document.getElementById('timeline'),
     options(extra = {}) {
       return {
         pane: document.getElementById('pane'), cluster: document.getElementById('cluster'), chatTimeline: document.getElementById('timeline'),
-        getSessionId: () => state.id, getTitle: (id) => sessions[id], windowRef: dom.window, ...extra,
+        getSessionId: () => state.id, windowRef: dom.window, ...extra,
       };
     },
-    titleNode: () => document.querySelector('[data-session-bar-title]'),
     diffNode: () => document.querySelector('[data-session-bar-diff]'),
     setHidden(value) {
       hidden = value;
@@ -74,120 +70,40 @@ const mountDiff = async (f, handler, extra = {}) => {
   return { api, bridge };
 };
 
-test('mounts one title node at the start of the cluster with the session title, text only', () => {
+test('re-syncs the session on the focused chat event, the timeline render event and an explicit sync', async () => {
   const f = fixture();
-  f.sessions.sess_a = '<img src=x onerror=alert(1)> chat';
-  const api = mountSessionBar(f.options());
-  const node = f.titleNode();
-  assert.ok(node && node.classList.contains('session-bar-title'));
-  assert.equal(f.cluster.firstChild, node, 'the title is a child of the cluster');
-  assert.equal(f.cluster.querySelector('img'), null, 'the title is never parsed as markup');
-  assert.equal(node.textContent, '<img src=x onerror=alert(1)> chat');
-  assert.equal(node.getAttribute('title'), node.textContent, 'the title attribute carries the full string');
-  api.dispose();
-});
-
-test('an untitled session shows "New session" and the passed jt wins over the English fallback', () => {
-  const f = fixture();
-  f.state.id = 'sess_none';
-  const api = mountSessionBar(f.options());
-  assert.equal(f.titleNode().textContent, 'New session');
-  api.dispose();
-  const g = fixture();
-  g.state.id = 'sess_none';
-  const api2 = mountSessionBar(g.options({ jt: (key, fallback) => `[${key}] ${fallback}` }));
-  assert.equal(g.titleNode().textContent, '[chat.empty.newSession] New session');
-  api2.dispose();
-});
-
-test('re-syncs on the focused chat event and the timeline render event, and on an explicit sync', () => {
-  const f = fixture();
-  const api = mountSessionBar(f.options());
-  assert.equal(f.titleNode().textContent, 'First chat');
+  const { api, bridge } = await mountDiff(f, () => available());
+  assert.deepEqual(bridge.calls.map((call) => call.session_id), ['sess_a']);
   f.state.id = 'sess_b';
   f.dom.window.dispatchEvent(new f.dom.window.CustomEvent('jenny:focused-chat-changed'));
-  assert.equal(f.titleNode().textContent, 'Second chat', 'jenny:focused-chat-changed');
-  f.sessions.sess_b = 'Renamed';
+  await flush();
+  assert.equal(bridge.calls.at(-1).session_id, 'sess_b', 'jenny:focused-chat-changed');
+  f.state.id = 'sess_a';
   f.timeline.dispatchEvent(new f.dom.window.CustomEvent('transcript-view-rendered'));
-  assert.equal(f.titleNode().textContent, 'Renamed', 'transcript-view-rendered');
-  f.sessions.sess_b = 'Renamed again';
-  assert.equal(f.titleNode().textContent, 'Renamed', 'a rename alone raises no event');
-  api.sync();
-  assert.equal(f.titleNode().textContent, 'Renamed again', 'sync() reads the title again');
-  api.dispose();
-});
-
-test('writes the node only when the title changed', () => {
-  const f = fixture();
-  const api = mountSessionBar(f.options());
-  const node = f.titleNode();
-  const first = node.firstChild;
-  api.sync();
-  api.sync();
-  assert.equal(node.firstChild, first, 'the same text node: nothing was rewritten');
-  api.dispose();
-});
-
-test('dispose removes the node and every listener; later events do nothing', () => {
-  const f = fixture();
-  let reads = 0;
-  const api = mountSessionBar(f.options({ getTitle: (id) => { reads += 1; return f.sessions[id]; } }));
-  const afterMount = reads;
-  api.dispose();
-  assert.equal(f.titleNode(), null);
+  await flush();
+  assert.equal(bridge.calls.at(-1).session_id, 'sess_a', 'transcript-view-rendered');
   f.state.id = 'sess_b';
-  f.dom.window.dispatchEvent(new f.dom.window.CustomEvent('jenny:focused-chat-changed'));
-  f.timeline.dispatchEvent(new f.dom.window.CustomEvent('transcript-view-rendered'));
   api.sync();
-  assert.equal(reads, afterMount, 'no listener or sync reads the title after dispose');
-  assert.doesNotThrow(() => api.dispose(), 'dispose is idempotent');
-});
-
-test('honors an AbortSignal like the session rail: abort disposes, an aborted signal mounts nothing', () => {
-  const f = fixture();
-  const controller = new f.dom.window.AbortController();
-  const api = mountSessionBar(f.options({ signal: controller.signal }));
-  assert.ok(f.titleNode());
-  controller.abort();
-  assert.equal(f.titleNode(), null, 'abort removes the node');
-  f.state.id = 'sess_b';
-  f.dom.window.dispatchEvent(new f.dom.window.CustomEvent('jenny:focused-chat-changed'));
-  assert.equal(f.titleNode(), null, 'abort released the listeners');
-  assert.doesNotThrow(() => api.dispose());
-  const g = fixture();
-  const aborted = new g.dom.window.AbortController();
-  aborted.abort();
-  assert.equal(mountSessionBar(g.options({ signal: aborted.signal })), null);
-  assert.equal(g.titleNode(), null);
-});
-
-test('a remount replaces the previous title node instead of stacking', () => {
-  const f = fixture();
-  mountSessionBar(f.options());
-  const api = mountSessionBar(f.options());
-  assert.equal(f.document.querySelectorAll('[data-session-bar-title]').length, 1);
+  await flush();
+  assert.equal(bridge.calls.at(-1).session_id, 'sess_b', 'sync()');
   api.dispose();
 });
 
-test('mounts nothing for a pane hosted in the IDE dock or without the required options', () => {
+test('mounts nothing for a pane in the IDE dock or without the required options', () => {
   const dock = fixture({ paneClass: 'chat-pane ide-chat-dock-body' });
   assert.equal(mountSessionBar(dock.options()), null);
-  assert.equal(dock.titleNode(), null);
-  const hosted = fixture({ paneAttrs: 'data-pane-hosted="true"' });
-  assert.equal(mountSessionBar(hosted.options()), null);
-  assert.equal(hosted.titleNode(), null);
   const f = fixture();
-  assert.equal(mountSessionBar(f.options({ getTitle: null })), null);
+  assert.equal(mountSessionBar(f.options({ getSessionId: null })), null);
   assert.equal(mountSessionBar(f.options({ cluster: null })), null);
   assert.equal(mountSessionBar(), null);
 });
 
-test('the bindings mount it beside the rail with the session title from state; index.html loads it before the rail', () => {
+test('the bindings mount it beside the rail; index.html loads it before the rail', () => {
   const bindings = read('renderer/chat/renderer-chat-event-transcript-bindings.js');
   const bar = bindings.indexOf('rendererSessionBar?.mountSessionBar?.(');
   const rail = bindings.indexOf('rendererSessionRail?.mountSessionRail?.(');
   assert.ok(bar > 0 && bar < rail, 'the bar mounts just before the rail');
-  assert.match(bindings.slice(bar, rail), /getTitle:\s*\(id\)\s*=>\s*state\.sessions\?\.find\?\.\(\(entry\) => entry\.id === id\)\?\.title/);
+  assert.doesNotMatch(bindings.slice(bar, rail), /getTitle/, 'the bar has no title (row 190: the chat tab is the title)');
   assert.match(bindings.slice(bar, rail), /signal:\s*bindAbortController\?\.signal/);
   const html = read('index.html');
   const barTag = html.indexOf('<script defer src="renderer/chat/renderer-session-bar.js"></script>');
@@ -398,7 +314,7 @@ test('a hostile branch name is text, never markup', async () => {
 });
 
 test('no read at all for a pane hosted in the IDE dock or elsewhere', async () => {
-  for (const f of [fixture({ paneClass: 'chat-pane ide-chat-dock-body' }), fixture({ paneAttrs: 'data-pane-hosted="true"' })]) {
+  for (const f of [fixture({ paneClass: 'chat-pane ide-chat-dock-body' })]) {
     const bridge = fakeBridge(() => available());
     assert.equal(mountSessionBar(f.options({ bridge })), null);
     await flush();
@@ -408,11 +324,10 @@ test('no read at all for a pane hosted in the IDE dock or elsewhere', async () =
   }
 });
 
-test('mounts no diff control without the bridge (title still works), and an empty session reads nothing', async () => {
+test('mounts no diff control without the bridge, and an empty session reads nothing', async () => {
   const f = fixture();
   const api = mountSessionBar(f.options());
   assert.equal(f.diffNode(), null);
-  assert.equal(f.titleNode().textContent, 'First chat');
   api.dispose();
   const g = fixture();
   g.state.id = '';
@@ -520,9 +435,10 @@ test('a remount replaces the diff control; syncAll still refreshes every bar', a
   const api = mountSessionBar(f.options({ bridge }));
   await flush();
   assert.equal(f.document.querySelectorAll('[data-session-bar-diff]').length, 1);
-  f.sessions.sess_a = 'Renamed by syncAll';
+  f.state.id = 'sess_b';
   syncAll();
-  assert.equal(f.titleNode().textContent, 'Renamed by syncAll');
+  await flush();
+  assert.equal(bridge.calls.at(-1).session_id, 'sess_b', 'syncAll re-reads the session');
   api.dispose();
 });
 

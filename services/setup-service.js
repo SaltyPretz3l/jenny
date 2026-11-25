@@ -84,8 +84,7 @@ function isLocalRuntimeEngine(value) {
 }
 
 function hasCurrentMinimumReadiness(readiness = {}) {
-  return readiness.workspace_root?.ready === true
-    && (readiness.local_model?.ready === true || readiness.endpoint?.ready === true);
+  return readiness.local_model?.ready === true || readiness.endpoint?.ready === true;
 }
 
 class SetupService extends EventEmitter {
@@ -108,7 +107,7 @@ class SetupService extends EventEmitter {
     logger = null,
     refreshManagedConfig = null,
     killProcessTreeImpl = null,
-    getLlamaServerManager = () => null,
+    getLlamaServerManager = () => null, getManagedServerManagers = () => [], // keyed servers: Setup's endpoint check
     getOwnedOllamaPid = () => 0,
   } = {}) {
     super();
@@ -139,7 +138,7 @@ class SetupService extends EventEmitter {
       fetchImpl: this.fetchImpl,
       timeoutMs: this.endpointTimeoutMs,
       logger: this.logger,
-      getLlamaServerManager,
+      getLlamaServerManager, getManagedServerManagers,
     });
     this.pullService = new OllamaPullService({
       spawnImpl: this.spawnImpl,

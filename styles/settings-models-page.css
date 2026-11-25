@@ -8,6 +8,7 @@
 .mp-dot[data-tone="warn"] { background: var(--state-warning); }
 .mp-dot[data-tone="busy"] { background: var(--state-pending); }
 .mp-dot[data-tone="off"] { background: var(--state-muted); }
+.mp-dot[data-tone="failed"] { background: var(--state-danger); }
 
 .mp-quiet {
   color: var(--text-muted);
@@ -38,6 +39,21 @@
 @container (max-width: 640px) {
   .srow { grid-template-columns: minmax(0, 1fr) auto; }
   .srow-status { grid-column: 1; grid-row: 2; }
+}
+
+/* A list of records on a tool page (Extensions): the switch and one button share the action cell. */
+.record-row .mrow-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.record-row .mrow-actions .btn {
+  min-width: 76px;
+}
+
+@container (min-width: 641px) {
+  .srow.record-row { grid-template-columns: minmax(0, 1fr) 230px auto; }
 }
 
 /* Section header inside the table: space above, a label with its summary, and
@@ -278,4 +294,14 @@
   .mm-ghost,
   .settings-card .settings-group.mstage::before { transition: none; }
   .mm--loading .mm-fill { animation: none; }
+}
+
+/* Model roles: one sentence that says how many roles reach the cloud. */
+.model-roles-summary {
+  margin-block: 0 var(--space-3);
+}
+
+/* A read-only line that points at Model roles from Chat and Tools. */
+.roles-pointer .settings-field-control {
+  align-self: center;
 }

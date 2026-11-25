@@ -21,6 +21,7 @@ use jenny_file_access::win::root::{
     check_root_shape, open_root, pin_close, pin_identity, pin_root, Identity, RootPin,
     MAX_ROOT_UNITS,
 };
+use jenny_file_access::win::sys::SysError;
 use jenny_file_access::{jfa_pin_close, jfa_pin_identity, jfa_root_open};
 
 fn table() -> Table<RootPin> {
@@ -291,6 +292,54 @@ fn a_file_or_a_missing_path_is_not_a_root() {
         error.system == 2 || error.system == 3,
         "the system's code, got {}",
         error.system
+    );
+}
+
+/// The directory-enumeration self-check runs once per root in a process, not
+/// on every open; every other check still runs each time, and a failed check
+/// is never remembered.
+#[test]
+fn the_self_check_runs_once_per_root_and_a_failure_is_not_remembered() {
+    let temp = TempDir::new("once");
+    let root = temp.dir("project");
+    let identity = identity_of(&root);
+    let failing = Injected {
+        self_check: Some(SysError(5)),
+        ..Injected::plain()
+    };
+    assert_eq!(
+        open_root(&failing, &wide(&root), identity).map(drop),
+        Err(Refusal::system(Status::SelfcheckFailed, 5))
+    );
+    assert_eq!(
+        open_root(&failing, &wide(&root), identity).map(drop),
+        Err(Refusal::system(Status::SelfcheckFailed, 5)),
+        "a failed check is run again, not remembered"
+    );
+    assert_eq!(failing.self_checks.get(), 2);
+    let probe = Injected::plain();
+    for _ in 0..3 {
+        let pin = open_root(&probe, &wide(&root), identity).expect("the root opens");
+        assert_eq!(pin.identity(), identity);
+    }
+    assert_eq!(probe.opens.get(), 3, "every open still opens the root");
+    assert_eq!(probe.self_checks.get(), 1, "the self-check ran once");
+    let remembered = Injected {
+        self_check: Some(SysError(5)),
+        ..Injected::plain()
+    };
+    assert!(open_root(&remembered, &wide(&root), identity).is_ok());
+    assert_eq!(
+        remembered.self_checks.get(),
+        0,
+        "a checked root is not enumerated again"
+    );
+    // The identity is still verified on every open, checked root or not.
+    let mut other = identity;
+    other.inode ^= 1;
+    assert_eq!(
+        open_root(&Injected::plain(), &wide(&root), other).map(drop),
+        Err(refused(Status::RootIdentity))
     );
 }
 

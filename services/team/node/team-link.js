@@ -22,12 +22,18 @@ function createTeamLink(manager) {
     return lent;
   }
 
+  // Registers the client when the link has none (and rotates it after a host restart): a call reads
+  // `client()` only after this, so a fresh connection never finds it missing.
+  async function ready() {
+    const lent = live();
+    const blocked = await lent.ensureClient(lent.link);
+    if (blocked) throw lost('team_client_missing');
+  }
+
   const http = {
     async openRequestStream(method, path, options) {
-      const lent = live();
-      const blocked = await lent.ensureClient(lent.link);
-      if (blocked) throw lost('team_client_missing');
-      return lent.link.http.openRequestStream(method, path, options);
+      await ready();
+      return live().link.http.openRequestStream(method, path, options);
     },
   };
 
@@ -42,7 +48,7 @@ function createTeamLink(manager) {
     try { return await live().link.session.hello(); } catch (_error) { return { ok: false }; }
   }
 
-  return createNodeLink({ http, client, hello });
+  return createNodeLink({ http, client, hello, ready });
 }
 
 module.exports = { createTeamLink };

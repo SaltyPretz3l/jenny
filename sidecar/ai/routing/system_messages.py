@@ -114,7 +114,6 @@ def render_turn_context_row(  # noqa: PLR0913
             workspace_manifest_enabled=bool(
                 getattr(config, "tools_workspace_manifest_enabled", False)
             ),
-            task_capsule_enabled=bool(getattr(config, "tools_task_capsule_enabled", False)),
             **root_kwargs,
         )
         if callable(section_builder)

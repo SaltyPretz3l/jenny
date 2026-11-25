@@ -417,14 +417,10 @@
 
     let delKey = ''; // team|project the deleted boards are read for ('' unless an admin has the project shown)
     let delSource = null;
-    let rows = [];
-    let expanded = false;
-    let restoring = '';
-    let block = null;
-    let delSig = '';
-    let trashRun = null;
-    let trashAgain = false;
-    let trashTimer = 0;
+    let rows = []; let expanded = false; let restoring = '';
+    let block = null; let delSig = '';
+    let trashErr = ''; // why the last read of the deleted boards failed ('' when it did not): the section stays, with this and Try again
+    let trashRun = null; let trashAgain = false; let trashTimer = 0;
 
     async function readTrash() {
       if (!delKey) return;
@@ -437,7 +433,7 @@
           let answer;
           try { answer = await team.trash(); } catch (_error) { answer = null; }
           if (disposed) return;
-          if (mine === delKey && team === delSource) { rows = answer && answer.ok === true && Array.isArray(answer.boards) ? answer.boards : []; drawDeleted(); }
+          if (mine === delKey && team === delSource) { const good = Boolean(answer && answer.ok === true && Array.isArray(answer.boards)); if (good) rows = answer.boards; trashErr = good ? '' : (answer && answer.message) || jt('board.team.deleted.failed', 'Deleted boards could not be read.'); drawDeleted(); } // a failed read keeps the rows that were known
         } while (trashAgain && delKey);
       })();
       try { await trashRun; } finally { trashRun = null; }
@@ -470,9 +466,9 @@
     }
 
     function drawDeleted() {
-      if (disposed || !delKey || !rows.length) { removeDeleted(); return; }
+      if (disposed || !delKey || (!rows.length && !trashErr)) { removeDeleted(); return; }
       const view = expanded ? rows.map((row) => ({ id: row.id, name: row.name, who: who(row.deletedBy), left: leftOf(row.deletedAt), busy: restoring === row.id })) : [];
-      const sig = JSON.stringify([expanded, rows.length, view]);
+      const sig = JSON.stringify([expanded, rows.length, view, trashErr]);
       if (!block) {
         block = doc.createElement('div');
         block.className = 'board-team-deleted';
@@ -483,9 +479,11 @@
         delSig = sig;
         const held = deletedFocus();
         block.textContent = '';
-        block.insertAdjacentHTML('beforeend', inv().actionButton({ variant: 'ghost', size: 'sm', className: 'board-team-deleted__toggle', ariaExpanded: expanded,
+        if (rows.length) { block.insertAdjacentHTML('beforeend', inv().actionButton({ variant: 'ghost', size: 'sm', className: 'board-team-deleted__toggle', ariaExpanded: expanded,
           label: jtn('board.team.deleted.count', rows.length, {}, '{count} deleted board', '{count} deleted boards'), dataset: { 'board-team-deleted': 'toggle' } }));
-        block.firstElementChild.insertAdjacentHTML('afterbegin', expanded ? DOWN : RIGHT);
+        block.firstElementChild.insertAdjacentHTML('afterbegin', expanded ? DOWN : RIGHT); }
+        if (trashErr) { block.insertAdjacentHTML('beforeend', '<p class="board-team-deleted__error" role="alert"></p>' + inv().actionButton({ variant: 'ghost', size: 'sm',
+          label: jt('board.team.history.retry', 'Try again'), title: jt('board.team.history.retry', 'Try again'), dataset: { 'board-team-deleted': 'retry' } })); block.querySelector('.board-team-deleted__error').textContent = trashErr; }
         if (expanded) {
           const list = doc.createElement('ul');
           list.className = 'board-team-deleted__list';
@@ -519,7 +517,7 @@
 
     const deletedLi = (id) => Array.from(block.querySelectorAll('[data-board-deleted-id]')).find((li) => li.getAttribute('data-board-deleted-id') === id) || null;
     function focusDeleted(id) {
-      const target = id === 'toggle' ? block.querySelector('[data-board-team-deleted="toggle"]') : (deletedLi(id) || block).querySelector('[data-board-team-deleted="restore"]');
+      const target = id === 'toggle' ? block.querySelector('[data-board-team-deleted="toggle"]') || block.querySelector('[data-board-team-deleted="retry"]') : (deletedLi(id) || block).querySelector('[data-board-team-deleted="restore"]');
       if (target && !target.disabled) target.focus({ preventScroll: true });
     }
 
@@ -549,6 +547,7 @@
       const target = event.target && event.target.closest ? event.target.closest('[data-board-team-deleted]') : null;
       if (!target || target === block || target.disabled) return;
       if (target.getAttribute('data-board-team-deleted') === 'toggle') { expanded = !expanded; drawDeleted(); focusDeleted('toggle'); return; }
+      if (target.getAttribute('data-board-team-deleted') === 'retry') { trashErr = jt('board.team.deleted.retrying', 'Trying again…'); drawDeleted(); void readTrash(); return; }
       void restore(target.closest('li').getAttribute('data-board-deleted-id'));
     }
 
@@ -558,7 +557,7 @@
       if (now !== delKey) {
         delKey = now;
         delSource = now ? team : null;
-        rows = [];
+        rows = []; trashErr = '';
         expanded = false;
         restoring = '';
         windowRef.clearTimeout(trashTimer);

@@ -30,6 +30,7 @@ _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "project_create", "projects_list", "app_view",
     "session_export", "terminal_read", "terminal_run",
     "schedule_list", "schedule_change", "away_digest", "browser",
+    "run_view_look", "run_view_restart", "computer",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",

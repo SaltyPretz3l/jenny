@@ -67,11 +67,8 @@ test('stream reveal patch updates an existing reasoning-only panel body', () => 
   );
 });
 
-function buildPaintV2State(enabled, sessionId = 'session-1') {
-  return {
-    currentSessionId: sessionId,
-    features: { featureFlags: { chat_stream_paint_v2: enabled } },
-  };
+function buildSessionState(sessionId = 'session-1') {
+  return { currentSessionId: sessionId };
 }
 
 // queuePatch patches synchronously. The flush-controlled rAF keeps
@@ -115,7 +112,7 @@ function driveReasoningHeaderPatch(controller, text) {
   });
 }
 
-test('chat_stream_paint_v2 ON: summary-only delta morphs the reasoning header in place (Ht-C C1)', () => {
+test('summary-only delta morphs the reasoning header in place (Ht-C C1)', () => {
   const { timeline, controller, flushFrames } = createFlushableRevealController(`
     <!doctype html>
     <html>
@@ -129,7 +126,7 @@ test('chat_stream_paint_v2 ON: summary-only delta morphs the reasoning header in
         </div>
       </body>
     </html>
-  `, { state: buildPaintV2State(true) });
+  `, { state: buildSessionState() });
 
   controller.commitFullRender({
     currentSessionId: 'session-1',
@@ -150,12 +147,12 @@ test('chat_stream_paint_v2 ON: summary-only delta morphs the reasoning header in
   assert.equal(
     mainAfter,
     mainBefore,
-    'flag ON must update the header text in place — the .reasoning-row-main element identity must survive a summary-only delta'
+    'the header text updates in place — the .reasoning-row-main element identity must survive a summary-only delta'
   );
   assert.equal(timeline.querySelector('.reasoning-row-header'), headerBefore);
 });
 
-test('chat_stream_paint_v2 ON: morph reconciles the full header shape — meta appears, status tone flips', () => {
+test('morph reconciles the full header shape — meta appears, status tone flips', () => {
   // Mirrors the real renderPhase header (kicker + main + status cluster with
   // optional meta): the meta span APPEARS between deltas and the status-dot
   // tone changes — the structural cases the simple text-only pin skips.
@@ -190,7 +187,7 @@ test('chat_stream_paint_v2 ON: morph reconciles the full header shape — meta a
         </div>
       </body>
     </html>
-  `, { state: buildPaintV2State(true) });
+  `, { state: buildSessionState() });
 
   controller.commitFullRender({
     currentSessionId: 'session-1',
@@ -230,51 +227,11 @@ test('chat_stream_paint_v2 ON: morph reconciles the full header shape — meta a
   assert.ok(timeline.querySelector('.reasoning-row-caret'), 'caret still present');
 });
 
-test('chat_stream_paint_v2 OFF: header patch keeps the historical innerHTML-rewrite path byte-identical', () => {
-  const { timeline, controller, flushFrames } = createFlushableRevealController(`
-    <!doctype html>
-    <html>
-      <body>
-        <div id="timeline">
-          <article class="chat-entry assistant pending" data-message-id="assistant_stream" data-streaming-message-id="assistant_stream">
-            <div class="chat-message-content">
-              ${reasoningStackMarkup('first summary')}
-            </div>
-          </article>
-        </div>
-      </body>
-    </html>
-  `, { state: buildPaintV2State(false) });
-
-  controller.commitFullRender({
-    currentSessionId: 'session-1',
-    structureSignature: 10,
-    streamingMessage: { id: 'assistant_stream', role: 'assistant', status: 'streaming', content: '' },
-    streamingArticleMessageId: 'assistant_stream',
-  });
-
-  const headerBefore = timeline.querySelector('.reasoning-row-header');
-  const mainBefore = timeline.querySelector('.reasoning-row-main');
-
-  driveReasoningHeaderPatch(controller, 'first summary grows longer');
-  flushFrames();
-
-  const mainAfter = timeline.querySelector('.reasoning-row-main');
-  assert.equal(mainAfter?.textContent, 'first summary grows longer');
-  assert.notEqual(
-    mainAfter,
-    mainBefore,
-    'flag OFF pins the pre-Ht-C behavior: the header children are rebuilt via innerHTML replacement'
-  );
-  assert.equal(timeline.querySelector('.reasoning-row-header'), headerBefore,
-    'the header button itself was always preserved — only its children were rewritten');
-});
-
-test('client_timing counters prove the header repaint reduction ON vs OFF (Ht-C acceptance)', () => {
+test('client_timing counters show every summary delta as a header morph and none as a rewrite (Ht-C acceptance)', () => {
   const { createStreamClientMetrics } = require('../renderer/chat/renderer-stream-client-metrics');
   const summaries = ['s1', 's1 s2', 's1 s2 s3', 's1 s2 s3 s4', 's1 s2 s3 s4 s5'];
 
-  function runStream(flagEnabled) {
+  function runStream() {
     const metrics = createStreamClientMetrics({ now: () => 0, ship: () => {} });
     metrics.noteDelta('stream-1', 'session-1');
     const { controller, flushFrames } = createFlushableRevealController(`
@@ -290,7 +247,7 @@ test('client_timing counters prove the header repaint reduction ON vs OFF (Ht-C 
           </div>
         </body>
       </html>
-    `, { state: buildPaintV2State(flagEnabled), streamClientMetrics: metrics });
+    `, { state: buildSessionState(), streamClientMetrics: metrics });
     controller.commitFullRender({
       currentSessionId: 'session-1',
       structureSignature: 10,
@@ -304,19 +261,11 @@ test('client_timing counters prove the header repaint reduction ON vs OFF (Ht-C 
     return metrics.take('stream-1');
   }
 
-  const on = runStream(true);
-  const off = runStream(false);
+  const counters = runStream();
 
-  assert.equal(off.reasoning_header_rewrites, summaries.length,
-    'flag OFF: every summary delta costs a destructive header innerHTML rewrite');
-  assert.equal(off.reasoning_header_morphs, 0);
-  assert.equal(on.reasoning_header_rewrites, 0,
-    'flag ON: no destructive header rewrites remain');
-  assert.equal(on.reasoning_header_morphs, summaries.length);
-  assert.ok(
-    on.reasoning_header_rewrites < off.reasoning_header_rewrites,
-    'the counters must prove the repaint reduction'
-  );
+  assert.equal(counters.reasoning_header_rewrites, 0,
+    'no destructive header rewrites remain');
+  assert.equal(counters.reasoning_header_morphs, summaries.length);
 });
 
 test('stream reveal keeps existing reasoning when patch model omits thinking markup', () => {
@@ -830,4 +779,50 @@ test('a full render that settles an open reasoning panel replays the eased colla
   const again = timeline.querySelector('.reasoning-row-panel');
   assert.equal(again.hidden, true);
   assert.equal(again.hasAttribute('data-collapsing'), false);
+});
+
+test('a live row rewrite keeps the steps heading and run stamps it was rendered without (row 192, C15)', () => {
+  const dom = new JSDOM(`<!doctype html><html><body><div id="timeline">
+    <article class="chat-entry assistant pending" data-message-id="assistant_ledger_root" data-streaming-message-id="assistant_ledger_stream">
+      <div class="chat-message-content"><div class="turn-row-list" data-turn-row-list="true">
+        <div class="chat-row" data-row-id="turn_ledger:tool_result:call_ledger" data-row-kind="tool_result" data-ledger-member="note" data-ledger-tail="true" data-ledger-show="true" data-run-id="call_run" data-run-member="interior" data-run-expanded="true">old</div>
+        <div class="chat-row" data-row-kind="assistant_text" data-source-message-id="assistant_ledger_stream">
+          <div class="chat-bubble chat-bubble-markdown chat-bubble-streaming" data-streaming-bubble="true">old</div>
+        </div>
+      </div></div>
+    </article>
+  </div></body></html>`);
+  trackRevealDom(dom);
+  const timeline = dom.window.document.getElementById('timeline');
+  dom.window.requestAnimationFrame = (callback) => { callback(); return 1; };
+  dom.window.cancelAnimationFrame = () => {};
+  const controller = createStreamRevealController({
+    windowRef: dom.window,
+    chatTimeline: timeline,
+    reducedMotionQuery: { matches: false },
+    renderStreamingMarkdownUnits: () => ({
+      html: '<span>patched</span>', units: [{ html: '<span>patched</span>', revealed: true, tail: true }], fingerprints: ['patched'], changedStartIndex: 0,
+    }),
+    escapeSelectorValue: (value) => String(value || ''),
+  });
+  const rowTarget = { turnId: 'turn_ledger', rowKind: 'tool_result', toolCallId: 'call_ledger' };
+  const message = { id: 'assistant_ledger_stream', role: 'assistant', status: 'streaming', content: 'patched' };
+  controller.commitFullRender({
+    currentSessionId: 'session-1', structureSignature: 10, streamingMessage: { ...message, content: 'old' },
+    streamingArticleMessageId: 'assistant_ledger_root', streamingRowTarget: rowTarget,
+  });
+  controller.queuePatch({
+    currentSessionId: 'session-1', structureSignature: 10, latestAssistantMessageId: message.id, streamingMessage: message,
+    streamingRowTarget: rowTarget, messages: [message],
+    buildRowNodeMarkup: () => '<div class="chat-row" data-row-id="turn_ledger:tool_result:call_ledger" data-row-kind="tool_result">new</div>',
+    buildMessageNodeState: () => ({
+      bubbleInnerHtml: '<span>patched</span>',
+      innerHtml: '<div class="chat-bubble chat-bubble-markdown chat-bubble-streaming" data-streaming-bubble="true"><span>patched</span></div>',
+      pending: true, entryReveal: false, status: 'streaming', finalizedAt: '',
+    }),
+  });
+  const row = timeline.querySelector('[data-row-id="turn_ledger:tool_result:call_ledger"]');
+  assert.equal(row?.textContent, 'new', 'the live row was rewritten');
+  assert.deepEqual(['data-ledger-member', 'data-ledger-tail', 'data-ledger-show'].map((name) => row.getAttribute(name)), ['note', 'true', 'true']);
+  assert.deepEqual(['data-run-id', 'data-run-member', 'data-run-expanded'].map((name) => row.getAttribute(name)), ['call_run', 'interior', 'true']);
 });

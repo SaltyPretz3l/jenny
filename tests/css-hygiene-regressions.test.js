@@ -441,26 +441,7 @@ test('right-rail panels share the flat base background and gutter token, with no
   };
   assert.match(rule('.chat-context-panel'), /background: var\(--bg-base\);/);
   assert.match(rule('.artifact-review-panel'), /background: var\(--bg-base\);/);
-  assert.match(rule('.artifact-review-panel.artifact-review-overlay'), /background: var\(--bg-base\);/);
   assert.equal(/artifact-review-header[^{]*\{[^}]*gradient/.test(contextCss), false, 'legacy header gradient is gone');
-});
-
-test('F6: the narrow-stage overlay drawer leaves the chat grid; the side-by-side panel keeps position relative', () => {
-  // styles.css imports context-panel.css before artifact-panel.css; equal-specificity
-  // rules resolve by that order, so the fixture keeps it (gate F6, 2026-10-05).
-  const styles = readRepoFile('styles.css');
-  assert.ok(styles.indexOf('styles/context-panel.css') < styles.indexOf('styles/artifact-panel.css'));
-  const { JSDOM } = require('jsdom');
-  const dom = new JSDOM('<!doctype html><html><head>'
-    + `<style>${readRepoFile('styles/context-panel.css')}</style><style>${readRepoFile('styles/artifact-panel.css')}</style>`
-    + '</head><body><div class="chat-view">'
-    + '<aside id="drawer" class="artifact-review-panel artifact-panel-v3 artifact-review-overlay"></aside>'
-    + '<aside id="side" class="artifact-review-panel artifact-panel-v3"></aside></div></body></html>');
-  try {
-    const position = id => dom.window.getComputedStyle(dom.window.document.getElementById(id)).position;
-    assert.equal(position('drawer'), 'absolute', 'an overlay drawer must not take a chat grid track');
-    assert.equal(position('side'), 'relative');
-  } finally { dom.window.close(); }
 });
 
 test('the Models services drawer carries the Settings row and control tokens it mounts outside of', () => {

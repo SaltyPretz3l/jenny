@@ -108,7 +108,7 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/shell/renderer-shell-artifact-rails.js|chatTimelineUtilityCluster',
   // Wave 2 -- IDE dock
   'renderer/features/renderer-ide-active-file-context.js|composerWrap',
-  'renderer/features/renderer-ide-chat-dock.js|artifactReviewResizer',
+  'renderer/features/renderer-ide-chat-dock.js|artifactReviewPanel',
   'renderer/features/renderer-ide-chat-dock.js|chatInput',
   'renderer/features/renderer-ide-chat-dock.js|chatThreadScroll',
   'renderer/features/renderer-ide-chat-dock.js|chatThreadStage',
@@ -125,6 +125,12 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/features/renderer-task-rail.js|artifactReviewPanel',
   'renderer/features/renderer-task-rail.js|chatInput',
   'renderer/features/renderer-task-rail.js|chatTimelineUtilityCluster',
+  // Row 190 -- the Chat room and room stacks: the one side panel, Activity and the chat view are app
+  // singletons the right stack moves between rooms, not pane-owned nodes
+  'renderer/app/renderer-app-chat-workbench-composition.js|chatView',
+  'renderer/chat/renderer-chat-right-stack.js|artifactReviewPanel',
+  'renderer/chat/renderer-chat-right-stack.js|chatContextPanel',
+  'renderer/chat/renderer-chat-right-stack.js|chatView',
   // Wave 2 -- agent hooks
   'renderer/shell/renderer-agent-hooks.js|chatInput',
   'renderer/shell/renderer-agent-hooks.js|chatTimeline',
@@ -334,15 +340,15 @@ test('the Wave 2 burn-down ledger of un-migrated getElementById lookups is exact
   );
   assert.equal(
     REMAINING_LOOKUP_SITES.length,
-    38,
+    42,
     'the ledger was pinned at 40 pairs on 2026-09-16 (26 plain-form, 14 optional-call-form); '
     + 'W3-2 (2026-09-26) added the subagentInspector name and its one un-migrated path-open lookup: 41; '
-    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42; row 59 checkpoint 1 (2026-10-15) added the artifact bridge\'s utility-cluster lookup: 43; rea row 53 MCP prompts (2026-10-15) added the prompt chip\'s attachmentTray fallback: 44; row 63 (2026-10-19) retired the slash menu\'s Commands-button lookup: 43; the merged jump control (2026-11-09) retired the three composerWayfinderHost lookups: 40; row 156 (2026-11-14) retired the two chatView lookups of the search overlay and its wiring: 38'
+    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39; FG-002 C3 project notes (2026-10-06) added the entry\'s utility-cluster and review-panel lookups and the rail\'s review-panel lookup, the same shared chrome the task rail resolves: 42; row 59 checkpoint 1 (2026-10-15) added the artifact bridge\'s utility-cluster lookup: 43; rea row 53 MCP prompts (2026-10-15) added the prompt chip\'s attachmentTray fallback: 44; row 63 (2026-10-19) retired the slash menu\'s Commands-button lookup: 43; the merged jump control (2026-11-09) retired the three composerWayfinderHost lookups: 40; row 156 (2026-11-14) retired the two chatView lookups of the search overlay and its wiring: 38; row 190 (2026-11-23) added the Chat room singleton lookups (chatView in the composition; the side panel, Activity and chatView in the right stack): 42'
   );
   assert.equal(
     new Set(REMAINING_LOOKUP_SITES.map((pair) => pair.split('|')[0])).size,
-    24,
-    'across 24 files (22 + the two project notes modules, 2026-10-06, + the MCP prompt slash commands, 2026-10-15, + the navigation composition split out of the lifecycle composition, 2026-11-03, + the artifact rails split out of the artifact bridge, 2026-11-03, - the three modules that only looked up the retired wayfinder host, 2026-11-09), each named with the Wave 2 feature that owns its migration'
+    26,
+    'across 24 files (22 + the two project notes modules, 2026-10-06, + the MCP prompt slash commands, 2026-10-15, + the navigation composition split out of the lifecycle composition, 2026-11-03, + the artifact rails split out of the artifact bridge, 2026-11-03, - the three modules that only looked up the retired wayfinder host, 2026-11-09, + the Chat room composition and right stack, row 190, 2026-11-23), each named with the Wave 2 feature that owns its migration'
   );
 
   // The constant-argument lookups the pattern cannot see: same equality, same

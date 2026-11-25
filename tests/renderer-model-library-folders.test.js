@@ -322,3 +322,64 @@ test('without the runtime folder dialog on the bridge there is no block', () => 
   assert.equal(harness.dom.window.document.querySelector(RUNTIME_BLOCK), null);
   harness.controller.dispose();
 });
+
+// Row 194: the host turns main's plan and the section's card size into the add step's estimate.
+const TOO_BIG = { ok: true, inside: false, file: 'Big-70B-Q4_K_M.gguf', companions: [], sizeBytes: 40 * 1024 ** 3, sourceDirName: 'Downloads', destRoot: 'D:\\gguf', destDir: 'D:\\gguf\\Big', crossVolume: true, freeBytes: 500e9, fit: { ctx: 32768, needMb: 48000, smallNeedMb: 46000 } };
+
+function addHarness(t, options = {}) {
+  const dom = new JSDOM('<!doctype html><body><div id="folders"></div></body>', { url: 'http://localhost/' });
+  const calls = [];
+  dom.window.jennyShell = {
+    llamaServer: {
+      async chooseGguf() { return { ok: true, picked: true, path: 'C:\\Users\\me\\Downloads\\Big-70B-Q4_K_M.gguf', dir: 'C:\\Users\\me\\Downloads' }; },
+      async planGgufImport() { return options.plan || TOO_BIG; },
+      async importGguf() { calls.push(['import']); return { ok: true }; },
+      async ggufImportStatus() { return { ok: true, active: false }; },
+      async chooseLibraryFolder() { return { ok: true, picked: false, path: '' }; },
+    },
+    engines: { async updateSettings(payload) { calls.push(['update', payload]); return { localEngines: { openaiCompatible: { managed: payload.managed } } }; } },
+  };
+  const controller = createModelLibraryFoldersController({
+    windowRef: dom.window,
+    documentRef: dom.window.document,
+    getRoots: () => ['D:\\gguf'],
+    getLibrary: () => ({ managed: { perModel: {} }, ollamaTags: [], installed: [] }),
+    refresh: () => Promise.resolve(),
+    hostId: 'folders',
+    getCardMb: () => options.cardMb,
+    showFits: () => calls.push(['showFits']),
+  });
+  t.after(() => controller.dispose());
+  controller.bind();
+  controller.render();
+  const document = dom.window.document;
+  const click = (selector) => document.querySelector(selector).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  return { calls, document, click, add: () => click('[data-model-library-folder-action="add-model"]') };
+}
+
+test('a file too large for the card shows the warning through the host, and Show models that fit reaches the section', async (t) => {
+  const h = addHarness(t, { cardMb: 16 * 1024 });
+  h.add();
+  await flush();
+  await flush();
+  const note = h.document.querySelector('.model-library-add-fit');
+  assert.match(note.textContent, /Big-70B-Q4_K_M\.gguf \(40 GB\) is too large for your graphics card\./);
+  assert.match(note.textContent, /Needs about 46\.9 GB at a 32K context · 30\.9 GB more than this card has/);
+  assert.match(note.textContent, /A smaller context does not fix it: at 8K it still needs about 44\.9 GB\./);
+  assert.deepEqual(h.calls, [], 'nothing is saved or moved before the answers');
+  h.click('[data-model-library-add-action="show-fits"]');
+  await flush();
+  assert.deepEqual(h.calls, [['showFits']]);
+  assert.equal(h.document.querySelector('.model-library-add-fit'), null);
+});
+
+test('an unknown card size, or a file that fits, adds as it did before', async (t) => {
+  for (const cardMb of [undefined, 0, 64 * 1024]) {
+    const h = addHarness(t, { cardMb });
+    h.add();
+    await flush();
+    await flush();
+    assert.equal(h.document.querySelector('.model-library-add-fit'), null, `card ${cardMb}`);
+    assert.match(h.document.querySelector('.model-library-add').textContent, /is in Downloads\. Move it to/, `card ${cardMb}: today's question`);
+  }
+});

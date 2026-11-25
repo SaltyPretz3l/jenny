@@ -630,11 +630,15 @@ def test_delegation_contract_survives_real_semantic_admission(
 
 def test_contract_text_is_identical_across_parent_turns() -> None:
     first = _delegation_contract_for_research(
-        parent_context=_context(), report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+        parent_context=_context(),
+        report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+        answer_chars=MAX_DELEGATE_ANSWER_CHARS,
     )
     other_turn = _context(request_id="req-other", agent_id="main@req-other")
     second = _delegation_contract_for_research(
-        parent_context=other_turn, report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+        parent_context=other_turn,
+        report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+        answer_chars=MAX_DELEGATE_ANSWER_CHARS,
     )
     assert first == second
     assert "req-" not in str(first["context"])
@@ -642,7 +646,42 @@ def test_contract_text_is_identical_across_parent_turns() -> None:
 
 def test_plain_text_contract_tells_child_its_answer_budget() -> None:
     plain = _delegation_contract_for_research(
-        parent_context=_context(), report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+        parent_context=_context(),
+        report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+        answer_chars=MAX_DELEGATE_ANSWER_CHARS,
     )
     assert f"{MAX_DELEGATE_ANSWER_CHARS:,} characters" in str(plain["return_format"])
     assert "lead with the result" in str(plain["return_format"])
+
+
+def test_plain_text_contract_takes_the_cloud_budget_and_names_the_partial_prefix() -> None:
+    plain = _delegation_contract_for_research(
+        parent_context=_context(),
+        report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+        answer_chars=16_000,
+    )
+    assert "16,000 characters" in str(plain["return_format"])
+    assert "PARTIAL:" in str(plain["return_format"])
+
+
+def test_plain_text_answer_that_says_partial_settles_as_partial() -> None:
+    class _PartialRouter(_Router):
+        def build_chat_decision(self, **kwargs: object) -> ChatDecision:
+            self.calls.append(dict(kwargs))
+            return ChatDecision(
+                thinking_text=None,
+                response_text="PARTIAL: sections 1-6 below; I did not read the client.",
+                approval_request=None,
+                tool_results=(),
+            )
+
+    result = invoke_sub_agent(
+        router=_PartialRouter(),
+        parent_context=_context(),
+        messages=[],
+        latest_user_content="inspect",
+        slot_allocator=SubAgentSlotAllocator(),
+        report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+    )
+
+    assert result.status == "partial"

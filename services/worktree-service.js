@@ -835,7 +835,8 @@ class WorktreeService {
   // keeps its own WARN logging vocabulary and inherits process.env (no scrub),
   // preserving byte-for-byte the result shape callers already depend on.
   _runGit(cwd, args, { logFailure = true, signal = null } = {}) {
-    return runGit(cwd, args, {
+    // Status runs on worktrees a writing helper edited (row 184 W3): never start a configured fsmonitor.
+    return runGit(cwd, ['-c', 'core.fsmonitor=false', ...args], {
       signal,
       timeoutMs: this._gitTimeoutMs,
       maxBuffer: GIT_OUTPUT_LIMIT_BYTES,

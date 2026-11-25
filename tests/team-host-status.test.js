@@ -97,8 +97,8 @@ test('after a restart: a new controller on a deployed profile answers deployed, 
   const serialized = JSON.stringify({ first, second, logs });
   assert.equal(serialized.includes(secureStore.values.get(HOST_KEY_NAME)), false, 'no key material anywhere');
   assert.deepEqual(Object.keys(first.host).sort(),
-    ['autostart', 'deployed', 'direct_port', 'file_tools', 'internet', 'internet_draft', 'key', 'model_relay', 'old_teams', 'operation', 'owner', 'reach', 'reason', 'since',
-      'state', 'team_id', 'team_name']);
+    ['autostart', 'deployed', 'desktop_hosting', 'direct_port', 'file_tools', 'internet', 'internet_draft', 'key', 'model_relay', 'old_teams', 'operation', 'owner',
+      'pool_context_cap', 'reach', 'reason', 'since', 'state', 'team_id', 'team_name']);
   // Slice 6-7: the owner's model relay setting (the default 2 when the config names none), nothing passing while stopped.
   assert.deepEqual(first.host.model_relay, { flowing: 2, passing: 0, live: false });
   // Slice 5-6: the key's state is read without pressing Start; a stopped team with its key says 'ok'.

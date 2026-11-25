@@ -61,7 +61,7 @@ def _ok_result(tool_name: str) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("dispatch_error", [None, RuntimeError("bridge failed")])
-@pytest.mark.parametrize("tool_id", ["ask_user", "session_message"])
+@pytest.mark.parametrize("tool_id", ["ask_user", "session_message", "run_view_restart"])
 def test_ask_user_wait_is_credited_back_to_the_deadline_on_every_outcome(
     monkeypatch: pytest.MonkeyPatch,
     dispatch_error: RuntimeError | None,
@@ -116,6 +116,8 @@ def test_ask_user_wait_is_credited_back_to_the_deadline_on_every_outcome(
     ("session_message", "send", "external_mcp"),
     ("session_message", "send", "jenny_builtin"),
     ("mcp__external__session_message", "send", "external_mcp"),
+    ("run_view_restart", "", "external_mcp"),
+    ("run_view_look", "", "electron_tool_bridge"),
 ])
 def test_non_consent_calls_keep_their_working_time_budget(
     monkeypatch: pytest.MonkeyPatch, tool_id: str, action: str, server: str,

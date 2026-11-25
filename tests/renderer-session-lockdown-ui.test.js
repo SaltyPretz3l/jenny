@@ -37,7 +37,7 @@ const errorRecoveryUtils = require('../renderer/chat/renderer-error-recovery-uti
 // calls createShellStub(settings.shell)) -- top-level keys are silently ignored.
 const LOCKDOWN_FLAG_ON = { shell: { features: { state: { featureFlags: { session_offline_lockdown: true } } } } };
 
-async function loadRendererTestApp(t, options) {
+async function loadRendererTestApp(t, options = {}) {
   const app = await loadRendererApp(options);
   t.after(async () => {
     await app.dispose();
@@ -84,13 +84,6 @@ async function openRowMenu(window, sessionId) {
   assert.ok(menuButton, `expected the ⋯ menu button for ${sessionId}`);
   menuButton.click();
   await waitForUi(window, 10);
-}
-
-async function collapseChatPanel(window) {
-  window.document.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 40);
-  window.document.getElementById('chatsPanelCollapseToggle').click();
-  await waitForUi(window, 40);
 }
 
 function getMenuItems(window) {
@@ -362,17 +355,6 @@ test('lockdown badge follows active-session switches and backend summary refresh
   await shell.__emitAuthState({ authenticated: true, user: { email: 'dev@example.com' } });
   await waitForUi(window, 40);
   assert.equal(announcementMutations, 2, 'unchanged backend summary does not re-announce');
-
-  await collapseChatPanel(window);
-  const collapsedChip = window.document.querySelector('[data-strip-session-id="session-open"]');
-  assert.ok(collapsedChip, 'active session survives as a collapsed-strip chip');
-  assert.equal(collapsedChip.dataset.sessionLockdown, 'true');
-  assert.equal(collapsedChip.title, 'Offline lockdown');
-  assert.match(collapsedChip.getAttribute('aria-label'), /Offline lockdown/);
-  assert.ok(
-    collapsedChip.querySelector('.session-offline-lockdown-badge.chats-strip__lockdown-badge svg'),
-    'collapsed chip carries the lock icon'
-  );
 });
 
 /* ── Group 3: composer tool toggles locked while active, freed when not ── */
@@ -585,17 +567,6 @@ test('flag off hides the toggle and both badges, and leaves composer toggles una
   const row = window.document.querySelector('[data-session-id="session-flagged-off"]');
   assert.equal(row.dataset.sessionLockdown, 'false');
   assert.equal(row.querySelector('.session-row__lockdown-badge'), null);
-
-  await collapseChatPanel(window);
-  const collapsedChip = window.document.querySelector(
-    '[data-strip-session-id="session-flagged-off"]'
-  );
-  assert.ok(collapsedChip);
-  assert.equal(collapsedChip.dataset.sessionLockdown, 'false');
-  // Chips carry an Open <title> tooltip; only lockdown replaces it.
-  assert.equal(collapsedChip.getAttribute('title'), 'Open Flag Off');
-  assert.doesNotMatch(collapsedChip.getAttribute('aria-label'), /Offline lockdown/);
-  assert.equal(collapsedChip.querySelector('.chats-strip__lockdown-badge'), null);
 
   const state = {
     features: { featureFlags: {} },

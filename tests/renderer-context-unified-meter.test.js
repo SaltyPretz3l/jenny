@@ -46,7 +46,7 @@ test('one estimate, one number: the rail and the ring agree on the percent of th
   const ring = contextUsageUtils.describeContextUsage(SID, { autoCompactEnabled: true });
   const rail = railContext(ESTIMATE);
   assert.equal(ring.percentLabel, '63%');
-  assert.equal(rail.valueText, ring.percentLabel);
+  assert.equal(rail.valueText, `${ring.percentLabel} full`); // row 195: the Session head reads "63% full"
   assert.equal(ring.targetType, 'auto_compact');
   assert.equal(ring.limit, 24600);
   assert.equal(ring.source, 'next_send');
@@ -58,7 +58,7 @@ test('the draft moves both surfaces by the same amount', (t) => {
   const draft = 'x'.repeat(4000);
   const ring = contextUsageUtils.describeContextUsage(SID, { autoCompactEnabled: true, draftText: draft });
   const rail = railContext(contextPreview.withDraft(ESTIMATE, draft, []));
-  assert.equal(rail.valueText, ring.percentLabel);
+  assert.equal(rail.valueText, `${ring.percentLabel} full`); // row 195: the Session head reads "63% full"
   assert.ok(ring.used > ESTIMATE.used_tokens);
 });
 
@@ -68,7 +68,7 @@ test('without a compaction point both read the share of the window', (t) => {
   contextPreview.remember(SID, windowOnly);
   const ring = contextUsageUtils.describeContextUsage(SID, { autoCompactEnabled: true });
   assert.equal(ring.percentLabel, '47%');
-  assert.equal(railContext(windowOnly).valueText, '47%');
+  assert.equal(railContext(windowOnly).valueText, '47% full');
   assert.equal(contextPreview.formatPercent(1, 1000), '<1%');
   assert.equal(contextPreview.formatPercent(5000, 1000), '100%', 'one rounding and cap for every surface');
 });

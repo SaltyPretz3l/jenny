@@ -9,7 +9,6 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var RESET_ARM_TIMEOUT_MS = 5000;
   var STREAM_RECHECK_MS = 3000;
   var FIELD_ID_PREFIX = 'advancedTuningField-';
 
@@ -47,7 +46,6 @@
     var lastState = { values: {}, fields: [], pending: false, activeStream: false };
     var lastPayload = ''; // the engine state last shown, serialized: an unchanged re-read skips the row syncs
     var armedReset = '';
-    var armTimer = null;
     var streamRecheckTimer = null;
     var inFlight = false;
     var painted = new WeakMap(); // node -> the markup last written into it
@@ -127,19 +125,26 @@
     function buildActionsMarkup() {
       var actionButton = inv('actionButton');
       if (!actionButton) return '';
-      var anyModified = builtHost && builtHost.querySelector('.settings-field:not([hidden]) [data-setting-revert]');
-      if (!anyModified) return '';
-      var armed = armedReset === 'section';
-      // Two steps because this resets every limit on the page.
-      return actionButton({
+      var anyModified = Boolean(builtHost && builtHost.querySelector('.settings-field:not([hidden]) [data-setting-revert]'));
+      var busy = Boolean(lastState.activeStream || lastState.pending || inFlight);
+      var markup = actionButton({
         id: 'advancedTuningResetAll',
-        label: armed
-          ? jt('settings.limits.resetPageConfirm', 'Confirm: reset every limit on this page')
-          : jt('settings.limits.resetPage', 'Reset this page'),
-        disabled: Boolean(lastState.activeStream || lastState.pending || inFlight),
-        variant: armed ? 'danger' : 'secondary',
-        dataset: { 'tuning-reset-all': armed ? 'confirm' : 'arm' },
+        label: jt('settings.limits.resetPage', 'Reset this page'),
+        disabled: busy || !anyModified,
+        variant: 'secondary',
+        dataset: { 'tuning-reset-all': 'arm' },
       });
+      if (!anyModified) armedReset = '';
+      if (!anyModified) return markup + '<p class="settings-group-copy">' + escapeHtml(jt('settings.limits.resetNone', 'Every limit is already at its default.')) + '</p>';
+      if (armedReset !== 'section') return markup;
+      // The one confirm strip Projects draws for Delete; it has no timer.
+      return markup + '<div class="projects-confirm" role="group" aria-labelledby="limitsResetConfirmTitle">'
+        + '<p id="limitsResetConfirmTitle"><strong>' + escapeHtml(jt('settings.limits.resetConfirmTitle', 'Reset every limit on this page?')) + '</strong></p>'
+        + '<p>' + escapeHtml(jt('settings.limits.resetConfirmBody', 'Your changed values are lost. Each limit goes back to its default.')) + '</p>'
+        + '<div class="settings-actions">'
+        + actionButton({ id: 'advancedTuningResetConfirm', label: jt('settings.limits.resetConfirmAction', 'Reset limits'), variant: 'danger', size: 'sm', disabled: busy, dataset: { 'tuning-reset-all': 'confirm' } })
+        + actionButton({ id: 'advancedTuningResetCancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', dataset: { 'tuning-reset-all': 'cancel' } })
+        + '</div></div>';
     }
 
     function statusMessage() {
@@ -255,22 +260,19 @@
 
     function clearArm() {
       armedReset = '';
-      if (armTimer) {
-        clearTimeout(armTimer);
-        armTimer = null;
-      }
     }
 
     function armSectionReset(dom) {
       armedReset = 'section';
-      if (armTimer) clearTimeout(armTimer);
-      var armToken = lifecycleGate.capture();
-      armTimer = setTimeout(function () {
-        if (!lifecycleGate.isCurrent(armToken)) return;
-        clearArm();
-        render(dom);
-      }, RESET_ARM_TIMEOUT_MS);
       render(dom);
+      // Cancel, the safe answer, as the Appearance and Permissions strips do (live-app check 2026-11-23).
+      dom.advancedTuningActions?.querySelector('[data-tuning-reset-all="cancel"]')?.focus({ preventScroll: true });
+    }
+
+    function cancelSectionReset(dom) {
+      clearArm();
+      render(dom);
+      dom.advancedTuningActions?.querySelector('[data-tuning-reset-all="arm"]')?.focus({ preventScroll: true });
     }
 
     async function refresh(dom, forceKey) {
@@ -406,7 +408,7 @@
       return jt('settings.advanced.updateFailed', 'Engine settings update failed.');
     }
 
-    /* FOUR delegated listeners for the whole surface. */
+    /* FIVE delegated listeners for the whole surface. */
     function bind(dom, registerSectionListener) {
       var target = dom || {};
       render(target);
@@ -466,13 +468,24 @@
         renderPageState(target);
       });
 
+      registerSectionListener(target.advancedTuningActions, 'keydown', function (event) {
+        if (event.key !== 'Escape' || !armedReset) return;
+        event.preventDefault();
+        cancelSectionReset(target);
+      });
+
       registerSectionListener(target.advancedTuningActions, 'click', function (event) {
         var button = event.target && event.target.closest
           ? event.target.closest('[data-tuning-reset-all]')
           : null;
         if (!button) return;
-        if (button.getAttribute('data-tuning-reset-all') === 'arm') {
+        var step = button.getAttribute('data-tuning-reset-all');
+        if (step === 'arm') {
           armSectionReset(target);
+          return;
+        }
+        if (step === 'cancel') {
+          cancelSectionReset(target);
           return;
         }
         clearArm();

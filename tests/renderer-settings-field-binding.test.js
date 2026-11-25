@@ -461,3 +461,83 @@ test('a switch that opts out of the save lock stays usable and its last click wi
   assert.equal(h.calls.at(-1).nested.flag, true);
   assert.equal(track.getAttribute('aria-checked'), 'true');
 });
+
+/* ── Row 193 C4: the switch revert, and the group helper (D2 A) ── */
+
+test('a changed switch has a revert slot naming its default; an unchanged one has an empty slot and no Modified', async (t) => {
+  const changed = harness({ initial: { nested: { flag: false } } });
+  const same = harness();
+  t.after(() => { changed.dispose(); same.dispose(); });
+  const row = changed.row(D.flag);
+  assert.equal(row.getAttribute('data-setting-kind'), 'toggle');
+  const revert = row.querySelector('.settings-field-title-row [data-setting-revert-slot="bindTestFlag"] [data-setting-revert="bindTestFlag"]');
+  assert.ok(revert, 'the revert sits on the name line');
+  assert.equal(revert.getAttribute('title'), 'Revert to On');
+  assert.equal(revert.getAttribute('aria-label'), 'Revert Flag to On');
+  assert.equal(row.querySelector('.settings-field-meta'), null, 'a switch shows no Modified word');
+  const slot = same.row(D.flag).querySelector('[data-setting-revert-slot="bindTestFlag"]');
+  assert.ok(slot, 'the slot is always laid out');
+  assert.equal(slot.innerHTML, '', 'and empty while the switch is at its default');
+  assert.equal(same.row(D.flag).querySelector('.settings-field-meta'), null);
+  changed.click('[data-setting-revert="bindTestFlag"]');
+  await flush();
+  assert.equal(changed.registry.read(D.flag), true, 'the revert writes the default');
+  assert.equal(changed.row(D.flag).querySelector('[data-setting-revert-slot]').innerHTML, '');
+  same.toggle('bindTestFlag', false);
+  await flush();
+  assert.equal(same.row(D.flag).querySelector('[data-setting-revert="bindTestFlag"]').getAttribute('title'), 'Revert to On', 'a switch changed here gets its revert in place');
+});
+
+test('dropdowns, numbers and text keep Modified and the revert exactly as before', (t) => {
+  const h = harness({ initial: { count: 7 } });
+  t.after(() => h.dispose());
+  const row = h.row(D.count);
+  assert.equal(row.querySelector('.settings-field-meta-modified').textContent, 'Modified');
+  assert.equal(row.querySelector('[data-setting-revert]').getAttribute('title'), 'Revert to 4 items');
+  assert.equal(row.getAttribute('data-setting-kind'), null);
+});
+
+test('the group helper writes the off reason once on the master row and as each child control description', (t) => {
+  const h = harness();
+  t.after(() => h.dispose());
+  const master = h.row(D.flag);
+  const children = [h.row(D.count), h.row(D.mode)];
+  binding.applyGroupOffReason(master, children, { off: true });
+  const lines = master.querySelectorAll('.settings-field-reason');
+  assert.equal(lines.length, 1, 'written once');
+  assert.equal(lines[0].textContent, 'Off. The settings below keep their values and can be changed again when this is on.');
+  assert.equal(master.querySelector('.settings-field-help').textContent, 'A switch.', 'the help stays; the reason is a second line');
+  children.forEach((child) => {
+    assert.equal(child.getAttribute('data-setting-parent-off'), 'true');
+    assert.equal(child.querySelector('.settings-field-reason'), null, 'no child prints the reason');
+    const described = child.querySelectorAll('.settings-field-control [aria-description]');
+    assert.ok(described.length >= 1, 'the control carries the description');
+    described.forEach((el) => assert.equal(el.getAttribute('aria-description'), 'Turn on "Flag" to change this.'));
+    assert.equal(child.querySelector('.settings-field-control [title]').getAttribute('title'), 'Turn on "Flag" to change this.');
+  });
+  binding.applyGroupOffReason(master, children, { off: true });
+  assert.equal(master.querySelectorAll('.settings-field-reason').length, 1, 'a repeat does not stack lines');
+  binding.applyGroupOffReason(master, children, { off: false });
+  assert.equal(master.querySelector('.settings-field-reason'), null);
+  children.forEach((child) => {
+    assert.equal(child.hasAttribute('data-setting-parent-off'), false);
+    assert.equal(child.querySelector('[aria-description]'), null);
+  });
+});
+
+test('row 193 C5: Language is restart-required, so its row shows Restart to apply while a restart is owed', (t) => {
+  const { restartList } = require('../renderer/shell/renderer-settings-foundation.js');
+  const language = require('../renderer/shell/renderer-settings-field-descriptors.js').getSettingDescriptor('uiLanguageSelect');
+  restartList.clear();
+  t.after(() => restartList.clear());
+  const optionSources = { uiLanguages: [{ value: 'en', label: 'English' }, { value: 'ja', label: 'Japanese' }] };
+  const paint = () => new JSDOM('<body>' + binding.renderSettingRow(language, 'ja', { inventory, optionSources }) + '</body>').window.document.querySelector('.settings-field');
+  assert.equal(language.restartRequired, true);
+  assert.equal(paint().querySelector('.settings-field-tag'), null, 'nothing owed at start');
+  restartList.track(language.id, 'Language', 'en', 'ja');
+  const tag = paint().querySelector('.settings-field-tag');
+  assert.equal(tag.textContent, 'Restart to apply');
+  assert.equal(tag.getAttribute('data-tone'), 'restart');
+  restartList.track(language.id, 'Language', 'en', 'en');
+  assert.equal(paint().querySelector('.settings-field-tag'), null, 'reverting clears the tag');
+});

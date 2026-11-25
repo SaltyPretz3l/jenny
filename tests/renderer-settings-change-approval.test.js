@@ -154,7 +154,8 @@ test('a missing or malformed approval fails closed: no Allow, no partial card', 
 });
 
 test('the receipt says how many settings changed or would have', () => {
-  const receipt = (extra) => render({ cardState: 'resolved', ...extra }).querySelector('.tool-approval-receipt-subject').textContent;
+  // Row 192 D2 A: the chat's inline row renders empty (the step carries the answer); the card keeps the receipt line.
+  const receipt = (extra) => render({ cardState: 'resolved', mode: 'card', ...extra }).querySelector('.tool-approval-receipt-subject').textContent;
   assert.equal(receipt({ decision: 'allowed' }), 'Changed 1 setting');
   assert.equal(receipt({ decision: 'allowed', settingsChangeApproval: ready([RUN_MODE, ZOOM]) }), 'Changed 2 settings');
   assert.equal(receipt({ decision: 'denied' }), 'Change 1 setting');

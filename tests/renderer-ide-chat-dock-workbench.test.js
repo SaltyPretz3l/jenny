@@ -19,7 +19,7 @@ function setup(t, opts = {}) {
     <section id="chatView">
       <div id="chatThreadStage"><div id="chatThreadScroll"><div id="chatTimeline"></div></div></div>
       <div id="composerWrap"><textarea id="chatInput"></textarea></div>
-      <div id="artifactReviewResizer"></div>
+      <aside id="artifactReviewPanel"></aside>
     </section>
     <div id="ideShell">
       <div id="ideMain"><div id="ideEditorHost" tabindex="0"></div></div>
@@ -103,7 +103,7 @@ function setup(t, opts = {}) {
     schedulePersist: () => { writes.push('persist'); },
     windowRef: dom.window,
     workbench: wb,
-    revealSecondChanges: opts.revealSecondChanges,
+    onNewChat: opts.onNewChat,
     changesView: opts.noChanges ? undefined : {
       loadChangesView: async () => changesViewModule,
       getSuggestedClient: () => client,
@@ -157,7 +157,7 @@ test('open() is a no-op while the dock flag is off', (t) => {
   assert.deepEqual(f.wb.setOpenCalls, []);
 });
 
-test('the header is the session row and New chat only: no Chat | Changes tabs and no collapse chevron', (t) => {
+test('the header holds the session picker (New chat is its last row): no Chat | Changes tabs and no collapse chevron', (t) => {
   const f = setup(t, { open: true });
   f.dock.reconcile();
   const header = f.header();
@@ -236,14 +236,26 @@ test('revealChanges reveals the changes view while docked; openChanges reveals i
   assert.equal(f.wb.revealCalls.at(-1), 'changes');
 });
 
-test('revealChanges from Chat 2 (secondChat) opens Changes 2, never the first chat\'s Changes', (t) => {
-  const asked = [];
-  const f = setup(t, { open: true, revealSecondChanges: (target) => { asked.push(target); return true; } });
-  assert.equal(f.dock.revealChanges({ turnId: 't9', secondChat: true }), true);
-  assert.deepEqual(asked, [{ turnId: 't9', secondChat: true }]);
-  assert.deepEqual(f.wb.revealCalls, [], 'the first Changes is not revealed');
-  const g = setup(t, { open: true });
-  assert.equal(g.dock.revealChanges({ secondChat: true }), false, 'no second chat wiring: nothing opens');
+test('row 190 Wave 4: the shown Chat tab names the chat and opens the picker; New chat closes it', (t) => {
+  let newChats = 0;
+  const f = setup(t, { open: true, onNewChat: () => { newChats += 1; } });
+  f.dock.reconcile();
+  assert.equal(f.dock.chatTabLabel(true), 'One', 'shown: the chat title');
+  assert.equal(f.dock.chatTabLabel(false), 'Chat', 'behind another tab: "Chat"');
+  const tab = f.doc.createElement('button');
+  f.doc.body.appendChild(tab);
+  const picker = () => f.byId('ideChatDockSessionPicker');
+  f.dock.openSwitcher(tab);
+  assert.equal(picker().hidden, false, 'the tab opens the picker');
+  assert.ok(picker().querySelector('[data-ide-chatdock-new-chat]'), 'New chat is inside the picker');
+  tab.click();
+  assert.equal(picker().hidden, false, 'a click on the opener is not a click away');
+  picker().querySelector('[data-ide-chatdock-new-chat]').click();
+  assert.equal(newChats, 1);
+  assert.equal(picker().hidden, true, 'New chat closes the picker');
+  f.dock.openSwitcher(tab);
+  f.dock.openSwitcher(tab);
+  assert.equal(picker().hidden, true, 'a second click on the tab closes it');
 });
 
 test('getChangesWaitingCount reports pending suggestions and onCountChange fires when the client changes', (t) => {

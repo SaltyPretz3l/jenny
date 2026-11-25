@@ -58,6 +58,18 @@
   padding-block: 0 var(--space-4);
 }
 
+/* Four options, five while a test run exists: the switch gives way before the panel does. */
+.background-tasks-toolbar .inv-segmented {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.background-tasks-toolbar .inv-segmented-option {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .background-tasks-list {
   flex: 1;
   min-height: 0;
@@ -72,6 +84,18 @@
 
 .background-tasks-fold .session-rail-divider {
   flex: 1;
+}
+
+/* After Clear: what it did and the way back. Muted footnote text, no box, no border. */
+.background-tasks-undo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-block: var(--space-4) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
 }
 
 .background-tasks-link {

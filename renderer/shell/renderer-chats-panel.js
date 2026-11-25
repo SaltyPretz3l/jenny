@@ -771,8 +771,8 @@
       if (typeof windowRef.Event === 'function') dom.conversationGroups.dispatchEvent(new windowRef.Event('sidebar-rendered'));
     }
 
-    // A scheduled render of a list that is not displayed only marks it stale; the badge, strip and
-    // inbox pass still runs on the rows that are there, since the collapsed strip shows that state.
+    // A scheduled render of a list that is not displayed only marks it stale; the badge and
+    // inbox pass still runs on the rows that are there.
     function renderWhenShown() {
       if (listShown || disposed || !dom.conversationGroups) return renderNow();
       scheduledFrame = 0;
@@ -862,11 +862,6 @@
       if (dom.searchInput) dom.searchInput.value = '';
       listShown = true; // the frame renders before the size observer reports the expanded list
       resetPaging();
-    }
-
-    // The strip lists the newest chats of every project, so the panel it expands into does too.
-    function prepareForStripExpansion() {
-      clearFilters(false);
     }
 
     /**
@@ -989,7 +984,6 @@
       toggleScope: toggleScope,
       setProjectFilter: setProjectFilter,
       loadMore: loadMore,
-      prepareForStripExpansion: prepareForStripExpansion,
       setRovingSession: setRovingSession,
       getVisibleSessionElements: getVisibleSessionElements,
       patchRuntimeState: patchRuntimeState,

@@ -59,6 +59,7 @@ const { createNodeRates: defaultNodeRates, createTeamNodeCommands } = require('.
 const { createNodeRoutes } = require('./node-routes');
 const { USAGE_LOG_FILE, UsageLog } = require('./usage-log');
 const { createHostBridge } = require('./transport/host-bridge');
+const { createKnownKeysFeed } = require('./transport/known-keys');
 const { judgeReach } = require('./transport/reach');
 
 const CLIENT_CAPACITY = 64;
@@ -461,7 +462,9 @@ async function startTeamHost(configPath, parent, options = {}) {
     const folders = projectFolders(createFolders, config.team.projectsRoot ?? null, { clock, logger });
     // Project boards (row 151): the store on `<profile>/team-boards`, its commands, routes and sweeps (boards/team-board-host.js).
     const boards = createTeamBoardHost({ userDataPath: config.userDataPath, directory: store.directory, sessionProject, publish, clock, logger, assertSafePath: assertSafeFile,
-      audit: approvals.append, diskRoots: diskRootsFor(config), statfs: options.statfs });
+      audit: approvals.append, diskRoots: diskRootsFor(config), statfs: options.statfs,
+      // OD-9: a model may propose a file card only while project files are on, for a real folder under the root.
+      projectRoot: config.team.fileTools === true ? (id) => { const found = folders.locate(id); return found.ok ? found.path : null; } : () => null });
     // One deleter for the command and the start-up reconcile; the core is read lazily.
     const deleter = createProjectDeleter({ store, folders, router: () => core?.router ?? null, boards: () => boards.store,
       sessionStore: () => core?.composition?.backend?.sessionStore ?? null,
@@ -531,7 +534,11 @@ async function startTeamHost(configPath, parent, options = {}) {
 
     // 8. The boot secret and the listener.
     bootSecret = Buffer.from(randomBytes(BOOT_SECRET_BYTES));
+    // Review C3/H11: the keys the bridge treats as known; a redeem's notice makes its device key known at once.
+    const knownKeys = createKnownKeysFeed({ store, bridge: () => bridge });
+    unsubscribes.push(() => knownKeys.dispose());
     const notifyMembership = (kind, memberId) => {
+      knownKeys.refresh();
       parent?.send({ type: 'membership_changed', kind, member_id: memberId });
     };
     const chatFiles = createChatAttachmentRoutes({ chat: () => chat, logger, diskRoots: diskRootsFor(config), statfs: options.statfs });
@@ -579,6 +586,7 @@ async function startTeamHost(configPath, parent, options = {}) {
           if (!stopRequested) sendError(failure('team_transport_down'));
           stop().catch(() => {});
         } });
+      knownKeys.start();
       await bridge.start();
     } catch (error) {
       // No bridge binary (a source checkout whose build/sidecar lost it, or a broken install) is not a network

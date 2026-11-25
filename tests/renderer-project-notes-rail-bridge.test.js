@@ -13,6 +13,7 @@ const notesRail = require('../renderer/features/renderer-project-notes-rail');
 const artifactsUtils = require('../renderer/features/renderer-artifacts-utils');
 const sidePanelOwner = require('../renderer/chat/renderer-side-panel-owner');
 const { createShellArtifactBridge } = require('../renderer/shell/renderer-shell-artifact-bridge');
+const { createPanelHostStub } = require('./helpers/artifact-panel-host-stub');
 
 const BRIDGE_PAGE = '<div id="workspace"><div id="chatView"></div>'
   + '<div id="chatTimelineUtilityCluster"></div>'
@@ -56,6 +57,7 @@ function bridgeRig(t, { withModule = true, entryStub = null } = {}) {
     features: { featureFlags: {} },
   };
   const byId = (id) => dom.window.document.getElementById(id);
+  const host = createPanelHostStub({ serves: () => true }); // row 190: a room stack presents the panel
   const bridge = createShellArtifactBridge({
     state,
     windowRef: dom.window,
@@ -76,6 +78,7 @@ function bridgeRig(t, { withModule = true, entryStub = null } = {}) {
     constants: { ARTIFACT_REVIEW_STORAGE_KEY: 'jenny.artifactReview.v1' },
     callbacks: {
       getActiveSession: () => ({ id: state.currentSessionId }),
+      getChatLayoutHost: () => host,
       setActiveView: (view) => { state.ui.activeView = view; },
       getProjectSwitcher: async () => ({ refresh: async () => {}, projectById: () => ({ name: 'Alpha App' }) }),
     },
@@ -92,7 +95,7 @@ test('the shell paints the Notes rail through renderSplitDetail and publishes th
   await flush();
   assert.equal(r.panel.dataset.artifactReviewMode, 'notes');
   assert.match(r.panel.querySelector('.notes-rail__preview')?.textContent || '', /line one/);
-  assert.equal(r.panel.querySelector('.notes-rail__header b').textContent, 'Alpha App');
+  assert.equal(r.panel.querySelector('.project-tab-name').textContent, 'Alpha App');
   assert.equal(r.panel.querySelector('.artifact-panel-title-text')?.textContent, 'Notes', 'the shared panel title says Notes');
   const host = r.dom.window.rendererProjectNotesHost;
   assert.deepEqual(Object.keys(host).sort(), ['isOpen', 'markSeen', 'open', 'refresh', 'toggle']);

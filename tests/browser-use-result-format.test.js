@@ -88,10 +88,10 @@ test('the description teaches refs, one step per call and when to stop', () => {
   assert.ok(BROWSER_TOOL_DESCRIPTION.length < 1400, 'every local request pays for this text');
 });
 
-test('the parameters offer exactly the eleven actions and require only action', () => {
+test('the parameters offer exactly the twelve actions and require only action', () => {
   assert.deepEqual(BROWSER_TOOL_PARAMETERS.required, ['action']);
   assert.deepEqual(BROWSER_TOOL_PARAMETERS.properties.action.enum, [
-    'navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'close', 'ad_block',
+    'navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'wait', 'close', 'ad_block',
   ]);
   assert.equal(BROWSER_TOOL_PARAMETERS.additionalProperties, false);
 });

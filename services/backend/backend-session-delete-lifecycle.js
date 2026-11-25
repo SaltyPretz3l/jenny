@@ -29,6 +29,8 @@ async function closeBrowserPage(service, sessionId) {
   try {
     await service.toolExecutor?.browserUse?.closeSession?.(sessionId);
   } catch (_error) { /* the chat is already gone */ }
+  // Row 196: its grants go with it, and the mouse is let go if it held it.
+  try { await service.toolExecutor?.computerUse?.forgetChat?.(sessionId); } catch (_error) { /* as above */ }
 }
 
 async function deleteSessionWithQuiescence(service, sessionId, options = {}) {

@@ -23,7 +23,6 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_APPROVAL_WINDOW_DROPPED,
 )
 from sidecar.ai.feature_flags import (
-    FEATURE_AGENT_EXECUTOR,
     FEATURE_CANONICAL_TURN_EVENTS,
     FEATURE_CONTEXT_COMPACTION,
     FEATURE_TOKEN_BUDGET,
@@ -1275,54 +1274,23 @@ def test_build_chat_send_response_rejects_null_plan_mode() -> None:
     ("engine_type", "expected_concurrency"),
     (("openai", 1), ("chatgpt", 3)),
 )
-def test_build_chat_send_response_passes_feature_flags_into_agent_executor(
-    monkeypatch,
+def test_build_chat_send_response_passes_request_context_to_router(
     engine_type: str,
     expected_concurrency: int,
 ) -> None:
     decision = ChatDecision(
         thinking_text=None,
-        response_text="Executor path.",
+        response_text="Router path.",
         approval_request=None,
         tool_results=(),
     )
-    brain_container = _build_brain_container(
-        decision,
-        engine_type=engine_type,
-        feature_flags={FEATURE_AGENT_EXECUTOR: True},
-    )
-    slot_allocator = object()
-    brain_container.stack.sub_agent_slot_allocator = slot_allocator
-    captured: dict[str, object] = {}
-
-    class _FakeExecutor:
-        def __init__(
-            self,
-            *,
-            router: object,
-            on_progress: object | None = None,
-            feature_flags: dict[str, bool] | None = None,
-            sub_agent_slot_allocator: object | None = None,
-            cancel_handle: object | None = None,
-            suppress_plan_proposal: bool = False,
-        ) -> None:
-            captured["router"] = router
-            captured["on_progress"] = on_progress
-            captured["feature_flags"] = feature_flags
-            captured["sub_agent_slot_allocator"] = sub_agent_slot_allocator
-            captured["cancel_handle"] = cancel_handle
-
-        def execute(self, **kwargs: object) -> ChatDecision:
-            captured["execute_kwargs"] = dict(kwargs)
-            return decision
-
-    monkeypatch.setattr("sidecar.runtime.chat.AgentExecutor", _FakeExecutor)
+    brain_container = _build_brain_container(decision, engine_type=engine_type)
 
     response = build_chat_send_response(
-        "msg-agent-executor-flags",
+        "msg-router-context",
         {
-            "request_id": "req-agent-executor-flags",
-            "messages": [{"role": "user", "content": "Use the executor"}],
+            "request_id": "req-router-context",
+            "messages": [{"role": "user", "content": "Use the router"}],
         },
         approvals_pre_granted=True,
         brain_container=brain_container,
@@ -1330,18 +1298,14 @@ def test_build_chat_send_response_passes_feature_flags_into_agent_executor(
     )
 
     assert response.result["status"] == "completed"
-    assert captured["feature_flags"] == {FEATURE_AGENT_EXECUTOR: True}
-    assert captured["router"] is brain_container.stack.router
-    assert callable(captured["on_progress"])
-    execute_kwargs = captured["execute_kwargs"]
-    assert isinstance(execute_kwargs, dict)
-    request_context = execute_kwargs["request_context"]
+    router_kwargs = brain_container.stack.router.last_kwargs
+    request_context = router_kwargs["request_context"]
     assert isinstance(request_context, ChatRequestContext)
-    assert request_context.request_id == "req-agent-executor-flags"
+    assert request_context.request_id == "req-router-context"
     assert request_context.mode == "chat"
     assert request_context.workspace_root_present is False
     assert request_context.workspace_instruction_present is False
-    assert request_context.agent_id == "main@req-agent-executor-flags"
+    assert request_context.agent_id == "main@req-router-context"
     assert request_context.agent_surface == "main"
     assert request_context.sub_agent_concurrency_budget == expected_concurrency
 
@@ -1403,49 +1367,23 @@ def test_build_chat_send_response_binds_agent_id_diagnostics_context() -> None:
     assert outside_payload["request_id"] is None
 
 
-def test_build_chat_send_response_passes_stream_runtime_into_agent_executor(
-    monkeypatch,
-) -> None:
+def test_build_chat_send_response_passes_stream_runtime_into_router() -> None:
     decision = ChatDecision(
         thinking_text=None,
-        response_text="Executor path.",
+        response_text="Router path.",
         approval_request=None,
         tool_results=(),
     )
-    brain_container = _build_brain_container(
-        decision,
-        feature_flags={FEATURE_AGENT_EXECUTOR: True},
-    )
+    brain_container = _build_brain_container(decision)
     slot_allocator = object()
     brain_container.stack.sub_agent_slot_allocator = slot_allocator
-    captured: dict[str, object] = {}
-
-    class _FakeExecutor:
-        def __init__(
-            self,
-            *,
-            router: object,
-            on_progress: object | None = None,
-            feature_flags: dict[str, bool] | None = None,
-            sub_agent_slot_allocator: object | None = None,
-            cancel_handle: object | None = None,
-            suppress_plan_proposal: bool = False,
-        ) -> None:
-            captured["sub_agent_slot_allocator"] = sub_agent_slot_allocator
-            _ = router, on_progress, feature_flags, cancel_handle
-
-        def execute(self, **kwargs: object) -> ChatDecision:
-            captured["runtime"] = kwargs.get("runtime")
-            return decision
-
-    monkeypatch.setattr("sidecar.runtime.chat.AgentExecutor", _FakeExecutor)
 
     written: list[dict[str, object]] = []
     response = build_chat_send_response(
-        "msg-agent-executor-runtime",
+        "msg-router-runtime",
         {
-            "request_id": "req-agent-executor-runtime",
-            "messages": [{"role": "user", "content": "Use the executor"}],
+            "request_id": "req-router-runtime",
+            "messages": [{"role": "user", "content": "Use the router"}],
         },
         approvals_pre_granted=True,
         brain_container=brain_container,
@@ -1455,29 +1393,19 @@ def test_build_chat_send_response_passes_stream_runtime_into_agent_executor(
     )
 
     assert response.result["status"] == "completed"
-    runtime = captured["runtime"]
+    runtime = brain_container.stack.router.last_kwargs["runtime"]
     assert runtime is not None
-    assert runtime.request_id == "req-agent-executor-runtime"
-    assert runtime.logical_turn_id == "req-agent-executor-runtime"
+    assert runtime.request_id == "req-router-runtime"
+    assert runtime.logical_turn_id == "req-router-runtime"
     assert runtime.streaming is True
     assert runtime.sub_agent_slot_allocator is slot_allocator
-    assert runtime.request_context.request_id == "req-agent-executor-runtime"
+    assert runtime.request_context.request_id == "req-router-runtime"
 
 
 def test_runtime_continuation_context_binds_logical_identity_and_callbacks(monkeypatch) -> None:
-    decision = ChatDecision(None, "Executor path.", None, ())
-    brain_container = _build_brain_container(
-        decision, feature_flags={FEATURE_AGENT_EXECUTOR: True},
-    )
+    decision = ChatDecision(None, "Router path.", None, ())
+    brain_container = _build_brain_container(decision)
     captured: dict[str, object] = {}
-
-    class _FakeExecutor:
-        def __init__(self, **_kwargs: object) -> None:
-            pass
-
-        def execute(self, **kwargs: object) -> ChatDecision:
-            captured["runtime"] = kwargs["runtime"]
-            return decision
 
     checkpoint_callback = object()
 
@@ -1489,7 +1417,6 @@ def test_runtime_continuation_context_binds_logical_identity_and_callbacks(monke
         captured["checkpoint"] = kwargs
         return checkpoint_callback
 
-    monkeypatch.setattr("sidecar.runtime.chat.AgentExecutor", _FakeExecutor)
     monkeypatch.setattr(
         "sidecar.runtime.operation_admission.build_operation_admission_callback",
         _operation_callback,
@@ -1533,7 +1460,7 @@ def test_runtime_continuation_context_binds_logical_identity_and_callbacks(monke
     )
 
     assert response.result["status"] == "completed"
-    runtime = captured["runtime"]
+    runtime = brain_container.stack.router.last_kwargs["runtime"]
     assert runtime.request_id == "stream_1"
     assert runtime.logical_turn_id == "turn_1"
     assert runtime.continuation_checkpoint is checkpoint_callback

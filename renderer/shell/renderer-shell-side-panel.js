@@ -42,8 +42,9 @@
       if (!panelEl || typeof panelEl.querySelector !== 'function') return;
       // The Subagent Monitor's record ends with its mode, its panel or its session (renderer-subagent-rail.js).
       if (mode !== 'context' && mode !== 'activity') getSubagentRailController()?.handleLayoutSync?.(mode, !panelEl.classList?.contains('hidden'));
-      // Changes (code_review) and Activity name their owner in one-pane view too (row 59 checkpoint 2).
-      const named = mode === 'code_review' || mode === 'activity' || (isSplitLayout() && (mode === 'artifact' || mode === 'context' || mode === 'subagents' || mode === 'browser'));
+      // Row 195: with two panes every chat tab names its chat; with one pane none does. Project (Tasks, Notes)
+      // belongs to the project, not to a chat, and never carries the line.
+      const named = isSplitLayout() && mode !== 'tasks' && mode !== 'notes';
       const sessionId = Boolean(sidePanelOwner) && named ? sidePanelOwner.resolvePanelSessionId(state) : '';
       const title = sessionId
         ? String(findSession(sessionId)?.title || '').trim() || jt('chat.empty.newSession', 'New session')

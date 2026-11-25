@@ -22,6 +22,11 @@
  *   - 'clipboard-read'          — navigator.clipboard.readText() (paste-from-clipboard).
  *   - 'clipboard-sanitized-write' — navigator.clipboard.writeText() (copy actions).
  *
+ * Screen capture is narrowed further (row 197 S1, the capture gate): it is
+ * granted only to the main window's own main frame on the app page, the check
+ * dictation passes, because model-written artifact and sketch pages live in
+ * this session too. The display-media handler checks the asking frame again.
+ *
  * Microphone ('media') is never on the allowlist. Dictation (row 84) gets it
  * through a narrower gate instead: while the dictation flag is on, an
  * audio-only request from the main window's own main frame on the app page
@@ -33,6 +38,8 @@
 const { trustedMainFrameUrl, MAIN_DOCUMENT_PATH } = require('./ipc-sender-authorization');
 
 const MICROPHONE_PERMISSION = 'media';
+// Allowlisted permissions that are still granted only to the main window's main frame.
+const MAIN_FRAME_ONLY_PERMISSIONS = Object.freeze(new Set(['display-capture']));
 
 // Electron's canonical permission strings the main window legitimately uses.
 const DEFAULT_ALLOWED_PERMISSIONS = Object.freeze([
@@ -57,13 +64,11 @@ function onlyAudio(mediaTypes) {
 }
 
 /*
- * The dictation gate. `mediaTypes` is the request's details.mediaTypes, or the
- * check's single details.mediaType wrapped in an array. Fails closed on any throw.
+ * True only for a request from the main window's own main frame on the app
+ * page. Fails closed on any throw or missing input.
  */
-function isTrustedMicrophoneRequest({ webContents, details, mediaTypes, getMainWindow, isMicrophoneEnabled, documentPath }) {
+function isMainWindowMainFrameRequest({ webContents, details, getMainWindow, documentPath }) {
   try {
-    if (typeof isMicrophoneEnabled !== 'function' || isMicrophoneEnabled() !== true) return false;
-    if (!onlyAudio(mediaTypes)) return false;
     const mainWindow = typeof getMainWindow === 'function' ? getMainWindow() : null;
     if (!mainWindow || mainWindow.isDestroyed?.() === true) return false;
     const expected = mainWindow.webContents;
@@ -71,6 +76,20 @@ function isTrustedMicrophoneRequest({ webContents, details, mediaTypes, getMainW
     if (details?.isMainFrame !== true) return false;
     return trustedMainFrameUrl(details.requestingUrl, documentPath)
       && trustedMainFrameUrl(expected.getURL?.(), documentPath);
+  } catch (_error) {
+    return false;
+  }
+}
+
+/*
+ * The dictation gate. `mediaTypes` is the request's details.mediaTypes, or the
+ * check's single details.mediaType wrapped in an array. Fails closed on any throw.
+ */
+function isTrustedMicrophoneRequest({ webContents, details, mediaTypes, getMainWindow, isMicrophoneEnabled, documentPath }) {
+  try {
+    if (typeof isMicrophoneEnabled !== 'function' || isMicrophoneEnabled() !== true) return false;
+    if (!onlyAudio(mediaTypes)) return false;
+    return isMainWindowMainFrameRequest({ webContents, details, getMainWindow, documentPath });
   } catch (_error) {
     return false;
   }
@@ -105,13 +124,20 @@ function installDefaultSessionPermissionGuard({
 
   const allowed = buildAllowedSet(allowedPermissions);
   allowed.delete(MICROPHONE_PERMISSION);
-  const isAllowed = (permission) => allowed.has(normalizePermission(permission));
+  const mainFrameGate = (webContents, details) => isMainWindowMainFrameRequest({
+    webContents, details, getMainWindow, documentPath: expectedDocumentPath,
+  });
+  const isAllowed = (permission, webContents, details) => {
+    const name = normalizePermission(permission);
+    if (!allowed.has(name)) return false;
+    return !MAIN_FRAME_ONLY_PERMISSIONS.has(name) || mainFrameGate(webContents, details);
+  };
   const microphoneGate = (webContents, details, mediaTypes) => isTrustedMicrophoneRequest({
     webContents, details, mediaTypes, getMainWindow, isMicrophoneEnabled, documentPath: expectedDocumentPath,
   });
 
   targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    const granted = isAllowed(permission)
+    const granted = isAllowed(permission, webContents, details)
       || (normalizePermission(permission) === MICROPHONE_PERMISSION && microphoneGate(webContents, details, details?.mediaTypes));
     if (!granted) {
       // Redaction (AGENTS.md §7): the permission name is not sensitive, but keep
@@ -127,7 +153,7 @@ function installDefaultSessionPermissionGuard({
   });
 
   if (typeof targetSession.setPermissionCheckHandler === 'function') {
-    targetSession.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details) => isAllowed(permission)
+    targetSession.setPermissionCheckHandler((webContents, permission, _requestingOrigin, details) => isAllowed(permission, webContents, details)
       || (normalizePermission(permission) === MICROPHONE_PERMISSION
         && microphoneGate(webContents, details, details?.mediaType ? [details.mediaType] : [])));
   }
@@ -147,6 +173,7 @@ module.exports = {
   DEFAULT_ALLOWED_PERMISSIONS,
   buildAllowedSet,
   installDefaultSessionPermissionGuard,
+  isMainWindowMainFrameRequest,
   isTrustedMicrophoneRequest,
   normalizePermission,
 };

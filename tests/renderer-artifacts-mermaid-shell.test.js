@@ -8,11 +8,9 @@ const {
 function setWorkspaceWidths(window, doc, workspaceWidth = 1600) {
   const workspace = doc.getElementById('workspace');
   const sidebar = doc.getElementById('viewPanel');
-  const sidebarResizer = doc.getElementById('sidebarResizer');
   const height = 900;
   workspace.getBoundingClientRect = () => ({ top: 0, left: 0, right: workspaceWidth, bottom: height, width: workspaceWidth, height });
   sidebar.getBoundingClientRect = () => ({ top: 0, left: 0, right: 320, bottom: height, width: 320, height });
-  sidebarResizer.getBoundingClientRect = () => ({ top: 0, left: 320, right: 330, bottom: height, width: 10, height });
   window.dispatchEvent(new window.Event('resize'));
 }
 
@@ -584,95 +582,6 @@ test('split view opens generated artifacts in the chat rail and transcript studi
     assert.equal(saves[0].sessionId, 'session-artifacts-split');
     assert.equal(saves[0].artifactId, 'artifact_file_session-artifacts-split_split-scratch-plan');
     assert.match(saves[0].content, /updated/);
-  } finally {
-    await app.dispose();
-  }
-});
-
-test('split view opens as an overlay drawer when the chat stage is too narrow (W1-5, studio removed)', async () => {
-  const app = await loadRendererApp({
-    artifactReviewPreferences: { enabled: true, collapsed: false, width: 420 },
-    shell: {
-      chat: {
-        async startStream(payload, { state }) {
-          const sessionId = 'session-artifacts-narrow';
-          state.sessions = [{
-            id: sessionId,
-            title: 'Narrow Artifact Session',
-            conversation_mode: payload.conversationMode || 'chat',
-            preferred_model: payload.preferredModel || 'gpt-test',
-            reasoning_effort: payload.reasoningEffort || 'default',
-            interactive_round_count: 0,
-            interactive_sequence_state: 'idle',
-            pending_question_batch: null,
-            updated_at: new Date().toISOString(),
-          }];
-          state.messagesBySession.set(sessionId, []);
-          return { sessionId, streamId: 'stream-artifacts-narrow' };
-        },
-      },
-    },
-  });
-  const { window, shell } = app;
-  const doc = window.document;
-  const input = doc.getElementById('chatInput');
-  const sendButton = doc.getElementById('sendButton');
-
-  try {
-    setWorkspaceWidths(window, doc, 1000);
-    await waitForUi(window, 30);
-
-    input.value = 'Create a narrow split artifact';
-    input.dispatchEvent(new window.Event('input', { bubbles: true }));
-    sendButton.click();
-    await waitForUi(window, 20);
-
-    await shell.__emitChat({
-      type: 'tool_use',
-      sessionId: 'session-artifacts-narrow',
-      streamId: 'stream-artifacts-narrow',
-      callId: 'call-narrow-1',
-      toolName: 'CreateArtifact',
-      summary: 'Create narrow artifact',
-      input: { artifact_kind: 'document', title: 'Narrow Artifact' },
-      status: 'running',
-    });
-    await shell.__emitChat({
-      type: 'tool_result',
-      sessionId: 'session-artifacts-narrow',
-      streamId: 'stream-artifacts-narrow',
-      callId: 'call-narrow-1',
-      toolName: 'CreateArtifact',
-      summary: 'Create narrow artifact',
-      content: 'Created document "Narrow Artifact"',
-      isError: false,
-      approvalState: 'auto',
-      durationMs: 12,
-      generatedArtifacts: [{
-        artifact_id: 'artifact_file_session-artifacts-narrow_narrow-artifact',
-        artifact_kind: 'document',
-        title: 'Narrow Artifact',
-        file_name: 'narrow-artifact.md',
-        display_path: '.jenny/artifacts/session-artifacts-narrow/narrow-artifact.md',
-        absolute_path: 'C:/workspace/.jenny/artifacts/session-artifacts-narrow/narrow-artifact.md',
-        language: 'markdown',
-        editable: true,
-        status: 'available',
-      }],
-    });
-    await waitForUi(window, 60);
-
-    doc.querySelector('[data-inv-artifact-action="panel"]').click();
-    await waitForUi(window, 40);
-
-    // W1-5: no studio fallback — on a narrow stage the panel opens as an
-    // overlay drawer over chat (same DOM, .artifact-review-overlay modifier),
-    // and chat keeps its full width (no artifact-review-open layout shift).
-    assert.equal(window.__rendererState.ui.activeView, 'chat');
-    const panel = doc.getElementById('artifactReviewPanel');
-    assert.equal(panel.classList.contains('hidden'), false);
-    assert.equal(panel.classList.contains('artifact-review-overlay'), true);
-    assert.equal(doc.getElementById('chatView').classList.contains('artifact-review-open'), false);
   } finally {
     await app.dispose();
   }

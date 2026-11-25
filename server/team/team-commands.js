@@ -175,7 +175,9 @@ function createTeamCommands({
     'team.project.audit.read': ({ params }) => {
       const audit = projectAudit();
       if (!audit) return hostFailure('unavailable', 'team_audit_unavailable');
-      const page = audit.read({ projectId: params.project_id, afterSeq: params.after_seq ?? 0, limit: params.limit ?? 100 });
+      // `before_seq`: the newest page below it, oldest first; `next_cursor` is then the page's oldest seq (project-audit.js).
+      const page = audit.read({ projectId: params.project_id, afterSeq: params.after_seq ?? 0, beforeSeq: params.before_seq,
+        limit: params.limit ?? 100 });
       return page.ok ? { ok: true, entries: page.entries, floor_seq: page.floor_seq, next_cursor: page.next } : page;
     },
   };
@@ -212,8 +214,14 @@ function createTeamCommands({
       const revoked = await store.revokeMember({ actorMemberId: actor.member_id, memberId: params.member_id });
       return revoked.ok ? { ok: true } : revoked;
     },
-    'team.rename': async ({ params, actor }) => {
+    // Row 201: a new name reaches every active member's device live (`team_renamed`); others read it at connect.
+    'team.rename': async ({ params, actor, publish }) => {
       const renamed = await store.rename({ actorMemberId: actor.member_id, name: params.name });
+      if (renamed.ok && renamed.changed === true && typeof publish === 'function') {
+        try {
+          publish('team_renamed', { name: params.name }, { audience: new Set(directory.activeMemberIds()), ephemeral: true });
+        } catch (_error) { log('WARN', 'team_command.rename_announce_failed', {}); }
+      }
       return renamed.ok ? { ok: true } : renamed;
     },
     // Row 170: the caller's own display name and the label of the device this request came from.
@@ -275,7 +283,7 @@ function createTeamCommands({
       log('WARN', 'team_command.rate_limited', { operation });
       return hostFailure('limit', 'team_rate_limit', requestId);
     }
-    const call = { params: command.params,
+    const call = { params: command.params, publish,
       actor: { member_id: live.member_id, owner: live.role === 'owner', device_id: context.deviceId } };
     const answer = read
       ? withRequestId(await read(call), requestId)

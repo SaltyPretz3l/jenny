@@ -117,6 +117,47 @@ test('the single-owner host refuses always exactly as its closed schema did, and
   assert.equal(applied, 1);
 });
 
+test('OD-2: while the rules are paused every granting change and every request is refused, an always answer applies nothing, and decline and remove still clear', BOUNDED, async (t) => {
+  const s = await approveSetup(t);
+  await s.h.ok(s.send('alice', 'team.project.rules.add', { project_id: s.P, tool_name: 'write_file', folder: 'posts' }));
+  assert.equal((await s.answer('carl', s.open(), { always: 'ask' })).always_result.request_seq, 1);
+  s.h.backend.hostRootBoundary = '/srv/team/projects';
+  assert.equal((await s.listed('carl')).paused, 'file_tools', 'the page reads the pause on the state it already has');
+  const before = JSON.stringify(await s.listed());
+  const decidedBefore = s.decided.length;
+  const entriesBefore = s.kinds().length;
+  const rules = (operation, params) => s.send('alice', `team.project.rules.${operation}`, { project_id: s.P, ...params });
+  for (const refused of [rules('add', { tool_name: 'edit_file', folder: null }),
+    rules('answer', { request_seq: 1, outcome: 'allow' }),
+    rules('answer', { request_seq: 1, outcome: 'change', tool_name: 'edit_file', folder: null })]) {
+    assert.equal(reasonOf(await refused), 'team_rules_unavailable');
+  }
+  // Allow once still works; "Always allow" and "Allow once, ask for always" are refused and the allow is not applied.
+  for (const [who, always] of [['alice', 'rule'], ['carl', 'ask']]) {
+    assert.equal(reasonOf(await s.answer(who, s.open(s.sP, { tool: 'edit_file' }), { always })), 'team_rules_unavailable', always);
+  }
+  assert.equal(s.decided.length, decidedBefore, 'a refused always answer applied nothing');
+  assert.equal((await s.answer('carl', s.open(s.sP, { tool: 'edit_file' }))).ok, true, 'allow once is unchanged');
+  assert.equal(JSON.stringify(await s.listed()), before, 'no rule and no request changed');
+  assert.equal(s.kinds().length, entriesBefore + 1, 'only the allow-once decision was audited');
+  // Decline and remove grant nothing, so an admin can still clear a stale request and a rule while paused.
+  assert.equal((await rules('answer', { request_seq: 1, outcome: 'decline', reason: 'No' })).ok, true, 'decline while paused');
+  assert.equal((await rules('remove', { rule_seq: 1 })).ok, true, 'remove while paused');
+  // Unpaused again, the same commands work.
+  s.h.backend.hostRootBoundary = null;
+  assert.equal((await rules('add', { tool_name: 'edit_file', folder: null })).ok, true);
+});
+
+test('a team demotion to read-only closes the open rule requests of that member', BOUNDED, async (t) => {
+  const s = await approveSetup(t);
+  assert.equal((await s.answer('carl', s.open(), { always: 'ask' })).always_result.request_seq, 1);
+  assert.equal((await s.listed()).open_request_count, 1);
+  await s.h.ok(s.send('owner', 'team.member.setRole', { member_id: s.member('carl'), role: 'read_only' }));
+  const listed = await s.listed();
+  assert.equal(listed.open_request_count, 0);
+  assert.deepEqual(listed.requests, []);
+});
+
 // ---- The port the backend consults ------------------------------------------------------------
 
 async function portSetup(t) {

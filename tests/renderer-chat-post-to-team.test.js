@@ -26,11 +26,16 @@ const CHAT = {
       { channel_id: 'chan_team', kind: 'team' },
       { channel_id: 'chan_c_abcdefghijklmnop', kind: 'channel', name: 'design' },
       { channel_id: 'chan_c_qrstuvwxyzabcdef', kind: 'channel', name: 'old', archived: true },
-      { channel_id: 'chan_project_p1', kind: 'channel', name: 'a project' },
+      { channel_id: 'chan_project_p1', kind: 'project', audience: [ME, DOT] },
+      { channel_id: 'chan_project_p2', kind: 'project', audience: [ME, DOT] },
+      { channel_id: 'chan_project_p3', kind: 'project', audience: [ME, DOT] },
       { channel_id: DM, kind: 'dm', participants: [ME, DOT] },
     ],
   },
 };
+
+// The project store's rows by team and project id: a project this member writes in, one it only reads, and p3 it does not know.
+const PROJECTS = { 'team_alpha|project_p1': { id: 'project_p1', name: 'Site <i>plan</i>', role: 'writer' }, 'team_alpha|project_p2': { id: 'project_p2', name: 'Taxes', role: 'reader' } };
 
 function harness(t, { teams = [team()], answers = {}, canQueue, chat = CHAT } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><main id="appShell"><button id="trigger">menu</button></main></body></html>');
@@ -42,6 +47,7 @@ function harness(t, { teams = [team()], answers = {}, canQueue, chat = CHAT } = 
     documentRef, stepModal, actionButton, textField, post, canQueue,
     getTeams: () => teams,
     getChatTeam: (id) => chat[id] || null,
+    getProject: (teamId, projectId) => PROJECTS[`${teamId}|${projectId}`] || null,
     failText: (answer) => (answer && answer.error ? `failed:${answer.error.reason}` : ''),
     showToast: (message, options) => toasts.push({ message, options }),
     announcer: { announce() {} },
@@ -69,14 +75,15 @@ test('the menu item is "Post to Team…" and opens the dialog for the text', (t)
   assert.match(h.$('.inv-step-modal-title').textContent, /^Post to Team$/u);
 });
 
-test('destinations: online writable teams only, grouped by team; channels and conversations, never a project or an archived channel', (t) => {
+test('destinations: online writable teams only, grouped by team; channels, project channels and conversations, never an archived channel', (t) => {
   const teams = [team(), team({ team_id: 'team_beta', team_name: 'Beta', role: 'read_only' }), team({ team_id: 'team_gamma', team_name: 'Gamma', state: 'offline' }),
     team({ team_id: 'team_delta', team_name: 'Delta', state: 'revoked' })];
   const h = harness(t, { teams });
   h.modal.open({ text: 'Hello team' });
   assert.deepEqual(h.groups(), ['Alpha']);
-  assert.deepEqual(h.options().map((el) => el.title), ['#team', '#design', 'Dot <b>']);
-  assert.equal(h.documentRef.querySelector('[data-chat-post-list] b'), null, 'a name is text, never markup');
+  assert.deepEqual(h.options().map((el) => el.title), ['#team', '#design', '#Site <i>plan</i>', 'Dot <b>'],
+    'a project channel by its project name; a project this member only reads, or does not know, is not offered');
+  assert.equal(h.documentRef.querySelector('[data-chat-post-list] b, [data-chat-post-list] i'), null, 'a name is text, never markup');
 });
 
 test('a queued team is offered only where a queue exists', (t) => {
@@ -95,6 +102,17 @@ test('readers line: a channel names everyone in the team and the host; a convers
   assert.equal(h.postButton().disabled, false);
   h.pick(`team_alpha|${DM}`);
   assert.equal(h.$('[data-chat-post-readers]').textContent, "The people in this conversation and the team's host can read this.");
+  h.pick('team_alpha|chan_project_p1');
+  assert.equal(h.$('[data-chat-post-readers]').textContent, "The members of Site <i>plan</i> and the team's host can read this.");
+});
+
+test('a project channel is a destination: Post sends to its channel id', async (t) => {
+  const h = harness(t);
+  h.modal.open({ text: 'For the project' });
+  h.pick('team_alpha|chan_project_p1');
+  h.postButton().click();
+  await flush();
+  assert.deepEqual(h.posts, [{ team_id: 'team_alpha', channel_id: 'chan_project_p1', text: 'For the project' }]);
 });
 
 test('the preview shows the exact text that will be posted, read-only and escaped', (t) => {

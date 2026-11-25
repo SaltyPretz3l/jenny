@@ -291,3 +291,11 @@
 .team-conv__stage > .team-copied { inset-block-end: var(--space-6); }
 .team-conv-ask { margin: var(--space-2) 0 0; }
 .team-conv--channel .team-msg .team-conv__receipts--turn { padding-inline: 0; }
+
+/* H23.5: where nothing hovers (touch), the controls that wait for a hover are always there. The conversation's rename pencil and the
+ * conversation row's menu button show at rest; the menu takes the place of the row's trailing facts, as it does on hover. */
+@media (hover: none) {
+  .team-head__rename { opacity: 1; }
+  .team-row__menu { opacity: 1; }
+  .team-row--conv .team-row__trail { visibility: hidden; }
+}

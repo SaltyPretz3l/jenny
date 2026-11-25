@@ -219,11 +219,15 @@ def thinking_ladder(control: ThinkingControl) -> dict[str, Any] | None:
     }
 
 
-def cap_thinking_budget(payload: dict[str, Any], output_tokens: int) -> None:
+def cap_thinking_budget(
+    payload: dict[str, Any], output_tokens: int, *, off_effort: str | None = None
+) -> None:
     """Keep a level's thinking budget under the guard share of ``output_tokens``.
 
     When that leaves less than a useful think, thinking turns off for the
-    request instead of a budget larger than the guard or the output itself.
+    request instead of a budget larger than the guard or the output itself:
+    through ``chat_template_kwargs`` by default, or, for a model whose wire
+    takes no template kwargs, by sending ``off_effort`` as the level.
     """
     budget = payload.get("thinking_budget_tokens")
     if not isinstance(budget, int) or isinstance(budget, bool):
@@ -238,6 +242,9 @@ def cap_thinking_budget(payload: dict[str, Any], output_tokens: int) -> None:
         payload["thinking_budget_tokens"] = capped
         return
     payload.pop("thinking_budget_tokens", None)
+    if off_effort is not None:
+        payload["reasoning_effort"] = off_effort
+        return
     payload["chat_template_kwargs"] = {"enable_thinking": False}
 
 

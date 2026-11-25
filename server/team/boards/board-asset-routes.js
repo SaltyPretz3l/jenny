@@ -130,11 +130,13 @@ function createBoardAssetRoutes({ boards, assets, clock = Date.now, logger = nul
     // Removed, demoted or revoked while the body arrived, or the board left: refused, and nothing is stored.
     const after = await stillAllowed(ctx, WRITE_ACTION, projectId, boardId);
     if (after !== null) return refuse(ctx, after);
-    const stored = await assets.put({ projectId, hash, bytes });
+    // The store asks the caller's check again inside its queue, before the write. A refusal after the write (the
+    // caller was removed in between) takes back only a picture this request stored and no card names.
+    const stored = await assets.put({ projectId, hash, bytes, recheck: () => check(ctx, WRITE_ACTION, projectId) });
     if (stored?.ok !== true) return refuse(ctx, failureOf(stored));
     const late = check(ctx, WRITE_ACTION, projectId);
     if (late !== null) {
-      if (stored.stored === true) await assets.discard({ projectId, hash });
+      if (stored.stored === true) await assets.discard({ projectId, hash, ifUnreferenced: true });
       return refuse(ctx, late);
     }
     json(ctx.response, 200, { ok: true, asset: stored.asset, type: stored.type, width: stored.width, height: stored.height,

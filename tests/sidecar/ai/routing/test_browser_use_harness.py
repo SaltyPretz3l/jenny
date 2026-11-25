@@ -130,6 +130,9 @@ def test_browser_screenshot_is_queued_for_a_vision_model() -> None:
     assert status == "queued"
     assert "queued for the next model request" in notice
     assert runtime.preview_images["shot-1"].tool_id == "browser"
+    # wait ends with a screenshot (row 182), so its picture is queued the same way.
+    assert _admit_preview(_browser("wait-1", "wait"), runtime=runtime)[0] == "queued"
+    assert _admit_preview(_browser("read-1", "read"), runtime=runtime) == ("", "")
     assert _admit_preview(_browser("s2", "screenshot"), vision=False) == (
         "unsupported", "Visual inspection requires a vision-capable active model.",
     )
@@ -187,7 +190,7 @@ def _bridge_request(tool_name: str, **arguments: object) -> bridge.ElectronToolB
 
 @pytest.mark.parametrize(
     "action",
-    ["navigate", "read", "find", "click", "type", "select", "scroll", "press", "screenshot"],
+    ["navigate", "read", "find", "click", "type", "select", "scroll", "press", "screenshot", "wait"],
 )
 def test_browser_gets_the_consent_wait_window_for_every_action(action: str) -> None:
     timeout = bridge._response_wait_timeout(_bridge_request("browser", action=action))
@@ -217,6 +220,7 @@ def test_bridge_keeps_pixels_only_for_the_screenshot_action_and_matching_call() 
                "preview_image": _wire("call-1")}
 
     assert _run_bridge({"action": "screenshot"}, payload).preview_image["call_id"] == "call-1"
+    assert _run_bridge({"action": "wait", "seconds": 2}, payload).preview_image["call_id"] == "call-1"
     assert _run_bridge({"action": "read"}, payload).preview_image is None
     other = {**payload, "preview_image": _wire("someone-else")}
     assert _run_bridge({"action": "screenshot"}, other).preview_image is None

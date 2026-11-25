@@ -153,6 +153,13 @@ class LoopRuntime:
                 self.tool_call_limit,
             )
 
+    def raise_tool_call_limit(self, limit: int) -> None:
+        """Widen a started budget to ``limit``; never shrinks it and never starts one."""
+
+        with self._lock:
+            if self.tool_call_limit is not None and int(limit) > self.tool_call_limit:
+                self.tool_call_limit = int(limit)
+
     def reserve_tool_calls(self, requested: int) -> int:
         """Reserve up to the remaining cumulative budget and return the admitted count."""
 

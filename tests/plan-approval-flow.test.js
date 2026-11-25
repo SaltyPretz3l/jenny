@@ -228,8 +228,8 @@ function acceptedPlanSession({ activeTurn = null, state = 'accepted', priorEvent
       plan_document: { plan_id: 'plan_new', state, title: 'New', steps: ['B'], parent_stream_id: 'stream_1' } },
   ];
   const events = priorEvent ? [{
-    event_id: 'stream_1:plan_document:plan_new:accepted', kind: 'plan_document', status: 'accepted',
-    payload: { plan_id: 'plan_new', transition: 'accepted' },
+    event_id: `stream_1:plan_document:plan_new:${state}`, kind: 'plan_document', status: state,
+    payload: { plan_id: 'plan_new', transition: state },
   }] : [];
   const appended = [];
   const service = {
@@ -269,6 +269,16 @@ test('building an accepted plan flips only the latest idle accepted plan to appr
   assert.equal(live.appended[0].event_id, 'stream_1:plan_document:plan_new:approved');
   assert.equal(live.appended[0].payload.transition, 'approved');
   assert.equal(deriveApprovedPlanContext(live.messages)?.title, 'New', 'the next send carries the plan');
+});
+
+test('a latest plan cut off by a stop before a decision builds like an accepted one (row 198)', () => {
+  const stopped = acceptedPlanSession({ state: 'abandoned' });
+  assert.deepEqual(markAcceptedPlanApproved({ service: stopped.service, sessionId: 's', planId: 'plan_new' }), { ok: true });
+  assert.equal(stopped.messages[1].plan_document.state, 'approved');
+  assert.equal(stopped.appended[0].event_id, 'stream_1:plan_document:plan_new:approved');
+  const rejected = acceptedPlanSession({ state: 'rejected' });
+  assert.deepEqual(markAcceptedPlanApproved({ service: rejected.service, sessionId: 's', planId: 'plan_new' }),
+    { ok: false, reason: 'not_accepted' });
 });
 
 test('building an accepted plan with no prior turn event still records the approved event', () => {

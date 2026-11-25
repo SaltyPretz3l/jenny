@@ -107,9 +107,6 @@
           panelEl, windowRef, formatLanguageLabel: projection?.formatLanguageLabel, appendClientLog, showToastMessage,
           getArtifactSource: () => managerHooks.getSelectedArtifactSource?.(),
           isCurrentArtifact: (artifact) => currentArtifact?.id === artifact?.id && currentArtifact?.sessionId === artifact?.sessionId,
-          toggleMaximize: () => managerHooks.toggleMaximize?.(),
-          isMaximized: () => managerHooks.isMaximized?.() === true,
-          isNarrow: () => panelEl?.dataset?.panelNarrow === 'true',
         }) || null;
       }
     }
@@ -233,9 +230,10 @@
         : mode === 'code_review' ? jt('artifactPanelV2Render.changes', 'Changes')
         : mode === 'file_preview' ? (previewName || jt('ide.filePreviewLabel', 'File preview'))
         : mode === 'notes' ? jt('projectNotes.title', 'Notes')
-        : mode === 'background_tasks' ? jt('backgroundTasks.title', 'Background tasks')
+        : mode === 'background_tasks' ? jt('chat.workbench.view.runs', 'Runs')
         : mode === 'terminal' ? jt('chatTerminal.title', 'Terminal')
         : mode === 'browser' ? (browserHost?.panelTitle?.() || jt('composer.toolFamily.browser.label', 'Browser'))
+        : mode === 'live' ? jt('chat.workbench.view.liveView', 'Live')
         : jt('artifactPanelV2Render.tasks', 'Tasks');
       // Row 138: an open background task turns the title into its Back control (the panel's own markup).
       // Row 178: the Terminal panel's tab strip and actions are its title (the chrome keeps Close).
@@ -295,13 +293,6 @@
       if (meta) meta.textContent = filePreview ? chromeRender.buildFilePreviewMetaText(filePreview) : chromeRender.buildStatusMetaText(artifact, source);
       syncSaveState(artifact, dirty);
 
-      // Maximize lives in More; the header shows a pressed Restore only while
-      // maximized, in the Maximize slot, in every mode: More is artifact-only,
-      // so Restore is the way back from a maximized file preview or code review.
-      const maximized = managerHooks.isMaximized?.() === true;
-      const restoreBtn = panelEl.querySelector('[data-artifact-panel-maximize]');
-      setHidden(restoreBtn, !maximized);
-      setDisabled(restoreBtn, !actionsController);
       syncTextWrapButton(mode);
     }
 
@@ -341,18 +332,6 @@
       textWrapController = controller && typeof controller === 'object' ? controller : null;
     }
 
-    // Restore hides itself once the panel is back to size: hand focus to More,
-    // or to the title where More is hidden or disabled, never to <body>.
-    function keepFocusAfterRestore() {
-      const restoreBtn = panelEl.querySelector('[data-artifact-panel-maximize]');
-      if (!restoreBtn?.classList.contains('hidden')) return;
-      const overflow = panelEl.querySelector('[data-artifact-panel-overflow]');
-      const target = overflow && !overflow.classList.contains('hidden') && !overflow.disabled
-        ? overflow
-        : panelEl.querySelector('#artifactReviewDetailTitle');
-      target?.focus?.({ preventScroll: true });
-    }
-
     function handlePanelClick(event) {
       const titleButton = event.target.closest?.('[data-artifact-switcher-trigger]');
       if (titleButton) {
@@ -362,11 +341,6 @@
           currentArtifactId: currentArtifact?.id,
           triggerEl: titleButton,
         });
-        return;
-      }
-      if (event.target.closest?.('[data-artifact-panel-maximize]')) {
-        actionsController?.toggleMaximize?.();
-        keepFocusAfterRestore();
         return;
       }
       const overflow = event.target.closest?.('[data-artifact-panel-overflow]');

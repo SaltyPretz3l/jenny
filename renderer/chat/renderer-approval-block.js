@@ -50,6 +50,7 @@
     deriveApprovalReceipt,
     receiptDecision,
     renderResolvedReceipt,
+    renderSpokenReceipt,
     resolveApprovalCardState,
   } = needSibling(globalThis.rendererApprovalReceipts
     || (canRequire ? require('./renderer-approval-receipts') : null), 'deriveApprovalReceipt', 'renderer-approval-receipts');
@@ -61,7 +62,9 @@
     SETTINGS_CHANGE_TOOL,
     SCHEDULE_CHANGE_TOOL,
     browserApprovalCopy,
+    computerApprovalCopy,
     normalizeBrowserApproval,
+    normalizeComputerApproval,
     normalizeExactApproval,
     normalizeRoundApproval,
     normalizeScheduleChangeApproval,
@@ -231,12 +234,18 @@
     const asksBrowser = toolName === BROWSER_TOOL;
     const browserApproval = asksBrowser ? normalizeBrowserApproval(source.browserApproval) : null;
     const browserCopy = browserApproval ? browserApprovalCopy(browserApproval) : null;
-    const ownCardOnly = changesSettings || changesSchedule || asksBrowser;
+    // A computer ask is the same: the app's reading of the grant, one answer, never batched or remembered.
+    const asksComputer = toolName === 'computer';
+    const computerApproval = asksComputer ? normalizeComputerApproval(source.computerApproval) : null;
+    const computerCopy = computerApproval ? computerApprovalCopy(computerApproval) : null;
+    const ownCopy = browserCopy || computerCopy;
+    const modelFree = asksBrowser || asksComputer;
+    const ownCardOnly = changesSettings || changesSchedule || modelFree;
     const withholdsAllow = (sendsMessage && !sessionMessage) || Boolean(exactUnavailable) || (changesSettings && !settingsReady)
-      || (changesSchedule && !scheduleReady) || (asksBrowser && !browserCopy);
+      || (changesSchedule && !scheduleReady) || (modelFree && !ownCopy);
     const displayToolName = normalizeText(source.displayToolName) || toolName || jt('approval.block.thisTool', 'this tool');
     const mode = source.mode === 'card' ? 'card' : 'inline';
-    const prompt = browserCopy?.prompt || normalizeText(source.prompt)
+    const prompt = ownCopy?.prompt || normalizeText(source.prompt)
       || (mode === 'inline' ? DEFAULT_INLINE_PROMPT : jt('approval.block.approvePrompt', 'Approve {tool}?', { tool: displayToolName }));
 
     const callIdAttr = escapeHtml(toolCallId);
@@ -269,14 +278,15 @@
         // A check change's receipt never quotes the model's input: without a reading it names the tool.
         : (toolName === SCHEDULE_CHANGE_TOOL
           ? scheduleChangeSubject(normalizeScheduleChangeApproval(source.scheduleChangeApproval)) || displayToolName : '');
-      const receipt = renderResolvedReceipt(source, displayToolName, escapeHtml, stopTarget && stopTarget.title
-        ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTarget.title }) : settingsSubject);
+      const subjectText = stopTarget && stopTarget.title
+        ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTarget.title }) : settingsSubject;
       const decisionAttr = ` data-approval-status="resolved" data-approval-decision="${receiptDecision(source.decision)}"`;
-      // Row 178: an allowed terminal_run's receipt links to its terminal (trusted markup built by the gap renderer).
-      const afterHtml = receiptDecision(source.decision) === 'allowed' && typeof source.receiptActionHtml === 'string' ? source.receiptActionHtml : '';
+      // Row 192 D2 A: inline, the answer rides on the step's own row (renderApprovalNote) and this row
+      // stays in place, visually empty, so nothing moves when the answer arrives; its live region still
+      // speaks the receipt. A terminal_run step links to its terminal from its own row (row 178).
       return mode === 'inline'
-        ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${receipt}${afterHtml}</div>`
-        : `<div class="tool-approval-block"${rowIdentity}${decisionAttr}>${receipt}</div>`;
+        ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${renderSpokenReceipt(source, displayToolName, escapeHtml, subjectText)}</div>`
+        : `<div class="tool-approval-block"${rowIdentity}${decisionAttr}>${renderResolvedReceipt(source, displayToolName, escapeHtml, subjectText)}</div>`;
     }
     if (cardState === 'inactive') {
       const receipt = `<p class="tool-approval-receipt">${escapeHtml(jt('approval.block.noLongerActive', 'Approval no longer active'))}</p>`;
@@ -297,7 +307,7 @@
     // A stated intent is attributed in the text itself, not only in a data
     // attribute: the reader must see that this sentence is Jenny's claim,
     // and a screen reader must hear it.
-    const purpose = asksBrowser ? '' : boundedText(source.purpose, PURPOSE_TEXT_MAX_CHARS);
+    const purpose = modelFree ? '' : boundedText(source.purpose, PURPOSE_TEXT_MAX_CHARS);
     const headline = purpose || prompt;
     const attributionMarkup = purpose
       ? `<span class="tool-approval-intent-source">${escapeHtml(jt('approval.block.jennySays', 'Jenny says'))}</span> ` : '';
@@ -316,17 +326,18 @@
     const localizedPolicyConsequence = translatePolicyText('approvalConsequence', policyConsequence);
     // Bounded like the policy strings above: this also renders from persisted
     // and replayed payloads, which never passed through the backend sanitizer.
-    const reason = asksBrowser ? '' : boundedText(source.reason, REASON_TEXT_MAX_CHARS);
-    const consequence = asksBrowser ? (browserCopy?.consequence || '') : reason || localizedPolicyConsequence;
+    const reason = modelFree ? '' : boundedText(source.reason, REASON_TEXT_MAX_CHARS);
+    const consequence = modelFree ? (ownCopy?.consequence || '') : reason || localizedPolicyConsequence;
     const consequenceMarkup = consequence
       ? `<div class="tool-approval-consequence">${escapeHtml(consequence)}</div>`
       : '';
     // Neutral, uncoloured chips: identity, then the scope, then what the
     // payload itself declares. No severity tint -- a warning on every
     // side-effecting call teaches the reader to click through it.
-    const chips = [{ field: 'tool', label: displayToolName }];
+    const chips = [{ field: 'tool', label: asksComputer ? jt('approval.block.computer.tool', 'Computer') : displayToolName }];
     if (browserCopy) chips.push({ field: 'browser', label: browserCopy.fact });
-    else if (policyScope && !asksBrowser) chips.push({ field: 'scope', label: localizedPolicyScope });
+    else if (computerCopy) for (const label of computerCopy.facts) chips.push({ field: 'computer', label });
+    else if (policyScope && !modelFree) chips.push({ field: 'scope', label: localizedPolicyScope });
     if (settingsReady) {
       const count = settingsChange.rows.length;
       chips.push({ field: 'settings', label: jtn('approval.block.settingsCount', count, { count }, '1 setting', '{count} settings') });
@@ -335,7 +346,7 @@
     if (scheduleReady) {
       for (const label of scheduleFacts(scheduleChange)) chips.push({ field: 'schedule', label });
     }
-    for (const fact of changesSchedule || asksBrowser ? [] : normalizeFacts(source.facts)) {
+    for (const fact of changesSchedule || modelFree ? [] : normalizeFacts(source.facts)) {
       chips.push({ field: fact.kind, label: fact.label });
     }
     if (sendsMessage) {
@@ -345,7 +356,7 @@
       + chips.map((chip) => `<li class="tool-approval-fact"`
         + ` data-approval-fact="${escapeHtml(chip.field)}">${escapeHtml(chip.label)}</li>`).join('')
       + `</ul>`;
-    const policyMarkup = consequence || policyScope || asksBrowser
+    const policyMarkup = consequence || policyScope || modelFree
       ? `${consequenceMarkup}${factsMarkup}`
       : `<div class="tool-approval-policy-fallback">${escapeHtml(translatePolicyText('approvalConsequence', POLICY_FALLBACK))}</div>${factsMarkup}`;
     // The exact command/argument being approved, verbatim (bounded): the
@@ -355,6 +366,10 @@
     let commandMarkup = '';
     if (asksBrowser) {
       commandMarkup = renderBrowserApproval(browserCopy, escapeHtml);
+    } else if (asksComputer) {
+      commandMarkup = computerCopy ? `<pre class="tool-approval-command"><code>${escapeHtml(computerCopy.path)}</code></pre>`
+        : `<p class="tool-approval-message-note" data-approval-computer-unavailable>`
+          + `${escapeHtml(jt('approval.block.computerUnavailable', "The details of this step can't be shown, so it can't be approved. Deny it."))}</p>`;
     } else if (toolName === SESSION_STOP_TOOL) {
       commandMarkup = renderSessionStopApproval(normalizeSessionStopApproval(source.sessionStopApproval), escapeHtml);
     } else if (changesSettings) {
@@ -455,7 +470,7 @@
       + roundMarkup
       + (withholdsAllow ? '' : `<button class="tool-approve-btn${roundMarkup ? ' tool-approve-btn--quiet' : ''}" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
-      + ` title="${escapeHtml(browserCopy?.allow || jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(browserCopy?.allow || jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(browserCopy?.allow || (roundMarkup ? jt('approval.block.allowThisOne', 'Allow this one') : jt('approval.block.allowOnce', 'Allow once')))}</button>`)
+      + ` title="${escapeHtml(ownCopy?.allow || jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(ownCopy?.allow || jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(ownCopy?.allow || (roundMarkup ? jt('approval.block.allowThisOne', 'Allow this one') : jt('approval.block.allowOnce', 'Allow once')))}</button>`)
       + alwaysAllowMarkup + rememberMarkup
       + `<button class="tool-deny-btn" type="button" data-action="deny"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.denyTitle', 'Deny this tool call'))}" aria-label="${escapeHtml(jt('approval.block.denyAriaLabel', 'Deny {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.deny', 'Deny'))}</button>`

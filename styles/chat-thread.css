@@ -399,9 +399,8 @@
   background: color-mix(in srgb, var(--state-warning) 7%, transparent);
 }
 
-/* Ht-D: content-visibility paint-skip per turn-article. Flag mirrors onto
-   :root[data-chat-content-visibility] (absent when OFF, so this whole block
-   is inert and markup/paint stays byte-identical to pre-Ht-D). The exemption
+/* Ht-D: content-visibility paint-skip per turn-article. The render prelude
+   always sets :root[data-chat-content-visibility="on"]. The exemption
    attribute (data-cv-exempt) is written by the article-markup builder and
    kept in sync by the streaming patch paths — see renderer-turn-shell.js
    syncChatEntryCvExemptAttribute. Bottom-2 is a pure structural selector
@@ -485,7 +484,7 @@
 }
 
 /* Answer stream units paint in place; there are no reveal markers. */
-/* chat_stream_token_fade: the tail unit's newly appended text fades in per
+/* Token fade: the tail unit's newly appended text fades in per
    frame; opacity only (inline spans must not transform), token-timed. */
 @keyframes chat-stream-token-in { from { opacity: 0; } to { opacity: 1; } }
 .chat-stream-token { animation: chat-stream-token-in var(--motion-duration-fast) var(--motion-ease-standard) both; }

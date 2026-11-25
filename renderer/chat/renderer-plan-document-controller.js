@@ -329,18 +329,19 @@
       }
     }
 
-    // Only the latest plan offers "Build it" on its accepted receipt.
+    // Only the latest plan offers "Build it": on its accepted receipt, or as the primary action of a card cut off by a stop.
     function syncBuildAcceptedSlots() {
       const documents = timeline ? [...timeline.querySelectorAll('[data-plan-document]')] : [];
       const latest = documents[documents.length - 1] || null;
       documents.forEach((host) => {
         const slot = host.querySelector('[data-plan-build-accepted]');
         if (!slot || typeof button !== 'function') return;
-        const live = host === latest && host.dataset.planState === 'accepted';
+        const stopped = host.dataset.planState === 'abandoned';
+        const live = host === latest && (host.dataset.planState === 'accepted' || stopped);
         if (!live) { slot.innerHTML = ''; return; }
         if (slot.querySelector('[data-action="plan-build-accepted"]')) return;
         slot.innerHTML = button({ id: 'plan-build-accepted', label: jt('artifacts.plan.buildAccepted', 'Build it'),
-          variant: 'ghost', size: 'sm', className: 'plan-document-receipt__build',
+          variant: stopped ? 'primary' : 'ghost', size: 'sm', className: 'plan-document-receipt__build',
           dataset: { 'plan-id': slot.dataset.planId || '' } });
       });
     }
@@ -372,6 +373,11 @@
           records.forEach((record) => {
             record.removedNodes.forEach((node) => { touched = unmountTree(node) || touched; });
             record.addedNodes.forEach((node) => { touched = scan(node) || touched; });
+            // A card morphed in place (pending -> stopped) keeps its host but changes inside it.
+            touched ||= Boolean(record.addedNodes.length && record.target.closest?.('[data-plan-document]'));
+          });
+          cleanups.forEach((cleanup, host) => {
+            if (host.dataset.planState !== 'pending') { cleanup(); cleanups.delete(host); }
           });
           if (touched && !disposed) syncBuildAcceptedSlots();
         })

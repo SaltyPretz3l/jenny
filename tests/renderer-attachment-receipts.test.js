@@ -1,6 +1,7 @@
 'use strict';
 
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 const { createAttachmentEventBindings } = require('../renderer/features/renderer-attachment-event-utils');
@@ -64,6 +65,57 @@ test('image paste mints ownership before byte preprocessing and cancels it on di
     global.document = previousDocument;
     dom.window.close();
   }
+});
+
+// The composer's capture screen waits for the Live picture's window request (row 197, F1.2), for at most 2.5 s.
+async function captureClick({ idle, ticks = 0 }) {
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const documentRef = dom.window.document;
+  const previous = { window: global.window, document: global.document, navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator') };
+  global.window = dom.window;
+  global.document = documentRef;
+  const requests = [];
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: { getDisplayMedia: async () => { requests.push('gdm'); throw new Error('stop here'); } } } });
+  dom.window.__jennyLiveCaptureIdle = idle;
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let controller;
+  try {
+    controller = createAttachmentEventBindings({
+      state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } },
+      dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'),
+        chatInput: documentRef.getElementById('input'), chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') },
+      callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [],
+        renderComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, queueInlineImageAttachment: async () => {} },
+    });
+    controller.bind();
+    documentRef.getElementById('capture').click();
+    await new Promise((resolve) => setImmediate(resolve));
+    const before = requests.length;
+    mock.timers.tick(ticks);
+    await new Promise((resolve) => setImmediate(resolve));
+    return { before, after: requests.length, release: async () => { await new Promise((resolve) => setImmediate(resolve)); return requests.length; } };
+  } finally {
+    mock.timers.reset();
+    controller?.dispose();
+    global.window = previous.window;
+    global.document = previous.document;
+    if (previous.navigator) Object.defineProperty(globalThis, 'navigator', previous.navigator); else delete globalThis.navigator;
+    dom.window.close();
+  }
+}
+
+test('the composer capture waits while a Live capture is open, goes ahead once it ends, and never waits past 2.5 s', async () => {
+  const none = await captureClick({ idle: null });
+  assert.equal(none.before, 1, 'no Live capture: asks at once');
+  let end;
+  const open = await captureClick({ idle: new Promise((resolve) => { end = resolve; }), ticks: 2000 });
+  assert.equal(open.before, 0, 'waits while the Live capture is open');
+  assert.equal(open.after, 0, 'still waiting at 2 s');
+  const late = await captureClick({ idle: new Promise(() => {}), ticks: 2500 });
+  assert.equal(late.after, 1, 'a Live capture that never ends cannot block the composer');
+  const done = await captureClick({ idle: Promise.resolve() });
+  assert.equal(done.before, 1, 'a Live capture that already ended does not delay it');
+  assert.equal(typeof end, 'function');
 });
 
 test('image paste logs receipt, bytes, and save settlement in order', async () => {

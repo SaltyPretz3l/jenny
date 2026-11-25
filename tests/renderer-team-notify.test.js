@@ -241,6 +241,23 @@ test('item 16: a request while the tab is hidden waits and runs once when the ta
   assert.equal(ran.length, 1, 'run once, not again at the next attach');
 });
 
+test('C10.3: an export intent carries its channel to the tab: the waiting intent and tabIntents.exportStart both pass the channel id', async (t) => {
+  const { h } = await setup();
+  t.after(h.restore);
+  const notify = require('../renderer/team/renderer-team-notify');
+  h.tab.hideTeamTab();
+  globalThis.rendererTopNavShellController = { openTeamView: () => true };
+  assert.equal(notify.request({ kind: 'export', teamId: OTHER, scope: 'one', channelId: 'chan_project_alpha' }), true, 'pending');
+  const ran = [];
+  notify.attachTab({ exportStart: (...args) => ran.push(args), hasTeam: () => true, shown: () => null })();
+  await flush();
+  assert.deepEqual(ran, [[OTHER, 'one', 'chan_project_alpha']], 'the channel the palette named reaches the tab');
+  const tabRan = [];
+  const intents = notify.tabIntents({ frame: () => null, teams: () => [], exportStart: (...args) => tabRan.push(args) });
+  intents.exportStart(OTHER, 'one', 'chan_project_alpha');
+  assert.deepEqual(tabRan, [[OTHER, 'one', 'chan_project_alpha']], 'tabIntents passes it on to the tab');
+});
+
 test('item 16: the gate starts the notifier with the chat store and stops it when the flag goes off', async (t) => {
   const h = harness({ show: false, teams: [memberTeam()] });
   t.after(h.restore);
@@ -280,6 +297,37 @@ test('item 19: scrolled up from the latest, or with newer messages not loaded, t
   h.chat.timeline(OTHER, CHAN).hasNewer = true;
   push(h, [fromMaya(40)]);
   assert.equal(sent.length, 2, 'newer messages not loaded: one');
+});
+
+// OD-8: a project channel is named by its project in a toast, never by its id.
+test('OD-8: a message in a project channel raises a candidate that names the project', async (t) => {
+  const before = globalThis.rendererTeamProjectStore;
+  globalThis.rendererTeamProjectStore = { getProjectStore: () => ({ project: (teamId, id) => (teamId === OTHER && id === 'project_site' ? { id, name: 'Site plan', role: 'writer' } : null) }) };
+  t.after(() => { if (before === undefined) delete globalThis.rendererTeamProjectStore; else globalThis.rendererTeamProjectStore = before; });
+  const site = 'chan_project_site';
+  const { h, sent } = await setup({ channels: [chatChannel({ notify: 'mentions', last_seq: 5 }), chatChannel({ channel_id: site, kind: 'project', notify: 'all', last_seq: 1 })] });
+  t.after(h.restore);
+  push(h, [fromMaya(2, { channel_id: site })], site);
+  assert.equal(sent.length, 1);
+  assert.deepEqual([sent[0].title, sent[0].conversation, sent[0].channelId], ['Maya in #Site plan', '#Site plan', site]);
+});
+
+// H22.2: a log that is not laid out measures 0; it is not on screen, so the message still raises one.
+test('H22.2: the shown channel on the list screen of a narrow window (its log not laid out) still raises a candidate', async (t) => {
+  const { h } = await openChat({ members: MEMBERS, channel: { notify: 'all', last_seq: 5 }, messages: [1, 2, 3, 4, 5].map((s) => message(s)), narrow: true });
+  t.after(h.restore);
+  const sent = [];
+  const controller = { notifyTeam: (c) => { sent.push(c); return c; }, setTeamOpenHandler: () => {} };
+  const notifier = require('../renderer/team/renderer-team-notify').createNotifier({ windowRef: h.window, state: { ui: { activeView: 'team' } }, store: h.store, controller: () => controller });
+  h.cleanups.push(() => notifier.stop());
+  const log = require('../renderer/team/renderer-team-notify').shownFrame().log;
+  assert.ok(log.clientHeight > 0, 'on the channel screen the log is laid out');
+  push(h, [fromMaya(6)]);
+  assert.equal(sent.length, 0, 'shown at its latest: nothing');
+  h.view.q('[data-team-tab-action="back"]').click();
+  assert.equal(log.clientHeight, 0, 'the list screen hides the log');
+  push(h, [fromMaya(7)]);
+  assert.equal(sent.length, 1, 'a hidden log is not "on screen"');
 });
 
 // Row 175 F1: a project conversation reachable from outside its tab.

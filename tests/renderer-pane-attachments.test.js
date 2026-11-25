@@ -283,7 +283,7 @@ test('unmounting pane 1 removes its attachment listeners; pane 0\'s bindings and
   const { window, doc, composition, pane1, state } = await openTwoPanes(t);
   const root = pane1.root;
   const input = pane1.dom.chatInput;
-  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
+  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close').click();
   await waitForUi(window, 80);
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');
 

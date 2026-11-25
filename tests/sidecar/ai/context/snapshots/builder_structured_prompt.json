@@ -24,6 +24,12 @@
     "content": "## Diagrams\nTo show a diagram, put Mermaid code in a fenced code block tagged mermaid in your reply; the chat draws it as a chart."
   },
   {
+    "name": "static",
+    "cacheable": true,
+    "heading": "## Mockups",
+    "content": "## Mockups\nTo show what a screen, panel or other interface would look like, write one self-contained HTML page in a fenced code block tagged mockup in your reply; the chat shows it live. Put all CSS, SVG and script inline: the page cannot load files, fonts or anything from the network. Draw the real layout, colours and sizes, never text art. Use the real labels, keys, prices and wording: read them from the code first rather than inventing them. A mockup is part of your reply, not a file, so it works in Plan Mode too."
+  },
+  {
     "name": "executable_tools",
     "cacheable": false,
     "heading": "## Executable Tools",

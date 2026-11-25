@@ -98,6 +98,13 @@ test('renderApprovalRules shows the empty state and the unavailable state', asyn
   assert.match(other.textContent, /unavailable/);
 });
 
+// A removal cannot be restored from the renderer (tools.* only clears), so Remove opens a confirm strip first.
+const clickNode = (dom, node) => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+const confirmRemoval = (dom, container, key) => {
+  clickNode(dom, container.querySelector(`[data-action="tools-approval-rule-remove"][data-rule-key="${key}"]`));
+  clickNode(dom, container.querySelector('[data-action="tools-approval-rule-confirm"]'));
+};
+
 test('Remove clears a per-tool policy or deletes a rule, then refetches', async () => {
   const { dom, container } = harness();
   const api = fakeApi(savedFixture());
@@ -111,8 +118,7 @@ test('Remove clears a per-tool policy or deletes a rule, then refetches', async 
   });
   await coreRenderers.renderApprovalRules({ container, api, actionButton });
 
-  container.querySelector('[data-rule-key="always-allow:write_file:abc123def456"]')
-    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  confirmRemoval(dom, container, 'always-allow:write_file:abc123def456');
   await flush();
   await flush();
   assert.deepEqual(api.calls.slice(1), [
@@ -121,8 +127,7 @@ test('Remove clears a per-tool policy or deletes a rule, then refetches', async 
   ]);
   assert.equal(container.querySelectorAll('.tools-approval-rule').length, 2);
 
-  container.querySelector('[data-rule-key="run_command"]')
-    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  confirmRemoval(dom, container, 'run_command');
   await flush();
   await flush();
   assert.deepEqual(api.calls.slice(3), [['clearPermission', 'run_command'], ['getPermissions']]);
@@ -144,8 +149,8 @@ test('a failed removal re-enables the button and reports the error', async () =>
   });
   await coreRenderers.renderApprovalRules({ container, api, actionButton });
 
-  const button = container.querySelector('[data-rule-key="delete_file"]');
-  button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  confirmRemoval(dom, container, 'delete_file');
+  const button = container.querySelector('[data-action="tools-approval-rule-confirm"]');
   await flush();
   await flush();
   assert.deepEqual(errors, [['Approval Rule Removal Failed', 'store offline']]);

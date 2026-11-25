@@ -18,6 +18,9 @@
     || (typeof require === 'function' ? require('./renderer-turn-row-approval-gap-markup') : null);
   const toolRowExpansionState = (typeof globalThis !== 'undefined' && globalThis.rendererToolRowExpansionState)
     || (typeof require === 'function' ? require('./renderer-tool-row-expansion-state') : null);
+  // Resolved per render: index.html loads the receipts module after this one.
+  const approvalReceipts = () => (typeof globalThis !== 'undefined' && globalThis.rendererApprovalReceipts)
+    || (typeof require === 'function' ? require('./renderer-approval-receipts') : null);
 
   function fallbackNormalizeId(value) {
     return String(value || '').trim();
@@ -53,6 +56,9 @@
     || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
   const memoryChatEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererMemoryChatEntry)
     || (typeof require === 'function' ? require('../features/renderer-memory-chat-entry') : null);
+  // Resolved per render: a computer step that did not work shows a warn dot and its reason (row 196 C8).
+  const computerStepDisplay = () => (typeof globalThis !== 'undefined' && globalThis.rendererComputerStepDisplay)
+    || (typeof require === 'function' ? require('./renderer-computer-step-display') : null);
   const reviewFindingsModule = () => (typeof globalThis !== 'undefined' && globalThis.rendererReviewFindings)
     || (typeof require === 'function' ? require('./renderer-review-findings') : null);
   const messageStrip = () => (typeof globalThis !== 'undefined' && globalThis.rendererComposerMessageStrip)
@@ -69,6 +75,33 @@
     interrupted: 'caution',
     stopped: 'calm',
   });
+
+  // A CMP-LOOP-0016 slip (a tool_result row) is retried when a call of the same tool issued after it in the
+  // turn, on the same path or command when both name one, succeeded. A parallel sibling never counts.
+  const toolTarget = (payload) => {
+    let input = payload.input;
+    if (!input && typeof payload.input_json === 'string') {
+      try { input = JSON.parse(payload.input_json); } catch (_error) { input = null; }
+    }
+    return input && typeof input === 'object' ? String(input.path || input.file_path || input.command || '') : '';
+  };
+  const isRetriedValidationSlip = (rows, slip) => {
+    const p = slip && slip.payload;
+    if (!p || p.is_error !== true || p.error_code !== 'CMP-LOOP-0016' || !p.tool_name || !Array.isArray(rows)) return false;
+    const idOf = (row) => row.tool_call_id || row.payload.tool_call_id;
+    const isCall = (row) => row && row.payload && /^tool_(call|step)$/.test(row.kind);
+    const slipCall = rows.find((row) => isCall(row) && idOf(row) === idOf(slip));
+    const target = slipCall ? toolTarget(slipCall.payload) : '';
+    for (let i = rows.indexOf(slip) + 1; i > 0 && i < rows.length; i += 1) {
+      const row = rows[i];
+      if (!isCall(row) || row.turn_id !== slip.turn_id || row.payload.tool_name !== p.tool_name) continue;
+      const next = toolTarget(row.payload);
+      if (target && next && next !== target) continue;
+      const done = rows.find((entry) => entry && entry.payload && entry.kind === 'tool_result' && idOf(entry) === idOf(row));
+      return Boolean(done && done.payload.is_error !== true);
+    }
+    return false;
+  };
 
   // Classify an errored tool result into one of three outcomes from its
   // error_code + status, so denied/cancelled don't read as crashes.
@@ -140,6 +173,21 @@
     const { buildApprovalGapMarkup, readApprovalCardState } = approvalGapMarkup.createApprovalGapMarkup({
       settings, toolCallUtils, normalizeId, escapeHtml, renderApprovalBlock, resolveProjectedRowCallId,
     });
+
+    // Row 192 D2 A: an answered approval says its answer on the step's own row
+    // ("✓ Allowed once"); its approval row stays in place and renders empty.
+    // Plan approvals keep their plan card's record. '' when nothing was answered.
+    function buildApprovalNoteMarkup(toolCallId, renderOptions) {
+      if (!toolCallId) return '';
+      const isGap = (entry) => entry && entry.kind === 'approval_gap' && resolveProjectedRowCallId(entry) === toolCallId;
+      const gap = [renderOptions.siblingRows, renderOptions.turnRows]
+        .reduce((found, rows) => found || (Array.isArray(rows) ? rows.find(isGap) : null), null);
+      const payload = gap && gap.payload && typeof gap.payload === 'object' ? gap.payload : {};
+      if (payload.state !== 'resolved' || normalizeId(payload.approval_variant) === 'plan') return '';
+      const receipts = approvalReceipts();
+      return typeof receipts?.renderApprovalNote === 'function'
+        ? receipts.renderApprovalNote({ decision: payload.decision, approvalScope: payload.approval_scope }, escapeHtml) : '';
+    }
 
     // W1-4: render the summary's path portion as an inline open-in-IDE chip.
     // The chip carries the forward-slash-normalized path (what the IDE and
@@ -293,11 +341,13 @@
         markerBannerMarkup = buildToolMarkerBannerMarkup(resultPayload);
       }
       const statusKey = String(status || '').toLowerCase();
+      // A retried slip reads superseded (warn), not failed; its error text stays in the details.
+      const shownStatus = isRetriedValidationSlip(renderOptions.turnRows?.length ? renderOptions.turnRows : renderOptions.siblingRows, pairedResultRow) ? 'abandoned' : status;
       // A4: the header says Paused or Withdrawn, muted, when the runtime no
       // longer waits on the approval (display only; the row keeps its status).
       const approvalCardState = statusKey === 'awaiting_approval' || statusKey === 'pending_approval'
         ? readApprovalCardState(row, toolCallId, renderOptions) : null;
-      const headerStatus = { paused: 'paused', inactive: 'withdrawn' }[approvalCardState && approvalCardState.state] || status;
+      const headerStatus = { paused: 'paused', inactive: 'withdrawn' }[approvalCardState && approvalCardState.state] || shownStatus;
       const statusAutoExpand = toolCallUtils && typeof toolCallUtils.shouldAutoExpandToolDetails === 'function'
         ? toolCallUtils.shouldAutoExpandToolDetails(statusKey, { transcriptView: renderOptions.transcriptView })
         : false;
@@ -312,7 +362,7 @@
       const bodyId = `${domToken}-body`;
       const ariaBusy = status === 'running' ? ' aria-busy="true"' : '';
       const hasResultAttr = resultPayload ? ' data-has-result="true"' : '';
-      const severity = getToolStatusSeverity(status);
+      const severity = getToolStatusSeverity(shownStatus);
       const severityAttr = severity ? ` data-tool-severity="${severity}"` : '';
       // Live per-tool elapsed: while the call is executing (and no result has
       // settled it), the duration slot becomes an elapsed node the transcript
@@ -443,12 +493,16 @@
       // A settled non-specialized row (a suggestion, a script, a move) renders
       // here, not in the tool shell, so it carries its own review affordance.
       const reviewTurnId = normalizeId(row && row.turn_id);
+      const approvalNoteMarkup = buildApprovalNoteMarkup(toolCallId, renderOptions);
       const reviewableChange = normalizeId(toolName) === 'propose_change'
         ? (resultPayload && !resultBodyIsError && detailModel.metadata.suggested_change && reviewTurnId && toolCallId
           ? { scope: 'suggested', turnId: reviewTurnId, toolCallId } : null)
         : resolveReviewableChange({ toolCallId, toolName, state: status, resultIsError: resultBodyIsError,
           resultMetadata: detailModel.metadata, input: summaryInput }, reviewTurnId);
+      const isComputerRow = normalizeId(toolName) === 'computer';
+      const computerStep = isComputerRow && !resultBodyIsError ? computerStepDisplay()?.computerStepDisplay(detailModel.metadata) : null;
       const headerInner = toolCallUtils.buildToolHeaderInner({
+        tone: computerStep?.tone,
         displayToolName,
         reviewableChange,
         lineCounts: toolCallUtils.getToolLineCounts(toolName, detailModel.metadata, status, resultBodyIsError),
@@ -471,15 +525,16 @@
               resultSummary: detailModel.resultSummary,
               metadata: detailModel.metadata,
             })
-          : '',
+          : (computerStep?.failureSummary || ''),
         durationLabel: liveElapsedAttrs ? liveElapsedSeedLabel : durationLabel,
         secondaryMeta: testSummary()?.headerMeta?.(toolName, detailModel.metadata) || toolCallUtils.formatToolResultMeta(toolName, detailModel.metadata),
       }, {
         escapeHtml,
+        // The cluster's leading slot: the review affordance, then the approval note (before the status and duration).
         renderReviewChangesAffordance(change) {
           const affordance = globalThis.rendererCodeReviewAffordance
             || (typeof require === 'function' ? require('./renderer-code-review-affordance') : null);
-          return change && affordance?.renderReviewChangesAffordance?.(change, { escapeHtml }) || '';
+          return (change && affordance?.renderReviewChangesAffordance?.(change, { escapeHtml }) || '') + approvalNoteMarkup;
         },
         renderIcon(icon, model) {
           return model.isFileOperation && icon
@@ -515,13 +570,14 @@
         ? `<div class="tool-call-row-action"><span class="tool-call-row-link" role="link" tabindex="0" data-inv-error-action="start_new_session">${escapeHtml(jt('chat.errorRecovery.startNewSession', 'Start new session'))}</span></div>`
         : '';
       // A row that shows content beside its header (banner, action link, chip,
-      // calendar block, diagram, artifact) never folds into an Answers tool run.
-      const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup,
+      // calendar block, diagram, artifact) never folds into an Answers tool run
+      // or under the steps heading (row 192), so the stamp rides in every view.
+      const runFoldableAttr = [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup,
         calendarBlockMarkup, notesBlockMarkup, reviewFindingsMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup, testSummaryMarkup].some((part) => String(part || '').trim())
         ? ' data-run-foldable="false"' : '';
       return `
         ${markerBannerMarkup}
-        <div class="tool-call-row tool-call-row--minimal${fileOperationClass}" data-tool-call-id="${escapeHtml(toolCallId)}" data-tool-row-key="${escapeHtml(rowKey)}" data-tool-status="${escapeHtml(status)}" data-is-error="${resultBodyIsError ? 'true' : 'false'}"${severityAttr}${chatPathAttr}${transcriptViewAttr}${runFoldableAttr} data-expanded="${expanded ? 'true' : 'false'}" data-tool-details-materialized="${detailsMaterialized ? 'true' : 'false'}"${ariaBusy}${hasResultAttr}>
+        <div class="tool-call-row tool-call-row--minimal${fileOperationClass}" data-tool-call-id="${escapeHtml(toolCallId)}"${isComputerRow ? ' data-tool-name="computer"' : ''} data-tool-row-key="${escapeHtml(rowKey)}" data-tool-status="${escapeHtml(shownStatus)}" data-is-error="${resultBodyIsError ? 'true' : 'false'}"${severityAttr}${chatPathAttr}${transcriptViewAttr}${runFoldableAttr} data-expanded="${expanded ? 'true' : 'false'}" data-tool-details-materialized="${detailsMaterialized ? 'true' : 'false'}"${ariaBusy}${hasResultAttr}>
           <div class="tool-call-row-header">
           <div
             class="tool-call-row-toggle"
@@ -632,6 +688,7 @@
     createTurnRowToolRenderUtils,
     getToolStatusLabel,
     getToolStatusSeverity,
+    isRetriedValidationSlip,
     setToolRowExpansion,
     getToolRowExpansion,
     clearToolRowExpansionOverrides,

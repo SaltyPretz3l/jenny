@@ -60,6 +60,7 @@ REQUIRED_SCRIPTS = {
     "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
     "build:launcher": "python scripts/packaging/build_native_launcher.py",
     "build:team-bridge": "python scripts/packaging/build_team_bridge.py",
+    "build:computer-helper": "python scripts/packaging/build_computer_helper.py",
     "build:file-access": "python scripts/packaging/build_file_access.py",
     "build:sketch": "node scripts/build/build-sketch.js",
     "build:sketch:force": "node scripts/build/build-sketch.js --force",
@@ -67,7 +68,7 @@ REQUIRED_SCRIPTS = {
         "npm run build:preload && npm run build:sketch && "
         "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
+        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run build:computer-helper && "
         "npm run build:file-access && npm run sbom:sidecar && "
         "npm exec -- electron-builder --dir "
         "--config electron-builder.yml --publish never"
@@ -76,7 +77,7 @@ REQUIRED_SCRIPTS = {
         "npm run build:preload:force && npm run build:sketch:force && "
         "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
+        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run build:computer-helper && "
         "npm run build:file-access && npm run sbom:sidecar && "
         "npm exec -- electron-builder "
         "--config electron-builder.yml --publish never"
@@ -85,7 +86,7 @@ REQUIRED_SCRIPTS = {
         "npm run build:preload:force && npm run build:sketch:force && "
         "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:team-bridge && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run build:team-bridge && npm run build:computer-helper && npm run sbom:sidecar && "
         "npm exec -- electron-builder --linux "
         "--config electron-builder.yml --publish never"
     ),
@@ -93,7 +94,7 @@ REQUIRED_SCRIPTS = {
         "npm run build:preload:force && npm run build:sketch:force && "
         "npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && "
+        "npm run build:sidecar && npm run build:launcher && npm run build:team-bridge && npm run build:computer-helper && "
         "npm run build:file-access && npm run sbom:sidecar && "
         "npm exec -- electron-builder --win "
         "--config electron-builder.yml --publish never"

@@ -25,10 +25,13 @@
 // segment is a stray, a revision past channel.rev rolls forward so none is
 // reused, reply counts are recounted, and strays are swept after the channel's
 // next commit. Failures: a refusal, a transient I/O error or a failed first
-// write answer without latching; corruption in one channel's segments or
-// read.json breaks only that channel; corruption in index.json or a
-// channel.json, or any failure after a file was written, latches the store
-// until restart. Nothing mutates a channel document in place: every commit
+// write answer without latching; so does a sharing lock (EBUSY, EPERM, EACCES)
+// writing a file of a channel the store holds after earlier files landed (H15: every earlier write was
+// that channel's segment or a whole prune commit, so the channel reloads from
+// its committed channel.json as after a crash); corruption in one channel's
+// segments or read.json breaks only that channel; corruption in index.json or
+// a channel.json, or any other failure after a file was written, latches the
+// store until restart. Nothing mutates a channel document in place: every commit
 // builds a new one by shallow spread. Logs carry ids, sizes and counts only.
 
 const crypto = require('node:crypto');
@@ -54,7 +57,7 @@ const { manageMethods } = require('./team-chat-manage');
 
 const { LIMITS, SCHEMA_VERSION } = schema;
 const { bytesOf, segmentMeta } = channels;
-const { checked, corrupt, isTransient, logChannel, refuse } = files;
+const { checked, corrupt, isSharingLock, isTransient, logChannel, refuse } = files;
 const { sumBytes } = retention;
 const INDEX_FILE = 'index.json';
 const CHANNEL_FILE = 'channel.json';
@@ -130,6 +133,9 @@ class TeamChatStore {
           cause: logCode(error.cause) });
         return hostFailure('persistence', state.broken);
       }
+    } else if (error?.duringWrite && isSharingLock(error) && this._forgetWrite(error.filePath)) {
+      this._log('WARN', 'team_chat.io_failed', { stage, code: logCode(error.code), written: this._files.written });
+      return hostFailure('persistence', 'team_chat_store_failed');
     }
     this._broken = error?.brokenReason || 'team_chat_store_failed';
     this._index = null;
@@ -144,13 +150,14 @@ class TeamChatStore {
   // after the rename), so memory stops vouching for that channel: the next
   // access reloads it, dropping an uncommitted message, marking a dirty head
   // and rolling a revision forward. index.json and a new channel need nothing:
-  // torn create covers them.
+  // torn create covers them. True when the file belongs to a channel the store holds.
   _forgetWrite(filePath) {
     const state = typeof filePath === 'string'
       ? this._channels.get(path.relative(this.dir, filePath).split(path.sep)[0]) : undefined;
-    if (!state) return;
+    if (!state) return false;
     Object.assign(state, { loaded: false, entries: undefined, byId: undefined, threads: undefined, head: null,
       headDirty: false, read: undefined });
+    return true;
   }
 
   // ------------------------------------------------------------ open and load
@@ -493,10 +500,14 @@ class TeamChatStore {
         return { ok: true, rev: found.message.rev, replayed: false, already_deleted: true, pruned: [] };
       }
       const old = found.message;
+      // A tombstone keeps no mentions and its thread no implicit follow it alone created (read before the write,
+      // so a read failure never follows a landed segment).
+      const follows = channels.followsWithout(state, old, this._io);
       const result = this._rewrite(state, key, digest, found, (rev) => ({
-        ...old, text: '', edits: [], reactions: {}, attachments: [], refs: [], pinned: null,
+        ...old, text: '', mentions: [], edits: [], reactions: {}, attachments: [], refs: [], pinned: null,
         deleted: { by: key.actorId, at: iso(this._clock()) }, rev,
       }), (pins) => pins.filter((messageId) => messageId !== old.id));
+      channels.setFollows(state, follows);
       this._blobs.removeMessage(state.doc.channel_id, old.id);
       return result;
     }));

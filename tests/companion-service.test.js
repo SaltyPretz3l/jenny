@@ -770,91 +770,6 @@ test('companion service labels agent task follow-ups with the dedicated source b
   assert.equal(payload.openLoopsBoard.active[0].sourceKind, 'agent_task');
 });
 
-test('companion service uses active_turn lifecycle summaries for the ready-to-resume card when task lifecycle is enabled', async () => {
-  const configService = createConfigService({
-    followUps: [
-      {
-        id: 'followup-linked',
-        label: 'Linked loop thread',
-        body: 'Keep momentum here.',
-        createdAt: '2026-03-19T10:00:00.000Z',
-        updatedAt: '2026-03-19T10:30:00.000Z',
-        status: 'active',
-        sessionId: 'session-open-loop',
-      },
-    ],
-    activeSessionId: 'session-active',
-    openSessionIds: ['session-active', 'session-open-loop'],
-    workspaceRootStatus: {
-      state: 'ready',
-      message: 'Workspace root is configured.',
-    },
-  });
-  const companionService = new CompanionService({
-    configService,
-    personalityWorkspace: createPersonalityWorkspace(),
-    listSessionSummaries: () => ([
-      {
-        id: 'session-active',
-        title: 'Current workspace thread',
-        updated_at: '2026-03-19T13:00:00.000Z',
-        last_message_preview: 'Continue from the artifacts follow-up.',
-      },
-      {
-        id: 'session-open-loop',
-        title: 'Linked loop thread',
-        updated_at: '2026-03-19T12:00:00.000Z',
-        last_message_preview: 'Session-linked loop preview.',
-      },
-    ]),
-    listSessionRecords: () => ([
-      {
-        id: 'session-active',
-        title: 'Current workspace thread',
-        updated_at: '2026-03-19T13:00:00.000Z',
-        last_message_preview: 'Continue from the artifacts follow-up.',
-        active_turn: {
-          request_id: 'req_active',
-          stream_id: 'stream_active',
-          user_message_id: 'user_active',
-          started_at: '2026-03-19T12:58:00.000Z',
-          last_event_at: '2026-03-19T12:59:00.000Z',
-          status: 'streaming',
-          task_id: 'local_agent_1',
-          task_type: 'local_agent',
-          agent_stage: 'tool_loop',
-          agent_summary: 'Running tool loop and gathering outputs.',
-          agent_percent: 55,
-        },
-      },
-      {
-        id: 'session-open-loop',
-        title: 'Linked loop thread',
-        updated_at: '2026-03-19T12:00:00.000Z',
-        last_message_preview: 'Session-linked loop preview.',
-        active_turn: null,
-      },
-    ]),
-    taskLifecycleEnabled: () => true,
-    nowProvider: () => new Date('2026-03-19T13:30:00.000Z'),
-    formatDateKey,
-  });
-
-  const payload = await companionService.getState();
-  const readyToResume = payload.todayCards.find((card) => card.id === 'ready-to-resume');
-
-  assert.ok(readyToResume);
-  assert.deepEqual(
-    readyToResume.items.map((item) => item.label),
-    ['Current workspace thread', 'Linked loop thread']
-  );
-  assert.equal(readyToResume.items[0].detail, 'Running tool loop and gathering outputs.');
-  assert.equal(readyToResume.items[0].action.type, 'continue_session');
-  assert.equal(readyToResume.items[0].action.sessionId, 'session-active');
-  assert.equal(readyToResume.items[1].action.type, 'continue_session');
-  assert.equal(readyToResume.items[1].action.sessionId, 'session-open-loop');
-});
-
 test('companion service builds a commitments-first home focus and reminder promotion actions', async () => {
   const companionService = new CompanionService({
     configService: createConfigService({
@@ -969,7 +884,7 @@ test('home focus helper degrades from malformed inputs to suggestions and clear 
   assert.equal(clearFocus.primaryAction, null);
 });
 
-test('companion service does not surface active_turn resume cards when task lifecycle is disabled', async () => {
+test('companion service shows no ready-to-resume card when there are no open loops', async () => {
   const companionService = new CompanionService({
     configService: createConfigService({
       workspaceRootStatus: {
@@ -979,20 +894,6 @@ test('companion service does not surface active_turn resume cards when task life
     }),
     personalityWorkspace: createPersonalityWorkspace(),
     listSessionSummaries: () => [],
-    listSessionRecords: () => ([
-      {
-        id: 'session-active',
-        title: 'Current workspace thread',
-        updated_at: '2026-03-19T13:00:00.000Z',
-        active_turn: {
-          request_id: 'req_active',
-          last_event_at: '2026-03-19T12:59:00.000Z',
-          status: 'streaming',
-          agent_summary: 'Running tool loop and gathering outputs.',
-        },
-      },
-    ]),
-    taskLifecycleEnabled: () => false,
     nowProvider: () => new Date('2026-03-19T13:30:00.000Z'),
     formatDateKey,
   });

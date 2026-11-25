@@ -44,10 +44,10 @@ function selectedEngine(service, request) {
   if (forced) return forced;
   const model = String(request.runtimePreferredModel || '').trim();
   const hinted = model ? String(service._modelEngineHints?.get?.(model) || '').trim().toLowerCase() : '';
-  // A managed llama-server / NInfer id the backend list does not carry must not
+  // A managed llama-server / NInfer / Strata id the backend list does not carry must not
   // fall through to the current engine (gate F27: `ollama pull <gguf>`).
   const managedKind = hinted ? '' : managedServerKindForModel(service, model, { routing: true });
-  if (managedKind === 'llama-server' || managedKind === 'ninfer') return 'openai-compatible';
+  if (managedKind) return 'openai-compatible';
   const current = String(service.currentEngineType || '').trim().toLowerCase();
   const inferred = inferEngineTypeFromModel(model);
   // Cloud IDs identify their provider even while startup is on a fallback.
@@ -649,6 +649,8 @@ class SessionRuntimeChatAdapter {
       gateway.close({ producerSettled: providerSettled });
       // Row 112: after the close, which gives back the inference slot the naming call needs.
       if (managed.status === 'completed' && providerSettled) void maybeGenerateSessionTitle(this.service, work.session_id);
+      // Row 197: a completed turn that changed the project restarts a running Live program; row 196: any turn's end lets go of the mouse. Fire and forget.
+      void Promise.resolve().then(() => { void Promise.resolve(this.service.toolExecutor?.computerUse?.onTurnEnd?.(work.session_id)).catch(() => {}); return this.service.runView?.onTurnEnd?.({ sessionId: work.session_id, projectId: work.project_id, status: managed.status }); }).catch(() => {});
       // Row 150: a completed turn sent from a board has its reply read once for `board` blocks; any other turn is inert there.
       // Its additions apply at once only under Full auto, judged on this turn's captured authority while it is still open.
       // The module (and the board model behind it) is loaded here, never at startup, and only while boards are on.

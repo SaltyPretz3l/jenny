@@ -18,7 +18,7 @@ test('row standard: boolean title labels its bare switch and clicks write once',
   assert.equal(track.getAttribute('aria-describedby'), row.querySelector('.settings-field-help').id);
   assert.equal(row.querySelector('.inv-toggle-label'), null);
   assert.equal(row.querySelector('.settings-field-meta'), null);
-  assert.equal(row.querySelector('[data-setting-revert-slot]'), null);
+  assert.equal(row.querySelector('[data-setting-revert-slot]').innerHTML, '', 'a switch at its default has an empty revert slot');
   let events = 0;
   h.host.addEventListener('inv-toggle-change', () => events++);
   require('../renderer/inventory/toggle-switch').initToggleHandlers(h.host);
@@ -170,4 +170,124 @@ test('a background sync keeps the Revert a person has focused', () => {
   binding.mountSettingRow(mount, D.mode, 'a', { inventory });
   assert.equal(mount.querySelector('[data-setting-revert]'), null, 'it still leaves with the modification');
   dom.window.close();
+});
+
+/* ── Row 193 C3: disabledReason, restartRequired, managedBy ── */
+
+const foundation = require('../renderer/shell/renderer-settings-foundation.js');
+
+function rowDescriptors(extra) {
+  const base = { sectionId: 'tools', adapterId: 'row193', copy: { label: 'Mode', description: 'Pick one.' } };
+  const mode = descriptors.defineSettingDescriptor(Object.assign({ id: 'r193Mode', kind: 'enum', default: 'a', key: 'mode', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }], control: 'select', controlReason: 'test' }, base, extra && extra.mode));
+  const flag = descriptors.defineSettingDescriptor(Object.assign({ id: 'r193Flag', kind: 'boolean', default: true, key: 'flag' }, base, { copy: { label: 'Flag', description: 'A switch.' } }, extra && extra.flag));
+  return { mode, flag };
+}
+function row193(fields, initial) {
+  return harness({ descriptors: fields, initial, normalize: (s) => ({ mode: s && s.mode === 'b' ? 'b' : 'a', flag: s && typeof s.flag === 'boolean' ? s.flag : true }) });
+}
+const unique = (() => { let n = 0; return (prefix) => `${prefix}${n += 1}`; })();
+function fresh(extra) {
+  // Descriptor ids are registry-unique: each case defines its own pair.
+  const n = unique('r');
+  const wrap = (key, over) => Object.assign({ id: `${n}${key}` }, over);
+  return rowDescriptors({ mode: wrap('Mode', extra && extra.mode), flag: wrap('Flag', extra && extra.flag) });
+}
+
+test('disabledReason disables the control, dims the name and shows the reason in place of the help', (t) => {
+  const { mode, flag } = fresh({ mode: { disabledReason: 'Turn on "Flag" to change this.' }, flag: { disabledReason: () => '' } });
+  const h = row193([mode, flag]);
+  t.after(() => h.dispose());
+  const row = h.row(mode);
+  assert.equal(h.input(mode).disabled, true);
+  assert.ok(row.classList.contains('settings-field--unavailable'), 'the name dims through the existing unavailable class');
+  const help = row.querySelector('.settings-field-help');
+  assert.ok(help.classList.contains('settings-field-reason'));
+  assert.equal(help.firstChild.textContent, 'Turn on "Flag" to change this.');
+  assert.equal(help.querySelector('.settings-field-help-original').textContent.trim(), 'Pick one.');
+  assert.equal(h.row(flag).querySelector('.settings-field-reason'), null, 'a function that answers empty leaves the row enabled');
+  assert.equal(h.host.querySelector('[data-inv-toggle]').disabled, false);
+});
+
+test('a disabledReason that changes is applied to a mounted row in place', (t) => {
+  let reason = 'Turn on "Flag" to change this.';
+  const { mode } = fresh({ mode: { disabledReason: () => reason } });
+  const h = row193([mode]);
+  t.after(() => h.dispose());
+  const mount = h.row(mode).parentElement;
+  assert.equal(h.input(mode).disabled, true);
+  reason = '';
+  binding.mountSettingRow(mount, mode, 'a', { inventory });
+  assert.equal(h.input(mode).disabled, false, 'the reason went, so the control is usable again');
+  assert.equal(h.row(mode).querySelector('.settings-field-reason'), null);
+  assert.equal(h.row(mode).classList.contains('settings-field--unavailable'), false);
+  reason = 'Back again.';
+  binding.mountSettingRow(mount, mode, 'a', { inventory });
+  assert.equal(h.row(mode).querySelector('.settings-field-reason').firstChild.textContent, 'Back again.');
+  assert.equal(h.input(mode).disabled, true);
+});
+
+test('managedBy shows the Managed tag, a read-only control that is not dimmed, and the reason line', (t) => {
+  const { mode, flag } = fresh({ mode: { managedBy: 'Set by a start-up setting.' } });
+  const h = row193([mode, flag]);
+  t.after(() => h.dispose());
+  const row = h.row(mode);
+  const tag = row.querySelector('.settings-field-tag');
+  assert.equal(tag.textContent, 'Managed');
+  assert.equal(tag.getAttribute('data-tone'), 'managed');
+  assert.equal(row.getAttribute('data-setting-managed'), 'true');
+  assert.equal(h.input(mode).disabled, true, 'read-only');
+  assert.equal(row.classList.contains('settings-field--unavailable'), false, 'a managed name is not dimmed');
+  assert.equal(row.querySelector('.settings-field-reason').firstChild.textContent, 'Set by a start-up setting.');
+  assert.equal(h.row(flag).querySelector('.settings-field-tag'), null);
+});
+
+test('restartRequired adds the row to the restart list after a saved change and a revert removes it', async (t) => {
+  const { mode, flag } = fresh({ mode: { restartRequired: true }, flag: { restartRequired: true } });
+  const h = row193([mode, flag]);
+  t.after(() => { h.dispose(); foundation.restartList.clear(); });
+  foundation.restartList.clear();
+  assert.equal(h.row(mode).querySelector('.settings-field-tag'), null, 'nothing owed at start');
+  h.change(mode, 'b');
+  await flush();
+  assert.deepEqual(foundation.restartList.list(), [{ id: mode.id, label: 'Mode' }]);
+  const tag = h.row(mode).querySelector('.settings-field-tag');
+  assert.equal(tag.textContent, 'Restart to apply');
+  assert.equal(tag.getAttribute('data-tone'), 'restart');
+  assert.equal(h.row(mode).querySelector('.settings-field-meta-modified').hidden, true, 'the tag stands in the place of Modified');
+  assert.ok(h.row(mode).querySelector('[data-setting-revert]'), 'the revert sits beside the tag');
+  h.click(`[data-setting-revert="${mode.id}"]`);
+  await flush();
+  assert.deepEqual(foundation.restartList.list(), [], 'back at the start value, nothing is owed');
+  assert.equal(h.row(mode).querySelector('.settings-field-tag'), null);
+
+  h.toggle(flag.controlId, false);
+  await flush();
+  assert.equal(foundation.restartList.has(flag.id), true, 'a switch joins the bar the same way');
+  assert.equal(h.row(flag).querySelector('.settings-field-tag').textContent, 'Restart to apply');
+  h.click(`[data-setting-revert="${flag.id}"]`);
+  await flush();
+  assert.equal(foundation.restartList.has(flag.id), false);
+});
+
+test('one tag at most, in the order Managed, then Restart to apply, then Modified', async (t) => {
+  const { mode } = fresh({ mode: { restartRequired: true, managedBy: 'Set elsewhere.' } });
+  const h = row193([mode], { mode: 'b' });
+  t.after(() => { h.dispose(); foundation.restartList.clear(); });
+  foundation.restartList.add(mode.id, 'Mode');
+  h.render();
+  const tags = () => [...h.row(mode).querySelectorAll('.settings-field-tag')].map((el) => el.textContent);
+  assert.deepEqual(tags(), ['Managed'], 'Managed beats Restart to apply and Modified');
+  assert.equal(h.row(mode).querySelector('.settings-field-meta-modified').hidden, true);
+  const plain = fresh({ mode: { restartRequired: true } }).mode;
+  const h2 = row193([plain], { mode: 'b' });
+  t.after(() => h2.dispose());
+  foundation.restartList.add(plain.id, 'Mode');
+  h2.render();
+  assert.deepEqual([...h2.row(plain).querySelectorAll('.settings-field-tag')].map((el) => el.textContent), ['Restart to apply']);
+  assert.equal(h2.row(plain).querySelector('.settings-field-meta-modified').hidden, true, 'Restart to apply beats Modified');
+  const mod = fresh({}).mode;
+  const h3 = row193([mod], { mode: 'b' });
+  t.after(() => h3.dispose());
+  assert.equal(h3.row(mod).querySelector('.settings-field-tag'), null);
+  assert.equal(h3.row(mod).querySelector('.settings-field-meta-modified').hidden, false, 'Modified shows when no tag applies');
 });

@@ -1,0 +1,152 @@
+/* styles/chat-workbench.css - the Chat room on the workbench (row 190).
+ *
+ * renderer/chat/renderer-chat-workbench.js mounts #chatWorkbench (an .ide-workbench) in the main stage where
+ * #chatView was, and adopts the open-chat tab row and #chatView as its centre. The frame, the stacks, the
+ * sash and the strips are the workbench's own (styles/ide-workbench.css); this file only fits the Chat
+ * room's existing panels into their view hosts. html[data-chat-workbench="on"] marks the built room (the
+ * Chat room is built on first use and then stays mounted). */
+
+.chat-workbench {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The room shows only with the Chat view, like #chatView did. */
+html[data-active-view]:not([data-active-view="chat"]) .chat-workbench {
+  display: none;
+}
+
+/* Centre: the tab row over the chat panes. */
+.chat-workbench-centre {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-workbench-centre > .chat-view {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+/* Left: the Chats panel content. The host is the `viewpanel` container the row trail measures. */
+.chat-workbench [data-wb-view="chats"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: viewpanel;
+  background: var(--view-panel-bg);
+}
+
+.chat-workbench [data-wb-view="chats"][hidden] {
+  display: none;
+}
+
+/* The stack's tab names the panel and carries New chat. */
+.chat-workbench [data-wb-view="chats"] .sidebar-title,
+.chat-workbench [data-wb-view="chats"] .sidebar-count,
+.chat-workbench [data-wb-view="chats"] .new-chat-button {
+  display: none;
+}
+
+/* Right: the side panel and the session rail fill their view's host; the workbench owns the width. The side
+   panel rules hold in every room: Workspace and Board host it in their own stacks (Wave 4). */
+.wb-view-host > .artifact-review-panel {
+  grid-column: auto;
+  grid-row: auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  border-inline-start: 0;
+}
+
+/* Row 195: one header per tab. The strip names the tab and closes it, so a tab whose own title row only repeated
+   that name loses the row (Project; Runs while it shows the list: a run's own page keeps it for the way back), and
+   no hosted panel keeps a second Close. Tabs whose row holds their own controls (Artifacts, Changes, File, Browser,
+   Terminal) keep it. The Artifacts footer shows for artifacts and files only. */
+.wb-view-host > .artifact-review-panel:is([data-artifact-review-mode="tasks"], [data-artifact-review-mode="notes"]) > .artifact-panel-header,
+.wb-view-host > .artifact-review-panel[data-artifact-review-mode="background_tasks"] > .artifact-panel-header:not(:has(.background-tasks-back)),
+.wb-view-host > .artifact-review-panel .artifact-panel-close,
+.wb-view-host > .artifact-review-panel:not([data-artifact-review-mode="artifact"], [data-artifact-review-mode="file_preview"]) > .artifact-panel-status {
+  display: none;
+}
+
+.wb-view-host > .artifact-review-panel.hidden {
+  display: none;
+}
+
+/* Activity: its panel fills the optional tab while open; its old column in #chatView is gone. */
+.chat-workbench .wb-view-host > .chat-context-panel {
+  position: static;
+  grid-column: auto;
+  grid-row: auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  border-inline-start: 0;
+}
+
+html[data-chat-workbench="on"] .chat-view > .chat-context-panel {
+  display: none;
+}
+
+.chat-workbench .wb-view-host > .session-rail {
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+/* Session stacks its owner line (two panes) above the rail. */
+.chat-workbench [data-wb-view="session"]:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Two panes that cannot keep 360px each beside two folded stacks: the solver folds the second
+   (renderer-chat-workbench.js decideSplit), as the old 1180px window rule did. */
+.chat-view[data-pane-count="2"][data-split-folded="true"] {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.chat-view[data-pane-count="2"][data-split-folded="true"] > .chat-pane[data-pane-focused="false"],
+.chat-view[data-pane-count="2"][data-split-folded="true"] > .chat-pane-resizer {
+  display: none;
+}
+
+.chat-view[data-pane-count="2"][data-split-folded="true"] > .chat-pane[data-pane-focused="true"] {
+  grid-column: 1;
+}
+
+/* ── Wave 3: one header row per pane (renderer-chat-pane-rows.js, owner D4) ──
+   Each pane's button cluster is its row: that pane's tabs first, then its buttons. The Artifacts, Tasks
+   and Notes buttons (the right stack's tabs now) leave the row. */
+html[data-chat-workbench="on"] .chat-view > .chat-pane > .chat-timeline-utility-cluster {
+  justify-content: flex-start;
+  padding-inline: var(--space-2) var(--space-4);
+}
+
+html[data-chat-workbench="on"] .chat-view > .chat-pane > .chat-timeline-utility-cluster > .chat-pane-tabs,
+html[data-chat-workbench="on"] .chat-view > .chat-pane > .chat-timeline-utility-cluster > .chat-pane-tabs[data-tab-count] {
+  order: -100;
+  display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  block-size: 100%;
+  border: 0;
+  background: none;
+}
+
+html[data-chat-workbench="on"] .chat-view > .chat-pane > .chat-timeline-utility-cluster > :is([data-chat-node="artifactSplitViewToggle"], .chat-timeline-tasks-toggle, .chat-timeline-notes-toggle) {
+  display: none;
+}
+
+html[data-chat-workbench="on"] .chat-view > .chat-pane > .chat-timeline-utility-cluster > .chat-pane-row-close {
+  order: 90;
+}

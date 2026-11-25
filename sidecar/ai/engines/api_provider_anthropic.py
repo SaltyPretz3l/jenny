@@ -11,16 +11,20 @@ SSE parsing is ``api_provider_anthropic_stream``.
 
 from __future__ import annotations
 
+import math
+import time
 from collections.abc import Callable, Generator
 from typing import Any
 
 from sidecar.ai.engines.api_provider_anthropic_stream import (
     AnthropicHttpService,
+    OutputFit,
     check_cancelled,
     run_messages_stream,
 )
 from sidecar.ai.engines.api_provider_anthropic_wire import (
     ThinkingReplayCache,
+    build_count_request,
     build_request,
     output_cap,
     static_headers,
@@ -59,6 +63,11 @@ from sidecar.runtime.local_engine.request_context import request_id as active_re
 _MODEL_PREFIX = "api-provider"
 _REQUEST_TIMEOUT_SECONDS = 300.0
 _ENGINE_NOT_READY = "api-provider engine has no model loaded"
+# The exact count (row 183 W2): bounded, and rested or skipped after a failure. A 400 is
+# a body the route rejects, which repeats every turn, so it stops the route like a 404.
+_COUNT_TIMEOUT_SECONDS = 2.0
+_COUNT_REST_SECONDS = 60.0
+_COUNT_ROUTE_MISSING_STATUSES = frozenset({400, 404, 405, 501})
 
 
 def _drain(stream: Generator[StreamChunk, None, GenerationResult]) -> GenerationResult:
@@ -76,6 +85,12 @@ class ApiProviderAnthropicEngine(BaseEngine):
     MODEL_RESIDENCY = "remote"
     # ``usage`` input is input + cache read + cache creation: the whole prompt.
     reports_full_prompt_input_tokens = True
+    # Each request's max_tokens is fitted to the room its prompt leaves (OutputFit), so the
+    # budget holds back only the answer floor (row 183 W1).
+    fits_output_to_window = True
+    # The whole prompt in Claude's tokenizer runs ~1.75x chars/4 with the tool framing, so a
+    # calibration is trusted up to this ratio (row 183 W2; local engines keep 1.6).
+    calibration_ceiling = 2.5
 
     def __init__(
         self,
@@ -109,6 +124,9 @@ class ApiProviderAnthropicEngine(BaseEngine):
         self._replay = ThinkingReplayCache()
         self._turn_diagnostics_store: Any | None = None
         self._local_runtime_capability_sources: dict[str, str] = {}
+        self._output_fit = OutputFit()
+        # The count route is off until this monotonic time (inf: until the next load).
+        self._count_blocked_until = 0.0
 
     # -- capabilities -----------------------------------------------------
 
@@ -148,6 +166,7 @@ class ApiProviderAnthropicEngine(BaseEngine):
             "thinking": str(sources["reasoning"]) if reasoning else "unsupported",
             "vision": str(sources["vision"]) if vision else "unsupported",
         }
+        self._count_blocked_until = 0.0
         self._ready = True
 
     def unload_model(self, _name: str | None = None) -> None:
@@ -158,6 +177,44 @@ class ApiProviderAnthropicEngine(BaseEngine):
 
     def get_model_context_length(self) -> int | None:
         return self._context_length
+
+    def count_request_tokens(
+        self, *, messages: list[Any], tools: list[dict[str, Any]]
+    ) -> int | None:
+        """Anthropic's own count of the request these router rows would send (row 183 W2).
+
+        ``POST /messages/count_tokens`` is free and rate-limited apart from generation. It
+        fails open, mirroring ``ServerTokenCounter``: a missing route (404/405/501), a
+        rejected body (400) or an unreadable reply is skipped until the next load, any other
+        failure rests the route for 60 s. Only the integer count is read; no reply text
+        reaches a log.
+        """
+        if not self._ready or self._wire_model is None:
+            return None
+        if time.monotonic() < self._count_blocked_until:
+            return None
+        payload = build_count_request(
+            model=self._wire_model, messages=list(messages), tools=list(tools or ()),
+            vision=bool(self._limits["vision"]),
+        )
+        if payload is None:
+            return None
+        try:
+            body = self._service.post_json(
+                "/messages/count_tokens", payload, timeout=_COUNT_TIMEOUT_SECONDS,
+                headers={"accept": "application/json"},
+            )
+        except Exception as error:  # noqa: BLE001 - a count must never fail a turn.
+            missing = getattr(error, "status_code", None) in _COUNT_ROUTE_MISSING_STATUSES
+            self._count_blocked_until = (
+                math.inf if missing else time.monotonic() + _COUNT_REST_SECONDS
+            )
+            return None
+        tokens = body.get("input_tokens") if isinstance(body, dict) else None
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
+            self._count_blocked_until = math.inf
+            return None
+        return tokens
 
     get_inference_budget_context_length = get_model_context_length
 
@@ -283,6 +340,7 @@ class ApiProviderAnthropicEngine(BaseEngine):
             vision=bool(self._limits["vision"]),
             replay=self._replay.snapshot(request_key),
         )
+        self._output_fit.fit(payload, self._context_length)
         self._record(
             "record_provider_request",
             think_enabled=thinking.adaptive,
@@ -308,6 +366,7 @@ class ApiProviderAnthropicEngine(BaseEngine):
                 on_first_chunk=lambda: self._record("record_first_chunk"),
             )
             result = outcome.result
+            self._output_fit.learn(getattr(result.usage, "last_request_input_tokens", 0))
             if outcome.input_transformations:
                 self._record(
                     "record_input_transformations", counts=outcome.input_transformations

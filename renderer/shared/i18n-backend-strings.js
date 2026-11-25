@@ -236,6 +236,7 @@
     'CMP-TOOL-0045': function () { return jt('error.tool.gitRepositoryRequired', 'Worktree operations require a Git repository within the workspace.'); },
     'CMP-TOOL-0046': function () { return jt('error.tool.autoRunPaused', 'Tool \'{tool_id}\' was not executed: auto run was paused because the user stepped away. Re-issue the call; it will ask for approval.'); },
     'CMP-TOOL-0047': function () { return jt('error.tool.pdfAddonMissing', 'PDF reading needs the optional PDF reading add-on. Install it in Settings › Tools › PDF reading add-on.'); },
+    'CMP-TOOL-0049': function () { return jt('error.tool.computerLookFirst', 'Tool \'computer\' was not executed: look at the new picture before acting again. Send one changing step at a time.'); },
     'CMP-TSRCH-0002': function () { return jt('error.toolSearch.invalidQuery', 'Tool search query invalid.'); },
     'CMP-TSRCH-0003': function () { return jt('error.toolSearch.deferredTool', 'Tool requires search-then-call.'); },
     'CMP-WEB-0001': function () { return jt('error.web.privateNetworkBlocked', 'Blocked: URL resolves to private network.'); },

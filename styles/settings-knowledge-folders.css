@@ -156,3 +156,59 @@
 .knowledge-catalog-danger {
   margin-top: 12px;
 }
+
+/* Settings > Tools > Computer (row 196, C12). Rows and the list reuse the Knowledge folders classes;
+ * this file adds only the Stop key cell, the subheading, the one-line path and the greyed state.
+ */
+
+.cu-key-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.cu-key-cell kbd {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.cu-subheading {
+  margin: var(--space-7) 0 var(--space-1);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* The path stays on one line; the full path is in the title. */
+.cu-program-row .settings-field-row-text {
+  min-width: 0;
+}
+
+.knowledge-folders-row-path.cu-program-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  word-break: normal;
+}
+
+/* The name is a button that turns into a text field; it keeps the label's look. */
+.cu-program-name {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: text;
+}
+
+/* Windows only: the group stays, greyed, with its note. */
+.cu-settings-group[aria-disabled="true"] > :not(.settings-group-heading, .settings-group-copy, #toolsComputerExtra) {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.cu-settings-group[aria-disabled="true"] #toolsComputerExtra > :not(.settings-note) {
+  opacity: 0.5;
+}

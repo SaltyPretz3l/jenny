@@ -55,7 +55,8 @@
   // Slice 5-6 (finding 3): a save that restarts the server (up to its 120 s start limit), a delete or a new team waits
   // longer still; an export, a restore and their pickers wait on the owner's dialog and on copying a whole team.
   // A delete removes a whole team's files, so it takes the long bound too (review item 14).
-  const LONG_CALLS = Object.freeze({ hostInternet: 180_000, hostDelete: 1_800_000, hostStartNew: 180_000, hostOldDelete: 1_800_000,
+  // Row 201 (H7): turning project files on restarts a running host the same way, so `hostFileTools` waits as long as `hostInternet`.
+  const LONG_CALLS = Object.freeze({ hostInternet: 180_000, hostFileTools: 180_000, hostDelete: 1_800_000, hostStartNew: 180_000, hostOldDelete: 1_800_000,
     hostExport: 1_800_000, hostRestorePick: 1_800_000, hostRestore: 1_800_000,
     // Slice 2c renderer: a file of up to 4 MiB each way (the client's part timeout is 60 s), and the file and save dialogs.
     chatUpload: 90_000, chatAttachmentImage: 90_000, chatAttachmentText: 90_000, chatAttachmentCopy: 90_000, chatAttachPick: 1_800_000, chatAttachmentSave: 1_800_000,
@@ -64,9 +65,9 @@
     // Row 175 (D13): a project file read (up to a 4 MiB picture) and a list page; main's own limits are 45 s and 60 s.
     projectFileRead: 60_000, projectFiles: 75_000 });
   const NO_ANSWER = Object.freeze({ code: 'CMP-TEAM-0001', reason: '' });
-  // Pinned to hostStatus on an empty profile by tests/team-off.test.js.
+  // Pinned to hostStatus on an empty profile by tests/team-off.test.js (on a platform that can host; the answer corrects it).
   const EMPTY_HOST = Object.freeze({ state: 'stopped', team_id: null, team_name: null, deployed: false, reason: null, since: 0, reach: null, direct_port: null,
-    internet: null, internet_draft: null, autostart: false, key: null, old_teams: Object.freeze([]), operation: null, owner: null });
+    internet: null, internet_draft: null, autostart: false, key: null, old_teams: Object.freeze([]), operation: null, owner: null, desktop_hosting: true, pool_context_cap: null });
   // needs_repair: a saved team whose file does not load (nothing is read for it). force_local (E64): Force local holds it.
   const LOCKED_OUT = new Set(['revoked', 'pending', 'needs_repair', 'force_local']);
 

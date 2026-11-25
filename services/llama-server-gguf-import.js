@@ -15,6 +15,8 @@ const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 
 const { readGgufArchitecture } = require('./gguf-header');
+const { DEFAULT_MANAGED_SHELL_CONTEXT_LENGTH } = require('./backend/backend-config');
+const { estimateModelFit, DEFAULT_CONTEXT_LENGTH } = require('./model-fit-estimator');
 const { createArchSupport } = require('./main/llama-server-runtime-choice');
 const { companionFiles, createPlaceFile, safeFolderName } = require('./gguf-place');
 const { splitGgufFiles } = require('./llama-server-gguf-files');
@@ -27,6 +29,17 @@ const SPACE_MARGIN_BYTES = 64 * 1024 * 1024;
 // while it is linked into place.
 const PARTIAL_SUFFIX = '.jenny-partial';
 const STAGED_SUFFIX = '.jenny-moving';
+
+// "Qwen3-14B-Q4_K_M.gguf" -> "14B", "…-30B-A3B-…" -> "30B-A3B": the size class the estimator reads from a name.
+const PARAMS_IN_NAME = /(?:^|[-_. ])(\d+(?:\.\d+)?[BM](?:-A\d+(?:\.\d+)?B)?)(?=[-_. ]|$)/i;
+
+// What the model would need from the card at the context a new model loads with, and at 8K. The card itself is the renderer's.
+function fitNeeds(file, sizeBytes) {
+  const params = (PARAMS_IN_NAME.exec(file) || [])[1] || '';
+  const needAt = (contextLength) => estimateModelFit({ sizeBytes, params, contextLength })?.vramRequiredMb || 0;
+  const ctx = DEFAULT_MANAGED_SHELL_CONTEXT_LENGTH;
+  return { ctx, needMb: needAt(ctx), smallNeedMb: needAt(DEFAULT_CONTEXT_LENGTH) };
+}
 
 function pathKey(value, platform) {
   const resolved = path.resolve(String(value || ''));
@@ -176,9 +189,6 @@ function createGgufImportService({
       ok: true, architecture, archSupport: support,
       ...(autoBuild ? { autoBuild } : {}), ...(downloadBuild ? { downloadBuild } : {}),
     };
-    if (scannedRoots().some((root) => isWithinOrSame(sourceDir, real(root), platform))) {
-      return { ...base, inside: true };
-    }
     let names = [];
     try {
       names = fsImpl.readdirSync(sourceDir);
@@ -194,6 +204,10 @@ function createGgufImportService({
         return false;
       }
     });
+    const fit = fitNeeds(file, sizeBytes);
+    if (scannedRoots().some((root) => isWithinOrSame(sourceDir, real(root), platform))) {
+      return { ...base, inside: true, sizeBytes, fit };
+    }
     const destRoot = homeRoot();
     return {
       ...base,
@@ -201,6 +215,7 @@ function createGgufImportService({
       file,
       companions,
       sizeBytes,
+      fit,
       sourceDirName: path.basename(sourceDir),
       destRoot,
       destDir: destRoot ? path.join(destRoot, safeFolderName(file)) : '',

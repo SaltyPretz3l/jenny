@@ -10,9 +10,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
+const relayUrl = require('../../server/team/transport/relay-url');
+
 const {
   MAX_RELAY_URL_CHARS, isCanonicalRelayUrl, isDnsHostName, parseRelayUrl,
-} = require('../../server/team/transport/relay-url');
+} = relayUrl;
 
 const REFUSED = { ok: false, reason: 'team_relay_url_invalid' };
 
@@ -25,7 +27,7 @@ test('a relay URL is accepted in one canonical form: lower case, no trailing sla
     ['https://relay.example.net:443/', 'https://relay.example.net'],
     ['https://relay-1.example.net:1', 'https://relay-1.example.net:1'],
     ['https://relay.example.net:65535', 'https://relay.example.net:65535'],
-    ['https://localhost', 'https://localhost'],
+    ['https://localhost.example.net', 'https://localhost.example.net'],
   ]) {
     assert.deepEqual(parseRelayUrl(input), { ok: true, url }, input);
     assert.equal(isCanonicalRelayUrl(url), true, url);
@@ -97,4 +99,25 @@ test('a last label in hex or digits is an address, never a name', () => {
     assert.deepEqual(parseRelayUrl(input), REFUSED, input);
   }
   assert.equal(parseRelayUrl('https://relay.0xbeef.net').ok, true, 'hex only matters in the last label');
+});
+
+// Review Part III transport. Fault: an invite (untrusted) naming `localhost` or a name under it points a member's
+// bridge at a service on its own machine; the bridge refuses the same names (native relay.rs `destination_ok`).
+test('localhost and every name under it are refused, as the bridge refuses them', () => {
+  for (const input of ['https://localhost', 'https://LOCALHOST:8443', 'https://relay.localhost', 'https://a.b.localhost/']) {
+    assert.deepEqual(parseRelayUrl(input), REFUSED, input);
+  }
+  assert.equal(isCanonicalRelayUrl('https://localhost'), false);
+});
+
+// Review Part III transport. Fault: three token rules (invites.js 48 b64token characters, the bridge and
+// control-channel.js 256 printable characters), so a token one side takes another refuses. One rule, here.
+test('the relay token is one grammar: 1 to 48 characters of an HTTP bearer token', () => {
+  const { MAX_RELAY_TOKEN_CHARS, isRelayToken } = relayUrl;
+  assert.equal(MAX_RELAY_TOKEN_CHARS, 48);
+  for (const token of ['t', 'tok_en-1.2~', 'a+b/c==', 'A'.repeat(48)]) assert.equal(isRelayToken(token), true, token);
+  for (const token of ['', 'a b', 'a!b', 'a=b', '=', '"x"', 'A'.repeat(49), null, 7]) {
+    assert.equal(isRelayToken(token), false, String(token));
+  }
+  assert.equal(require('../../server/team/invites').isRelayToken, isRelayToken, 'invites.js uses the same rule');
 });

@@ -34,3 +34,14 @@ test('the managed server stamp is kept only for a known kind and omitted otherwi
   }
   assert.equal(Object.hasOwn(buildLoadFailure(base), 'managed'), false);
 });
+
+test('row 197 R3b: a live run record is kept only when valid, and older records keep their shape', () => {
+  const base = { cause: 'out_of_memory', message: 'vram_in_use', engine: 'openai-compatible', model: 'qwen3.8-27b-nvfp4', at: '2026-11-24T10:00:00.000Z' };
+  const plain = buildLoadFailure(base);
+  assert.deepEqual(plain, { cause: 'out_of_memory', message: 'vram_in_use', context: null, at: base.at, engine: 'openai-compatible', model: 'qwen3.8-27b-nvfp4' });
+  assert.deepEqual(buildLoadFailure({ ...base, live_run: { project_id: 'p1', program: 'game.exe', extra: 1 } }).live_run, { project_id: 'p1', program: 'game.exe' });
+  for (const live_run of [null, 'x', [], {}, { project_id: 'p1' }, { program: 'a' }, { project_id: '', program: 'a' },
+    { project_id: 'p1', program: '  ' }, { project_id: 7, program: 'a' }, { project_id: 'p'.repeat(201), program: 'a' }, { project_id: 'p', program: 'a'.repeat(201) }]) {
+    assert.deepEqual(buildLoadFailure({ ...base, live_run }), plain, JSON.stringify(live_run));
+  }
+});

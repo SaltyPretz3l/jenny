@@ -41,10 +41,12 @@ function fakeGroup({ fail = '', hold = false } = {}) {
 test('chat boot evaluates no lazy IDE module and requests none', async (t) => {
   const { window, dispose } = await loadRendererApp();
   t.after(dispose);
+  // Row 190: the Chat room's workbench loads at boot (manifest.chatWorkbench); the IDE files it shares are not lazy there.
+  const atBoot = new Set(manifest.chatWorkbench.map(([src]) => src));
   for (const [src, name] of manifest) {
-    assert.equal(window[name], undefined, `chat boot evaluated ${src}`);
+    if (!atBoot.has(src)) assert.equal(window[name], undefined, `chat boot evaluated ${src}`);
   }
-  assert.deepEqual(window.scriptLoaderUtils.requests.filter((src) => manifest.some(([entry]) => entry === src)), []);
+  assert.deepEqual(window.scriptLoaderUtils.requests.filter((src) => !atBoot.has(src) && manifest.some(([entry]) => entry === src)), []);
 });
 
 test('opening Workspace loads one ordered group and renders the IDE', async (t) => {

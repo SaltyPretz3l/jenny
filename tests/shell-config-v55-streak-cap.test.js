@@ -34,8 +34,8 @@ test('v55 streak-cap constants and normalizer are bounded', async (t) => {
 
 test('v55 migration adds the default and preserves valid forward values', () => {
   const migrated = normalizeState({ version: 54 });
-  assert.equal(CONFIG_VERSION, 59);
-  assert.equal(migrated.version, 59);
+  assert.equal(CONFIG_VERSION, 60);
+  assert.equal(migrated.version, 60);
   assert.equal(migrated.autoApproveStreakCap, 250);
   assert.equal(normalizeState({ version: 54, autoApproveStreakCap: 120 }).autoApproveStreakCap, 120);
 });

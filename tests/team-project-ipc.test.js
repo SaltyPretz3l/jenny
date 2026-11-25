@@ -86,6 +86,9 @@ test('each project method reaches the host as its operation with exactly its par
     'team.project.members.setRole', { project_id: projectId, member_id: f.reader.member.member_id, role: 'writer' });
   await expectOne(owner, 'projectAudit', { project_id: projectId, limit: 5 }, 'team.project.audit.read',
     { project_id: projectId, limit: 5 });
+  // Team review fixes (OD-10): `before_seq` goes to the host as given (the newest page below it).
+  await expectOne(owner, 'projectAudit', { project_id: projectId, before_seq: Number.MAX_SAFE_INTEGER, limit: 100 }, 'team.project.audit.read',
+    { project_id: projectId, before_seq: Number.MAX_SAFE_INTEGER, limit: 100 });
   await drained(writer, seen);
   const listed = await sentBy(seen, () => writer.call('projectConversations', { ...team, project_id: projectId }),
     ['projects.list', 'sessions.list'], writer);
@@ -186,6 +189,8 @@ test('a bad payload is refused in main with zero host requests', async (t) => {
     ['projectSetMember', { team_id: teamId, project_id: projectId, member_id: 'device_x', role: 'writer' }],
     ['projectJoin', { team_id: teamId, project_id: projectId }],
     ['projectAudit', { team_id: teamId, project_id: projectId, limit: 101 }],
+    ['projectAudit', { team_id: teamId, project_id: projectId, before_seq: 0 }],
+    ['projectAudit', { team_id: teamId, project_id: projectId, before_seq: '9' }],
     ['conversationCreate', { team_id: teamId, project_id: projectId, title: 'x'.repeat(81) }],
     ['conversationOpen', { team_id: teamId, session_id: '../etc' }],
     ['conversationSend', { team_id: teamId, session_id: s, prompt: 'x'.repeat(100_001) }],

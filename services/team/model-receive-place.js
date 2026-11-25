@@ -34,6 +34,10 @@ const SET_DIR = 'set';
 // Folder renames tried at most: one per folder the rule allows.
 const MAX_RENAMES = 16;
 
+// What a rename of the set's folder answers when a folder or a file took the family name since it was looked at: EEXIST
+// (Windows' holder), ENOTEMPTY (POSIX, a folder with something in it) and ENOTDIR (POSIX, a file).
+const NAME_TAKEN = new Set(['EEXIST', 'ENOTEMPTY', 'ENOTDIR']);
+
 const placeError = (reason, extra = {}) => Object.assign(new Error(reason), { reason, ...extra });
 
 function createPlacer({ fsImpl = fs, log = () => {}, renameFolder = renameNoReplace } = {}) {
@@ -189,7 +193,7 @@ function createPlacer({ fsImpl = fs, log = () => {}, renameFolder = renameNoRepl
         // A holder the rename could not remove is left at the name; the next pick of the folder rule removes it.
         await renameFolder(setDir, familyDir, { onLeft: () => log('WARN', 'team.model.receive_holder_left', {}) });
       } catch (error) {
-        if (error?.code === 'EEXIST' && present(setDir, fsImpl)) continue;
+        if (NAME_TAKEN.has(error?.code) && present(setDir, fsImpl)) continue;
         throw placeError('model_staging_failed');
       }
       stages.fill(2);

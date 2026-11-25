@@ -8,6 +8,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
+const { createExclusions } = require('../../server/team/scheduler/affinity');
 const { chooseNode, isEligible } = require('../../server/team/scheduler/selection');
 const {
   activeLease, createScheduler, model, registerNode, requestLease,
@@ -233,4 +234,45 @@ test('a listed node still matches after it unregisters and registers again; the 
   assert.equal(registerNode(fx.scheduler, { deviceId: 'device_2', memberId: 'member_b' }), fx.b, 'the same device, the same id');
   const lease = fx.scheduler.getLease(waiting.lease.lease_id);
   assert.deepEqual([lease.state, lease.node_id], ['active', fx.b]);
+});
+
+// ---------------------------------------------------------------------------
+// Medium: the retry exclusion keeps a few nodes per conversation, not one.
+
+test('two broken nodes do not take turns while a healthy third idles', () => {
+  const { scheduler, clock } = createScheduler();
+  const a = registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_a' });
+  const b = registerNode(scheduler, { deviceId: 'device_2', memberId: 'member_b' });
+  const c = registerNode(scheduler, { deviceId: 'device_3', memberId: 'member_c' });
+  let claimSeq = 0;
+  const failOn = (conversationKey, expected) => {
+    clock.advance(SECOND);
+    const lease = requestLease(scheduler, { conversationKey }).lease;
+    assert.equal(lease.node_id, expected);
+    const job = scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).job;
+    claimSeq += 1;
+    scheduler.claim(expected, claimSeq);
+    scheduler.failJob(job.job_id, expected, 'engine_error');
+  };
+  failOn('conv:p:1', a);
+  failOn('conv:p:1', b);
+  // C then serves someone else, so it is the most recently served: only the exclusions keep A and B away.
+  clock.advance(SECOND);
+  const other = requestLease(scheduler, { conversationKey: 'conv:p:other', memberId: 'member_c' }).lease;
+  assert.equal(other.node_id, c);
+  scheduler.releaseLease(other.lease_id);
+  clock.advance(SECOND);
+  const third = requestLease(scheduler, { conversationKey: 'conv:p:1' }).lease;
+  assert.equal(third.node_id, c, 'both failed nodes stay excluded for this conversation');
+});
+
+test('the exclusion set holds the newest four nodes, drops the oldest, and ends together after 10 minutes', () => {
+  const ex = createExclusions({ max: 1024, ttlMs: 10 * MINUTE });
+  for (const [i, id] of ['n1', 'n2', 'n3', 'n4', 'n5'].entries()) ex.exclude('conv:p:1', id, i);
+  assert.deepEqual(ex.getAll('conv:p:1', 10), ['n2', 'n3', 'n4', 'n5']);
+  assert.equal(ex.getAll('conv:p:1', 10).at(-1), 'n5', 'the newest one last');
+  ex.exclude('conv:p:1', 'n3', 20);
+  assert.deepEqual(ex.getAll('conv:p:1', 21), ['n2', 'n4', 'n5', 'n3'], 'a repeat moves to the newest, no duplicate');
+  assert.equal(ex.getAll('conv:p:1', 20 + 10 * MINUTE - 1).length, 4);
+  assert.deepEqual(ex.getAll('conv:p:1', 20 + 10 * MINUTE), []);
 });

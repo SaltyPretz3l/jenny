@@ -114,7 +114,6 @@
   function firstUnresolvedRequiredStepId(setupState, modelStepId) {
     var health = sceneUtils.computeSetupHealth(setupState);
     var unresolved = health.pendingSteps.concat(health.skippedSteps);
-    if (unresolved.indexOf('workspaceRoot') !== -1) return 'workspaceRoot';
     if (unresolved.indexOf('model') !== -1) return modelStepId;
     return '';
   }
@@ -130,10 +129,7 @@
     if (sceneUtils.computeSetupHealth(setupState).state === 'complete') {
       return jt('setup.hub.modelUnavailable', "Jenny can't reach a model right now — start the local engine or validate an endpoint, then try again.");
     }
-    var workspaceDone = setupState.steps && setupState.steps.workspaceRoot === 'done';
-    return workspaceDone
-      ? jt('setup.hub.noModelConfigured', "No model configured — chats can't run locally.")
-      : jt('setup.hub.noWorkspaceRoot', 'No workspace root set — file tools will be off until you set one.');
+    return jt('setup.hub.noModelConfigured', "No model configured — chats can't run locally.");
   }
 
   function requiredHealthLine(setupState, selectedRoute, engine) {
@@ -158,12 +154,10 @@
     var healthComplete = sceneUtils.computeSetupHealth(setupState).state === 'complete';
     var stepId = healthComplete ? (modelStepId === 'endpoint' ? 'endpoint' : 'localEngine')
       : (firstUnresolvedRequiredStepId(setupState, modelStepId) || modelStepId);
-    var health = sceneUtils.computeSetupHealth(setupState);
-    var onlyFolderLeft = !healthComplete && health.pendingSteps.concat(health.skippedSteps).join() === 'workspaceRoot';
     var fixLabel = stepId === 'endpoint' ? jt("sceneSetupHub.checkExistingServer", "Check existing server") : healthComplete ? jt("sceneSetupHub.checkOllama", "Check Ollama")
-      : stepId === 'workspaceRoot' ? jt('setup.hub.setWorkspaceRoot', 'Set workspace root') : jt('setup.hub.configureModel', 'Configure model');
+      : jt('setup.hub.configureModel', 'Configure model');
     return '<div class="setup-hub-finish-warning" role="alert">'
-      + '<div class="setup-hub-warning-copy"><strong>' + escapeHtml(onlyFolderLeft ? jt('setup.hub.finishWithoutFolder', 'Finish without a folder?') : jt('setup.hub.notReady', 'Setup is not ready')) + '</strong><p>'
+      + '<div class="setup-hub-warning-copy"><strong>' + escapeHtml(jt('setup.hub.notReady', 'Setup is not ready')) + '</strong><p>'
       + escapeHtml(warningCopy(setupState)) + '</p></div>'
       + '<div class="setup-hub-warning-actions">'
       + renderButton({ id: 'fixRequired', label: fixLabel, variant: 'primary', dataset: { 'step-id': stepId } })

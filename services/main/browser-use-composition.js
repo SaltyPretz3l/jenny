@@ -108,7 +108,7 @@ function createLazyBrowserUse({ getMainWindow, sendBridgeEvent, getBackendServic
           getReservedPorts: createReservedPortReader({
             getBaseUrls: () => {
               const options = getBackendService?.()?.options;
-              return [managerBaseUrl(options?.getLlamaServerManager), managerBaseUrl(options?.getNinferManager)].filter(Boolean);
+              return [options?.getLlamaServerManager, options?.getNinferManager, options?.getStrataManager].map(managerBaseUrl).filter(Boolean);
             },
             getDebugPort: () => electron.app.commandLine.getSwitchValue('remote-debugging-port'),
           }),

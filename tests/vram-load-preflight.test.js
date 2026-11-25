@@ -8,6 +8,8 @@ const {
   createVramLoadPreflight,
   estimateLlamaServerMb,
   estimateNinferMb,
+  estimateStrataMb,
+  liveRunOf,
   refusalMessageForStatus,
   withVramPreflight,
 } = require('../services/backend/vram-load-preflight');
@@ -23,7 +25,7 @@ function holder(pid, name, mb, parents = []) {
   return { pid, name, mb, chain: [{ pid, name }, ...parents] };
 }
 
-function preflight({ samples, holders = [], enabled = true, onHolders } = {}) {
+function preflight({ samples, holders = [], enabled = true, onHolders, liveRunPids } = {}) {
   const queue = [...samples];
   let clock = 0;
   const logs = [];
@@ -37,6 +39,7 @@ function preflight({ samples, holders = [], enabled = true, onHolders } = {}) {
     sleep: async (ms) => { clock += ms; },
     now: () => clock,
     log: (level, event, payload) => logs.push({ level, event, payload }),
+    ...(liveRunPids ? { liveRunPids } : {}),
   });
   return { instance, logs };
 }
@@ -74,6 +77,48 @@ test('2026-11-13 replay: NInfer at 196K beside a 24 GB foreign server is refused
   assert.match(verdict.message, /llama-server\.exe \(22\.9 GB\)/);
   assert.equal(instance.getLastRefusal().requiredMb, requiredMb);
   assert.equal(logs.at(-1).event, 'vram_preflight.refused');
+});
+
+test('row 197: a program the Live tab started is named as such, by itself or as a parent', async () => {
+  const game = holder(7100, 'client.exe', 1400);
+  const child = holder(7200, 'renderer.exe', 300, [{ pid: 7100, name: 'client.exe' }]);
+  const other = holder(8000, 'blender.exe', 9000);
+  const { instance } = preflight({ samples: [vramSample(30000)], holders: [other, game, child], liveRunPids: () => [7100] });
+  const verdict = await instance.check({ engine: 'ninfer', model: 'm', requiredMb: 20000 });
+  assert.equal(verdict.ok, false);
+  assert.deepEqual(verdict.holders.map((h) => [h.name, h.liveRun === true]),
+    [['blender.exe', false], ['client.exe', true], ['renderer.exe', true]]);
+  assert.match(verdict.message, /client\.exe was started from the Live tab: stop it there to free its memory\.$/);
+
+  const plain = preflight({ samples: [vramSample(30000)], holders: [other], liveRunPids: () => { throw new Error('gone'); } });
+  const quiet = await plain.instance.check({ engine: 'ninfer', model: 'm', requiredMb: 20000 });
+  assert.equal(quiet.holders[0].liveRun, undefined);
+  assert.doesNotMatch(quiet.message, /Live tab/);
+});
+
+test('row 197 R3b: the refusal records which live pid matched, and liveRunOf maps it to a project', async () => {
+  const game = holder(7100, 'client.exe', 1400);
+  const child = holder(7200, 'renderer.exe', 300, [{ pid: 7100, name: 'client.exe' }]);
+  const { instance } = preflight({ samples: [vramSample(30000)], holders: [child, game], liveRunPids: () => [7100] });
+  const verdict = await instance.check({ engine: 'ninfer', model: 'm', requiredMb: 20000 });
+  assert.deepEqual(verdict.holders.map((h) => [h.name, h.liveRunPid]), [['client.exe', 7100], ['renderer.exe', 7100]]);
+  const asked = [];
+  const service = { runView: { projectForPid: (pid) => { asked.push(pid); return pid === 7100 ? 'proj-1' : ''; } } };
+  assert.deepEqual(liveRunOf(service, verdict), { project_id: 'proj-1', program: 'client.exe' });
+  assert.deepEqual(asked, [7100]);
+  const unnamed = { holders: [{ pid: 55, name: '', mb: 9, liveRun: true, liveRunPid: 55 }] };
+  assert.equal(liveRunOf({ runView: { projectForPid: () => 'p' } }, unnamed).program, 'PID 55');
+  const long = { holders: [{ pid: 55, name: 'x'.repeat(300), mb: 9, liveRun: true, liveRunPid: 55 }] };
+  assert.equal(liveRunOf({ runView: { projectForPid: () => 'p' } }, long).program.length, 200);
+  // No project for the pid, no live holder, no lookup, or garbage: nothing, and never a throw.
+  assert.equal(liveRunOf({ runView: { projectForPid: () => '' } }, verdict), null);
+  assert.equal(liveRunOf(service, { holders: [{ pid: 1, name: 'a.exe', mb: 1 }] }), null);
+  assert.equal(liveRunOf({}, verdict), null);
+  assert.equal(liveRunOf({ runView: { projectForPid: () => { throw new Error('gone'); } } }, verdict), null);
+  for (const garbage of [null, undefined, 'x', 7, {}, { holders: 'x' }, { holders: [null, 3] }]) {
+    assert.equal(liveRunOf(service, garbage), null);
+  }
+  assert.equal(liveRunOf(null, verdict), null);
 });
 
 test('a load that fits never lists holders', async () => {
@@ -171,6 +216,21 @@ test('NInfer estimate follows the KV dtype, vision and the LM-head draft', () =>
   assert.equal(estimateNinferMb({ artifactPath: 'a', contextSize: 65536 }, fs), 22000 + 4096);
   assert.equal(estimateNinferMb({ artifactPath: 'a', contextSize: 65536, kvDtype: 'fp8', vision: true, mtp: true }, fs), 22000 + 2048 + 1024 + 370);
   assert.equal(estimateNinferMb({ artifactPath: 'a', contextSize: 65536, mtp: true, lmHeadDraft: false }, fs), 22000 + 4096);
+});
+
+test('Strata estimate: experts on the card, trunk, vision and the KV at the capped context (row 200 S2 step 6)', () => {
+  const fs = fakeFs({ native: 18450 * MIB });
+  const args = (extra = []) => ['--native', 'native', '--max-context', '114432', ...extra];
+  // The owner's default (4 slots, k8v8, 114,432 tokens, vision, Setup's 14.66 GiB of experts) is
+  // close to the 21 GB S0b measured after load plus the KV the engine grows into.
+  const full = estimateStrataMb({ slots: 4, config: { args: args(['--vision', 'v', '--kv', 'k8v8', '--vram-experts-gb', '14.66']) } }, fs);
+  assert.equal(full, Math.ceil(14.66 * 1024 + 3500 + 607 + 114432 * 4 * 0.0274));
+  assert.ok(full > 30000 && full < 32607);
+  // No expert flag: every expert is on the card (the pack minus its trunk).
+  assert.equal(estimateStrataMb({ slots: 1, config: { args: ['--native', 'native', '--max-context', '32768'] } }, fs),
+    Math.ceil(18450 + 32768 * 0.0541));
+  assert.equal(estimateStrataMb({ slots: 4, config: { args: ['--native', 'missing', '--max-context', '32768'] } }, fs), 0);
+  assert.equal(estimateStrataMb({}, fs), 0);
 });
 
 test('the launch wrapper refuses before the spawn, skips identity restores, adopts, and honours a stop', async () => {

@@ -159,6 +159,11 @@ test('chipHtml: classes, the turn-open action, aria-expanded, the dot and the sh
   assert.ok(parse(tl.chipHtml({ turnId: 't', state: 'failed', label: 'x' })).querySelector('.status-dot--error'));
 });
 
+test('chipHtml: aria-controls names the popover by the id the conversation gives it (its prefix), the bare id when none is given', () => {
+  assert.equal(parse(tl.chipHtml({ turnId: 't', popId: 'tc2-teamTurnPop' })).firstElementChild.getAttribute('aria-controls'), 'tc2-teamTurnPop');
+  assert.equal(parse(tl.chipHtml({ turnId: 't' })).firstElementChild.getAttribute('aria-controls'), 'teamTurnPop');
+});
+
 test('chipHtml: a hostile tool name is cleaned and escaped', () => {
   const state = tl.chipState({ turn: running, stream: stream({ tools: [{ id: 'c', name: HOSTILE, state: 'running' }] }), now: 2000 });
   assert.equal(state.label.includes('‮'), false);

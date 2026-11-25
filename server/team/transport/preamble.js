@@ -19,7 +19,12 @@ const HEADER_BYTES = 8;
 const MEMBER_PREAMBLE_BYTES = HEADER_BYTES + SECRET_BYTES;
 const HOST_PREAMBLE_BYTES = HEADER_BYTES + SECRET_BYTES + KEY_BYTES;
 const PREAMBLE_TIMEOUT_MS = 3000;
-const MAX_PREAMBLE_SOCKETS = 16;
+// The host listener's sockets still in the preamble phase: one per stream the host bridge may hold at once
+// (host-bridge.js `maxStreamsTotal`), so a burst of streams the bridge accepted is never cut at the listener
+// (team review fixes, row 201). Each is still bounded by PREAMBLE_TIMEOUT_MS.
+const MAX_PREAMBLE_SOCKETS = 128;
+// The member bridge's: one per stream of its one connection.
+const MEMBER_MAX_PREAMBLE_SOCKETS = 16;
 
 function requireBytes(value, length, name) {
   if (!(value instanceof Uint8Array) || value.length !== length) {
@@ -75,6 +80,7 @@ module.exports = {
   HOST_PREAMBLE_BYTES,
   KEY_BYTES,
   MAX_PREAMBLE_SOCKETS,
+  MEMBER_MAX_PREAMBLE_SOCKETS,
   MEMBER_PREAMBLE_BYTES,
   PREAMBLE_TIMEOUT_MS,
   SECRET_BYTES,

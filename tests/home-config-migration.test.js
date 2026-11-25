@@ -16,7 +16,7 @@ const {
 test('v23 migration seeds the home key with defaults on older payloads', () => {
   const state = normalizeState({ version: 22 });
 
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
   assert.deepEqual(state.home, {
     links: [],
     widgets: { order: [], hidden: [] },
@@ -141,7 +141,7 @@ test('v59 forgets a saved Home weather location and keeps the rest of Home', () 
     },
   });
 
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.equal(Object.hasOwn(state.home, 'weather'), false);
   assert.equal(Object.hasOwn(serializeState(state).home, 'weather'), false);
   assert.equal(state.home.links[0].name, 'Lab');

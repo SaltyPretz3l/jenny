@@ -21,7 +21,7 @@ function runtimeIsLiveCapable(status) {
   return status?.state === 'ready' && NINFER_LIVE_VERSION.test(String(status.runtimeLabel || '').trim());
 }
 
-// -> { provider_kind: 'ninfer'|'llama-server'|'ollama'|'other', live_capable: boolean }
+// -> { provider_kind: 'ninfer'|'llama-server'|'strata'|'ollama'|'other', live_capable: boolean }
 function resolveProviderIdentity({ service, apiUrl, ninferManager, engineType } = {}) {
   try {
     if (String(engineType || '').trim().toLowerCase() === 'ollama') return { provider_kind: 'ollama', live_capable: false };
@@ -30,6 +30,8 @@ function resolveProviderIdentity({ service, apiUrl, ninferManager, engineType } 
       const manager = ninferManager || owner.manager;
       return { provider_kind: 'ninfer', live_capable: runtimeIsLiveCapable(manager?.getStatus?.() || owner.status) };
     }
+    // Managed Strata: terminal timings only, so never live (row 200 F10).
+    if (owner?.kind === 'strata') return { provider_kind: 'strata', live_capable: false };
     if (owner?.kind === 'llama-server') {
       // Jenny's own server streams cumulative `timings` per token and
       // `prompt_progress` (bundled b10749 checked 2026-11-04); a foreign server

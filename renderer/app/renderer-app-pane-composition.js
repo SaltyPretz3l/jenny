@@ -15,7 +15,7 @@
  *       order), remove the root, hide the divider, data-pane-count="1", clear
  *       the split tracks.
  *   handleLayoutChanged(prev, next)  the layout controller's one callback:
- *       mount/unmount on a pane-count change, focus attributes, kickers, and
+ *       mount/unmount on a pane-count change, focus attributes, and
  *       one coalesced full render when sessions or focus moved (a ratio-only
  *       change renders nothing: the divider writes its own tracks per frame).
  *   renderSessionPane(sessionId, kind)  the render-frame router
@@ -28,13 +28,13 @@
  *       writers, and schedules the other pane after a full render. A header
  *       or full render also raises `jenny:focused-chat-changed` (window) when
  *       the focused chat, pane 0's chat or either one's project changed.
- *   syncFocus(), renderKickers(), measureWidth(), toggleSplit(),
+ *   syncFocus(), measureWidth(), toggleSplit(),
  *   hydrateOnce(storedLayout), getPane(paneId), dispose().
  *   getSessionPaneTarget(sessionId)  the side panel's jump target in a pane
  *       other than pane 0 (timeline, scroll, projection), else null.
  *   setDropHover(side), getDropTarget()  drag-to-split (W2-1): the drop-zone
- *       outline attribute and the rail tab drag's target; a kicker-title drag
- *       swaps the panes (renderer-pane-drag-controller.js, injected).
+ *       outline attribute and the rail tab drag's target
+ *       (renderer-pane-drag-controller.js, injected).
  *   Attachments (W2-2b): pane 1 gets its own tray (template), attach button
  *       (inserted at mount) and pane-scoped attachment bindings keyed by its
  *       session; its queue is its session's composer record, rendered by
@@ -61,19 +61,18 @@
  * No `with (ctx)`: every dependency is injected, so jsdom tests build it with
  * fakes. The module holds no pane-0 construction; pane 0 stays the app's.
  * Created once and called through: the per-pane chrome (renderer-app-pane-
- * chrome.js), the controller stack (renderer-app-pane-stack.js), focus, dock
- * focus and hosting (renderer-app-pane-placement.js) and the kickers
- * (renderer-app-pane-kickers.js).
+ * chrome.js), the controller stack (renderer-app-pane-stack.js) and focus, dock
+ * focus and hosting (renderer-app-pane-placement.js).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(root, require('./renderer-pane-drag-controller'), require('../chat/renderer-composer-pane-drafts'), require('./renderer-app-pane-chrome'),
-      require('./renderer-app-pane-stack'), require('./renderer-app-pane-placement'), require('./renderer-app-pane-kickers'));
+      require('./renderer-app-pane-stack'), require('./renderer-app-pane-placement'));
     return;
   }
   root.rendererAppPaneComposition = factory(root, root.rendererPaneDragController, root.rendererComposerPaneDrafts, root.rendererAppPaneChrome,
-    root.rendererAppPaneStack, root.rendererAppPanePlacement, root.rendererAppPaneKickers);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, paneDragController, paneDrafts, paneChrome, paneStack, panePlacement, paneKickers) {
+    root.rendererAppPaneStack, root.rendererAppPanePlacement);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (root, paneDragController, paneDrafts, paneChrome, paneStack, panePlacement) {
   'use strict';
 
   var jtFallback = function (key, fallback, params) {
@@ -115,11 +114,10 @@
     var fullRenderQueued = false;
     var paneRenderQueued = new Set();
     var resizer = null;
-    var paneRenderListener = null; // W6b: the Workspace's second chat hears pane renders (unread, its Changes)
 
     function resizerEl() { return chatView.querySelector(':scope > .chat-pane-resizer'); }
     function pane0Root() { return chatView.querySelector(':scope > .chat-pane[data-pane-id="0"]'); }
-    // Pane 0's root never leaves #chatView; another pane's may sit in the Workspace (setPaneHost).
+    // Every pane's root sits in #chatView.
     function paneRootOf(paneId) { return paneId === 0 ? pane0Root() : ((panes.get(paneId) || {}).root || null); }
     function paneRoots() { return [pane0Root()].concat(Array.from(panes.keys()).map(paneRootOf)).filter(Boolean); }
     function paneSessionId(paneId) {
@@ -128,14 +126,6 @@
       return entry ? entry.sessionId : '';
     }
     function isFocused(paneId) { return layoutController.getLayout().focusedPaneId === paneId; }
-    function kickerFor(paneId) {
-      if (paneId === 0) {
-        var root0 = pane0Root();
-        return root0 ? root0.querySelector('[data-chat-node="chatPaneKicker"]') : null;
-      }
-      var pane = panes.get(paneId);
-      return pane ? pane.dom.chatPaneKicker : null;
-    }
 
     var chrome = paneChrome.createPaneChrome({
       state: state, layoutController: layoutController, options: options, root: root, doc: doc, jt: jt,
@@ -148,10 +138,9 @@
     var handOffDrafts = chrome.handOffDrafts;
     var showPaneDraft = chrome.showPaneDraft;
     var autosizeInput = chrome.autosizeInput;
-    var insertButton = chrome.insertButton;
     var stack = paneStack.createPaneStack({
       state: state, layoutController: layoutController, call: call, syncPaneComposer: syncPaneComposer,
-      autosizeInput: autosizeInput, getPaneRenderListener: function () { return paneRenderListener; }, safely: safely,
+      autosizeInput: autosizeInput,
     });
 
     /* ── P2: a pane's selection mode belongs to the session it showed. A pane
@@ -202,7 +191,6 @@
       pane.rail = call('createPaneComposerRail', { state: state, paneRoot: rootEl, railEl: toolbarRight, hintHost: pane.composer, sessionContext: { paneId: paneId, getSessionId: getSessionId }, documentRef: doc }) || null;
       if (pane.rail) Object.assign(pane.dom, pane.rail.dom);
       panes.set(paneId, pane);
-      kickers.resetKickers();
       stack.buildPaneControllers(pane, paneId, getSessionId);
       pane.attachments = createPaneAttachments(pane);
       mountPaneNotices(pane, getSessionId);
@@ -232,7 +220,6 @@
     function unmount(paneId) {
       var pane = panes.get(paneId);
       if (!pane) return false;
-      cancelKickerDrag();
       panes.delete(paneId);
       paneRenderQueued.delete(paneId);
       safely(function () { if (pane.failedSendNotice) pane.failedSendNotice.destroy(); });
@@ -243,7 +230,6 @@
       safely(function () { if (pane.runtime && pane.runtime.dispose) pane.runtime.dispose(); });
       safely(function () { if (pane.rail) pane.rail.dispose(); });
       safely(function () { pane.root.remove(); });
-      kickers.resetKickers();
       if (!panes.size) {
         if (resizer) safely(function () { resizer.dispose(); });
         resizer = null;
@@ -260,30 +246,40 @@
       return true;
     }
 
-    /* ── drag-to-split (W2-1) and the kicker drag: renderer-pane-drag-controller.js. ── */
+    /* ── drag-to-split (W2-1): renderer-pane-drag-controller.js. ── */
     var dragController = paneDragController.createPaneDragController({
-      chatView: chatView, documentRef: doc, layoutController: layoutController, kickerFor: kickerFor,
+      chatView: chatView, documentRef: doc, layoutController: layoutController,
       isRtl: options.isRtl, isDisposed: function () { return disposed; },
     });
     var setDropHover = dragController.setDropHover;
     var dropTarget = dragController.dropTarget;
-    var startKickerDrag = dragController.startKickerDrag;
-    var cancelKickerDrag = dragController.cancelKickerDrag;
-    /* ── kickers and the focused-chat signal: renderer-app-pane-kickers.js; focus,
-       dock focus, hosting and the jump target: renderer-app-pane-placement.js. ── */
-    var kickers = paneKickers.createPaneKickers({
-      layoutController: layoutController, call: call, doc: doc, jt: jt, kickerFor: kickerFor, paneSessionId: paneSessionId,
-      insertButton: insertButton, startKickerDrag: startKickerDrag, normalizeId: normalizeId, safely: safely,
-    });
-    var renderKickers = kickers.renderKickers;
+    /* ── focus, dock focus, hosting and the jump target: renderer-app-pane-placement.js. ── */
     var placement = panePlacement.createPanePlacement({
       chatView: chatView, doc: doc, layoutController: layoutController, panes: panes, pane0Root: pane0Root, paneRootOf: paneRootOf,
-      paneRoots: paneRoots, resizerEl: resizerEl, call: call, isDisposed: function () { return disposed; }, normalizeId: normalizeId,
+      paneRoots: paneRoots, call: call, isDisposed: function () { return disposed; }, normalizeId: normalizeId,
     });
     var bindFocusTracking = placement.bindFocusTracking;
     var unbindFocusTracking = placement.unbindFocusTracking;
     var syncFocus = placement.syncFocus;
     var focusPaneInput = placement.focusPaneInput;
+
+    /* The Explorer nudge names the focused chat's project (pane 0's while docked): a header or full
+       render raises `jenny:focused-chat-changed` only when either chat or its project moved. */
+    var focusedChatKey = '';
+    function projectOfSession(sessionId) {
+      var summary = sessionId ? call('getSessionSummary', sessionId) : null;
+      return normalizeId(summary && summary.project_id);
+    }
+    function noteFocusedChat() {
+      var layout = layoutController.getLayout();
+      var focused = layout.panes[layout.focusedPaneId] ? layout.panes[layout.focusedPaneId].sessionId : '';
+      var zero = layout.panes[0] ? layout.panes[0].sessionId : '';
+      var key = [focused, projectOfSession(focused), zero, projectOfSession(zero)].join('\u0000');
+      if (key === focusedChatKey) return;
+      focusedChatKey = key;
+      var view = doc && doc.defaultView;
+      if (view && typeof view.CustomEvent === 'function') safely(function () { view.dispatchEvent(new view.CustomEvent('jenny:focused-chat-changed')); });
+    }
 
     function measureWidth() {
       var width = function (element) {
@@ -344,12 +340,11 @@
       if (disposed) return;
       layoutController.syncFocusedPaneFromState();
       if (kind === 'all' || kind === 'header') {
-        kickers.noteFocusedChat();
+        noteFocusedChat();
         root.rendererSessionBar?.syncAll?.(); // a rename reaches the session bar's title
       }
       if (layoutController.getPaneCount() < 2) notePaneSession(0, normalizeId(state.currentSessionId), false);
       if (routing || layoutController.getPaneCount() < 2) return;
-      if (kind === 'all' || kind === 'header') renderKickers();
       var focused = layoutController.getLayout().focusedPaneId;
       if (kind === 'all') {
         panes.forEach(function (_pane, paneId) { schedulePaneRender(paneId); });
@@ -426,7 +421,6 @@
       if (next.panes.length > 1) showPaneDraft(panes.get(1), next.panes[1].sessionId, reason);
       notePaneSessions(next, reason === 'rekey');
       syncFocus();
-      renderKickers();
       // Any pane whose session changed loads it (idempotent for a loaded one):
       // pane 0 too, since drag-to-split can place a never-opened tab there.
       next.panes.forEach(function (entry, index) {
@@ -486,14 +480,11 @@
       getPane: function (paneId) { return panes.get(paneId) || null; },
       getPaneCount: function () { return layoutController.getPaneCount(); },
       getPaneSessionId: function (paneId) { return disposed ? '' : normalizeId(paneSessionId(paneId)); },
-      setPaneHost: placement.setPaneHost,
-      setPaneRenderListener: function (fn) { paneRenderListener = typeof fn === 'function' ? fn : null; },
       handleLayoutChanged: handleLayoutChanged,
       renderSessionPane: renderSessionPane,
       renderMessagesForSession: function (sessionId) { return renderSessionPane(sessionId, 'messages'); },
       syncPaneLayout: syncPaneLayout,
       syncFocus: syncFocus,
-      renderKickers: renderKickers,
       setDropHover: setDropHover,
       getDropTarget: function () { return disposed ? null : dropTarget; },
       measureWidth: measureWidth,

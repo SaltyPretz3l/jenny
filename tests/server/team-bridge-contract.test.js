@@ -313,11 +313,12 @@ test('drop closes that key streams and sockets, returns the count and leaves oth
   assert.deepEqual(dropLogs.map((entry) => entry.fields), [{ connections: 2 }], 'logged once, by the child');
 });
 
-test('drop of a key with no connection returns 0 and sends nothing to the child', async (t) => {
+// Review H11: the drop still goes to the child, whose `drop` clears that key's cooldown connections or not.
+test('drop of a key with no connection returns 0 and still sends the drop to the child', async (t) => {
   const env = await setup(t);
   const stranger = new Uint8Array(32).fill(77);
   assert.equal(env.bridge.drop(stranger), 0);
-  assert.equal(env.spawner.last().received.some((line) => line.t === 'drop'), false);
+  await waitFor(() => env.spawner.last().received.some((line) => line.t === 'drop'));
   assert.throws(() => env.bridge.drop(new Uint8Array(31)));
 });
 

@@ -97,8 +97,8 @@
           : [],
         effortSupported: effortSelect?.dataset?.reasoningSupported === 'true',
         effortLocked: effortSelect?.getAttribute?.('aria-disabled') === 'true',
-        backendModel: utils.resolveDefaultChatModel?.(state)?.model
-          ?? String(state.status?.model || state.modelList?.active_model || '').trim(),
+        backendModel: utils.resolveDefaultChatModel?.(state)?.model ?? String(state.status?.model || state.modelList?.active_model || '').trim(),
+        defaultLocal: !utils.describeCloudPill?.({}, state), // row 194: "on this PC" is said only when it is true
         loadedModel: String(state.status?.model || '').trim(),
       };
     }
@@ -258,9 +258,9 @@
       const backendLoaded = Boolean(inputs.loadedModel && inputs.backendModel)
         && formatUtils.canonicalOllamaTag(inputs.loadedModel)
           === formatUtils.canonicalOllamaTag(inputs.backendModel);
-      const defaultTitle = inputs.backendModel
-        ? jt('composer.modelPicker.useBackendDefaultWithModel', 'Use the backend default model ({model})', { model: inputs.backendModel })
-        : jt('composer.modelPicker.useBackendDefault', 'Use the backend default model');
+      const defaultTitle = inputs.backendModel && inputs.defaultLocal
+        ? jt('composer.modelPicker.defaultOnThisPcTitle', 'Your default model on this PC ({model}). Change it in Settings › Models.', { model: inputs.backendModel })
+        : inputs.backendModel ? jt('composer.modelPicker.useBackendDefaultWithModel', 'Use the backend default model ({model})', { model: inputs.backendModel }) : jt('composer.modelPicker.useBackendDefault', 'Use the backend default model');
       const defaultSelected = inputs.preferredModel === '';
       const defaultOption = inputs.pinned ? '' : actionButton({
         plain: true,
@@ -270,7 +270,8 @@
         disabled: locked,
         dataset: { 'picker-model': '' },
         title: defaultTitle,
-        trustedHtml: nameHtml(jt('composer.modelPicker.defaultModel', 'Default'), inputs.backendModel ? ` · ${utils.displayModelId(inputs.backendModel)}` : '')
+        trustedHtml: nameHtml(jt('composer.modelPicker.defaultModel', 'Default'), inputs.backendModel ? ` · ${utils.splitModelId(inputs.backendModel).family}` : '',
+          inputs.backendModel && inputs.defaultLocal ? jt('composer.modelPicker.onThisPc', 'on this PC') : '')
           + metaHtml({ loaded: backendLoaded, selected: defaultSelected }),
       });
       const search = totalCount > 8
@@ -373,14 +374,15 @@
       }
       watchStore();
       const inputs = readCarrierInputs();
-      const label = utils.formatComposerModelPillLabel(inputs);
+      const cloud = utils.describeCloudPill?.(inputs, state) || null; // row 192 C14: cloud models are marked
+      const label = cloud ? cloud.label : utils.formatComposerModelPillLabel(inputs);
       const labelEl = pill.querySelector('.inv-chip-label');
       if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
       const pin = pill.querySelector('.composer-model-pill-pin');
       if (inputs.pinned && !pin) pill.appendChild(Object.assign(documentRef.createElement('span'), { className: 'composer-model-pill-pin', textContent: jt('composer.modelPicker.pinned', 'Pinned') }));
       else if (!inputs.pinned && pin) pin.remove();
-      const title = utils.buildPillTitle(inputs);
-      const ariaLabel = jt('composer.modelPicker.pillAriaLabel', 'Model and reasoning effort. {title}', { title });
+      const title = cloud ? cloud.title : utils.buildPillTitle(inputs);
+      const ariaLabel = jt('composer.modelPicker.pillAriaLabel', 'Model and reasoning effort. {title}', { title: cloud ? cloud.ariaTitle : title });
       if (pill.getAttribute('title') !== title) pill.setAttribute('title', title);
       if (pill.getAttribute('aria-label') !== ariaLabel) pill.setAttribute('aria-label', ariaLabel);
 
@@ -391,12 +393,10 @@
       const isLoaded = Boolean(resolvedModel && inputs.loadedModel)
         && formatUtils.canonicalOllamaTag(resolvedModel)
           === formatUtils.canonicalOllamaTag(inputs.loadedModel);
+      utils.syncCloudMark?.(pill, cloud);
       let dot = pill.querySelector('.composer-model-pill-dot');
-      if (isFailed || isLoaded) {
-        if (!dot) {
-          dot = documentRef.createElement('span');
-          dot.setAttribute('aria-hidden', 'true');
-        }
+      if (isFailed || (isLoaded && !cloud)) { // a cloud model's icon takes the loaded dot's place
+        if (!dot) { dot = documentRef.createElement('span'); dot.setAttribute('aria-hidden', 'true'); }
         dot.className = 'composer-model-pill-dot status-dot status-dot--' + (isFailed ? 'error' : 'ok');
         if (pill.firstChild !== dot) pill.insertBefore(dot, pill.firstChild);
       } else if (dot) {

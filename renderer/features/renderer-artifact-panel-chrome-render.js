@@ -23,7 +23,6 @@
     dots: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></svg>',
     'text-wrap': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h12a3 3 0 0 1 0 6h-3"></path><path d="m15 16-2 2 2 2"></path><path d="M4 18h5"></path></svg>',
     expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"></path></svg>',
-    restore: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"></path></svg>',
     copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>',
     'external-link': '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"></path><path d="M20 4 11 13"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>',
     history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l2 2"></path><path d="M3.05 11a9 9 0 1 1 .5 4M3 4v4h4"></path></svg>',
@@ -130,15 +129,14 @@
 
   // One 36px row, the tab rail's height: glyph, title (middle ellipsis),
   // failed state, kind caption, then View full screen (available generated
-  // images only), Copy, Wrap (text bodies), Restore (only while maximized),
-  // More and Close. Download and Maximize live in More.
+  // images only), Copy, Wrap (text bodies), More and Close. Download lives in
+  // More.
   function buildHeaderHtml() {
     return '<div class="artifact-panel-header"><div class="artifact-panel-header-primary" data-artifact-panel-title-slot><span class="artifact-panel-title" id="artifactReviewDetailTitle" tabindex="-1"><span class="artifact-panel-title-text">Artifact</span></span></div><div class="artifact-panel-header-actions">'
       + buildOpenIdeButtonHtml()
       + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-fullscreen hidden', ariaLabel: jt('artifacts.actions.viewFullScreen', 'View full screen'), title: jt('artifacts.actions.viewFullScreen', 'View full screen'), dataset: { 'artifact-panel-fullscreen': '' }, trustedHtml: ICONS.expand })
       + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-copy', ariaLabel: jt('common.copy', 'Copy'), title: jt('common.copy', 'Copy'), dataset: { 'artifact-panel-v2-copy': '' }, trustedHtml: ICONS.copy })
       + buildWrapButtonHtml()
-      + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-maximize hidden', ariaLabel: jt('artifacts.actions.restorePanelSize', 'Restore panel size'), title: jt('artifacts.actions.restorePanelSize', 'Restore panel size'), ariaPressed: true, dataset: { 'artifact-panel-maximize': '' }, trustedHtml: ICONS.restore })
       + actionButton({ plain: true, className: 'artifact-panel-icon-btn artifact-panel-overflow', ariaLabel: jt('artifacts.actions.moreActions', 'More actions'), title: jt('artifacts.actions.moreActions', 'More actions'), ariaHaspopup: 'menu', ariaExpanded: false, dataset: { 'artifact-panel-overflow': '' }, trustedHtml: ICONS.dots })
       + actionButton({ plain: true, domId: 'artifactReviewCollapseButton', className: 'artifact-panel-icon-btn artifact-panel-close', ariaLabel: jt('artifacts.review.closePanel', 'Close panel'), title: jt('artifacts.review.closePanel', 'Close panel'), trustedHtml: ICONS.x })
       + '</div></div>';

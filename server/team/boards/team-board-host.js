@@ -48,23 +48,30 @@ const PRESENCE_DROP_KINDS = new Set(['role_changed']);
  * userDataPath: the host profile. directory: the member directory. sessionProject(id): the project a conversation is
  * in, or null. audit(entry): appends one project audit entry, answering { ok } (team-approvals.js `append`).
  * assertSafePath: the host's guard for a path it is about to use. diskRoots (and statfs, for tests): what the upload's
- * disk gate measures, as for chat attachments. Nothing reads the disk until a call asks. For tests: `limits`
+ * disk gate measures, as for chat attachments. `projectRoot(projectId)`: the folder of a project's files, or null when
+ * project files are off (a proposed file card needs it). Nothing reads the disk until a call asks. For tests: `limits`
  * ({ commands, events, route, imports }) replaces rate limits, `wrap(store)` what the commands, routes and proposals are
  * given, `timers` the presence sweep's timer and `presenceClock` the presence store's monotonic clock.
  */
 function createTeamBoardHost({
   userDataPath, directory, sessionProject, publish, audit, clock = Date.now, logger = null, assertSafePath, diskRoots = [], statfs,
-  limits = {}, wrap = (store) => store, timers = { setInterval, clearInterval }, presenceClock,
+  limits = {}, wrap = (store) => store, timers = { setInterval, clearInterval }, presenceClock, projectRoot = null,
 } = {}) {
   const say = safeLogger(logger);
   // Every applied batch and list change is announced from inside the store (board-events.js).
   const events = createBoardEvents({ publish, directory, clock, logger, limits: limits.events });
-  const store = createTeamBoards({ userDataPath, clock, logger, assertSafePath, onChange: events.onChange });
-  const served = wrap(store);
   const presence = createBoardPresence(presenceClock ? { clock: presenceClock } : {});
   const live = createPresenceOperations({ presence, publish, directory, logger });
+  // A board put in the trash takes its viewers and locks with it: nobody is left viewing what cannot be opened.
+  const store = createTeamBoards({ userDataPath, clock, logger, assertSafePath, onChange: (change) => {
+    events.onChange(change);
+    if (change?.kind === 'list' && change.removed === true && typeof change.boardId === 'string') {
+      dropped(() => presence.dropBoard(change.boardId));
+    }
+  } });
+  const served = wrap(store);
   const proposals = createHostProposals({ boards: served, audit, batchRefusal: batchRules({ sessionProject, presence }),
-    announce: events.proposalsChanged, clock, logger });
+    announce: events.proposalsChanged, clock, logger, projectRoot });
   const commands = createTeamBoardCommands({ boards: served, directory, sessionProject, audit, presence,
     presenceOperations: live.operations, proposals, clock, logger, limits: limits.commands });
   const turns = createBoardTurnPorts({ boards: served, proposals, sessionProject, logger });

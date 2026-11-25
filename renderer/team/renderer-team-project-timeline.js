@@ -441,10 +441,11 @@
     return { state: 'done', label, elapsed: '' };
   }
 
-  // The chip: one button that opens the turn's transcript (`open`: its popover is open).
-  function chipHtml({ turnId = '', state = 'done', label = '', elapsed = '', open = false } = {}) {
+  // The chip: one button that opens the turn's transcript (`open`: its popover is open; `popId`: that popover's id,
+  // which carries its conversation's prefix).
+  function chipHtml({ turnId = '', state = 'done', label = '', elapsed = '', open = false, popId = 'teamTurnPop' } = {}) {
     const time = clean(elapsed, 16);
-    return actionButton({ plain: true, className: 'team-turn-chip', ariaExpanded: Boolean(open), ariaControls: 'teamTurnPop',
+    return actionButton({ plain: true, className: 'team-turn-chip', ariaExpanded: Boolean(open), ariaControls: str(popId),
       title: jt('team.turn.chipTitle', 'Show what Jenny thought and did in this turn'), dataset: { state: clean(state, 16), 'project-action': 'turn-open', 'turn-id': str(turnId) },
       trustedHtml: '<span class="status-dot status-dot--' + (CHIP_DOTS[state] || 'muted') + '" aria-hidden="true"></span>'
         + '<span class="team-turn-chip__label' + (state === 'live' ? ' shimmer-active' : '') + '" dir="auto">' + escapeHtml(clean(label, LIMITS.status)) + '</span>'

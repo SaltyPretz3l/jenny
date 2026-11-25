@@ -200,7 +200,8 @@ test('a missing or malformed approval fails closed: no Allow, no partial card', 
 });
 
 test('the receipt names the change and the check, never the model input', () => {
-  const receipt = (extra) => render({ cardState: 'resolved', ...extra }).querySelector('.tool-approval-receipt-subject').textContent;
+  // Row 192 D2 A: the chat's inline row renders empty (the step carries the answer); the card keeps the receipt line.
+  const receipt = (extra) => render({ cardState: 'resolved', mode: 'card', ...extra }).querySelector('.tool-approval-receipt-subject').textContent;
   assert.equal(receipt({ decision: 'allowed' }), 'Schedule a check: What finished overnight');
   assert.equal(receipt({ decision: 'denied', scheduleChangeApproval: CANCEL }), 'Delete a check: Weekly tidy-up summary');
   assert.equal(receipt({ decision: 'allowed', scheduleChangeApproval: refused('not_found') }), 'Schedule Change');

@@ -318,3 +318,42 @@ test('the tune drawer labels the openai-compatible engine NInfer only when NInfe
   assert.equal(await drawerSubtitle({ runtime: { managed_server: { kind: 'llama-server', state: 'ready' } } }), 'Runs on llama-server.');
   assert.equal(await drawerSubtitle(undefined), 'Runs on llama-server.');
 });
+
+test('a crashed Strata names itself and Restart dispatches to jennyShell.strata.restart, never llama-server', async () => {
+  const strata = { kind: 'strata', state: 'crashed', alias: 'inkling-2-mini-sq-20', port: 8035, acceleration_mode: 'off',
+    last_error: 'strata_exited:1', runtime_label: '0.1.67', stopped_by: '', watchdog_watts: 0, changed_at: 1 };
+  const markup = buildPopoverMarkup(BASE_STATE, pillSnapshot({ managed_server: strata }), {});
+  assert.match(markup, /row-value-danger">Strata · <em>stopped unexpectedly \(inkling-2-mini-sq-20\)<\/em>/);
+  assert.match(markup, /data-health-pill-action="restart-strata">Restart Strata<\/button>/);
+  assert.doesNotMatch(markup, /restart-llama-server|restart-ninfer/);
+  const restarts = { strata: 0, llama: 0, ninfer: 0 };
+  const { window, slot, controller } = pillHarness(pillSnapshot({ managed_server: strata }), {
+    strata: { restart: async () => { restarts.strata += 1; return { ok: true }; } },
+    ninfer: { restart: async () => { restarts.ninfer += 1; return { ok: true }; } },
+    llamaServer: { restart: async () => { restarts.llama += 1; return { ok: true }; } },
+  });
+  await controller.refresh({ silent: true });
+  slot.querySelector('button').click();
+  window.document.querySelector('[data-health-pill-action="restart-strata"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(restarts, { strata: 1, llama: 0, ninfer: 0 });
+  controller.dispose();
+});
+
+// --- row 200: Strata labels ---
+
+test('the engine row names Strata for the model it serves, and its watchdog stop reads like the NInfer one with Strata named', () => {
+  const base = { engine: 'openai-compatible', model: 'inkling-2-mini-sq-20', model_loaded: true };
+  const strata = (overrides = {}) => ({ kind: 'strata', state: 'ready', alias: 'inkling-2-mini-sq-20', port: 8035, acceleration_mode: 'off', last_error: '', runtime_label: '0.1.67', stopped_by: '', watchdog_watts: 0, changed_at: 1, ...overrides });
+  assert.equal(engineRowText({ ...base, managed_server: strata() }), 'Strata · inkling-2-mini-sq-20 · loaded');
+  assert.equal(engineRowText({ ...base, managed_server: strata({ state: 'crashed' }) }), 'Strata · inkling-2-mini-sq-20 · unloaded');
+  assert.equal(engineRowText({ ...base, model: 'other', managed_server: strata() }), 'openai-compatible · other · loaded');
+  const watchdog = buildPopoverMarkup(BASE_STATE, pillSnapshot({ managed_server: strata({ state: 'crashed', stopped_by: 'watchdog', watchdog_watts: 512 }) }), {});
+  assert.match(watchdog, /row-value-danger">Strata · <em>stopped by the power watchdog \(512 W\)<\/em>/);
+  assert.match(watchdog, /data-health-pill-action="restart-strata">Restart Strata/);
+});
+
+test('the tune drawer labels the openai-compatible engine Strata only when Strata is the managed server for that model', async () => {
+  assert.equal(await drawerSubtitle({ runtime: { managed_server: { kind: 'strata', state: 'ready', alias: ALIAS } } }), 'Runs on Strata.');
+  assert.equal(await drawerSubtitle({ runtime: { managed_server: { kind: 'strata', state: 'ready', alias: 'other-model' } } }), 'Runs on llama-server.');
+});

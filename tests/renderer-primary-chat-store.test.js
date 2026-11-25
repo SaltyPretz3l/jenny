@@ -234,7 +234,7 @@ test('row 144: a held check shows one sticky warning toast with Choose a model, 
   assert.deepEqual(toast.actions.map((entry) => [entry.label, entry.kind || 'secondary']),
     [['Choose a model', 'primary'], ['Run on lfm3:2b', 'secondary'], ['Skip', 'secondary']]);
   await action(toast, 'choose_model').onClick();
-  assert.deepEqual(h.opened, [['chat', { focusId: 'checkModelSelect' }]]);
+  assert.deepEqual(h.opened, [['models', { focusId: 'modelRoleCheckSelect' }]]);
 });
 
 test('row 144: a model that is not available offers no Run action, and an empty label falls back', async () => {

@@ -94,7 +94,7 @@
       const compacted = Math.max(item.compactions || 0, item === v.live && s.stream ? s.stream.compacted || 0 : 0);
       const sig = [st.state, st.label, st.elapsed, open, canStop, canRetry, st.reason || '', compacted].join('\u0000');
       const hit = leads.get(item.id);
-      const line = hit && hit.sig === sig ? hit.html : tl.turnLineHtml({ chip: tl.chipHtml({ turnId: item.id, ...st, open }), turnId: item.id, canStop, canRetry, reason: st.reason })
+      const line = hit && hit.sig === sig ? hit.html : tl.turnLineHtml({ chip: tl.chipHtml({ turnId: item.id, ...st, open, popId: (o.idPrefix || '') + 'teamTurnPop' }), turnId: item.id, canStop, canRetry, reason: st.reason })
         + tl.compactionLinesHtml(compacted);
       if (!hit || hit.sig !== sig) leads.set(item.id, { sig, html: line });
       // Item 11: the host's receipts of this turn's tool calls stand under it (renderer-team-project-actions.js).

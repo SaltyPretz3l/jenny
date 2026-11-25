@@ -1,18 +1,18 @@
 {
   "index_html_lines": {
-    "baseline": 1850,
-    "note": "Raised 2026-11-16 with owner approval (Settings > About credits list). Goes down only; a split that moves code into a new deferred module may add its tag line. Dated records: docs/history/complexity-ratchet-history.md."
+    "baseline": 1833,
+    "note": "Raised 2026-11-24 (row 196 C4, owner approved: the Settings > Tools > Computer group and two script tags). Goes down only; a split that moves code into a new deferred module may add its tag line. Dated records: docs/history/complexity-ratchet-history.md."
   },
   "index_html_scripts": {
-    "baseline": 722,
-    "note": "Measured 2026-11-14 on the landing merge (row 158 flyout; row 154: two dead scripts out, source card in); tests/renderer-startup-script-budget.test.js pins the same number. Goes down only; a split may add one tag per new module. Dated records: docs/history/complexity-ratchet-history.md."
+    "baseline": 719,
+    "note": "Raised 2026-11-24 (row 196 C4, owner approved: renderer-computer-settings.js and renderer-computer-step-display.js). Goes down only; a split may add one tag per new module. Dated records: docs/history/complexity-ratchet-history.md."
   },
   "raw_primitive_allowlist_budget": {
     "baseline": 97,
     "note": "Measured 2026-11-03 (1.6.1 cut). Goes down only. Dated records: docs/history/complexity-ratchet-history.md."
   },
   "production_files_over_600": {
-    "baseline": 253,
+    "baseline": 252,
     "note": "Measured 2026-11-03 (1.6.1 cut). Goes down only: split or extract instead of raising. Dated records: docs/history/complexity-ratchet-history.md."
   },
   "production_files_over_900": {
@@ -20,7 +20,7 @@
     "note": "Added 2026-11-03 (tech-debt wave 1): production files over 900 lines, the files pinned near the 1000+15 hard cap. Goes down only. Dated records: docs/history/complexity-ratchet-history.md."
   },
   "test_files_over_600": {
-    "baseline": 178,
+    "baseline": 177,
     "note": "Measured 2026-11-03 (1.6.1 cut). Goes down only. Dated records: docs/history/complexity-ratchet-history.md."
   }
 }

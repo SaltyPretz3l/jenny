@@ -318,3 +318,65 @@ test('setFieldError leaves an unchanged reason alone, so a poll does not announc
   settingsField.setFieldError(root, 'Other');
   assert.equal(root.querySelector('.settings-field-error').textContent, 'Other');
 });
+
+/* ── Row 193: tag and reason ── */
+
+function fieldRoot(opts) {
+  const dom = new JSDOM(`<div>${settingsField(Object.assign({ id: 'row193', variant: 'row', label: 'Title', help: 'Help text.', helpId: 'row193Help', controlHtml: '<input id="c">' }, opts))}</div>`);
+  return { dom, root: dom.window.document.querySelector('.settings-field') };
+}
+
+test('settingsField tag renders one tag on the title line with its tone', (t) => {
+  const restart = fieldRoot({ tag: { text: 'Restart to apply', tone: 'restart' } });
+  const managed = fieldRoot({ tag: { text: 'Managed', tone: 'managed' } });
+  const none = fieldRoot({});
+  t.after(() => { restart.dom.window.close(); managed.dom.window.close(); none.dom.window.close(); });
+  const tag = restart.root.querySelector('.settings-field-title-row .settings-field-tag');
+  assert.equal(tag.textContent, 'Restart to apply');
+  assert.equal(tag.getAttribute('data-tone'), 'restart');
+  assert.equal(restart.root.getAttribute('data-tag'), 'restart');
+  assert.equal(restart.root.querySelectorAll('.settings-field-tag').length, 1);
+  assert.equal(managed.root.querySelector('.settings-field-tag').getAttribute('data-tone'), 'managed');
+  assert.equal(none.root.querySelector('.settings-field-tag'), null, 'no tag unless asked for');
+});
+
+test('settingsField reason takes the help paragraph, keeps the line count and the help for assistive reading', (t) => {
+  const plain = fieldRoot({});
+  const reasoned = fieldRoot({ reason: 'Turn on "A" to change this.' });
+  t.after(() => { plain.dom.window.close(); reasoned.dom.window.close(); });
+  const lines = (root) => root.querySelectorAll('.settings-field-text > p').length;
+  assert.equal(lines(reasoned.root), lines(plain.root), 'the row keeps its line count');
+  const p = reasoned.root.querySelector('.settings-field-help');
+  assert.ok(p.classList.contains('settings-field-reason'));
+  assert.equal(p.id, 'row193Help', 'the control still points at the same element');
+  assert.equal(p.firstChild.textContent, 'Turn on "A" to change this.');
+  assert.equal(p.querySelector('.settings-field-help-original').textContent.trim(), 'Help text.');
+  assert.equal(plain.root.querySelector('.settings-field-reason'), null);
+});
+
+test('setFieldTag and setFieldReason set and clear without rebuilding the row', (t) => {
+  const { dom, root } = fieldRoot({ metaHtml: '<span class="settings-field-meta"><span class="settings-field-meta-modified" hidden>Modified</span></span>', revertSlot: true });
+  t.after(() => dom.window.close());
+  settingsField.setFieldTag(root, { text: 'Managed', tone: 'managed' });
+  settingsField.setFieldTag(root, { text: 'Restart to apply', tone: 'restart' });
+  assert.equal(root.querySelectorAll('.settings-field-tag').length, 1, 'one tag at most');
+  assert.equal(root.querySelector('.settings-field-tag').getAttribute('data-tone'), 'restart');
+  settingsField.setFieldModified(root, true);
+  assert.equal(root.querySelector('.settings-field-meta-modified').hidden, true, 'a tag stands in the place of Modified');
+  settingsField.setFieldTag(root, null);
+  assert.equal(root.querySelector('.settings-field-tag'), null);
+  assert.equal(root.hasAttribute('data-tag'), false);
+  assert.equal(root.querySelector('.settings-field-meta-modified').hidden, false, 'Modified returns when the tag leaves');
+
+  settingsField.setFieldReason(root, 'Because.');
+  const p = root.querySelector('.settings-field-help');
+  assert.equal(p.firstChild.textContent, 'Because.');
+  assert.ok(p.classList.contains('settings-field-reason'));
+  settingsField.setFieldReason(root, 'Again.');
+  assert.equal(p.querySelector('.settings-field-help-original').textContent.trim(), 'Help text.', 'the help survives a second reason');
+  settingsField.setFieldReason(root, '');
+  assert.equal(p.classList.contains('settings-field-reason'), false);
+  assert.equal(p.textContent, 'Help text.');
+  settingsField.setFieldTag(null, { text: 'x' });
+  settingsField.setFieldReason(null, 'x');
+});

@@ -402,8 +402,8 @@ const STREAM_CONTEXT_FIXTURES = [
   { name: 'open tilde fence', raw: '~~~python\nstart();\n\n' + 'x '.repeat(450) + 'run().Then(done); misses.Let me;', code: 'run().Then(done); misses.Let me;' },
   { name: 'odd quote run', raw: 'The quote opens "here\n\n' + 'x '.repeat(450) + 'end."So we check the loader.' },
   { name: 'unfinished inline span', raw: 'Intro\n\n' + 'x'.repeat(80) + ' `React.Component misses.Let me', code: '`React.Component misses.Let me' },
-  // Quote parity is per prose segment: the quote inside the inline code must
-  // not balance the open prose quote before the paragraph break.
+  // Quotes are counted in prose only and restart at a paragraph break: the
+  // quote inside the inline code must not balance the open prose quote.
   { name: 'quote inside inline code before the boundary', raw: '`"` said "hi\n\n' + 'x '.repeat(450) + 'Done."Then more' },
   // A tilde fence marker inside a backtick fence is literal; the later ~~~
   // opens a fence that swallows the boundary, so no memo split is safe.
@@ -436,7 +436,7 @@ for (const { name, raw, code } of STREAM_CONTEXT_FIXTURES) {
   });
 }
 
-test('prettify memo retains 24 phases and separates message scopes', () => {
+test('prettify memo retains a 200-row render pass and separates message scopes', () => {
   const modulePath = require.resolve('../renderer/chat/chat-thinking-utils');
   const priorModule = require.cache[modulePath];
   const hadUtils = Object.prototype.hasOwnProperty.call(globalThis, 'reasoningPrettifyUtils');
@@ -463,6 +463,33 @@ test('prettify memo retains 24 phases and separates message scopes', () => {
     calls = 0;
     join(entries, { scope: 'm1' });
     assert.equal(calls, 0, 'the first scope remains cached');
+    // A render pass re-joins every settled row in order, so a cache smaller
+    // than the pass misses every lookup.
+    const rows = Array.from({ length: 200 }, (_, index) => ({ id: `row_${index}`, text: `row ${index} end.Next thought.` }));
+    join(rows, { scope: 'm3' });
+    calls = 0;
+    join(rows, { scope: 'm3' });
+    assert.equal(calls, 0, 'a 200-row render pass stays cached');
+    // A thought streaming past a real paragraph break: the delta that finds
+    // the split prettifies the old and the new remainder, later ones the new.
+    const live = (text) => join([{ id: 'live', text }], { scope: 'm4' });
+    const base = 'Intro one.\n\nSecond block';
+    live(base);
+    calls = 0;
+    live(`${base} grows.`);
+    assert.equal(calls, 2, 'the first delta past the break finds the split');
+    calls = 0;
+    const grown = `${base} grows.Then more.`;
+    assert.equal(live(grown), prettifyReasoningMarkdown(grown));
+    assert.equal(calls, 1, 'a later delta prettifies only the new remainder');
+    calls = 0;
+    const nextBlock = `${grown}\n\nThird block end.Now go.`;
+    assert.equal(live(nextBlock), prettifyReasoningMarkdown(nextBlock));
+    assert.equal(calls, 1, 'a new break arriving inside the delta keeps the known split');
+    calls = 0;
+    const pastNextBreak = `${nextBlock} And more.`;
+    assert.equal(live(pastNextBreak), prettifyReasoningMarkdown(pastNextBreak));
+    assert.equal(calls, 2, 'the split moves to the new break');
   } finally {
     require.cache[modulePath] = priorModule;
     if (hadUtils) globalThis.reasoningPrettifyUtils = priorUtils;

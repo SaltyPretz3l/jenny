@@ -346,15 +346,6 @@ def test_build_default_registry_does_not_probe_lsp_servers_when_disabled(
     assert "lsp_definition" not in registry
 
 
-def test_build_default_registry_does_not_expose_static_mcp_resource_tools() -> None:
-    registry = build_default_registry(config={"tools_mcp_resources_enabled": True})
-
-    assert "list_resources" not in registry
-    assert "read_resource" not in registry
-    assert "list_resource_templates" not in registry
-    assert all(not name.startswith("mcp__") for name in registry)
-
-
 def test_tool_manifest_matches_batch4_git_and_read_file_contract() -> None:
     manifest_path = (
         Path(__file__).resolve().parents[4] / "services" / "tools" / "tool-manifest.json"

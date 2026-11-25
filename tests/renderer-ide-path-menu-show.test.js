@@ -58,3 +58,22 @@ test('a failed OS action logs a bounded reason, never the bridge error message',
   await win.shown[0].items.find((item) => item.label === 'Reveal in File Explorer').action();
   assert.deepEqual(logs.map(([level, event, data]) => [level, event, data]), [['WARN', 'ide.reveal_in_folder_failed', { reason: 'ENOENT' }]]);
 });
+
+test('in the page, before the IDE loads, the menu never calls Monaco\'s AMD require', () => {
+  // A browser script context: no CommonJS module, a global require that throws like Monaco's
+  // loader for an unseen module, and no outside-files registry yet (it loads with the IDE).
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../renderer/features/renderer-ide-path-menu.js'), 'utf8');
+  const amdCalls = [];
+  const sandbox = {
+    require(id) { amdCalls.push(id); throw new Error(`Check dependency list! Synchronous require cannot resolve module '${id}'.`); },
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(source, sandbox);
+  const menu = sandbox.rendererIdePathMenu.createIdePathMenu({});
+  const items = menu.buildPathUtilityMenuItems('src/app.js');
+  assert.ok(items.some((item) => /Reveal/.test(item.label || '')));
+  assert.deepEqual(amdCalls, []);
+});

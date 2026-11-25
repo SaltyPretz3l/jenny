@@ -3,6 +3,7 @@ const {
   normalizeOfflineIntelligence,
 } = require('./shell-config-service');
 const { normalizeString } = require('./backend/path-utils');
+const { assertLocalDefaultModel } = require('./backend/backend-service-utils');
 const { managedModelKey } = require('./shell-config-engines');
 const { t } = require('./i18n-main');
 const { buildModelFitEstimates } = require('./model-fit-diagnostics');
@@ -580,9 +581,8 @@ class OfflineIntelligenceService {
   }
 
   async updateSettings(patch = {}) {
-    if (!this.configService || typeof this.configService.updateOfflineIntelligence !== 'function') {
-      return this.getState();
-    }
+    if (!this.configService || typeof this.configService.updateOfflineIntelligence !== 'function') return this.getState();
+    assertLocalDefaultModel(patch); // row 194: a cloud id is refused, not stored
     this.configService.updateOfflineIntelligence(patch);
     return this.getState();
   }

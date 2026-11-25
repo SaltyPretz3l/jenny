@@ -50,11 +50,34 @@ test('flat MCP rows mount in their stable host with only drawer action and switc
   assert.equal(group.parentElement.id, 'mcpServersHost');
   assert.equal(group.closest('.settings-card'), h.extensionsCard);
   assert.equal(h.toolsCard.querySelector('#mcpServersGroup'), null);
-  assert.ok(row.classList.contains('settings-field-row'));
-  assert.deepEqual(Array.from(row.querySelectorAll('button')).map((button) => button.textContent.trim()), ['Review', '']);
+  assert.ok(row.classList.contains('mrow') && row.classList.contains('srow'), 'the Models record row');
+  assert.deepEqual(Array.from(row.querySelectorAll('button')).map((button) => button.textContent.trim()), ['', 'Review']);
+  assert.equal(row.querySelector('[data-mcp-servers-action="details"]').classList.contains('btn--ghost'), false, 'Review is the secondary style');
+  assert.equal(row.querySelector('.mrow-name').textContent, 'weather');
+  assert.equal(row.querySelector('.srow-status').textContent.trim(), 'Off');
+  assert.equal(row.querySelector('.mp-dot').dataset.tone, 'off');
   const toggle = row.querySelector('[role="switch"]');
   assert.equal(toggle.disabled, true);
-  assert.match(row.textContent, /turn on unavailable until its tools are reviewed/);
+  assert.match(row.querySelector('.mrow-meta').textContent, /turn on unavailable until its tools are reviewed/);
+});
+
+test('a reviewed connection says Manage with its status words, and a failed one carries the failed tone', async (t) => {
+  const approved = { status: 'approved', configuration_digest: 'a'.repeat(64), advertised_tools_digest: 'b'.repeat(64), reviewed_at: '' };
+  const h = harness(t, { initialState: discovery({ servers: [
+    pendingServer({ name: 'ok', enabled: true, status: 'running', toolsCount: 2, trust: approved }),
+    pendingServer({ name: 'bad', enabled: true, status: 'failed', trust: approved, failure: { message: 'boom' } }),
+    pendingServer({ name: 'idle', enabled: false, trust: approved }),
+    pendingServer({ name: 'unreviewed', enabled: true })] }) });
+  h.controller.bind(); await flush();
+  const row = (name) => h.extensionsCard.querySelector(`[data-mcp-server-row="${name}"]`);
+  const parts = (name) => ({ words: row(name).querySelector('.srow-status').textContent.trim(),
+    tone: row(name).querySelector('.mp-dot').dataset.tone, button: row(name).querySelector('.btn').textContent.trim() });
+  assert.deepEqual(parts('ok'), { words: 'Running', tone: 'ready', button: 'Manage' });
+  assert.deepEqual(parts('bad'), { words: 'Failed', tone: 'failed', button: 'Manage' });
+  assert.deepEqual(parts('idle'), { words: 'Off', tone: 'off', button: 'Manage' });
+  assert.deepEqual(parts('unreviewed'), { words: 'Review required', tone: 'warn', button: 'Review' });
+  assert.equal(row('ok').querySelector('[role="switch"]').disabled, false);
+  assert.match(row('bad').querySelector('.mrow-meta').textContent, /boom/);
 });
 
 test('read-only future state explains preservation and disables creation', async (t) => {
@@ -285,6 +308,32 @@ test('badge and failure mapping make trust state primary', () => {
     { state: 'success', text: 'Running' });
   assert.match(mapMcpFailureMessage('blocked: PermissionError'), /private or local/);
   assert.equal(mapMcpFailureMessage('custom failure'), 'custom failure');
+});
+
+test('in the app, where require is Monaco\'s AMD loader, the group renders before the Models services load', async () => {
+  // Live-app check 2026-11-23: the record-row lookup called the AMD require at render time and threw at boot.
+  const vm = require('node:vm'), { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><body><section class="settings-card" data-settings-section="extensions">'
+    + '<div id="mcpServersHost"></div></section></body>', { pretendToBeVisual: true });
+  dom.window.jennyShell = { mcpDiscovery: { getState: async () => discovery({ servers: [pendingServer()] }) },
+    mcpAuth: { getStatus: async () => ({ loaded: true, store: { status: 'ready' }, servers: [] }) } };
+  const sandbox = { console, setTimeout, clearTimeout, setImmediate,
+    stringUtils: require('../renderer/shared/string-utils'),
+    rendererMcpServersRea: require('../renderer/shell/renderer-mcp-servers-rea'),
+    inventoryDrawer: require('../renderer/inventory/drawer'),
+    inventoryActionButton: require('../renderer/inventory/action-button'), inventoryTextField: require('../renderer/inventory/text-field'),
+    inventorySelectField: require('../renderer/inventory/select-field'), inventoryToggleSwitch: require('../renderer/inventory/toggle-switch'),
+    require: (id) => { throw new Error('Synchronous require cannot resolve module ' + id); } };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'shell', 'renderer-mcp-servers.js'), 'utf8'), sandbox);
+  const controller = sandbox.rendererMcpServers.createMcpServersController({ windowRef: dom.window, documentRef: dom.window.document,
+    showToastMessage() {}, appendClientLog() {}, confirmDanger: async () => true });
+  try {
+    controller.bind(); await controller.refresh(); await flush(); // refresh rejected with the AMD error before the fix
+    const group = dom.window.document.getElementById('mcpServersGroup');
+    assert.ok(group, 'the group is drawn');
+    assert.equal(group.querySelector('[data-mcp-server-row]'), null, 'rows wait for the Models services');
+  } finally { controller.dispose(); }
 });
 
 test('MCP controller does not use native window confirmation', () => {

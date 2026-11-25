@@ -26,14 +26,10 @@
     return `${text.slice(0, TIMELINE_V2_SUMMARY_ATTR_MAX_LENGTH - 3).trimEnd()}...`;
   }
 
-  // Cheap string-level (no DOM parse) check for "this row would render with
-  // nothing visible beside its node-dot". Strips HTML comments and any
-  // visually-hidden wrapper (sr-only spans, aria-hidden="true" elements) —
-  // e.g. buildAssistantTextRowMarkup's SR-only phase kicker for a blank
-  // assistant segment — then checks whether any markup/text remains. This is
-  // intentionally conservative (string surgery, not a real DOM walk): it only
-  // needs to catch the two known orphan-dot shapes (fully blank bodyMarkup,
-  // and SR-only-only bodyMarkup), not every conceivable case.
+  // String check (no DOM parse) that a row would show nothing beside its dot:
+  // strip comments and sr-only / aria-hidden wrappers (a blank segment's phase
+  // kicker), then look for markup or text left. Catches the two orphan-dot
+  // shapes (blank body, sr-only-only body), not every case.
   const SR_ONLY_OR_ARIA_HIDDEN_ELEMENT_RE = /<([a-z][a-z0-9-]*)\b[^>]*\bclass="[^"]*\bsr-only\b[^"]*"[^>]*>[\s\S]*?<\/\1>|<[a-z][a-z0-9-]*\b[^>]*\baria-hidden="true"[^>]*>[\s\S]*?<\/[a-z][a-z0-9-]*>|<[a-z][a-z0-9-]*\b[^>]*\baria-hidden="true"[^>]*\/>/gi;
   function isBodyMarkupVisuallyEmpty(bodyMarkup) {
     const raw = String(bodyMarkup || '');
@@ -41,20 +37,14 @@
       return true;
     }
     let stripped = raw.replace(/<!--[\s\S]*?-->/g, '');
-    // Repeatedly strip sr-only / aria-hidden wrapper elements: nested
-    // wrappers (e.g. an aria-hidden rule inside an sr-only span) need more
-    // than one pass since the regex doesn't recurse.
+    // The regex does not recurse: nested wrappers need more than one pass.
     let previous;
     do {
       previous = stripped;
       stripped = stripped.replace(SR_ONLY_OR_ARIA_HIDDEN_ELEMENT_RE, '');
     } while (stripped !== previous && stripped.includes('<'));
-    // Whatever remains after stripping sr-only/aria-hidden wrappers: a
-    // self-closing or attribute-bearing element (img, svg icon, etc.) still
-    // counts as visible content, so check for any remaining tag *or* text,
-    // not just text. Only now-empty leaf wrappers (e.g. the emptied
-    // <span class="chat-commentary-kicker"></span> left behind once its
-    // sr-only child was stripped) and bare text nodes are evaluated here.
+    // A media or icon element left counts as visible; emptied leaf wrappers
+    // (the commentary kicker once its sr-only child is gone) do not.
     const remainingTags = stripped.match(/<[a-z][a-z0-9-]*\b[^>]*\/?>/gi) || [];
     const hasNonEmptyLeafTag = remainingTags.some(function tagLooksVisible(tag) {
       return /\bsrc=|\bviewBox=|<img\b|<svg\b|<canvas\b|<video\b|<audio\b|<iframe\b/i.test(tag);
@@ -66,11 +56,9 @@
     return !textOnly;
   }
 
-  // Row-wrapper + turn-row-list assembly layer; per-kind row body builders stay
-  // in renderer-turn-row-render-utils.js. Consumes the body dispatch (buildRowBodyMarkup), identity
-  // (buildRowId), and streaming detection (isStreamingRow) as injected deps so
-  // the body/wrapper/list layering stays a one-directional dependency chain.
-  // Rows render as a flat sequence while the turn-activity envelope only controls upstream article coalescing.
+  // Row wrapper and turn-row-list assembly; per-kind bodies live in
+  // renderer-turn-row-render-utils.js and arrive as injected deps (body,
+  // identity, streaming), keeping the layering one-directional. Rows are flat.
   function createTurnRowListUtils(deps) {
     const settings = deps || {};
     const escapeHtml = typeof settings.escapeHtml === 'function'
@@ -127,6 +115,17 @@
         attrs.push(`data-chat-row-v2-state="${escapeHtml(state)}"`);
       }
       return attrs;
+    }
+
+    // Text right before a question or a plan card is written to the owner (row 198): stamped
+    // data-assistant-lead-in, full emphasis, never folded under the steps heading.
+    function leadsIntoDecision(rows, rowIndex) {
+      for (let index = rowIndex + 1; index < rows?.length; index += 1) {
+        const next = rows[index], kind = normalizeId(next?.kind);
+        if (kind === 'reasoning' || kind === 'assistant_text') continue;
+        return kind === 'plan_document' || (/^tool_(call|step)$/.test(kind) && /^(ask_user|exit_plan_mode)$/.test(normalizeId(next.payload?.tool_name)));
+      }
+      return false;
     }
 
     function buildRowWrapperMarkup(row, messages, options) {
@@ -201,6 +200,9 @@
           || assistantPhase === 'final_answer') {
           attrs.push(`data-assistant-phase="${escapeHtml(assistantPhase)}"`);
         }
+        if (assistantPhase !== 'final_answer' && leadsIntoDecision(renderOptions.siblingRows, renderOptions.rowIndex)) {
+          attrs.push('data-assistant-lead-in="true"');
+        }
       }
       attrs.push(...buildTimelineV2SummaryAttributes(row));
       if (!rowHasVisibleBody) {
@@ -262,12 +264,12 @@
       return !result; // still running: the card shows "Preparing the new chat…"
     }
 
-    // Answers tool runs (NEXT_STEPS row 21). Rows stay flat siblings: members
-    // get data-run-* stamped on their own .chat-row and one summary row (kind
+    // Tool runs (NEXT_STEPS row 21). Rows stay flat siblings: members get
+    // data-run-* stamped on their own .chat-row and one summary row (kind
     // tool_run) is emitted right before the first member, so no row changes
-    // parent when a run grows and the keyed morph reuses every node. Only the
-    // Answers view emits runs (a view switch is already a full render), so the
-    // Thinking and Everything markup stays exactly as before.
+    // parent when a run grows and the keyed morph reuses every node. The
+    // Thinking and Everything views put one steps heading over the turn (row
+    // 192, buildWorkLedger below) and its runs, split by notes, under it (C15).
     function stampRowAttributes(markup, attrs) {
       return markup.startsWith(CHAT_ROW_OPEN_TAG)
         ? `${CHAT_ROW_OPEN_TAG}${attrs} ${markup.slice(CHAT_ROW_OPEN_TAG.length)}`
@@ -296,28 +298,23 @@
       try { return JSON.parse(inputJson); } catch (_error) { return null; }
     }
 
-    function describeRunEntry(entry, toolCallUtils) {
-      const row = entry.row;
-      const kind = normalizeId(row && row.kind);
-      const openTag = entry.markup.slice(0, entry.markup.indexOf('>') + 1);
-      if (kind === 'reasoning' || openTag.includes('data-row-visually-empty="true"')) return { role: 'transparent' };
-      if (kind !== 'tool_call' && kind !== 'tool_step') return { role: 'break' };
-      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
+    // One tool row as a run member, read from its own open tag (status, error
+    // and fold stamps) and its paired result (duration).
+    function readToolEntry(entry, toolCallUtils) {
+      const payload = entry.row && entry.row.payload && typeof entry.row.payload === 'object' ? entry.row.payload : {};
       const toolName = normalizeId(payload.tool_name);
       const toolTag = readToolRowOpenTag(entry.markup);
       const status = readMarkupAttribute(toolTag, 'data-tool-status') || normalizeId(payload.state);
-      const foldable = toolCallUtils.isToolRunFoldable({
-        toolName,
-        status,
-        approvalRequested: Array.isArray(payload.approval_requests) && payload.approval_requests.length > 0,
-        hasOwnContent: toolTag.includes('data-run-foldable="false"'),
-      });
-      if (!foldable) return { role: 'break' };
       const resultPayload = entry.pairedToolResultRow && entry.pairedToolResultRow.payload || {};
       return {
-        role: 'member',
-        callId: normalizeId(row.tool_call_id || payload.tool_call_id) || normalizeId(row.row_id),
-        expanded: readMarkupAttribute(toolTag, 'data-expanded') === 'true',
+        payload,
+        toolTag,
+        fold: {
+          toolName,
+          status,
+          approvalRequested: Array.isArray(payload.approval_requests) && payload.approval_requests.length > 0,
+          hasOwnContent: toolTag.includes('data-run-foldable="false"'),
+        },
         member: {
           tool: toolName,
           toolLabel: toolCallUtils.getToolDisplayName(toolName, payload.tool_display_name),
@@ -329,6 +326,41 @@
             ? Number(readMarkupAttribute(entry.markup, 'data-elapsed-started-at')) || 0 : 0,
         },
       };
+    }
+
+    function describeRunEntry(entry, toolCallUtils, scope) {
+      const row = entry.row;
+      const kind = normalizeId(row && row.kind);
+      const openTag = entry.markup.slice(0, entry.markup.indexOf('>') + 1);
+      const ledger = scope === 'ledger';
+      if (kind === 'reasoning' || openTag.includes('data-row-visually-empty="true"') || (ledger && kind === 'tool_result')) return { role: 'transparent' };
+      if (kind !== 'tool_call' && kind !== 'tool_step') return { role: 'break' };
+      const tool = readToolEntry(entry, toolCallUtils);
+      if (!toolCallUtils.isToolRunFoldable({ ...tool.fold, scope })) return { role: 'break' };
+      // Under the heading only a step the user opened seeds its run open (Everything auto-expands).
+      return {
+        role: 'member',
+        callId: normalizeId(row.tool_call_id || tool.payload.tool_call_id) || normalizeId(row.row_id),
+        expanded: ledger
+          ? globalThis.rendererTurnRowToolRenderUtils?.getToolRowExpansion?.(readMarkupAttribute(tool.toolTag, 'data-tool-row-key')) === true
+          : readMarkupAttribute(tool.toolTag, 'data-expanded') === 'true',
+        member: tool.member,
+      };
+    }
+
+    function resolveToolCallUtils() {
+      return globalThis.toolCallUtils || (typeof require === 'function' ? require('./tool-call-utils') : null);
+    }
+
+    // The steps heading (row 192): tool-run-utils owns the member rules, the
+    // model and the markup; this file lends it the row readers.
+    function buildWorkLedger(entries, renderOptions, messageById, toolCallUtils, runs) {
+      if (typeof toolCallUtils.buildWorkLedger !== 'function') return null;
+      return toolCallUtils.buildWorkLedger(entries, renderOptions, messageById, {
+        normalizeId, escapeHtml, readMarkupAttribute, buildToolRowKey: toolCallUtils.buildToolRowKey,
+        readToolEntry: (entry) => readToolEntry(entry, toolCallUtils),
+        getExpansion: (key) => globalThis.rendererTurnRowToolRenderUtils?.getToolRowExpansion?.(key),
+      }, runs);
     }
 
     function buildToolRunSummaryRowMarkup(run, descriptors, entries, renderOptions, toolCallUtils) {
@@ -349,6 +381,7 @@
       const expanded = seedOpen || runOverride === true;
       const expandedText = expanded ? 'true' : 'false';
       const inner = toolCallUtils.buildToolRunToggleInner(summary, { escapeHtml });
+      run.expanded = expanded;
       return {
         rowId: `${turnId}:tool_run:${runId}`,
         sharedStamp: `data-run-id="${escapeHtml(runId)}" data-run-expanded="${expandedText}"`,
@@ -359,38 +392,45 @@
       };
     }
 
-    // Joins the entries into the list body. With a segment sink it also emits
-    // one segment per top-level child in document order -- dividers, the run
-    // summary row, then the row as stamped -- so the per-row reconcile sees
-    // exactly the markup that is returned (timeline-perf + Answers tool runs).
-    function assembleToolRunMarkup(entries, renderOptions, segmentSink) {
-      const toolCallUtils = renderOptions.transcriptView === 'answers'
-        ? (globalThis.toolCallUtils || (typeof require === 'function' ? require('./tool-call-utils') : null))
-        : null;
-      const descriptors = toolCallUtils ? entries.map((entry) => describeRunEntry(entry, toolCallUtils)) : [];
+    // Joins the entries into the list body; a segment sink also gets one
+    // segment per top-level child in order (heading, dividers, run summary,
+    // stamped row), so the per-row reconcile sees the returned markup.
+    function assembleToolRunMarkup(entries, renderOptions, segmentSink, messageById) {
+      const answers = renderOptions.transcriptView === 'answers';
+      const toolCallUtils = answers || (normalizeId(renderOptions.turnId) && renderOptions.projectionContext) ? resolveToolCallUtils() : null;
+      const descriptors = toolCallUtils ? entries.map((entry) => describeRunEntry(entry, toolCallUtils, answers ? 'run' : 'ledger')) : [];
       const runs = toolCallUtils
         ? toolCallUtils.groupToolRuns(descriptors.map((descriptor, index) => ({
           role: descriptor.role,
           breakBefore: Boolean(entries[index].dividerMarkup),
         })))
         : [];
+      const summaries = runs.map((run) => buildToolRunSummaryRowMarkup(run, descriptors, entries, renderOptions, toolCallUtils));
+      // Runs exist outside Answers only under a heading; a turn with a run has a step, so it has one.
+      const ledger = toolCallUtils && !answers
+        ? buildWorkLedger(entries, renderOptions, messageById, toolCallUtils, runs)
+        : null;
+      if (ledger && segmentSink) segmentSink.push({ kind: 'row', id: ledger.rowId, markup: ledger.markup });
       const summaryBefore = new Map();
-      const stampByIndex = new Map();
-      for (const run of runs) {
-        const summaryRow = buildToolRunSummaryRowMarkup(run, descriptors, entries, renderOptions, toolCallUtils);
+      const stampByIndex = new Map(ledger && ledger.stampByIndex);
+      const stamp = (index, attrs) => stampByIndex.set(index, stampByIndex.has(index) ? `${stampByIndex.get(index)} ${attrs}` : attrs);
+      runs.forEach((run, i) => {
+        const summaryRow = ledger
+          ? { ...summaries[i], markup: stampRowAttributes(summaries[i].markup, ledger.runStamps.get(run.members[0])) }
+          : summaries[i];
         summaryBefore.set(run.members[0], summaryRow);
         for (const index of run.members) {
-          const memberAttrs = toolCallUtils.buildToolRunMemberAttributes(descriptors[index].member, escapeHtml);
-          stampByIndex.set(index, `${summaryRow.sharedStamp} ${memberAttrs}`);
+          const memberAttrs = ledger ? 'data-run-member="step"' : toolCallUtils.buildToolRunMemberAttributes(descriptors[index].member, escapeHtml);
+          stamp(index, `${summaryRow.sharedStamp} ${memberAttrs}`);
         }
         for (const index of run.interior) {
-          stampByIndex.set(index, `${summaryRow.sharedStamp} data-run-member="interior"`);
+          stamp(index, `${summaryRow.sharedStamp} data-run-member="interior"`);
         }
-      }
-      return entries.map((entry, index) => {
-        const stamp = stampByIndex.get(index);
+      });
+      const body = entries.map((entry, index) => {
+        const attrs = stampByIndex.get(index);
         const summaryRow = summaryBefore.get(index) || null;
-        const markup = stamp ? stampRowAttributes(entry.markup, stamp) : entry.markup;
+        const markup = attrs ? stampRowAttributes(entry.markup, attrs) : entry.markup;
         if (segmentSink) {
           segmentSink.push(...entry.dividers);
           if (summaryRow) segmentSink.push({ kind: 'row', id: summaryRow.rowId, markup: summaryRow.markup });
@@ -398,6 +438,7 @@
         }
         return entry.dividerMarkup + (summaryRow ? summaryRow.markup : '') + markup;
       }).join('');
+      return ledger ? ledger.markup + body : body;
     }
 
     function buildTurnRowListMarkup(rows, messages, options) {
@@ -483,7 +524,7 @@
         }
         entries.push({ row, markup, dividerMarkup, dividers, pairedToolResultRow });
       });
-      const rowMarkup = assembleToolRunMarkup(entries, renderOptions, segmentSink);
+      const rowMarkup = assembleToolRunMarkup(entries, renderOptions, segmentSink, messageById);
 
       const turnPhaseAttr = turnPhase ? ` data-turn-phase="${escapeHtml(turnPhase)}"` : '';
       // The in-flight turn (projection-context liveTurnId, tool gaps included):

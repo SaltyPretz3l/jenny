@@ -64,8 +64,10 @@ function jsonOf(bytes) {
 const tooLarge = () => ({ ok: false, error: { code: HOST_ERROR_CODES.INVALID, reason: 'job_request_too_large', retryable: false } });
 
 // `hello()` (optional) answers the host's hello; a command refused with
-// team_hello_required is sent once more after it, as team-session.js does.
-function createNodeLink({ http, client, hello = null }) {
+// team_hello_required is sent once more after it, as team-session.js does. `ready()` (optional)
+// runs before each call reads `client()`: it registers the client when there is none and rotates
+// it after a host restart, so the credentials sent are the ones in force now (never the stale ones).
+function createNodeLink({ http, client, hello = null, ready = null }) {
   if (!http || typeof http.openRequestStream !== 'function') throw new TypeError('The node link needs a team HTTP client.');
   if (typeof client !== 'function') throw new TypeError('The node link needs the registered client.');
 
@@ -84,8 +86,13 @@ function createNodeLink({ http, client, hello = null }) {
     return { status: handle.status, ...read };
   }
 
+  async function currentReady() {
+    if (typeof ready === 'function') await ready();
+    return current();
+  }
+
   async function commandOnce(operation, params, { timeoutMs, signal }) {
-    const used = current();
+    const used = await currentReady();
     const body = Buffer.from(JSON.stringify({ api_version: API_VERSION, operation, request_id: crypto.randomUUID(),
       client_id: used.client_id, boot_epoch: used.boot_epoch, params }));
     const answer = await exchange('POST', '/api/v1/commands', { body, headers: { 'X-Client-Token': used.client_token },
@@ -108,7 +115,7 @@ function createNodeLink({ http, client, hello = null }) {
       if (!JOB_ID.test(String(jobId))) throw lost('team_path_invalid');
       const max = Math.min(maxBytes, MAX_REQUEST_BYTES);
       const answer = await exchange('GET', `/api/v1/team/node/jobs/${jobId}/request`,
-        { headers: routeHeaders(current()), timeoutMs, signal, max: Math.max(max, ANSWER_MAX_BYTES) });
+        { headers: routeHeaders(await currentReady()), timeoutMs, signal, max: Math.max(max, ANSWER_MAX_BYTES) });
       if (answer.tooLarge) return tooLarge();
       if (answer.status === 200) return answer.bytes.length > max ? tooLarge() : { ok: true, bytes: answer.bytes };
       return jsonOf(answer.bytes);
@@ -116,7 +123,7 @@ function createNodeLink({ http, client, hello = null }) {
     // One chunk: an empty `bytes` is a ping; the answer is the host's { ok, next_seq, cancel } or refusal.
     async postChunk(jobId, { seq, final, bytes, timeoutMs = 15_000, signal = null }) {
       if (!JOB_ID.test(String(jobId))) throw lost('team_path_invalid');
-      const headers = routeHeaders(current(), { 'X-Chunk-Seq': String(seq), 'X-Chunk-Final': final ? '1' : '0' });
+      const headers = routeHeaders(await currentReady(), { 'X-Chunk-Seq': String(seq), 'X-Chunk-Final': final ? '1' : '0' });
       const answer = await exchange('POST', `/api/v1/team/node/jobs/${jobId}/chunks`, { body: bytes, headers, timeoutMs, signal });
       if (answer.tooLarge) throw lost('team_response_too_large');
       return jsonOf(answer.bytes);

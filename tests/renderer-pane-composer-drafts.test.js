@@ -151,7 +151,7 @@ test('P4: an unchanged composer sync writes nothing to pane 1\'s DOM', (t) => {
   for (let index = 0; index < 100; index += 1) rig.composition.renderSessionPane('b', 'composer');
   observer.takeRecords().forEach((record) => mutations.push(record));
   assert.deepEqual(mutations.map((record) => `${record.type}:${record.attributeName || record.target.className}`), []);
-  assert.equal(root.querySelector('.composer-send').textContent, 'Queue', 'the streaming label still renders');
+  assert.equal(root.querySelector('.composer-send').getAttribute('aria-label'), 'Queue', 'the streaming queue state still renders (row 192: an icon, named Queue)');
 });
 
 /* ── Astra review round 2: the openSession loading window. openSession

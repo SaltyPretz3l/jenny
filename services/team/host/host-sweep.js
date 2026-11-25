@@ -151,7 +151,8 @@ async function sweepPendingExport(userDataPath) {
     return error?.code === 'ENOENT';
   }
   const { parent, folder } = record || {};
-  if (typeof parent !== 'string' || typeof folder !== 'string' || path.dirname(folder) !== parent) {
+  // `folder === parent` is a drive root or `/` (its own dirname): never a folder an export made, and never removed.
+  if (typeof parent !== 'string' || typeof folder !== 'string' || folder === parent || path.dirname(folder) !== parent) {
     clearPendingExport(userDataPath);
     return true;
   }

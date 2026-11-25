@@ -365,3 +365,13 @@ test('ensurePrimarySession swallows a throwing or missing preference writer and 
   missingWriter.setSessionPreferences = undefined;
   assert.equal((await ensureViaService(missingWriter)).created, true);
 });
+
+test('row 201 OD-1: a team model pin is never re-applied while Team is on; with Team off the id is ordinary', async () => {
+  const on = pinService('team/team_a/qwen3.8:27b');
+  on.featureFlags = { ...(on.featureFlags || {}), team: true };
+  assert.equal((await ensureViaService(on)).created, true);
+  assert.equal(on.calls.length, 0, 'a teammate GPU is never Jenny\'s own model');
+  const off = pinService('team/team_a/qwen3.8:27b');
+  await ensureViaService(off);
+  assert.equal(off.calls.length, 1, 'E71: the prefix is reserved only while Team is on');
+});

@@ -20,11 +20,10 @@
  * answered out of its conversation, the row's title is a BUTTON that opens that
  * conversation -- the one click back to the context.
  *
- * While the panel is collapsed to its strip the same rows also render into a
- * flyout beside it (renderer-attention-inbox-flyout.js owns that dialog and the
- * badge's DOM). The conversation on screen keeps a one-line row and no
- * decisions: its transcript card is where it is answered. `getSnapshot()` is
- * what the strip and the chat dots read.
+ * The titlebar badge's DOM lives in renderer-attention-inbox-flyout.js.
+ * The conversation on screen keeps a one-line row and no decisions: its
+ * transcript card is where it is answered. `getSnapshot()` is what the chat
+ * dots read.
  *
  * It owns no clock. `render()` is called from the same passes that already
  * refresh the chats panel and the workspace chrome, so an approval arriving in
@@ -44,9 +43,8 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  /* Each render target keeps its own DOM-id prefix so no id repeats in the document. */
+  /* The section's DOM-id prefix, so no id repeats in the document. */
   var PANEL_PREFIX = 'attention-inbox-';
-  var FLYOUT_PREFIX = 'attention-inbox-flyout-';
   var EMPTY_SNAPSHOT = Object.freeze({ answerable: 0, waitingSessionIds: Object.freeze([]), states: new Map(), key: '' });
   var COLLAPSED_STORAGE_KEY = 'jenny.attentionInbox.collapsed';
   var ROW_CLASS = 'attention-inbox__row';
@@ -79,10 +77,10 @@
    * @param {HTMLElement} [deps.badgeAnchor] - #workbenchHealthPillSlot
    * @param {Function} [deps.actionButton] - inventoryActionButton
    * @param {Object} [deps.facts] - { getApprovalFacts, getApprovalCommandPreview }
-   * @param {Object} [deps.callbacks] - { openSession, setActiveView, setSidebarCollapsed, appendClientLog, showComposerActionError }
+   * @param {Object} [deps.callbacks] - { openSession, setActiveView, appendClientLog, showComposerActionError }
    * @param {Function} [deps.getAttentionInbox] - Overrides the built-in model read
    * @param {Function} [deps.onInboxRows] - Told the model rows on every pass whose sources moved
-   * @returns {{render, dispose, getSnapshot, openFlyout, closeFlyout, toggleFlyout, isFlyoutOpen}}
+   * @returns {{render, dispose, getSnapshot}}
    */
   function createAttentionInboxController(deps) {
     var options = deps && typeof deps === 'object' ? deps : {};
@@ -95,17 +93,11 @@
     var actionButton = typeof options.actionButton === 'function' ? options.actionButton : null;
     var callbacks = options.callbacks && typeof options.callbacks === 'object' ? options.callbacks : {};
     var appendClientLog = typeof callbacks.appendClientLog === 'function' ? callbacks.appendClientLog : null;
-    // index.html loads it first (require is the Node path); a missing module degrades to the expand path.
+    // index.html loads it first (require is the Node path); a missing module leaves the section without its badge.
     var flyoutApi = flyoutModule();
 
-    /* Where rows render: the panel's section, and the flyout while it is open.
-     * Each target owns the listeners of its own controls, because one can be
-     * rebuilt while the other stays on screen. */
-    var panel = { host: host, prefix: PANEL_PREFIX, cleanup: [], flyout: false };
-    var flyout = null;
-    var flyoutTarget = null;
-    var current = panel;
-    var lastRows = [];
+    /* Where rows render: the panel's section, which owns the listeners of its own controls. */
+    var panel = { host: host, prefix: PANEL_PREFIX, cleanup: [] };
     var snapshot = EMPTY_SNAPSHOT;
     var fingerprint = null;
     var signature = null;
@@ -182,31 +174,26 @@
       if (!node) return null;
       if (spec.modifier) node.classList.add(spec.modifier);
       node.addEventListener('click', spec.onClick);
-      current.cleanup.push(function detach() { node.removeEventListener('click', spec.onClick); });
+      panel.cleanup.push(function detach() { node.removeEventListener('click', spec.onClick); });
       parent.appendChild(node);
       return node;
     }
 
-    function flyoutOpen() { return !!(flyout && flyout.isOpen()); }
-
     function setRowBusy(key, busy) {
-      // The row may be on screen in the panel, the flyout or both. Compared,
-      // never interpolated into a selector: a call id carrying a quote or a
-      // bracket must not throw inside the click that owns it.
-      (flyoutOpen() ? [panel, flyoutTarget] : [panel]).forEach(function eachTarget(target) {
-        target.host.querySelectorAll('.' + ROW_CLASS).forEach(function eachRow(row) {
-          if (row.dataset.attentionKey !== key) return;
-          // The decisions go dead; the row keeps its surface, because a row that
-          // dims while the bridge answers reads as an outcome it has not had.
-          // Disabling the pressed decision would blur it: focus the title first.
-          var active = documentRef.activeElement;
-          if (busy === true && active && row.contains(active) && active.classList.contains(ACTION_CLASS)) {
-            var title = row.querySelector('.' + TITLE_CLASS);
-            if (title && typeof title.focus === 'function') title.focus();
-          }
-          row.querySelectorAll('.' + ACTION_CLASS).forEach(function disable(node) {
-            node.disabled = busy === true;
-          });
+      // Compared, never interpolated into a selector: a call id carrying a quote
+      // or a bracket must not throw inside the click that owns it.
+      host.querySelectorAll('.' + ROW_CLASS).forEach(function eachRow(row) {
+        if (row.dataset.attentionKey !== key) return;
+        // The decisions go dead; the row keeps its surface, because a row that
+        // dims while the bridge answers reads as an outcome it has not had.
+        // Disabling the pressed decision would blur it: focus the title first.
+        var active = documentRef.activeElement;
+        if (busy === true && active && row.contains(active) && active.classList.contains(ACTION_CLASS)) {
+          var title = row.querySelector('.' + TITLE_CLASS);
+          if (title && typeof title.focus === 'function') title.focus();
+        }
+        row.querySelectorAll('.' + ACTION_CLASS).forEach(function disable(node) {
+          node.disabled = busy === true;
         });
       });
     }
@@ -266,7 +253,6 @@
     }
 
     function openSession(sessionId, row) {
-      closeFlyout({ restoreFocus: false });
       if (row && row.source === 'team') model().openTeamConversation(row);
       else if (typeof callbacks.openSession === 'function') callbacks.openSession(sessionId);
     }
@@ -323,7 +309,7 @@
     function renderTitle(row, node) {
       var button = control(node, {
         action: 'open-session',
-        domId: current.prefix + 'session-' + slug(row.key),
+        domId: panel.prefix + 'session-' + slug(row.key),
         className: TITLE_CLASS,
         label: row.sessionTitle,
         title: jt('chat.attentionInbox.openSessionTitle', 'Open this conversation'),
@@ -343,7 +329,7 @@
 
     // One text decision: its DOM id and modifier class follow the action's name.
     function decide(actions, row, spec) {
-      control(actions, Object.assign({ domId: current.prefix + (spec.idName || spec.action) + '-' + slug(row.key),
+      control(actions, Object.assign({ domId: panel.prefix + (spec.idName || spec.action) + '-' + slug(row.key),
         className: ACTION_CLASS, modifier: ACTION_CLASS + '--' + spec.action }, spec));
     }
 
@@ -423,26 +409,18 @@
 
     /* The panel's own kicker, reused class and all (.group-label in
      * styles/chats-panel.css): the count is plain text inside it, never a
-     * pill, and in the panel the whole kicker is the collapse toggle. The
-     * flyout's is static: its list is always shown. */
+     * pill, and the whole kicker is the collapse toggle. */
     function renderHeading(answerable) {
       var heading = element('div', 'attention-inbox__heading');
-      if (current.flyout) {
-        var label = element('div', 'attention-inbox__heading-static', jt('chat.attentionInbox.title', 'Needs you'));
-        label.classList.add('group-label');
-        label.appendChild(element('span', 'attention-inbox__count', String(answerable)));
-        heading.appendChild(label);
-        return heading;
-      }
       var toggle = control(heading, {
-        action: 'toggle', domId: current.prefix + 'toggle', className: 'group-label attention-inbox__toggle',
+        action: 'toggle', domId: panel.prefix + 'toggle', className: 'group-label attention-inbox__toggle',
         label: jt('chat.attentionInbox.title', 'Needs you'),
         title: jt('chat.attentionInbox.toggleTitle', 'Show or hide what needs you'),
         onClick: function onToggle() { writeCollapsed(!readCollapsed()); redraw(); },
       });
       if (toggle) {
         toggle.setAttribute('aria-expanded', String(!readCollapsed()));
-        toggle.setAttribute('aria-controls', current.prefix + 'list');
+        toggle.setAttribute('aria-controls', panel.prefix + 'list');
         toggle.appendChild(element('span', 'attention-inbox__count', String(answerable)));
         var chevron = element('span', 'attention-inbox__chevron', readCollapsed() ? CHEVRON_CLOSED : CHEVRON_OPEN);
         chevron.setAttribute('aria-hidden', 'true');
@@ -451,71 +429,35 @@
       return heading;
     }
 
-    /* One target's whole content, rebuilt from the rows of this pass. */
-    function paint(target, rows, answerable) {
-      current = target;
+    /* The section's whole content, rebuilt from the rows of this pass. */
+    function paint(rows, answerable) {
       var active = documentRef.activeElement;
-      var focusedId = active && target.host.contains(active) ? active.id : '';
-      while (target.cleanup.length) target.cleanup.pop()();
-      target.host.replaceChildren();
-      if (!target.flyout) target.host.hidden = rows.length === 0;
+      var focusedId = active && host.contains(active) ? active.id : '';
+      while (panel.cleanup.length) panel.cleanup.pop()();
+      host.replaceChildren();
+      host.hidden = rows.length === 0;
       if (!rows.length) return;
-      target.host.appendChild(renderHeading(answerable));
+      host.appendChild(renderHeading(answerable));
       var list = element('div', 'attention-inbox__list');
-      list.id = target.prefix + 'list';
-      list.hidden = !target.flyout && readCollapsed();
+      list.id = panel.prefix + 'list';
+      list.hidden = readCollapsed();
       list.setAttribute('role', 'group');
       list.setAttribute('aria-label', jt('chat.attentionInbox.listLabel', 'Everything waiting on you'));
-      target.host.appendChild(list);
+      host.appendChild(list);
       rows.forEach(function addRow(row) {
         renderRow(row, list);
         if (stale.has(row.key)) staleShown.add(row.key);
       });
       var restore = focusedId ? documentRef.getElementById(focusedId) : null;
       // A focused row that just left (answered) hands focus to the first title, never to the body.
-      if (focusedId && !(restore && target.host.contains(restore))) restore = target.host.querySelector('.' + TITLE_CLASS);
-      if (restore && target.host.contains(restore) && !restore.disabled) restore.focus();
-    }
-
-    /* A closed flyout holds no rows and no listeners. */
-    function clearFlyout() {
-      if (!flyoutTarget) return;
-      while (flyoutTarget.cleanup.length) flyoutTarget.cleanup.pop()();
-      flyoutTarget.host.replaceChildren();
-    }
-
-    function ensureFlyout() {
-      if (flyout || disposed || !flyoutApi || typeof flyoutApi.createAttentionInboxFlyout !== 'function') return flyout;
-      var created = flyoutApi.createAttentionInboxFlyout({ documentRef: documentRef, windowRef: windowRef, onClose: clearFlyout });
-      var flyoutHost = created.contentHost();
-      if (!flyoutHost) { created.dispose(); return null; }
-      flyout = created;
-      flyoutTarget = { host: flyoutHost, prefix: FLYOUT_PREFIX, cleanup: [], flyout: true };
-      return flyout;
-    }
-
-    function openFlyout(anchorEl, openOptions) {
-      if (disposed || !anchorEl || snapshot.answerable === 0 || !ensureFlyout()) return false;
-      if (!flyout.isOpen()) paint(flyoutTarget, lastRows, snapshot.answerable);
-      return flyout.open(anchorEl, openOptions);
-    }
-
-    function closeFlyout(closeOptions) { if (flyout) flyout.close(closeOptions); }
-
-    function toggleFlyout(anchorEl) {
-      if (flyoutOpen()) closeFlyout({ restoreFocus: false });
-      else openFlyout(anchorEl, { opener: anchorEl });
+      if (focusedId && !(restore && host.contains(restore))) restore = host.querySelector('.' + TITLE_CLASS);
+      if (restore && host.contains(restore) && !restore.disabled) restore.focus();
     }
 
     function handleBadgeClick() {
-      // The section lives in the Chats panel: chat view first. A collapsed panel
-      // answers in its strip's flyout, because expanding it would undo that choice.
+      // The section lives in the Chats panel: chat view first.
       if (typeof callbacks.setActiveView === 'function') callbacks.setActiveView('chat');
       render(); // the view just changed, so which chat is "on screen" may have too
-      var mark = documentRef.getElementById('chatsStripNeedsYou');
-      if (mark && mark.isConnected && !mark.closest('[hidden]')
-        && openFlyout(mark, { opener: badge && badge.element() })) return;
-      if (typeof callbacks.setSidebarCollapsed === 'function') callbacks.setSidebarCollapsed(false);
       if (readCollapsed()) { writeCollapsed(false); redraw(); }
       if (typeof host.scrollIntoView === 'function') host.scrollIntoView({ block: 'start' });
       // The title, never a decision: a stray Space or Enter must not approve a call.
@@ -555,7 +497,6 @@
       stale.forEach(function pruneStale(key) { if (!live.has(key)) stale.delete(key); });
       var rows = modelRows.filter(function isVisible(row) { return !resolved.has(row.key); });
       var answerable = rows.filter(function isAnswerable(row) { return !stale.has(row.key); });
-      lastRows = rows;
       snapshot = model().snapshotOf(answerable);
       // The second gate: what the rows would actually say, so a source that
       // moved without changing a word still touches no DOM.
@@ -565,34 +506,20 @@
       if (signature === next) return;
       signature = next;
       if (badge) badge.sync(answerable.length);
-      if (flyoutOpen()) {
-        if (answerable.length === 0) {
-          // Nothing left to answer: the dialog goes, and focus must not fall to the body with it.
-          var held = flyout.contains(documentRef.activeElement);
-          flyout.close({ restoreFocus: false });
-          var toggle = held ? documentRef.getElementById('chatsStripPanelToggle') : null;
-          if (toggle) toggle.focus();
-        } else {
-          paint(flyoutTarget, rows, answerable.length);
-          flyout.reposition();
-        }
-      }
-      paint(panel, rows, answerable.length);
+      paint(rows, answerable.length);
     }
 
     function dispose() {
       if (disposed) return;
       disposed = true;
       if (typeof windowRef.removeEventListener === 'function') windowRef.removeEventListener('jenny:team-attention', onTeam);
-      if (flyout) flyout.dispose();
       while (panel.cleanup.length) panel.cleanup.pop()();
       if (badge) badge.dispose();
       host.replaceChildren();
       host.hidden = true;
     }
 
-    return { render: render, dispose: dispose, getSnapshot: function getSnapshot() { return snapshot; },
-      openFlyout: openFlyout, closeFlyout: closeFlyout, toggleFlyout: toggleFlyout, isFlyoutOpen: flyoutOpen };
+    return { render: render, dispose: dispose, getSnapshot: function getSnapshot() { return snapshot; } };
   }
 
   return { createAttentionInboxController: createAttentionInboxController };

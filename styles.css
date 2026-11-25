@@ -29,7 +29,6 @@
 @import url("./styles/attention-inbox.css");
 @import url("./styles/away-digest.css");
 @import url("./styles/chats-panel-selection.css");
-@import url("./styles/chats-panel-collapsed.css");
 @import url("./styles/toast.css");
 @import url("./styles/workspace-rail.css");
 @import url("./styles/chat-timeline-tokens.css");
@@ -104,6 +103,7 @@
 @import url("./styles/ide-tabs.css");
 @import url("./styles/ide-statusbar-quickpick.css");
 @import url("./styles/ide-workbench.css");
+@import url("./styles/chat-workbench.css");
 @import url("./styles/ide-view-replace.css");
 @import url("./styles/ide-diff-toolbar.css");
 @import url("./styles/ide-chrome.css");
@@ -155,6 +155,7 @@
 @import url("./styles/chat-terminal-panel.css");
 @import url("./styles/project-notes-rail.css");
 @import url("./styles/browser-use-panel.css");
+@import url("./styles/live-run-panel.css");
 @import url("./styles/workbench-health-pill.css");
 @import url("./styles/surface-states.css");
 @import url("./styles/origin-chip.css");

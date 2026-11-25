@@ -162,8 +162,41 @@
     return readPaneSessionId(resolveFocusedPane(layout));
   }
 
+  /**
+   * Which open chat tabs belong to pane 1, as a sparse map `sessionId -> 1`
+   * (a tab not in the map belongs to pane 0; a 0 value is never stored).
+   * Rules: only open tabs with a value of exactly 1 survive; fewer than two
+   * panes means no map; the pane-1 session is forced in and the pane-0
+   * session forced out; keys follow `openSessionIds` order. Junk is `{}`.
+   * Always a fresh, plain, unfrozen object.
+   *
+   * @param {*} raw - the stored or patched map.
+   * @param {Object} context
+   * @param {Array<string>} context.openSessionIds - the open tabs, in rail order.
+   * @param {Array} context.panes - the layout's panes (entries or bare ids).
+   * @returns {Object<string, number>}
+   */
+  function normalizeTabPanes(raw, context) {
+    var result = {};
+    var panes = readPanes(context);
+    if (panes.length < 2) return result;
+    var source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    var openIds = context && Array.isArray(context.openSessionIds) ? context.openSessionIds : [];
+    var paneZero = readPaneSessionId(panes[0]);
+    var paneOne = readPaneSessionId(panes[1]);
+    openIds.forEach(function place(value) {
+      var sessionId = normalizeId(value);
+      if (!sessionId || sessionId === paneZero) return;
+      if (sessionId === paneOne || (Object.prototype.hasOwnProperty.call(source, sessionId) && source[sessionId] === 1)) {
+        result[sessionId] = 1;
+      }
+    });
+    return result;
+  }
+
   return {
     normalizePaneLayout: normalizePaneLayout,
+    normalizeTabPanes: normalizeTabPanes,
     resolveFocusedPane: resolveFocusedPane,
     resolvePaneForSession: resolvePaneForSession,
     listPaneSessionIds: listPaneSessionIds,

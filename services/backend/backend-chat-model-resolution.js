@@ -9,17 +9,19 @@ const { assertTeamModelUsable, isReservedTeamModelId, liveTeamSelection, otherCh
 
 const CLOUD_ENGINE_TYPES = new Set(['chatgpt', 'codex-cli', 'api-provider']);
 
-// A chat on "Default" (empty preferred_model) runs on the Settings default for
-// local inference (Model Library), not on whatever local model another chat
-// loaded last. Only a model the catalog lists or a managed server can serve
-// counts (the catalog lists one engine family at a time), and a cloud engine
-// keeps its own model; otherwise '' keeps the loaded-model fallback.
-// Hosted servers pin their own model. Mirrored by the renderer's picker label.
+// A chat on "Default" (empty preferred_model) runs on the Settings default on
+// this PC (Model Library), whichever engine another chat is using: a chat
+// reaches the cloud only when a cloud model was picked for it (row 194, owner
+// 2026-11-23). Only a model the catalog lists or a managed server can serve
+// counts (the catalog lists one engine family at a time); otherwise '' keeps
+// the loaded-model fallback. Hosted servers pin their own model. Mirrored by
+// the renderer's picker label.
 function resolveDefaultChatModel(service) {
   if (!service || service.hostMode === 'server') return '';
-  if (CLOUD_ENGINE_TYPES.has(String(service.currentEngineType || '').trim().toLowerCase())) return '';
   const model = String(service.offlineIntelligenceService?.getPreferredLocalModel?.() || '').trim();
   if (!model) return '';
+  // Row 201 C1: a saved team id (a teammate's GPU) is no default on this PC; it reads as unset.
+  if (isReservedTeamModelId(service, model)) return '';
   if (model === String(service.currentModel || '').trim() || service._modelEngineHints?.get?.(model)) return model;
   return managedServerKindForModel(service, model, { routing: true }) ? model : '';
 }

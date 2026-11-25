@@ -22,8 +22,9 @@ use crate::host::{stopping, Shared};
 
 /// In characters.
 const MAX_URL_CHARS: usize = 100;
-/// In bytes, each printable ASCII.
-const MAX_TOKEN_BYTES: usize = 256;
+/// In bytes: the token invites.js mints and the owner's token field takes, an HTTP bearer token
+/// (RFC 6750 b64token) of 1 to 48 characters (`server/team/transport/relay-url.js`).
+const MAX_TOKEN_BYTES: usize = 48;
 /// The default of `RunOptions::relay_unreachable_after`: how long the host waits for its relay
 /// before it says `unreachable`. Under the supervisor's ten-second start and stop budgets; it
 /// never holds `ready` or `stop`.
@@ -48,7 +49,8 @@ impl RelayStart {
 
 /// `relay`: absent or null is off; otherwise exactly `{ url, token }`. Any other shape, a URL
 /// that is not plain `https://host[:port]` of at most 100 characters, or a token that is not
-/// 1 to 256 printable ASCII characters is `Err`, which the caller reports as `start_invalid`.
+/// a 1 to 48 character b64token is `Err`, which the caller reports as `start_invalid`. Where
+/// the URL may point is checked once the sockets are known ([`destination_allowed`]).
 pub(crate) fn parse(fields: &mut Map<String, Value>) -> Result<Option<RelayStart>, ()> {
     // Read in place, so the message's drop wipes the URL with the other strings.
     let Some(field) = fields.get_mut("relay") else {
@@ -103,8 +105,37 @@ fn parse_url(text: &str) -> Result<RelayUrl, ()> {
     }
 }
 
+/// True when the relay may be dialled. An invite names it, so it is untrusted: the same rule as
+/// `relay-url.js`, a DNS name only, never `localhost` or a name under it, and never an address
+/// literal of any kind (loopback, unspecified, link-local, multicast, private LAN or public
+/// alike). Loopback-only sockets (the tests' loopback relay) can reach nothing else anyway.
+pub(crate) fn destination_ok(url: &RelayUrl, loopback_only: bool) -> bool {
+    if loopback_only {
+        return true;
+    }
+    // `domain()` is `None` for an IPv4 or IPv6 host, including the forms the URL parser reads
+    // as IPv4 (`0x7f000001`).
+    match url.domain() {
+        Some(name) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name != "localhost" && !name.ends_with(".localhost")
+        }
+        None => false,
+    }
+}
+
+/// [`destination_ok`] for a `relay` start field; no relay is always allowed.
+pub(crate) fn destination_allowed(relay: Option<&RelayStart>, loopback_only: bool) -> bool {
+    relay.is_none_or(|relay| destination_ok(&relay.url, loopback_only))
+}
+
 fn is_token(token: &str) -> bool {
-    (1..=MAX_TOKEN_BYTES).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_graphic())
+    let body = token.trim_end_matches('=');
+    (1..=MAX_TOKEN_BYTES).contains(&token.len())
+        && !body.is_empty()
+        && body
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._~+/-".contains(&b))
 }
 
 /// The endpoint's relay: none (iroh's Minimal preset has no relay transport), or exactly the
@@ -403,6 +434,61 @@ mod tests {
         assert_eq!(reason(&[(false, true), (true, false)]), "host_unreachable");
         assert_eq!(reason(&[(false, false)]), "relay_unreachable");
         assert_eq!(reason(&[]), "relay_unreachable");
+    }
+
+    fn accepted(text: &str, loopback_only: bool) -> bool {
+        parse_url(text).is_ok_and(|url| destination_ok(&url, loopback_only))
+    }
+
+    // Part III transport: an invite names the relay a member dials, so one rule with
+    // relay-url.js: a DNS name only, never `localhost` (or under it), never an address literal.
+    #[test]
+    fn a_relay_from_an_invite_is_a_dns_name_never_localhost_or_an_address() {
+        for good in [
+            "https://relay.example.com",
+            "https://relay.example.com:8443",
+            "https://localhost.example.com",
+        ] {
+            assert!(accepted(good, false), "{good}");
+        }
+        for bad in [
+            "https://localhost",
+            "https://LOCALHOST:8443",
+            "https://relay.localhost",
+            "https://127.0.0.1",
+            "https://127.0.0.1:3340",
+            "https://0.0.0.0",
+            "https://169.254.1.1",
+            "https://224.0.0.1",
+            "https://192.168.1.10",
+            "https://10.0.0.1",
+            "https://8.8.8.8",
+            "https://0x7f000001",
+            "https://[::1]",
+            "https://[::]",
+            "https://[fe80::1]",
+            "https://[ff02::1]",
+            "https://[2606:4700::1111]",
+        ] {
+            assert!(!accepted(bad, false), "{bad}");
+        }
+        // The loopback test relay, with loopback-only sockets only.
+        assert!(accepted("https://localhost:3340", true));
+        assert!(accepted("https://127.0.0.1:3340", true));
+    }
+
+    // Part III transport: the one token grammar invites.js mints and the owner's field takes:
+    // 1 to 48 characters of an HTTP bearer token (RFC 6750 b64token).
+    #[test]
+    fn the_relay_token_has_the_owners_field_grammar() {
+        let longest = "A".repeat(48);
+        for good in ["t", "tok_en-1.2~", "a+b/c==", longest.as_str()] {
+            assert!(is_token(good), "{good}");
+        }
+        let too_long = "A".repeat(49);
+        for bad in ["", "a b", "a!b", "a=b", "=", "\"x\"", too_long.as_str()] {
+            assert!(!is_token(bad), "{bad}");
+        }
     }
 
     #[test]

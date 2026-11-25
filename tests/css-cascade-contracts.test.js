@@ -87,13 +87,10 @@ test('the find field outranks the session bar rules it overrides', () => {
     return rule;
   };
   const anyChild = pick(bar, `${PREFIX} > *`);
-  const title = pick(bar, `${PREFIX} > .session-bar-title`);
   const field = pick(find, `${PREFIX} > .chat-find`);
   const toggle = pick(find, `${PREFIX} > .chat-find-toggle`);
-  const hideTitle = pick(find, `${PREFIX}[data-find-open] > .session-bar-title`);
-  assert.equal(field.style.getPropertyValue('order'), '1', 'the field sits right after the title slot');
-  assert.equal(toggle.style.getPropertyValue('order'), '50', 'the toggle sits before the Session button (60)');
-  assert.equal(hideTitle.style.getPropertyValue('display'), 'none');
+  assert.equal(field.style.getPropertyValue('order'), '1', 'the field sits right after the pane tabs');
+  assert.equal(toggle.style.getPropertyValue('order'), '50', 'the toggle sits after the bar buttons (40)');
   const strictlyBeats = (winner, loser) => {
     const a = specificity(winner.selector);
     const b = specificity(loser.selector);
@@ -104,7 +101,6 @@ test('the find field outranks the session bar rules it overrides', () => {
   };
   assert.ok(strictlyBeats(field, anyChild), 'the field order beats the bar\u2019s order 80');
   assert.ok(strictlyBeats(toggle, anyChild), 'the toggle order beats the bar\u2019s order 80');
-  assert.ok(strictlyBeats(hideTitle, title), 'open, the title hides despite its display: block');
   assert.equal(find.some((rule) => /chat-search-overlay-host/.test(rule.selector)), false, 'no floating host remains');
 });
 

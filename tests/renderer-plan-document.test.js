@@ -76,6 +76,34 @@ test('terminal and legacy plans render as collapsed inert receipts', () => {
   assert.match(accepted, /data-plan-build-accepted data-plan-id="plan_a"/);
 });
 
+test('row 198: versions read in order, plain state words, a stopped latest plan stays a card with Build it', () => {
+  const plan = { plan_id: 'p2', title: 'Bar', steps: ['A'], feedback: 'Could I get a mock up?' };
+  const line = documentUi.fullDocumentMarkup({ ...plan, state: 'superseded' }, { version: 1 });
+  assert.match(line, /^<details class="plan-document-receipt plan-version-line"/);
+  assert.match(line, /Plan, version 1<\/span><span class="plan-version-line__ask" dir="auto">You asked: Could I get a mock up\?/);
+  assert.match(line, /Replaced below/);
+  assert.match(line, /plan-document-receipt__body/, 'the line opens to the plan');
+  assert.match(documentUi.fullDocumentMarkup({ ...plan, state: 'pending' }, { version: 2 }), /plan-document__eyebrow">Plan · version 2</);
+  assert.match(documentUi.fullDocumentMarkup({ ...plan, state: 'rejected' }), /Sent back with your changes/);
+  const stopped = documentUi.fullDocumentMarkup({ ...plan, state: 'abandoned' }, { latest: true });
+  assert.match(stopped, /^<section class="plan-document"[^>]*data-plan-state="abandoned"/);
+  assert.match(stopped, /The reply stopped before you decided\./);
+  assert.match(stopped, /data-plan-build-accepted data-plan-id="p2"/);
+  for (const editing of ['data-plan-title', 'data-plan-step-text', 'data-plan-add-step', 'data-plan-actions', 'draggable']) {
+    assert.equal(stopped.includes(editing), false, `${editing} is for a pending plan only`);
+  }
+  const older = documentUi.fullDocumentMarkup({ ...plan, state: 'abandoned' }, { latest: false });
+  assert.match(older, /^<details[^>]*data-plan-state="abandoned"/);
+  assert.match(older, /Stopped before you decided/);
+  const rows = [{ kind: 'plan_document', payload: { plan_id: 'p1', state: 'superseded' } }, { kind: 'assistant_text' },
+    { kind: 'plan_document', payload: { plan_id: 'p2', transition: 'abandoned' } }];
+  const messages = ['p1', 'p2'].map((id) => ({ kind: 'plan_document', plan_document: { plan_id: id } }));
+  assert.deepEqual(documentUi.describePlanRow('p1', rows, 0, messages), { version: 1, latest: false });
+  assert.deepEqual(documentUi.describePlanRow('p2', rows, 2, messages), { version: 2, latest: true });
+  assert.equal(documentUi.hasStoppedLatestPlan(rows, messages), true);
+  assert.equal(documentUi.hasStoppedLatestPlan(rows, [...messages, { kind: 'plan_document', plan_document: { plan_id: 'p3' } }]), false);
+});
+
 test('transition normalization is bounded and stable', () => {
   const normalized = documentUi.normalizePlanDocument({
     title: 'x'.repeat(200), steps: Array.from({ length: 25 }, (_, index) => `Step ${index}`),
@@ -317,6 +345,20 @@ test('only the latest accepted receipt offers Build it', async () => {
   dom.window.document.getElementById('chatTimeline').append(newer.firstElementChild);
   await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
   assert.deepEqual(buttons(), [], 'a newer plan retires the older receipt action');
+  newer.innerHTML = documentUi.fullDocumentMarkup({ plan_id: 'plan_stopped', title: 'S', steps: ['A'], state: 'abandoned' }, { latest: true });
+  dom.window.document.getElementById('chatTimeline').append(newer.firstElementChild);
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.deepEqual(buttons(), ['plan_stopped'], 'a latest plan cut off by a stop offers Build it');
+  assert.match(dom.window.document.querySelector('[data-action="plan-build-accepted"]').className, /primary/);
+  const pending = documentUi.fullDocumentMarkup({ plan_id: 'plan_morph', title: 'M', steps: ['A'], state: 'pending', tool_call_id: 'c' }, { latest: true });
+  newer.innerHTML = pending;
+  const host = dom.window.document.getElementById('chatTimeline').appendChild(newer.firstElementChild);
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  const stopped = new JSDOM(documentUi.fullDocumentMarkup({ plan_id: 'plan_morph', title: 'M', steps: ['A'], state: 'abandoned' }, { latest: true })).window.document.body.firstElementChild;
+  host.dataset.planState = 'abandoned';
+  host.innerHTML = stopped.innerHTML;
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  assert.deepEqual(buttons(), ['plan_morph'], 'a card stopped in place gets Build it');
   controller.dispose();
   dom.window.close();
 });

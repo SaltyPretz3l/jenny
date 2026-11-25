@@ -248,6 +248,7 @@ const PARAM_SCHEMAS = Object.freeze({
   'team.project.delete': object({ project_id: projectId }, ['project_id']),
   // Slice 3-6b: a page of one project's audit log, after a seq.
   'team.project.audit.read': object({ project_id: projectId, after_seq: teamCount,
+    before_seq: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
     limit: { type: 'integer', minimum: 1, maximum: 100 } }, ['project_id']),
   // Slice 3-8b: a project's files. begin names one new top-level folder; project-files.js re-checks the
   // count (2,000), every path, size and hash. A manifest page names the manifest and a cursor.

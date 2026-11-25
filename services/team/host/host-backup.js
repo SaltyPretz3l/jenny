@@ -94,6 +94,49 @@ function readHeader(header, limits) {
   return { params, salt: header.subarray(18, 34), prefix: header.subarray(34, 42) };
 }
 
+// A handle's `read` and `write` may answer less than asked (SMB and NAS shares do), so each loops to the full length.
+// `readFully` answers the bytes read: fewer than `length` only at the end of the file.
+async function readFully(handle, buffer, length, position) {
+  let got = 0;
+  while (got < length) {
+    const { bytesRead } = await handle.read(buffer, got, length - got, position + got);
+    if (!(bytesRead > 0)) break;
+    got += bytesRead;
+  }
+  return got;
+}
+
+async function writeFully(handle, buffer) {
+  for (let at = 0; at < buffer.length;) {
+    const { bytesWritten } = await handle.write(buffer, at, buffer.length - at);
+    if (!(bytesWritten > 0)) throw new BackupError('team_backup_write_failed');
+    at += bytesWritten;
+  }
+}
+
+// A source file opened without following a link, as the walk saw it. Where the platform has no O_NOFOLLOW the path
+// is checked by lstat and the opened handle must be the same file.
+async function openSource(abs) {
+  const noFollow = fs.constants.O_NOFOLLOW || 0;
+  const changed = () => new BackupError('team_backup_source_changed');
+  const before = noFollow ? null : await fs.promises.lstat(abs, { bigint: true });
+  if (before && !before.isFile()) throw changed();
+  let source;
+  try {
+    source = await fs.promises.open(abs, fs.constants.O_RDONLY | noFollow);
+  } catch (error) {
+    throw error?.code === 'ELOOP' ? changed() : error;
+  }
+  try {
+    const stat = await source.stat({ bigint: true });
+    if (!stat.isFile() || (before && (stat.ino !== before.ino || stat.dev !== before.dev))) throw changed();
+    return { source, size: Number(stat.size) };
+  } catch (error) {
+    await source.close().catch(() => {});
+    throw error;
+  }
+}
+
 function nonceOf(prefix, index) {
   const nonce = Buffer.alloc(12);
   prefix.copy(nonce, 0);
@@ -162,8 +205,8 @@ async function writeBackup({ target, password, manifest, entries, kdf = KDF, ran
     handle = await fs.promises.open(temp, 'wx', 0o600);
     const queue = [];
     const sealer = createSealer(key, header, prefix, (chunk) => queue.push(chunk));
-    const flush = async () => { while (queue.length) await handle.write(queue.shift()); };
-    await handle.write(header);
+    const flush = async () => { while (queue.length) await writeFully(handle, queue.shift()); };
+    await writeFully(handle, header);
     const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
     if (manifestBytes.length > MAX_MANIFEST) throw new BackupError('team_backup_unavailable');
     const manifestHead = Buffer.alloc(5);
@@ -173,9 +216,8 @@ async function writeBackup({ target, password, manifest, entries, kdf = KDF, ran
     sealer.push(manifestBytes);
     for (const entry of entries) {
       if (entry.dir) { sealer.push(recordHead(RECORD.DIR, entry.rel, 0)); continue; }
-      const source = await fs.promises.open(entry.abs, 'r');
+      const { source, size } = await openSource(entry.abs);
       try {
-        const { size } = await source.stat();
         sealer.push(recordHead(RECORD.FILE, entry.rel, size));
         let left = size;
         const piece = Buffer.alloc(CHUNK);
@@ -186,6 +228,8 @@ async function writeBackup({ target, password, manifest, entries, kdf = KDF, ran
           left -= bytesRead;
           await flush();
         }
+        // A file that grew (or changed size) while it was read is not the file the record says: fail, never truncate.
+        if (Number((await source.stat({ bigint: true })).size) !== size) throw new BackupError('team_backup_source_changed');
       } finally {
         await source.close();
       }
@@ -271,7 +315,7 @@ async function peekBackup(file, { handle: given = null } = {}) {
   const handle = given ?? await fs.promises.open(file, 'r');
   try {
     const header = Buffer.alloc(HEADER_BYTES);
-    const { bytesRead } = await handle.read(header, 0, HEADER_BYTES, 0);
+    const bytesRead = await readFully(handle, header, HEADER_BYTES, 0);
     readHeader(header.subarray(0, bytesRead), KDF_LIMITS);
     return { size: (await handle.stat()).size };
   } finally {
@@ -293,7 +337,7 @@ async function readBackup({ file, password, handlers, limits = KDF_LIMITS, handl
   try {
     const { size } = await handle.stat();
     const header = Buffer.alloc(HEADER_BYTES);
-    const { bytesRead } = await handle.read(header, 0, HEADER_BYTES, 0);
+    const bytesRead = await readFully(handle, header, HEADER_BYTES, 0);
     const { params, salt, prefix } = readHeader(header.subarray(0, bytesRead), limits);
     const body = size - HEADER_BYTES;
     if (body < TAG) throw new BackupError('team_backup_password_wrong');
@@ -306,7 +350,7 @@ async function readBackup({ file, password, handlers, limits = KDF_LIMITS, handl
     for (let index = 0; index < count; index += 1) {
       const length = Math.min(full, size - offset);
       if (length < TAG) throw new BackupError('team_backup_password_wrong');
-      const { bytesRead: got } = await handle.read(sealed, 0, length, offset);
+      const got = await readFully(handle, sealed, length, offset);
       if (got !== length) throw new BackupError('team_backup_password_wrong');
       offset += length;
       let plain;

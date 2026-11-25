@@ -96,6 +96,7 @@
     var id = sanitizeToken(opts.id, 'step-modal');
     var tone = sanitizeToken(opts.tone, 'default');
     var actions = Array.isArray(opts.actions) ? opts.actions.map(renderAction).filter(Boolean) : [];
+    var status = String(opts.status || '').trim();
     return '<div class="inv-step-modal-backdrop" data-step-modal="' + id + '">'
       + '<section class="inv-step-modal inv-step-modal--' + tone + '"'
       + ' role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="' + id + '-title"'
@@ -104,7 +105,7 @@
       + (opts.eyebrow ? '<div class="inv-step-modal-eyebrow">' + escapeHtml(opts.eyebrow) + '</div>' : '')
       + '<div class="inv-step-modal-title-row">'
       + '<h2 class="inv-step-modal-title" id="' + id + '-title">' + escapeHtml(opts.title || '') + '</h2>'
-      + (opts.status ? '<span class="inv-step-modal-status">' + escapeHtml(opts.status) + '</span>' : '')
+      + (status ? '<span class="inv-step-modal-status">' + escapeHtml(status) + '</span>' : '')
       + '</div>'
       + (opts.summary ? '<p class="inv-step-modal-summary" id="' + id + '-summary">' + escapeHtml(opts.summary) + '</p>' : '')
       + '</header>'

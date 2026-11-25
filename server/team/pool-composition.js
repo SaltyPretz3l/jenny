@@ -12,7 +12,9 @@
 // `mayUsePool(memberId, sessionId)` (owner decisions E6 and E37): asked before a
 // lease is requested, again when a queued lease turns active, and for every live
 // lease by `recheckLeases` whenever membership or roles change. Only an answer of
-// `true` allows; a throw or any other answer refuses with role_forbidden.
+// `true` allows; a throw or any other answer refuses with role_forbidden. With project
+// files on, the node's own owner is asked too (`mayReadConversation`): at every dispatch,
+// so a node whose owner lost access is skipped, and by `recheckLeases` for a live lease.
 //
 // The scheduler's clock is monotonic by default: its timeouts compare two
 // readings, and a wall clock stepped by the OS must not expire or prolong one.
@@ -116,14 +118,25 @@ function createPoolComposition({
   // The scheduler and gateway log lower-case levels; the host's logger takes upper case.
   const childLog = (level, event, fields) => say(String(level || 'info').toUpperCase(), event, fields);
   let bootKey = Buffer.from(randomBytes(BOOT_KEY_BYTES)).toString('base64url');
-  const scheduler = createScheduler({ clock, randomBytes, logger: childLog, limits: limits.scheduler });
+  // Live lease id -> { sessionId (null for the team engine), allowedNodes (null for any node) }.
+  // Bounded by the scheduler's own lease limits; an entry goes when its lease ends.
+  const leaseSessions = new Map();
+  const mayRead = (memberId, sessionId) => {
+    try { return mayReadConversation(memberId, sessionId) === true; } catch (_error) { return false; }
+  };
+  // Review H2: whether a node's owner may read the conversation a lease serves, asked of every free node at each
+  // dispatch. A lease this composition has not recorded yet (it is being created) is covered by its allowed list.
+  function mayServe(lease, node) {
+    const entry = leaseSessions.get(lease.lease_id);
+    return !entry || entry.sessionId === null || mayRead(node.member_id, entry.sessionId);
+  }
+  const scheduler = createScheduler({ clock, randomBytes, logger: childLog, limits: limits.scheduler,
+    mayServe: nodesMustRead === true ? mayServe : null });
   const gateway = createGateway({ scheduler, bootKey, clock, logger: childLog,
     limits: { ...limits.gateway, contextCap: contextLength } });
 
   const waiters = new Map(); // lease id -> settle(error | null)
-  // Live lease id -> { sessionId (null for the team engine), allowedNodes (null for any node) }.
-  // Bounded by the scheduler's own lease limits; an entry goes when its lease ends.
-  const leaseSessions = new Map();
+  const recheckHooks = new Set(); // called after each recheckLeases (the team engine routes drop revoked requests)
   let state = 'new'; // new | starting | started | stopping | stopped
   let sweepTimer = null;
   let unsubscribe = null;
@@ -153,14 +166,25 @@ function createPoolComposition({
     }
   }
 
+  // Why a waiting lease ended. A lease with an allowed list that names no node registered now says so, in the words
+  // of the list, even when the scheduler found no node for it first.
+  function endedError(event, entry) {
+    const reason = String(event.reason || 'team_pool_unavailable');
+    if (reason === 'no_eligible_node' && entry?.allowedNodes && !namesRegisteredNode(entry.allowedNodes, registeredNodes())) {
+      return noAllowedNode();
+    }
+    return poolError('unavailable', reason);
+  }
+
   // The one scheduler listener of this module: lease waiters, the lane feed and the allowed-node lists.
   function onSchedulerChange(event) {
     if (event?.type === 'lease') {
+      const entry = leaseSessions.get(event.lease_id);
       if (LEASE_TERMINAL.has(event.to)) leaseSessions.delete(event.lease_id);
       const settle = waiters.get(event.lease_id);
       if (!settle) return;
       if (event.to === 'active') settle(null);
-      else if (LEASE_TERMINAL.has(event.to)) settle(poolError('unavailable', String(event.reason || 'team_pool_unavailable')));
+      else if (LEASE_TERMINAL.has(event.to)) settle(endedError(event, entry));
     } else if (event?.type === 'nodes') {
       try { feedLanes(event.online_slots); } catch (_error) { say('WARN', 'team.pool.lane_feed_failed'); }
       try { failOrphanedWaiters(); } catch (_error) { say('WARN', 'team.pool.allowed_nodes_check_failed'); }
@@ -222,19 +246,22 @@ function createPoolComposition({
   // pool's only model. Both routes (turn and team engine) resolve here. Row 172: a conversation's own model (the turn
   // route) must be offered now; the team engine route leaves an unoffered model to the scheduler.
   function leaseModel(model, { conversation = false } = {}) {
-    const models = scheduler.poolSummary().models;
+    // The models any online PC advertises, a paused one too: a model whose PC is only paused is refused by the
+    // scheduler as no_eligible_node, not said to be missing. (The pool summary leaves paused PCs out.)
+    const models = [...new Set(scheduler.listNodes().filter((node) => node.online)
+      .flatMap((node) => node.models.map((entry) => entry.id)))].sort();
     if (typeof model === 'string' && model.trim() && model !== POOL_MODEL_ALIAS) {
-      if (conversation && !models.some((entry) => entry.id === model)) throw conversationModelOffline();
+      if (conversation && !models.includes(model)) throw conversationModelOffline();
       return model;
     }
     const stored = teamModel();
     if (typeof stored === 'string' && stored) {
-      if (models.some((entry) => entry.id === stored)) return stored;
+      if (models.includes(stored)) return stored;
       throw teamModelNotOffered();
     }
     const automatic = automaticModel(scheduler.listNodes());
     if (automatic) return automatic;
-    if (models.length === 1) return models[0].id;
+    if (models.length === 1) return models[0];
     throw poolError('limit', 'model_not_in_pool');
   }
 
@@ -274,8 +301,7 @@ function createPoolComposition({
   // node whose member may read that conversation (and so its project's files); the saved list narrows it further.
   function readersOnly(savedList, sessionId) {
     if (nodesMustRead !== true || (savedList !== undefined && savedList !== null && !Array.isArray(savedList))) return savedList;
-    const reads = (memberId) => { try { return mayReadConversation(memberId, sessionId) === true; } catch (_error) { return false; } };
-    const readers = scheduler.listNodes().filter((node) => reads(node.member_id)).map((node) => node.node_id);
+    const readers = scheduler.listNodes().filter((node) => mayRead(node.member_id, sessionId)).map((node) => node.node_id);
     const list = Array.isArray(savedList) ? savedList.filter((id) => readers.includes(id)) : readers;
     if (list.length === 0) throw noReaderNode();
     return list;
@@ -386,12 +412,17 @@ function createPoolComposition({
   // on every membership or role change. Refused leases end: queued ones first,
   // across all members, so a freed slot never goes to a refused lease, then active
   // ones (`cancelLease` cancels a running job). A queued waiter rejects
-  // role_forbidden. Each cancel is guarded on its own. Returns how many ended.
+  // role_forbidden. Each cancel is guarded on its own. With project files on, an active lease whose serving
+  // node's owner may no longer read its conversation ends too, and a queued lease no node may serve now fails
+  // as no_eligible_node (review H2). Returns how many ended.
   function recheckLeases() {
     if (state !== 'started') return 0;
     const sessionOf = (leaseId) => (leaseSessions.has(leaseId) ? leaseSessions.get(leaseId).sessionId : null);
+    const nodeOwner = new Map(scheduler.listNodes().map((node) => [node.node_id, node.member_id]));
+    const nodeLostAccess = (lease) => nodesMustRead === true && lease.state === 'active' && sessionOf(lease.lease_id) !== null
+      && nodeOwner.has(lease.node_id) && !mayRead(nodeOwner.get(lease.node_id), sessionOf(lease.lease_id));
     const refused = scheduler.listLeases().filter((lease) => (lease.state === 'queued' || lease.state === 'active')
-      && !allowed(lease.member_id, sessionOf(lease.lease_id)));
+      && (!allowed(lease.member_id, sessionOf(lease.lease_id)) || nodeLostAccess(lease)));
     let ended = 0;
     let failed = 0;
     for (const wanted of ['queued', 'active']) {
@@ -404,9 +435,29 @@ function createPoolComposition({
         }
       }
     }
+    if (nodesMustRead === true) ended += dispatchAgain();
     if (failed > 0) say('WARN', 'team.pool.recheck_failed', { failed });
     if (ended > 0) say('INFO', 'team.pool.leases_rechecked', { ended });
+    for (const hook of [...recheckHooks]) {
+      try { hook(); } catch (_error) { say('WARN', 'team.pool.recheck_hook_failed'); }
+    }
     return ended;
+  }
+
+  // Lets the scheduler dispatch again after who may read what changed; the queued leases it fails because
+  // no node may serve them now are counted.
+  function dispatchAgain() {
+    if (typeof scheduler.rebalance !== 'function') return 0;
+    const queued = scheduler.listLeases().filter((lease) => lease.state === 'queued').map((lease) => lease.lease_id);
+    try { scheduler.rebalance(); } catch (_error) { say('WARN', 'team.pool.rebalance_failed'); return 0; }
+    return queued.filter((id) => scheduler.getLease(id)?.reason === 'no_eligible_node').length;
+  }
+
+  // `listener()` runs after every recheckLeases that ran (not when the pool is not started). Returns its remover.
+  function onRecheck(listener) {
+    if (typeof listener !== 'function') throw new TypeError('onRecheck needs a function.');
+    recheckHooks.add(listener);
+    return () => { recheckHooks.delete(listener); };
   }
 
   // Idempotent: every queued and active lease is cancelled, every waiter rejected, nothing left.
@@ -423,6 +474,7 @@ function createPoolComposition({
     }
     try { unsubscribe?.(); } catch (_error) { /* stop goes on */ }
     unsubscribe = null;
+    recheckHooks.clear();
     lanes = null;
     try { await gateway.stop(); } catch (_error) { say('WARN', 'team.pool.gateway_stop_failed'); }
     leaseSessions.clear();
@@ -438,7 +490,7 @@ function createPoolComposition({
   }
 
   return Object.freeze({
-    start, stop, bindRuntime, resources, scheduler, recheckLeases,
+    start, stop, bindRuntime, resources, scheduler, recheckLeases, onRecheck,
     // The per-boot key, for the sidecar's initialize secrets only; null after stop.
     modelCredential: () => bootKey,
     // Row 172: the model ids offered now, which a conversation may pick (server/team-conversation-preferences.js).

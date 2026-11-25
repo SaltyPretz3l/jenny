@@ -2,14 +2,15 @@
 
 /* Row 59 checkpoint 2, slice S3: the per-pane session rail controller in jsdom, against a fake
    chatWorkspace bridge (contract C2) and a fake detail API (contract C3). Layout is covered by
-   tests/renderer-session-rail-layout.test.js in headless Chromium; here: data flow, docking
-   decisions, the toggle, the sheet, disclosures and their persistence, focus, disposal. */
+   tests/renderer-session-rail-layout.test.js in headless Chromium; here: data flow, the hosted
+   placement, disclosures and their persistence, focus, disposal. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { flush, sleep, deferred, summaryFor, createBridge, createFixture, docked } = require('./helpers/session-rail-fixture.js');
+const { hostInDocument, flush, sleep, deferred, summaryFor, createBridge, createFixture, docked } = require('./helpers/session-rail-fixture.js');
+const rails = require('../renderer/chat/renderer-session-rail.js');
 
-test('next-send breakdown renders inline, counts the local draft, and retains stale counts on failure', async (t) => {
+test('next-send estimate: the head counts the local draft, and a failed read keeps the last head marked stale', async (t) => {
   let failed = false;
   const bridge = createBridge({ respond: ({ session_id }) => ({ ok: true,
     summary: summaryFor(session_id, { context: { state: failed ? 'checking' : 'available', data: failed
@@ -21,16 +22,16 @@ test('next-send breakdown renders inline, counts the local draft, and retains st
   const f = await docked({ bridge });
   t.after(() => { f.api.dispose(); f.window.close(); });
   f.head('context').click();
-  assert.equal(f.section('context').querySelectorAll('.session-context-category').length, 7);
-  assert.equal(f.value('context'), '10%');
+  assert.equal(f.section('context').querySelectorAll('.session-context-category').length, 0, 'the token ledger is not in the rail');
+  assert.equal(f.value('context'), '10% full');
   const input = f.doc.getElementById('chatInput');
   input.value = 'a'.repeat(400);
   input.dispatchEvent(new f.window.Event('input', { bubbles: true }));
-  assert.equal(f.value('context'), '20%');
+  assert.equal(f.value('context'), '20% full');
   failed = true;
   f.api.refresh();
   await flush();
-  assert.match(f.value('context'), /20%.*stale/);
+  assert.match(f.value('context'), /20% full.*stale/);
   assert.equal(f.head('context').getAttribute('aria-expanded'), 'true');
 });
 
@@ -43,14 +44,14 @@ test('the rail paints a newer shared estimate and never republishes a stale read
     summary: summaryFor(session_id, { context: { state: failed ? 'checking' : 'available', data: failed ? null : estimate(100) } }) }) });
   const f = await docked({ bridge });
   t.after(() => { f.api.dispose(); f.window.close(); contextPreview.resetForTests(); });
-  assert.equal(f.value('context'), '10%');
+  assert.equal(f.value('context'), '10% full');
   contextPreview.remember('sess_a', estimate(300)); // the ring's popover fetched a newer estimate
   await sleep(50);
-  assert.equal(f.value('context'), '30%');
+  assert.equal(f.value('context'), '30% full');
   failed = true;
   f.api.refresh();
   await flush();
-  assert.match(f.value('context'), /10%.*stale/);
+  assert.match(f.value('context'), /10% full.*stale/);
   assert.equal(contextPreview.latest('sess_a').data.used_tokens, 300, 'the carried-forward reading is not republished');
 });
 
@@ -69,25 +70,25 @@ test('an invalidation during a summary read rejects the obsolete response', asyn
     state: 'available', data: { project_name: 'Obsolete project', run_mode: 'ask' },
   } }) });
   await flush();
-  assert.doesNotMatch(f.text('environment'), /Obsolete/);
+  assert.doesNotMatch(f.text('this_chat'), /Obsolete/);
   assert.equal(requests, 2);
 });
 
-test('mount: asks for this pane\u2019s own session and paints the five sections in order', async () => {
-  const f = await docked({ width: 1133, sessionId: 'sess_a' });
+test('mount: asks for this pane\u2019s own session and paints This chat, Context and Running now in order', async () => {
+  const f = await docked({ sessionId: 'sess_a' });
   assert.deepEqual(f.bridge.summaryCalls, [{ schema_version: 1, session_id: 'sess_a' }]);
-  assert.deepEqual([...f.doc.querySelectorAll('[data-section]')].map((node) => node.dataset.section), ['environment', 'context', 'outputs', 'changes', 'background_tasks']);
-  assert.equal(f.pane.dataset.sessionRail, 'docked');
+  assert.deepEqual([...f.doc.querySelectorAll('[data-section]')].map((node) => node.dataset.section), ['this_chat', 'context', 'running_now']);
+  assert.equal(f.pane.dataset.sessionRail, 'hosted');
   assert.equal(f.rail().hidden, false);
-  assert.equal(f.rail().querySelector('.session-rail-tray') !== null, true, 'the tray lives in the docked rail');
-  assert.equal(f.value('environment'), 'Local');
-  assert.equal(f.value('context'), '64%');
-  assert.equal(f.value('outputs'), '1');
-  assert.equal(f.value('changes'), '+412 \u221237');
-  assert.equal(f.value('background_tasks'), '1 running');
-  assert.match(f.text('background_tasks'), /Some sources aren't connected yet\./);
-  assert.match(f.text('environment'), /project of sess_a/);
-  assert.equal(f.sheet().hidden, true);
+  assert.equal(f.rail().parentNode, f.doc.getElementById('railHost'), 'the rail sits in the workbench host');
+  assert.equal(f.rail().querySelector('.session-rail-tray') !== null, true, 'the tray lives in the hosted rail');
+  assert.equal(f.value('this_chat'), 'Local');
+  assert.equal(f.value('context'), '64% full');
+  assert.equal(f.value('running_now'), '1');
+  assert.match(f.text('running_now'), /Workspace testsRunning.*All runs/);
+  assert.match(f.text('this_chat'), /Some sources aren't connected yet\./, 'a really partial summary keeps its one note');
+  assert.match(f.text('this_chat'), /project of sess_a/);
+  assert.match(f.text('context'), /Used20\.5k of 32kJenny summarises older messages when this fills\.Context details/);
   f.api.dispose();
 });
 
@@ -96,11 +97,11 @@ test('first paint is checking words, never zeros', async () => {
   const bridge = createBridge({ respond: () => gate.promise });
   const f = createFixture({ bridge });
   assert.equal(f.value('context'), 'Checking\u2026');
-  assert.equal(f.value('changes'), 'Checking\u2026');
+  assert.equal(f.value('this_chat'), 'Checking\u2026');
   assert.doesNotMatch(f.doc.querySelector('.session-rail-tray').textContent, /\d/);
   gate.resolve({ schema_version: 1, ok: true, summary: summaryFor('sess_a'), workspace_view: bridge.view, coordination_revision: 0 });
   await flush();
-  assert.equal(f.value('context'), '64%');
+  assert.equal(f.value('context'), '64% full');
   f.api.dispose();
 });
 
@@ -114,16 +115,16 @@ test('a failed first fetch reads unavailable; a failed refetch keeps the last va
     },
   });
   const f = await docked({ bridge });
-  assert.equal(f.value('environment'), 'Unavailable');
-  assert.equal(f.value('changes'), 'Unavailable');
+  assert.equal(f.value('this_chat'), 'Unavailable');
+  assert.equal(f.value('context'), 'Unavailable');
   mode = 'ok';
   f.api.refresh();
   await flush();
-  assert.equal(f.value('context'), '64%');
+  assert.equal(f.value('context'), '64% full');
   mode = 'bad';
   f.api.refresh();
   await flush();
-  assert.equal(f.value('context'), '64% \u00b7 stale', 'the last reading stays, labelled stale');
+  assert.equal(f.value('context'), '64% full \u00b7 stale', 'the last reading stays, labelled stale');
   assert.equal(f.section('context').dataset.state, 'stale');
   f.api.dispose();
 });
@@ -131,7 +132,7 @@ test('a failed first fetch reads unavailable; a failed refetch keeps the last va
 test('disclosures: defaults where null, one control per section with aria-expanded', async () => {
   const f = await docked();
   const expanded = (key) => f.head(key).getAttribute('aria-expanded');
-  assert.deepEqual(['environment', 'context', 'outputs', 'changes', 'background_tasks'].map(expanded), ['true', 'false', 'true', 'false', 'true']);
+  assert.deepEqual(['this_chat', 'context', 'running_now'].map(expanded), ['true', 'false', 'true']);
   assert.equal(f.head('context').getAttribute('aria-controls'), f.section('context').querySelector('[data-rail-body]').id);
   f.api.dispose();
 });
@@ -188,13 +189,14 @@ test('a write that conflicts twice refetches once and reverts the toggle', async
   bridge.setViewHandler = async () => ({ schema_version: 1, ok: false, error_code: 'CMP-CHATWS-0004', reason: 'revision_conflict', retryable: true, current_revision: 9 });
   const f = await docked({ bridge });
   const before = bridge.summaryCalls.length;
-  f.head('environment').click();
-  assert.equal(f.head('environment').getAttribute('aria-expanded'), 'false', 'optimistic collapse');
+  f.head('this_chat').click();
+  assert.equal(f.head('this_chat').getAttribute('aria-expanded'), 'false', 'optimistic collapse');
   await flush(10);
+  assert.equal(bridge.setViewCalls[0].patch.disclosures.environment, false, 'This chat persists under the service\u2019s own key');
   assert.equal(bridge.setViewCalls.length, 2, 'one re-send at the current revision, then give up');
   assert.equal(bridge.setViewCalls[1].expected_revision, 9);
   assert.equal(bridge.summaryCalls.length, before + 1, 'exactly one refetch');
-  assert.equal(f.head('environment').getAttribute('aria-expanded'), 'true', 'reverted to the persisted default');
+  assert.equal(f.head('this_chat').getAttribute('aria-expanded'), 'true', 'reverted to the persisted default');
   f.api.dispose();
 });
 
@@ -208,12 +210,12 @@ test('review #8: a proposal write that bumped the revision does not lose the tog
     return { schema_version: 1, ok: true, workspace_view: bridge.view, coordination_revision: 13 };
   };
   const f = await docked({ bridge });
-  f.head('environment').click();
+  f.head('this_chat').click();
   await flush(10);
   assert.equal(bridge.setViewCalls.length, 2);
   assert.equal(bridge.setViewCalls[1].expected_revision, 12);
   assert.deepEqual(bridge.setViewCalls[1].patch, bridge.setViewCalls[0].patch, 'the same idempotent patch');
-  assert.equal(f.head('environment').getAttribute('aria-expanded'), 'false', 'the toggle stuck');
+  assert.equal(f.head('this_chat').getAttribute('aria-expanded'), 'false', 'the toggle stuck');
   f.api.dispose();
 });
 
@@ -221,181 +223,19 @@ test('a thrown write reverts too', async () => {
   const bridge = createBridge();
   bridge.setViewHandler = async () => { throw new Error('ipc closed'); };
   const f = await docked({ bridge });
-  f.head('changes').click();
+  f.head('context').click();
   await flush(10);
-  assert.equal(f.head('changes').getAttribute('aria-expanded'), 'false');
+  assert.equal(f.head('context').getAttribute('aria-expanded'), 'false');
   f.api.dispose();
 });
 
 test('persisted disclosures from the profile win over the defaults', async () => {
   const bridge = createBridge();
-  bridge.view = { schema_version: 1, rail_visible: null, disclosures: { environment: false, changes: true }, children_expanded: null };
+  bridge.view = { schema_version: 1, disclosures: { environment: false, context: true }, children_expanded: null };
   const f = await docked({ bridge });
-  assert.equal(f.head('environment').getAttribute('aria-expanded'), 'false');
-  assert.equal(f.head('changes').getAttribute('aria-expanded'), 'true');
-  assert.equal(f.head('outputs').getAttribute('aria-expanded'), 'true', 'an unset key keeps its default');
-  f.api.dispose();
-});
-
-test('docked: the Session toggle hides and shows the rail and writes rail_visible', async () => {
-  const f = await docked();
-  assert.equal(f.toggle().getAttribute('aria-pressed'), 'true');
-  assert.equal(f.toggle().hasAttribute('aria-expanded'), false);
-  f.toggle().click();
-  await flush();
-  assert.deepEqual(f.bridge.setViewCalls[0].patch, { rail_visible: false });
-  assert.equal(f.pane.dataset.sessionRail, 'hidden');
-  assert.equal(f.rail().hidden, true);
-  assert.equal(f.toggle().getAttribute('aria-pressed'), 'false');
-  f.toggle().click();
-  await flush();
-  assert.deepEqual(f.bridge.setViewCalls[1].patch, { rail_visible: true });
-  assert.equal(f.bridge.setViewCalls[1].expected_revision, 1);
-  assert.equal(f.pane.dataset.sessionRail, 'docked');
-  assert.equal(f.rail().hidden, false);
-  f.api.dispose();
-});
-
-test('a persisted rail_visible false starts hidden; a failed write puts the rail back', async () => {
-  const bridge = createBridge();
-  bridge.view = { schema_version: 1, rail_visible: false, disclosures: {}, children_expanded: null };
-  const hidden = await docked({ bridge });
-  assert.equal(hidden.pane.dataset.sessionRail, 'hidden');
-  hidden.api.dispose();
-
-  const failing = createBridge();
-  failing.setViewHandler = async () => ({ schema_version: 1, ok: false, error_code: 'CMP-CHATWS-0005', reason: 'io_failed', retryable: true, current_revision: 0 });
-  const f = await docked({ bridge: failing });
-  f.toggle().click();
-  assert.equal(f.pane.dataset.sessionRail, 'hidden', 'optimistic hide');
-  await flush(10);
-  assert.equal(f.pane.dataset.sessionRail, 'docked', 'reverted');
-  f.api.dispose();
-});
-
-test('undocked: the toggle opens a non-modal sheet anchored to the pane and never writes rail_visible', async () => {
-  const f = await docked({ width: 700 });
-  assert.equal(f.pane.dataset.sessionRail, 'undocked');
-  assert.equal(f.rail().hidden, true);
-  assert.equal(f.toggle().getAttribute('aria-expanded'), 'false');
-  assert.equal(f.toggle().getAttribute('aria-haspopup'), 'dialog');
-  assert.equal(f.toggle().hasAttribute('aria-pressed'), false);
-  assert.equal(f.sheet().hidden, true);
-  f.toggle().click();
-  assert.equal(f.sheet().hidden, false);
-  assert.equal(f.toggle().getAttribute('aria-expanded'), 'true');
-  assert.equal(f.sheet().getAttribute('role'), 'dialog');
-  assert.equal(f.sheet().getAttribute('aria-modal'), 'false');
-  assert.ok(f.sheet().querySelector('.session-rail-tray'), 'the tray moved into the sheet');
-  assert.equal(f.value('context'), '64%');
-  assert.equal(f.doc.activeElement, f.head('environment'), 'focus moves into the sheet');
-  f.toggle().click();
-  assert.equal(f.sheet().hidden, true);
-  assert.equal(f.doc.activeElement, f.toggle(), 'closing returns focus to the toggle');
-  assert.equal(f.bridge.setViewCalls.length, 0, 'the sheet never writes rail_visible');
-  f.api.dispose();
-});
-
-test('sheet: Escape closes it and returns focus to the toggle without the key reaching the document', async () => {
-  const f = await docked({ width: 700 });
-  f.toggle().click();
-  let leaked = 0;
-  f.doc.addEventListener('keydown', () => { leaked += 1; });
-  f.head('context').dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(f.sheet().hidden, true);
-  assert.equal(f.doc.activeElement, f.toggle());
-  assert.equal(leaked, 0, 'Escape is consumed by the sheet');
-  f.api.dispose();
-});
-
-test('sheet: an outside pointer closes it and returns focus only when focus was inside', async () => {
-  const f = await docked({ width: 700 });
-  f.toggle().click();
-  f.doc.getElementById('other').dispatchEvent(new f.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(f.sheet().hidden, true);
-  assert.equal(f.doc.activeElement, f.toggle(), 'focus was in the sheet, so it returns to the toggle');
-  f.toggle().click();
-  f.doc.getElementById('other').focus();
-  f.doc.getElementById('other').dispatchEvent(new f.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(f.sheet().hidden, true);
-  assert.equal(f.doc.activeElement, f.doc.getElementById('other'), 'a click elsewhere keeps the focus it chose');
-  f.toggle().click();
-  f.sheet().dispatchEvent(new f.window.Event('pointerdown', { bubbles: true }));
-  assert.equal(f.sheet().hidden, false, 'a pointer inside the sheet keeps it open');
-  f.api.dispose();
-});
-
-test('responsive collapse never writes: crossing the threshold only changes the mode', async () => {
-  const f = await docked({ width: 1133 });
-  assert.equal(f.pane.dataset.sessionRail, 'docked');
-  await f.resize(700);
-  assert.equal(f.pane.dataset.sessionRail, 'undocked');
-  assert.equal(f.rail().hidden, true);
-  await f.resize(1133);
-  assert.equal(f.pane.dataset.sessionRail, 'docked');
-  assert.equal(f.bridge.setViewCalls.length, 0);
-  f.api.dispose();
-});
-
-test('widening past the threshold with the sheet open docks the rail and closes the sheet', async () => {
-  const f = await docked({ width: 700 });
-  f.toggle().click();
-  assert.equal(f.sheet().hidden, false);
-  await f.resize(1000);
-  assert.equal(f.pane.dataset.sessionRail, 'docked');
-  assert.equal(f.sheet().hidden, true);
-  assert.ok(f.rail().querySelector('.session-rail-tray'));
-  f.api.dispose();
-});
-
-test('a person-hidden rail stays hidden when docking, and an undocked pane ignores the preference', async () => {
-  const bridge = createBridge();
-  bridge.view = { schema_version: 1, rail_visible: false, disclosures: {}, children_expanded: null };
-  const f = await docked({ bridge, width: 700 });
-  assert.equal(f.pane.dataset.sessionRail, 'undocked', 'the sheet is still reachable');
-  f.toggle().click();
-  assert.equal(f.sheet().hidden, false);
-  f.toggle().click();
-  await f.resize(1200);
-  assert.equal(f.pane.dataset.sessionRail, 'hidden');
-  f.api.dispose();
-});
-
-test('a side panel keeps a docked rail down to 640px, never docks an undocked one, and never re-evaluates mid-motion', async () => {
-  const f = await docked({ width: 1133 });
-  assert.equal(f.pane.dataset.sessionRail, 'docked');
-  f.chatView.classList.add('artifact-review-open');
-  await f.resize(713);
-  assert.equal(f.pane.dataset.sessionRail, 'docked', '1455 single with the panel open');
-  f.chatView.dataset.panelMotion = 'closing';
-  await f.resize(500);
-  assert.equal(f.pane.dataset.sessionRail, 'docked', 'mid-motion: no re-evaluation');
-  delete f.chatView.dataset.panelMotion;
-  await flush();
-  assert.equal(f.pane.dataset.sessionRail, 'undocked', 'the motion\u2019s end re-evaluates: 500px is below the floor');
-  f.chatView.classList.remove('artifact-review-open');
-  f.api.dispose();
-
-  const g = await docked({ width: 800 });
-  assert.equal(g.pane.dataset.sessionRail, 'undocked');
-  g.context.classList.remove('collapsed');
-  await flush();
-  g.state.width = 800;
-  g.api.evaluateDock();
-  assert.equal(g.pane.dataset.sessionRail, 'undocked', 'an expanded context panel does not dock an undocked rail');
-  g.api.dispose();
-});
-
-test('docking changes are bracketed by the reflow notice so the reader keeps their place', async () => {
-  const f = await docked({ width: 700 });
-  const phases = [];
-  f.pane.addEventListener('session-rail-reflow', (event) => phases.push([event.detail.phase, f.pane.dataset.sessionRail]));
-  await f.resize(1200);
-  assert.deepEqual(phases, [['before', 'undocked'], ['after', 'docked']]);
-  phases.length = 0;
-  f.toggle().click();
-  assert.deepEqual(phases, [['before', 'docked'], ['after', 'hidden']]);
-  await flush();
+  assert.equal(f.head('this_chat').getAttribute('aria-expanded'), 'false');
+  assert.equal(f.head('context').getAttribute('aria-expanded'), 'true');
+  assert.equal(f.head('running_now').getAttribute('aria-expanded'), 'true', 'an unset key keeps its default');
   f.api.dispose();
 });
 
@@ -412,7 +252,7 @@ test('session change: clears to checking at once, fetches the new session, ignor
   await flush();
   gates.get('sess_a').resolve();
   await flush();
-  assert.match(f.text('environment'), /project of sess_a/);
+  assert.match(f.text('this_chat'), /project of sess_a/);
   f.changeSession('sess_b');
   assert.equal(f.value('context'), 'Checking\u2026', 'never another session\u2019s values during a switch');
   assert.doesNotMatch(f.doc.querySelector('.session-rail-tray').textContent, /sess_a/);
@@ -425,30 +265,50 @@ test('session change: clears to checking at once, fetches the new session, ignor
   assert.doesNotMatch(f.doc.querySelector('.session-rail-tray').textContent, /sess_b/, 'a late answer for a session the pane left is dropped');
   gates.get('sess_c').resolve();
   await flush();
-  assert.match(f.text('environment'), /project of sess_c/);
+  assert.match(f.text('this_chat'), /project of sess_c/);
   f.api.dispose();
+});
+
+test('a session switch paints "Checking..." with data-no-motion on the tray, and leaves none behind', async (t) => {
+  const f = await docked({ sessionId: 'sess_a' });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  const tray = f.doc.querySelector('.session-rail-tray');
+  const seen = [];
+  const observer = new f.window.MutationObserver((records) => {
+    for (const record of records) if (record.attributeName === 'data-no-motion') seen.push(tray.hasAttribute('data-no-motion'));
+  });
+  observer.observe(tray, { attributes: true, attributeFilter: ['data-no-motion'], attributeOldValue: true });
+  f.changeSession('sess_b');
+  assert.equal(f.value('context'), 'Checking…', 'the switch cleared to checking');
+  const records = observer.takeRecords();
+  observer.disconnect();
+  assert.deepEqual(records.map((record) => [record.attributeName, record.oldValue]), [['data-no-motion', null], ['data-no-motion', '']],
+    'data-no-motion was set around the paint and removed again');
+  assert.equal(tray.hasAttribute('data-no-motion'), false);
+  assert.equal(seen.length, 0, 'no observer callback ran with the attribute left on');
 });
 
 test('a session change also drops unconfirmed toggles and the persisted view of the old session', async () => {
   const bridge = createBridge();
-  bridge.view = { schema_version: 1, rail_visible: false, disclosures: { context: true }, children_expanded: null };
+  bridge.view = { schema_version: 1, disclosures: { context: true }, children_expanded: null };
   const f = await docked({ bridge });
-  assert.equal(f.pane.dataset.sessionRail, 'hidden');
-  bridge.view = { schema_version: 1, rail_visible: null, disclosures: {}, children_expanded: null };
+  assert.equal(f.head('context').getAttribute('aria-expanded'), 'true');
+  bridge.view = { schema_version: 1, disclosures: {}, children_expanded: null };
   f.changeSession('sess_b');
-  assert.notEqual(f.pane.dataset.sessionRail, 'hidden', 'sess_a\u2019s hidden preference does not carry over');
   await flush();
   assert.equal(f.head('context').getAttribute('aria-expanded'), 'false');
   f.api.dispose();
 });
 
-test('no session in the pane: nothing to show, the toggle steps aside', async () => {
+test('no session in the pane: nothing to show, the rail steps aside', async () => {
   const f = await docked({ sessionId: '' });
-  assert.equal(f.toggle().hidden, true);
+  assert.equal(f.pane.dataset.sessionRail, 'hidden');
+  assert.equal(f.rail().hidden, true);
   assert.equal(f.bridge.summaryCalls.length, 0);
   f.changeSession('sess_a');
   await flush();
-  assert.equal(f.toggle().hidden, false);
+  assert.equal(f.pane.dataset.sessionRail, 'hosted');
+  assert.equal(f.rail().hidden, false);
   assert.equal(f.bridge.summaryCalls.length, 1);
   f.api.dispose();
 });
@@ -491,46 +351,27 @@ test('one request in flight: an invalidation during a fetch queues exactly one f
   f.api.dispose();
 });
 
-test('a rail nobody can see does not refetch on invalidations; it catches up when shown', async () => {
-  const f = await docked({ width: 700 });
-  assert.equal(f.bridge.summaryCalls.length, 1, 'mount still fetches');
+test('a rail nobody can see does not refetch on invalidations; it catches up when hosted', async () => {
+  rails.configure({ getHost: () => null });
+  const f = await docked();
+  assert.equal(f.pane.dataset.sessionRail, 'hidden', 'another pane is focused');
+  assert.equal(f.bridge.summaryCalls.length, 0, 'a rail nobody sees does not even fetch on mount');
   f.bridge.emit({ schema_version: 1, session_id: 'sess_a', revision: 9 });
   await sleep(200);
-  assert.equal(f.bridge.summaryCalls.length, 1, 'sheet closed: no refetch');
-  f.toggle().click();
+  assert.equal(f.bridge.summaryCalls.length, 0, 'hidden: no refetch');
+  rails.configure({ getHost: hostInDocument });
+  rails.syncHosts();
   await flush();
-  assert.equal(f.bridge.summaryCalls.length, 2, 'opening the sheet fetches what was missed');
+  assert.equal(f.pane.dataset.sessionRail, 'hosted');
+  assert.equal(f.bridge.summaryCalls.length, 1, 'being hosted fetches what was missed, once');
   f.api.dispose();
 });
 
-test('a hidden chat reads no pane width; showing it decides once, after layout, on the stage resize', async () => {
-  let reads = 0;
-  const f = createFixture({ mountOptions: { getPaneWidth: () => { reads += 1; return 1133; } } });
-  await flush();
-  try {
-    const before = reads;
-    f.chatView.classList.add('hidden');
-    await flush();
-    assert.equal(reads, before, 'hidden: no read');
-    f.chatView.classList.remove('hidden');
-    await flush();
-    assert.equal(reads, before, 'just shown: waits for the resize instead of forcing a layout');
-    f.resizeObservers.forEach((observer) => observer.callback([]));
-    await flush();
-    assert.equal(reads, before + 1, 'the resize decides');
-    await new Promise((resolve) => f.window.setTimeout(resolve, 300));
-    assert.equal(reads, before + 1, 'the fallback timer has nothing left to do');
-  } finally {
-    f.api.dispose();
-    f.controller.abort();
-  }
-});
-
-/* Row 176: the Servers section's browser entry (renderer-session-rail.js with the jobs helper). */
+/* Row 176 / row 195: the chat's browser page is a row of Running now (renderer-session-rail.js with the jobs helper). */
 function browserBridge(states = {}) {
   const bridge = {
-    closes: [], listeners: new Set(), states,
-    getState: async ({ session_id }) => bridge.states[session_id] || { ok: true, open: false },
+    closes: [], listeners: new Set(), states, stateCalls: 0,
+    getState: async ({ session_id }) => { bridge.stateCalls += 1; return bridge.states[session_id] || { ok: true, open: false }; },
     close: async (payload) => { bridge.closes.push(payload); return { ok: true }; },
     onChanged: (listener) => { bridge.listeners.add(listener); return () => bridge.listeners.delete(listener); },
     push: (event) => { for (const listener of [...bridge.listeners]) listener(event); },
@@ -538,47 +379,124 @@ function browserBridge(states = {}) {
   return bridge;
 }
 
-test('Servers: the chat\'s open browser page is a row that opens the Browser panel and closes itself; its section outlives the page', async (t) => {
+test('Running now: the chat\'s open browser page is a row that opens the Browser panel and closes itself; the section leaves with the last run', async (t) => {
   const bu = browserBridge({ sess_a: { ok: true, open: true, url: 'https://example.com/docs', title: 'Example docs' } });
-  const f = await docked({ mountOptions: { getBrowserUse: () => bu } });
+  const f = await docked({ mountOptions: { getBrowserUse: () => bu, getRunningRows: () => [] } });
   t.after(() => { f.api.dispose(); f.window.close(); });
-  assert.equal(f.value('servers'), '1 up');
-  assert.equal(f.head('servers').getAttribute('aria-expanded'), 'true', 'open by default with an entry');
-  assert.deepEqual([...f.rail().querySelectorAll('[data-section]')].map((node) => node.getAttribute('data-section')).slice(-2), ['background_tasks', 'servers']);
-  const row = f.section('servers').querySelector('[data-rail-surface="browser"]');
+  assert.equal(f.value('running_now'), '1');
+  const row = f.section('running_now').querySelector('[data-rail-surface="browser"]');
   assert.equal(row.textContent.replace(/\s+/g, ' ').trim(), 'Example docsBrowser');
   row.click();
-  assert.deepEqual(f.detail.calls.at(-1), { surface: 'browser', ownerSessionId: 'sess_a', opener: row });
-
+  assert.deepEqual(f.detail.calls.at(-1), { surface: 'browser', ownerSessionId: 'sess_a', opener: row, pane: f.pane });
   bu.push({ session_id: 'sess_other', open: false });
-  assert.equal(f.value('servers'), '1 up', 'a push for another chat is ignored');
-  f.section('servers').querySelector('[data-rail-server-stop="browser"]').click();
+  assert.equal(f.value('running_now'), '1', 'a push for another chat is ignored');
+  f.section('running_now').querySelector('[data-rail-server-stop="browser"]').click();
   await flush();
   assert.deepEqual(bu.closes, [{ session_id: 'sess_a' }]);
-  bu.states.sess_a = { ok: true, open: false };
   bu.push({ session_id: 'sess_a', open: false });
-  assert.equal(f.value('servers'), 'None up', 'a chat that had a server keeps the section');
-  assert.match(f.text('servers'), /Nothing this chat started is still serving\./);
-
-  f.changeSession('sess_b');
-  await flush();
-  assert.equal(f.section('servers'), null, 'a chat that never had one has no section');
-  assert.ok(f.section('background_tasks'));
-  f.changeSession('sess_a');
-  await flush();
-  assert.equal(f.value('servers'), 'None up', 'and the first chat still does');
+  assert.equal(f.section('running_now'), null, 'nothing runs, so no Running now');
+  assert.deepEqual([...f.rail().querySelectorAll('[data-section]')].map((node) => node.getAttribute('data-section')), ['this_chat', 'context']);
 });
 
-test('Servers: the browser subscription is released on dispose, and a missing browser bridge is simply no page', async () => {
+test('the browser subscription is released on dispose, and a missing browser bridge is simply no page', async () => {
   const bu = browserBridge({ sess_a: { ok: true, open: true, url: 'https://example.com', title: '' } });
-  const f = await docked({ mountOptions: { getBrowserUse: () => bu } });
+  const f = await docked({ mountOptions: { getBrowserUse: () => bu, getRunningRows: () => [] } });
   assert.equal(bu.listeners.size, 1);
-  assert.equal(f.section('servers').querySelector('.session-rail-ellip').textContent, 'example.com', 'no title: the address');
+  assert.equal(f.section('running_now').querySelector('.session-rail-ellip').textContent, 'example.com', 'no title: the address');
   f.api.dispose();
   assert.equal(bu.listeners.size, 0);
   f.window.close();
-  const bare = await docked();
-  assert.equal(bare.section('servers'), null);
+  const bare = await docked({ mountOptions: { getRunningRows: () => [] } });
+  assert.equal(bare.section('running_now'), null);
   bare.api.dispose();
   bare.window.close();
+});
+
+const RUN_ROWS = [
+  { id: 'job:aaaaaaaaaaaa', kind: 'server', label: 'npm run dev', detail: 'localhost:5173', startedAt: 1000, canStop: true },
+  { id: 'chat:h1', kind: 'helper', label: 'Helper: summarise', startedAt: 2000, canStop: false },
+];
+
+test('Running now: rows come from getRunningRows, a row opens its run and All runs opens the list; unwired they open the task detail', async (t) => {
+  const opened = [];
+  const f = await docked({ mountOptions: { getRunningRows: (sid) => (sid === 'sess_a' ? RUN_ROWS : []), openRun: (id, ctx) => opened.push(['run', id, ctx.ownerSessionId, ctx.pane]), openRuns: (ctx) => opened.push(['runs', ctx.ownerSessionId]) } });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  assert.equal(f.value('running_now'), '2');
+  const body = f.section('running_now');
+  assert.match(body.textContent.replace(/\s+/g, ' '), /localhost:5173Up · [\d:]+StopHelper: summariseRunningAll runs/);
+  body.querySelector('[data-rail-run="chat:h1"]').click();
+  body.querySelector('[data-rail-runs]').click();
+  assert.deepEqual(opened, [['run', 'chat:h1', 'sess_a', f.pane], ['runs', 'sess_a']]);
+  assert.deepEqual(f.detail.calls, [], 'a wired port takes the click');
+  const bare = await docked({ mountOptions: { getRunningRows: () => RUN_ROWS } });
+  t.after(() => { bare.api.dispose(); bare.window.close(); });
+  const row = bare.section('running_now').querySelector('[data-rail-run="chat:h1"]');
+  row.click();
+  assert.deepEqual(bare.detail.calls.at(-1), { surface: 'background_tasks', ownerSessionId: 'sess_a', opener: row, pane: bare.pane, resourceRef: 'chat:h1' });
+  assert.equal(body.querySelector('[data-rail-job-stop], [data-rail-server-stop]').disabled, false, 'a server that can stop has a live Stop');
+});
+
+test('Running now follows the runs: syncHosts repaints it, and it is gone when the list is empty', async (t) => {
+  let list = RUN_ROWS;
+  const f = await docked({ mountOptions: { getRunningRows: () => list } });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  assert.equal(f.value('running_now'), '2');
+  list = [];
+  rails.syncHosts();
+  assert.equal(f.section('running_now'), null);
+  list = [RUN_ROWS[0]];
+  rails.syncHosts();
+  assert.equal(f.value('running_now'), '1');
+});
+
+test('Jenny\'s checklist: from getChecklist with "1 of 3 done"; absent without items; its fold is local and writes nothing', async (t) => {
+  let steps = [{ text: 'Load the ledger', state: 'done' }, { text: 'Compare to plan', state: 'now' }, { text: 'Chart FX', state: 'todo' }];
+  const f = await docked({ mountOptions: { getChecklist: () => steps } });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  assert.equal(f.value('checklist'), '1 of 3 done');
+  assert.match(f.text('checklist'), /Load the ledgerDone.*Compare to planNow.*Chart FX/);
+  f.head('checklist').click();
+  await flush();
+  assert.equal(f.head('checklist').getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(f.bridge.setViewCalls, [], 'the checklist has no persisted disclosure');
+  steps = [];
+  rails.syncHosts();
+  assert.equal(f.section('checklist'), null);
+  const bare = await docked();
+  t.after(() => { bare.api.dispose(); bare.window.close(); });
+  assert.equal(bare.section('checklist'), null, 'no reader, no section');
+});
+
+test('full auto is named as the run mode when it is armed', async (t) => {
+  const f = await docked({ mountOptions: { isFullAuto: (sid) => sid === 'sess_a' } });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  assert.match(f.text('this_chat'), /project of sess_aFull auto/);
+});
+
+test('a closed tab costs nothing: a rail that is not shown sets no timer, fetches nothing, and refreshes once when shown', async (t) => {
+  let shown = false;
+  rails.configure({ isShown: () => shown });
+  t.after(() => rails.configure({ isShown: null }));
+  const bu = browserBridge({ sess_a: { ok: true, open: false } });
+  const f = await docked({ mountOptions: { getBrowserUse: () => bu } });
+  t.after(() => { f.api.dispose(); f.window.close(); });
+  assert.equal(f.bridge.summaryCalls.length, 0, 'not shown at mount: no request');
+  assert.equal(bu.stateCalls, 0, 'nor a read of the chat\'s browser page');
+  for (let n = 0; n < 3; n += 1) f.bridge.emit({ schema_version: 1, session_id: 'sess_a', revision: n });
+  f.window.dispatchEvent(new f.window.Event('focus'));
+  await sleep(220);
+  assert.equal(f.bridge.summaryCalls.length, 0, 'invalidations and focus do no fetch while not shown');
+  shown = true;
+  rails.syncHosts();
+  await flush();
+  assert.equal(f.bridge.summaryCalls.length, 1, 'shown again: one refresh for everything missed');
+  rails.syncHosts();
+  await flush();
+  assert.equal(f.bridge.summaryCalls.length, 1, 'still shown: nothing more');
+  shown = false;
+  rails.syncHosts();
+  shown = true;
+  rails.syncHosts();
+  await flush();
+  assert.equal(f.bridge.summaryCalls.length, 2, 'every return to the tab refreshes once, even with no event in between');
 });

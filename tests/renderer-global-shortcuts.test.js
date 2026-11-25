@@ -132,36 +132,6 @@ test('a held Ctrl+N (auto-repeat keydown) creates one chat, not one per repeat',
   assert.equal(shell.__state.sessionCounter, counterBefore, 'a repeat keydown never fires the chord');
 });
 
-test('Ctrl+B toggles the active panel and is a no-op on panel-less views', async (t) => {
-  const { window } = await loadRendererTestApp(t);
-  const doc = window.document;
-  const workspace = doc.getElementById('workspace');
-  await waitForUi(window, 60);
-
-  pressCtrl(window, '2');
-  await waitForUi(window, 30);
-  assert.equal(window.__rendererState.ui.activeView, 'chat');
-
-  const focusedTab = doc.getElementById('chatTopRailTab');
-  focusedTab.focus();
-  pressCtrl(window, 'b');
-  await waitForUi(window, 30);
-  assert.equal(workspace.classList.contains('panel-collapsed'), true, 'Ctrl+B collapses the chat panel');
-  assert.equal(doc.activeElement, focusedTab, 'the keyboard path never steals focus (unlike the click path)');
-
-  pressCtrl(window, 'b');
-  await waitForUi(window, 30);
-  assert.equal(workspace.classList.contains('panel-collapsed'), false, 'Ctrl+B expands it again');
-
-  pressCtrl(window, '4');
-  await waitForUi(window, 30);
-  pressCtrl(window, 'b');
-  await waitForUi(window, 30);
-  assert.equal(workspace.classList.contains('panel-collapsed'), false, 'no panel to toggle on logs');
-  const store = JSON.parse(window.localStorage.getItem('jenny.panels.v2'));
-  assert.equal(store.byView.chat.collapsed, false, 'logs Ctrl+B never touched the chat panel state');
-});
-
 test('extra modifiers never consume the keys', async (t) => {
   const { window } = await loadRendererTestApp(t);
   await waitForUi(window, 60);

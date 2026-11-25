@@ -31,6 +31,7 @@
 
 const { STATES_SEEN } = require('./client-file');
 const { DEFAULT_BACKOFF, addressSets, backoffDelay, cleanAddresses, createRefusalWindow, createWaits, openLink } = require('./bridge-link');
+const { sendCommand } = require('./command-send');
 const { createDialSecrets } = require('./dial-secrets');
 const { createEventFeed } = require('./event-feed');
 const { createRoute, resolveHostName } = require('./host-name');
@@ -45,8 +46,8 @@ const STATES = Object.freeze({
   PENDING: 'pending', REVOKED: 'revoked', UPDATE_REQUIRED: 'update_required',
 });
 const TERMINAL = new Set([STATES.REVOKED, STATES.UPDATE_REQUIRED]);
-const OFFLINE_REASONS = new Set(['host_unreachable', 'host_name_unresolved', 'relay_denied', 'team_bridge_unavailable']);
-const CLIENT_REASONS = new Set(['client_unauthorized', 'boot_epoch_mismatch', 'client_required']);
+const OFFLINE_REASONS = new Set(['host_unreachable', 'host_name_unresolved', 'relay_denied', 'relay_unreachable',
+  'team_bridge_unavailable']);
 const RATE_LIMIT_MS = 60_000;
 const CHAT_PREFIX = 'team.chat.';
 // The host's own test (services/host/team-chat-commands.js): presence is limited with chat, on its own counter.
@@ -88,6 +89,11 @@ function createConnectionManager({
   const say = (event, fields = {}) => { try { log('INFO', event, { team_id: teamId, ...fields }); } catch { /* logging is best effort */ } };
   // Host events across reconnects (event-feed.js); its remembered id is cleared on stop, revoke and identity loss.
   const feed = createEventFeed({ log: (level, event, fields) => say(event, fields) });
+  // Row 201: the owner's rename reaches every device live (`team_renamed`), not only the one that renamed.
+  feed.onEvent((event) => {
+    const name = event?.event_type === 'team_renamed' ? event.name : null;
+    if (typeof name === 'string' && name.length >= 1 && name.length <= 128 && name !== facts.team_name) { facts = { ...facts, team_name: name }; notify(); }
+  });
 
   function notify() {
     pushedFacts = JSON.stringify(facts);
@@ -230,6 +236,7 @@ function createConnectionManager({
     // The saved relay, read for every dial (dial-secrets.js); a token store that cannot answer dials nothing.
     const saved = secrets.relay();
     if (saved.reason) { key.seed.fill(0); return { ok: false, keyReason: saved.reason, retry: true }; }
+    let relay = saved.relay; // a denied relay is dropped for the sets that remain, which are the direct addresses
     const route = createRoute(addressSets(record), record.host_name, resolveName);
     routes.add(route);
     let reason = 'host_unreachable';
@@ -241,7 +248,7 @@ function createConnectionManager({
         if (!addresses) break;
         let bridge = null;
         const opened = await openLink({ secretKey: key.seed, hostPublicKey: hostKey, addresses, spawnChild, appVersion,
-          protocolVersion, requestTimeoutMs, createBridge, relay: saved.relay, log: (event, fields) => say(event, fields),
+          protocolVersion, requestTimeoutMs, createBridge, relay, log: (event, fields) => say(event, fields),
           onBridge: (started) => { bridge = started; dialing.add(started); } });
         if (bridge) dialing.delete(bridge);
         if (stale(gen)) {
@@ -251,7 +258,7 @@ function createConnectionManager({
         if (opened.ok) return { ok: true, link: opened.link };
         reason = opened.reason;
         if (reason === 'host_refused') break;
-        if (reason === 'relay_denied') { secrets.refuseRelay(); break; }
+        if (reason === 'relay_denied') { secrets.refuseRelay(); relay = null; }
       }
     } finally {
       routes.delete(route);
@@ -446,22 +453,8 @@ function createConnectionManager({
     if (!target || (current.state !== STATES.ONLINE && current.state !== STATES.PENDING)) {
       return teamFailure('CONNECTION_FAILED', 'team_not_connected');
     }
-    const blocked = await ensureClient(target);
-    if (blocked) return blocked;
-    const used = target.client;
-    let answer = await target.session.command(operation, params, { client: used, bootEpoch: used.bootEpoch, requestId, envelope });
-    if (isFailureAnswer(answer) && CLIENT_REASONS.has(answer.error.reason)) {
-      // Only the client this call used is dropped: a concurrent call may already have a new one.
-      if (target.client === used) target.client = null;
-      if (client === used) client = null;
-      const again = await ensureClient(target);
-      if (again) return again;
-      // The first attempt was refused at identity, before dispatch, so resending under the caller's id is safe;
-      // without one the retry carries a new id. A later resend under the same id replays the stored answer
-      // only for chat (the chat store keys member, device and id). An admin mutation's receipt also digests
-      // client_id and boot_epoch, so after a new registration it answers request_payload_changed.
-      answer = await target.session.command(operation, params, { client: target.client, bootEpoch: target.client.bootEpoch, requestId, envelope });
-    }
+    const answer = await sendCommand({ target, operation, params, requestId, envelope, ensureClient,
+      forgetClient: (used) => { if (client === used) client = null; } });
     // The host's admin limit is one counter per member over every team command, so the hold covers every
     // admin command (a chat operation's own limit answers team_chat_rate_limit and starts no hold).
     if (isFailureAnswer(answer) && answer.error.reason === 'team_rate_limit') {
@@ -475,7 +468,7 @@ function createConnectionManager({
   async function command(operation, params, options) {
     let answer;
     try { answer = await send(operation, params, options); } catch (error) { return failureOf(error); }
-    // The name is read at connect only: a rename this device made shows at once (other devices: at their next connect).
+    // A rename this device made shows at once; every other device takes it from `team_renamed` (or at its next connect).
     if (operation === 'team.rename' && answer?.ok === true && facts.team_name !== params.name) { facts = { ...facts, team_name: params.name }; notify(); }
     return answer;
   }
@@ -518,6 +511,7 @@ function createConnectionManager({
     if (busy) return { outcome: 'failed', answer: teamFailure('CONNECTION_FAILED', 'team_busy') };
     busy = true;
     lossDuringBusy = null;
+    const target = link;
     let outcome;
     let answer;
     try {
@@ -527,7 +521,9 @@ function createConnectionManager({
       answer = failureOf(error);
       outcome = 'failed';
       if (error instanceof TeamError && error.reset) {
-        const happened = await track(changeHappened());
+        // A key the host refused after greeting it on this very connection is a revoke: no second refusal to wait for.
+        const refusal = lossDuringBusy ?? (target ? await target.offlineReason() : null);
+        const happened = (refusal === 'host_refused' && target?.greeted === true) || await track(changeHappened());
         outcome = happened ? 'done' : 'failed';
         answer = happened ? { ok: true } : teamFailure('CONNECTION_FAILED', 'team_change_unconfirmed');
       }

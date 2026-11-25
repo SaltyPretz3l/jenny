@@ -92,6 +92,12 @@ def _diagram_guidance_block(variant: str) -> str:
     return resolve_diagram_guidance(variant)
 
 
+def _mockup_guidance_block() -> str:
+    from sidecar.ai.context.mockup_guidance import MOCKUP_GUIDANCE
+
+    return MOCKUP_GUIDANCE
+
+
 def request_workspace_root_kwargs(config: Any, execution_context: Any | None) -> dict[str, Any]:
     """Prompt-build kwargs carrying the request authority's root.
 
@@ -139,7 +145,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
 
         The captured request authority wins when the caller supplies one --
         including an explicitly unbound (``None``) root, which renders no
-        bootstrap, ``agentj.md``, manifest, or task-capsule block at all. Only
+        bootstrap, ``agentj.md`` or manifest block at all. Only
         a caller that passes nothing falls back to the process-wide root, so
         the global ``tools_workspace_root`` can never leak into a session whose
         project has no folder bound.
@@ -189,7 +195,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         include_skills: bool = True,
         include_bootstrap: bool = True,
         workspace_manifest_enabled: bool = False,
-        task_capsule_enabled: bool = False,
         request_workspace_root: Any = _UNSET_ROOT,
         defer_turn_context: bool = False,
         skill_authority: SkillAuthority | None = None,
@@ -246,6 +251,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         if current_date_block:
             prompt_blocks.append(current_date_block)
         prompt_blocks.append(_diagram_guidance_block(diagram_guidance))
+        prompt_blocks.append(_mockup_guidance_block())
         executable_tools_block = self._render_executable_tools(
             tool_statuses, native_tool_schemas=native_tool_schemas
         )
@@ -259,7 +265,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
                 latest_user_content=latest_user_content,
                 workspace_root=workspace_root,
                 workspace_manifest_enabled=workspace_manifest_enabled,
-                task_capsule_enabled=task_capsule_enabled,
             )
         )
         requested_tool_block = turn_sections.get("requested_tool_availability", "")
@@ -283,9 +288,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         workspace_manifest_block = turn_sections.get("workspace_manifest", "")
         if workspace_manifest_block:
             prompt_blocks.append(workspace_manifest_block)
-        task_capsule_block = turn_sections.get("task_capsule", "")
-        if task_capsule_block:
-            prompt_blocks.append(task_capsule_block)
         current_info_block = turn_sections.get("current_info_guidance", "")
         if current_info_block:
             prompt_blocks.append(current_info_block)
@@ -312,6 +314,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         if current_date_block:
             static_blocks.append(current_date_block)
         static_blocks.append(_diagram_guidance_block(diagram_guidance))
+        static_blocks.append(_mockup_guidance_block())
         for block in static_blocks:
             if block:
                 sections.append(CacheSection(name="static", content=block, cacheable=True))
@@ -379,14 +382,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
                     cacheable=False,
                 )
             )
-        if task_capsule_block:
-            sections.append(
-                CacheSection(
-                    name="task_capsule",
-                    content=task_capsule_block,
-                    cacheable=False,
-                )
-            )
         if current_info_block:
             sections.append(
                 CacheSection(
@@ -424,7 +419,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         latest_user_content: str,
         workspace_root: Path | None,
         workspace_manifest_enabled: bool,
-        task_capsule_enabled: bool,
     ) -> dict[str, str]:
         """Render the per-turn sections, keyed by ``TURN_SECTION_NAMES``."""
         return {
@@ -435,12 +429,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
             "workspace_manifest": self._render_workspace_manifest_block(
                 enabled=workspace_manifest_enabled,
                 workspace_root=workspace_root,
-            ),
-            "task_capsule": self._render_task_capsule_block(
-                enabled=task_capsule_enabled,
-                workspace_root=workspace_root,
-                latest_user_content=latest_user_content,
-                tool_statuses=tool_statuses,
             ),
             "current_info_guidance": self._render_current_info_guidance(
                 tool_statuses=tool_statuses,
@@ -459,7 +447,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None = None,
         latest_user_content: str = "",
         workspace_manifest_enabled: bool = False,
-        task_capsule_enabled: bool = False,
         request_workspace_root: Any = _UNSET_ROOT,
     ) -> tuple[str, ...]:
         """The sections ``build_system_prompt(defer_turn_context=True)`` leaves out."""
@@ -468,7 +455,6 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
             latest_user_content=latest_user_content,
             workspace_root=self._effective_workspace_root(request_workspace_root),
             workspace_manifest_enabled=workspace_manifest_enabled,
-            task_capsule_enabled=task_capsule_enabled,
         )
         return tuple(blocks[name] for name in TURN_SECTION_NAMES if blocks.get(name))
 

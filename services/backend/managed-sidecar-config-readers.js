@@ -127,6 +127,10 @@ function getConfiguredToolsPythonRuntimeEnabled(service) {
   return readConfigState(service, (state) => state.tools?.pythonRuntime === true);
 }
 
+function getConfiguredToolsComputerUseEnabled(service) {
+  return readConfigState(service, (state) => state.tools?.computer !== false);
+}
+
 function getConfiguredToolsTodoEnabled(service) {
   return true;
 }
@@ -358,6 +362,7 @@ module.exports = {
   getConfiguredToolsImageReadEnabled,
   getConfiguredToolsLspEnabled,
   getConfiguredToolsPythonRuntimeEnabled,
+  getConfiguredToolsComputerUseEnabled,
   getConfiguredToolsRichFilesEnabled,
   getConfiguredToolsSubagentsEnabled,
   getConfiguredToolsTodoEnabled,

@@ -63,6 +63,13 @@ function createTeamProjectRules({
   }
   const project = (projectId) => (rules ? rules.project(projectId) : null);
 
+  // Row 123 (D5) and OD-2: with project files on, the rule gate answers nothing, so the rules are paused: the list says
+  // so, and no rule changes and no request is filed meanwhile (the reason is the unavailable one: every approval asks a person).
+  function pausedReason() {
+    try { return backend()?.hostRootBoundary ? 'file_tools' : null; } catch { return null; }
+  }
+  const pausedRefusal = () => (pausedReason() ? unavailable() : null);
+
   // The caller's effective role in an active team project, or null (General, a deleting or unknown project). The
   // twin of project-visibility.js's unexported `activeProjectRole`.
   function roleIn(memberId, projectId) {
@@ -175,16 +182,16 @@ function createTeamProjectRules({
     const admin = role === 'admin';
     const requests = current.requests.filter((request) => request.asker_member_id === actor.member_id
       || (admin && request.state === 'open'));
-    // Row 123 (D5): with project files on, the rule gate answers nothing, so the page says the rules are paused.
-    let paused;
-    try { paused = Boolean(backend()?.hostRootBoundary); } catch { paused = false; }
+    const paused = pausedReason();
     return { ok: true, project_id: params.project_id, revision: current.revision, rules: current.rules,
-      open_request_count: openCount(current), requests, ...(paused ? { paused: 'file_tools' } : {}) };
+      open_request_count: openCount(current), requests, ...(paused ? { paused } : {}) };
   }
 
   function add({ params, actor }) {
     const denied = mustBe(actor.member_id, params.project_id, 'admin');
     if (denied) return denied;
+    const stopped = pausedRefusal();
+    if (stopped) return stopped;
     const folder = validateFolder(params.folder);
     if (!folder.ok) return fail('invalid', folder.reason);
     return saveRule(params.project_id, params.tool_name, folder.folder, actor.member_id);
@@ -206,7 +213,8 @@ function createTeamProjectRules({
 
   function answer({ params, actor }) {
     const projectId = params.project_id;
-    const denied = mustBe(actor.member_id, projectId, 'admin');
+    // While paused a decline still clears a stale request (it grants nothing); allow and change are refused.
+    const denied = mustBe(actor.member_id, projectId, 'admin') || (params.outcome === 'decline' ? null : pausedRefusal());
     if (denied) return denied;
     const current = project(projectId);
     if (!current) return unavailable();
@@ -246,6 +254,7 @@ function createTeamProjectRules({
       revision: written.revision };
   }
 
+  // A removal only takes authority away, so it stays open while the rules are paused.
   function remove({ params, actor }) {
     const projectId = params.project_id;
     const denied = mustBe(actor.member_id, projectId, 'admin');
@@ -286,7 +295,7 @@ function createTeamProjectRules({
   function precheck({ always, projectId, toolName, memberId }) {
     if (typeof projectId !== 'string') return fail('conflict', 'team_rule_no_project');
     if (!isRuleTool(toolName)) return fail('invalid', 'team_rule_tool_invalid');
-    return mustBe(memberId, projectId, always === 'rule' ? 'admin' : 'writer');
+    return mustBe(memberId, projectId, always === 'rule' ? 'admin' : 'writer') || pausedRefusal();
   }
 
   // After the decision applied, in the same synchronous run as `precheck` (no await between, so the role it read
@@ -395,8 +404,11 @@ function createTeamProjectRules({
     const host = core.composition.backend;
     host.teamProjectRules = Object.freeze({ match, used });
     const offMembers = store.onMembershipChange((event) => {
-      if (event?.kind !== 'member_revoked' || typeof event.member_id !== 'string') return;
-      dropRequests(event.member_id, rules?.projectIds() ?? []);
+      if (typeof event?.member_id !== 'string') return;
+      // A revoke or leave, or a demotion to read-only (a reader asks for nothing): the member's open requests close.
+      if (event.kind === 'member_revoked' || (event.kind === 'role_changed' && event.role === 'read_only')) {
+        dropRequests(event.member_id, rules?.projectIds() ?? []);
+      }
     });
     const offProjects = store.onProjectChange((event) => {
       // A delete drops the project's entry itself (team-project-delete.js); only a member leaving matters here.

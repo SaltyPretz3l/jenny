@@ -20,27 +20,8 @@
     // unchanged blob -- it cannot go stale.
     let cachedReviewPrefsRaw = null;
     let cachedReviewPrefs = null;
-    // Artifact Panel V2: per-entry validation for the per-session width map —
-    // non-empty string key, finite positive number, clamped to the static
-    // 320..560 range; malformed entries dropped; oversized maps trimmed to the
-    // newest 40 (matching the prefs module's oldest-first eviction).
-    function normalizeArtifactReviewWidthBySession(value) {
-      const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-      const normalized = {};
-      for (const key of Object.keys(source)) {
-        const sessionId = String(key || '').trim();
-        const numeric = Number(source[key]);
-        if (!sessionId || !Number.isFinite(numeric) || numeric <= 0) continue;
-        normalized[sessionId] = Math.max(320, Math.min(560, Math.round(numeric)));
-      }
-      const keys = Object.keys(normalized);
-      for (let i = 0; i < keys.length - 40; i += 1) {
-        delete normalized[keys[i]];
-      }
-      return normalized;
-    }
-
-    function normalizeArtifactReviewMaximizedBySession(value) {
+    // A per-session `true`-only map (the Close dismissal): non-empty string keys, trimmed to the newest 40.
+    function normalizeArtifactReviewSessionFlags(value) {
       const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
       const normalized = {};
       for (const key of Object.keys(source)) {
@@ -58,24 +39,17 @@
       const normalized = {
         // One closed state: a retired `collapsed: true` reads as closed.
         enabled: source.enabled === true && source.collapsed !== true,
-        width: Math.max(320, Math.min(560, Math.round(Number(source.width || 420) || 420))),
         // Must stay in lockstep with the manager-side normalizer
         // (renderer-artifact-review-prefs.js, wired through
         // renderer-artifacts-utils.js): the two drifting is the named auto-open
-        // desync failure mode. The lockstep covers widthBySession (Artifact
-        // Panel V2), the per-chat dismissal (shell chrome area 3, D1) and the
-        // per-kind wrap: stripping any here would make the next save lose it.
-        // The retired global `userDismissed` is ignored, never carried.
+        // desync failure mode. The lockstep covers the per-chat dismissal
+        // (shell chrome area 3, D1) and the per-kind wrap: stripping any here
+        // would make the next save lose it. The retired global `userDismissed`
+        // and the retired width and maximize fields are ignored, never carried.
         textWrap: { output: source.textWrap === false ? false : textWrap.output !== false, code: source.textWrap === false ? false : textWrap.code !== false },
       };
-      const widthBySession = normalizeArtifactReviewWidthBySession(source.widthBySession);
-      if (Object.keys(widthBySession).length > 0) {
-        normalized.widthBySession = widthBySession;
-      }
-      const dismissedForSession = normalizeArtifactReviewMaximizedBySession(source.dismissedForSession);
+      const dismissedForSession = normalizeArtifactReviewSessionFlags(source.dismissedForSession);
       if (Object.keys(dismissedForSession).length > 0) normalized.dismissedForSession = dismissedForSession;
-      const maximizedBySession = normalizeArtifactReviewMaximizedBySession(source.maximizedBySession);
-      if (Object.keys(maximizedBySession).length > 0) normalized.maximizedBySession = maximizedBySession;
       return normalized;
     }
 

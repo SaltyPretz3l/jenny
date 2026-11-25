@@ -9,9 +9,9 @@ import json
 import logging
 import math
 import os
-import re
 import shutil
 import subprocess  # noqa: F401 - compatibility seam for injected unit fakes.
+import time
 import uuid
 from pathlib import Path
 
@@ -24,7 +24,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
-from sidecar.ai.tools.builtins import cancellation, output_chunk_slot, shell_harness
+from sidecar.ai.tools.builtins import cancellation, new_image_note, output_chunk_slot, shell_harness
 from sidecar.ai.tools.builtins import shell_live_output as _live_output
 from sidecar.ai.tools.builtins import shell_test_progress as _test_progress
 from sidecar.ai.tools.builtins.executable_lookup import (
@@ -60,6 +60,9 @@ from sidecar.ai.tools.builtins.shell_harness import powershell_directory as _pow
 from sidecar.ai.tools.builtins.shell_security import (
     classify_command,
     find_blocked_pattern,
+)
+from sidecar.ai.tools.builtins.shell_semantic_exit import (
+    is_semantic_ok as _is_semantic_ok,
 )
 from sidecar.ai.tools.builtins.shell_settings import _FEATURE_FLAGS, default_on_feature_enabled
 from sidecar.ai.tools.builtins.shell_settings import (
@@ -100,22 +103,8 @@ MAX_EXPECTED_EXIT_CODES = 16
 _MIN_COMPOUND_SEGMENTS = 2
 # Background-job states a check_background_job poll reports as a successful read.
 _READABLE_JOB_STATES = frozenset({"running", "completed", "failed"})
+_TERMINAL_JOB_STATES = frozenset({"completed", "failed"})
 
-# Semantic exit-code overrides: command prefix -> {exit_code: explanation}.
-SEMANTIC_EXIT_OVERRIDES: dict[str, dict[int, str]] = {
-    "git grep": {1: "no matches found"},
-    "grep": {1: "no matches found"},
-    "rg": {1: "no matches found"},
-    "diff": {1: "files differ (normal)"},
-    "cmp": {1: "files differ (normal)"},
-    "test": {1: "condition is false (normal)"},
-    # Windows equivalents: a month of real chats counted these as tool errors (row 129, A3).
-    "findstr": {1: "no matches found"},
-    "where": {1: "not found on PATH"},
-    "where.exe": {1: "not found on PATH"},
-    "fc": {1: "files differ (normal)"},
-    "robocopy": dict.fromkeys(range(1, 8), "robocopy finished; exit codes below 8 mean success"),
-}
 
 # ── Module-level config ───────────────────────────────────────────────
 
@@ -205,30 +194,6 @@ def _display_cwd(cwd: Path, workspace: WorkspaceGuard) -> str:
         return cwd.relative_to(workspace.require_root()).as_posix()
     except ValueError:
         return str(cwd)
-
-
-def _is_semantic_ok(command: str, exit_code: int) -> str | None:
-    """Return an explanation when *exit_code* is semantically OK."""
-    lower = command.lower()
-    if re.search(r"(?:&&|\|\||[;\r\n])", lower):
-        return None
-    if "|" in lower:
-        if '"' in lower or "'" in lower:
-            return None  # a quoted "|" is text, not a pipe
-        # A plain pipeline exits with its last command's code: `dir /s | findstr x`.
-        lower = lower.rsplit("|", 1)[1].strip()
-        if lower.startswith("git diff"):
-            return None
-    if (
-        (lower == "git diff" or lower.startswith("git diff "))
-        and ("--exit-code" in lower or "--quiet" in lower)
-        and exit_code == 1
-    ):
-        return "differences found (normal for git diff --exit-code/--quiet)"
-    for prefix, overrides in SEMANTIC_EXIT_OVERRIDES.items():
-        if (lower == prefix or lower.startswith(f"{prefix} ")) and exit_code in overrides:
-            return overrides[exit_code]
-    return None
 
 
 def _separator_masks_prior_exit_code(separator: str) -> bool:
@@ -658,6 +623,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
     # ── Background execution ──────────────────────────────────────
     if arguments.get("run_in_background") is True:
         root = workspace.require_root()
+        job_started_at = time.time()
         started = start_background_job(
             argv,
             cwd=cwd,
@@ -666,6 +632,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             progress_tap=_live_output.background_tap_for(command, cwd, root),
         )
         job_id = started.job_id
+        new_image_note.remember_job_start(root, job_id, job_started_at, command, cwd)
         bg_payload = {
             "job_id": job_id,
             "timeout_seconds": timeout_seconds,
@@ -689,6 +656,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         )
 
     # ── Synchronous execution ─────────────────────────────────────
+    call_started_at = time.time()
     progress = _test_progress.tracker_for(command, cwd, workspace.root)
     _test_progress.activate(progress)  # picked up by _run_owned_process on this thread
     try:
@@ -764,7 +732,10 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
     expectation_met = (
         exit_code in expected_exit_codes if expected_exit_codes is not None else None
     )
-    semantic = None if expected_exit_codes is not None else _is_semantic_ok(command, exit_code)
+    semantic = (
+        None if expected_exit_codes is not None
+        else _is_semantic_ok(command, exit_code, raw_stderr)
+    )
     is_ok = bool(expectation_met) if expected_exit_codes is not None else (
         exit_code == 0 or semantic is not None
     )
@@ -809,6 +780,12 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
     if semantic is not None:
         payload["semantic_note"] = semantic
     payload.update(output_fields)
+    image_note = new_image_note.new_image_note(
+        workspace.root, texts=(command, raw_stdout, raw_stderr),
+        started_at=call_started_at, base_dirs=(cwd,),
+    )
+    if image_note:
+        payload[new_image_note.NOTE_KEY] = image_note
     if not is_ok:
         hint = _unresolved_command_hint(f"{raw_stderr}\n{raw_stdout}", cwd=cwd)
         if hint is not None:
@@ -944,6 +921,12 @@ def check_background_job_tool(
         )
         if hint is not None:
             status["hint"] = hint
+    if status.get("state") in _TERMINAL_JOB_STATES:
+        image_note = new_image_note.note_for_job(
+            root, job_id, texts=(str(status.get("stdout") or ""), str(status.get("stderr") or "")),
+        )
+        if image_note:
+            status[new_image_note.NOTE_KEY] = image_note
     # A running or terminal job (completed, failed, cancelled, timed out) is a
     # state the poll read successfully: ``state``/``exit_code``/``error`` carry
     # the job's outcome. Only an unreadable or rejected status fails the poll.

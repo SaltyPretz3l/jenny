@@ -534,7 +534,7 @@
 
   // The rows of Settings > Appearance: what its Reset restores and what enables it. A preference that
   // shares the store but sits on another page (chat width, title-bar load, side panel) is not listed.
-  var APPEARANCE_PAGE_KEYS = ['paletteId', 'typographyId', 'surfaceEffectId', 'composerHoloId', 'fontScaleId', 'startupAnimation', 'teamDensityId'];
+  var APPEARANCE_PAGE_KEYS = ['paletteId', 'typographyId', 'surfaceEffectId', 'composerHoloId', 'fontScaleId', 'startupAnimation']; // Team chat density sits on the Team page (row 193)
 
   function getDefaultAppearancePreferences() {
     return Object.assign({}, DEFAULT_FRESH_APPEARANCE);

@@ -19,6 +19,8 @@
  *   replies only) is followed by the next while the log stays at the bottom,
  *   until the newest; meanwhile nothing is marked read and pushed messages
  *   are not drawn.
+ * - Opening a channel with unread messages lands on the "New" line (the first unread, at the top of the log) instead of the
+ *   bottom, once the log is laid out, and nothing is marked read before that: the reader reaches the end by reading on.
  * - Read state: `chatMarkRead` with the last message shown, only while the
  *   log is laid out (shown on screen), the window has focus, the bottom is
  *   reached and the newest are held. The mark is the channel's `last_seq`
@@ -77,6 +79,7 @@
     const bodies = new Map(); // message id or 'out:' + entry id -> { rev, names, html }; one per row shown
     let opened = false;
     let newAfter = null;
+    let landOnNew = false; // the first open with unread: the log still has to land on the New line
     let unseen = 0;
     let drawn = 0; // message rows after the last pass (the store has merged a push before it tells)
     let disposed = false;
@@ -228,7 +231,7 @@
     }
 
     function markRead() {
-      if (disposed || readHeld || !line().loaded || line().hasNewer || !focused() || !laidOut() || !atBottom()) return;
+      if (disposed || readHeld || landOnNew || !line().loaded || line().hasNewer || !focused() || !laidOut() || !atBottom()) return;
       const record = chat.channel(teamId, channelId);
       const seq = Math.max(lastSeq(), (record && record.last_seq) || 0);
       if (seq) void chat.markRead(teamId, channelId, seq);
@@ -240,10 +243,10 @@
     // while the newest are held.
     function update(change = {}) {
       if (disposed) return;
-      if (change.type === 'cleared') { opened = false; newAfter = null; unseen = 0; bodies.clear(); }
+      if (change.type === 'cleared') { opened = false; newAfter = null; landOnNew = false; unseen = 0; bodies.clear(); }
       if (change.type === 'timeline' && change.reset && newAfter === null && line().loaded) {
         const record = chat.channel(teamId, channelId);
-        if (record && record.unread > 0 && record.last_read_seq < record.last_seq) newAfter = record.last_read_seq;
+        if (record && record.unread > 0 && record.last_read_seq < record.last_seq) { newAfter = record.last_read_seq; landOnNew = true; }
       }
       const newer = Array.isArray(change.newer);
       const stick = !newer && !line().hasNewer && ((laidOut() && atBottom()) || (change.type === 'timeline' && change.reset));
@@ -268,12 +271,24 @@
         if (chat.trim(teamId, channelId, 'newest', MAX_ROWS)) patch();
       }
       drawn = messageCount();
+      if (landOnNew) landOnNewLine();
       if (line().loaded && scroll.getAttribute('aria-live') !== 'polite') scroll.setAttribute('aria-live', 'polite');
       syncJump();
       openIfReady();
       markRead();
       files.scan();
       if (onAfterPatch) onAfterPatch();
+    }
+
+    // The first unread message at the top of the log, once the log is laid out; with no New line drawn (every unread message is
+    // yours) the log stays where it is.
+    function landOnNewLine() {
+      const mark = nodes.get('new');
+      if (!mark) { landOnNew = false; return; }
+      if (!laidOut()) return;
+      landOnNew = false;
+      scroll.scrollTop = Math.max(0, mark.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop);
+      unseen = 0;
     }
 
     // The channel is opened once the team's chat is in and the team is connected. After a failure it

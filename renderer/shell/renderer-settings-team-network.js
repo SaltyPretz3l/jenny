@@ -5,7 +5,11 @@
  * - one save bar for the address, relay and token fields (`hostInternet` with the whole record: the saved
  *   setting plus the edits; the token only when typed, absent means keep);
  * - the Reconnect code row (`hostReconnectCode`), and on a member's row "Enter reconnect code"
- *   (`teamReconnectCode`).
+ *   (`teamReconnectCode`);
+ * - row 201 (OD-5): "Pool context length", the owner's cap on how much text one request to the team's GPUs may hold
+ *   (`hostPoolContext { context_cap }`; an empty field is Auto, the host state's `pool_context_cap` is the saved
+ *   value). It is one of the owner's host settings that lives in this group because it needs no group of its own;
+ *   it applies at the server's next start, and only an owner's page draws it.
  * The page (renderer-settings-team-section.js) places the group and hands each call its context. The fold, the
  * field drafts and the shown code live here until the page is left (`reset`). The relay token is never read
  * back: the page knows only `has_token`. Markup through the page's builders; every value is escaped. */
@@ -27,10 +31,13 @@
   const SECRET = Object.freeze({ 'team-secret': '1' });
   const TONES = Object.freeze({ ok: 'success', bad: 'danger', pending: 'pending' });
   const COPIED_MS = 1500;
+  // The bounds of the pool's context length in whole tokens (services/team/host/host-layout.js POOL_CONTEXT_MIN / _AUTO).
+  const POOL_MIN = 2048;
+  const POOL_MAX = 1048576;
 
   let ui = fresh();
   let copyTimer = null;
-  function fresh() { return { fold: null, address: undefined, relay: undefined, tokenTyped: false, code: '', copied: false }; }
+  function fresh() { return { fold: null, address: undefined, relay: undefined, tokenTyped: false, code: '', copied: false, pool: undefined }; }
   function inv() { return globalThis.inventory || {}; }
 
   // ------------------------------------------------------------- the state
@@ -137,9 +144,13 @@
       input({ id: 'teamNetAddr', value: now.address, ariaLabel: addressLabel, placeholder: jt('settings.team.net.addressPlaceholder', 'home.example.net or 203.0.113.7'), maxLength: 255, disabled: busy }));
     const relay = field('teamNetRelay', relayLabel, jt('settings.team.net.relayHelp', 'A relay you run yourself. Jenny comes with none.'),
       input({ id: 'teamNetRelay', value: now.relay, ariaLabel: relayLabel, placeholder: jt('settings.team.net.relayPlaceholder', 'https://relay.example.net'), maxLength: 100, disabled: busy }));
+    const clear = saved(host).hasToken
+      ? view.button(vm, 'net-clear-token', jt('settings.team.net.clearToken', 'Clear token'), { busyKey: 'net-save', disabled: dirty(host),
+        title: dirty(host) ? jt('settings.team.net.clearTokenFirst', 'Save or discard your changes first.') : jt('settings.team.net.clearTokenTip', 'Removes the saved relay token and restarts the server.') })
+      : '';
     const token = field('teamNetToken', tokenLabel, jt('settings.team.net.tokenHelp', 'Optional. Lets your relay turn strangers away. Carried in this team’s invites.'),
-      input({ id: 'teamNetToken', value: '', type: 'password', maxLength: 48, disabled: busy, ariaLabel: tokenLabel, dataset: SECRET,
-        placeholder: saved(host).hasToken ? jt('settings.team.net.tokenSaved', 'A token is saved. Type to replace it') : '' }));
+      '<div class="team-set-inline">' + input({ id: 'teamNetToken', value: '', type: 'password', maxLength: 48, disabled: busy, ariaLabel: tokenLabel, dataset: SECRET,
+        placeholder: saved(host).hasToken ? jt('settings.team.net.tokenSaved', 'A token is saved. Type to replace it') : '' }) + clear + '</div>');
     const relayNote = '<p class="team-net-note">' + escapeHtml(jt('settings.team.net.relaySees', 'The relay sees encrypted traffic and the addresses of this PC and of each member, never what is said.')) + '</p>';
     return { addr, relay, token, relayNote };
   }
@@ -207,6 +218,31 @@
     return html;
   }
 
+  // ---------------------------------------------- the pool context length (row 201, OD-5)
+
+  function poolSaved(host) { return Number.isSafeInteger(host.pool_context_cap) ? String(host.pool_context_cap) : ''; }
+  function poolShown(host) { return ui.pool ?? poolSaved(host); }
+  // The cap the field says: { ok: true, cap } with null for Auto (an empty field), or { ok: false }.
+  function poolParse(text) {
+    const trimmed = String(text).trim();
+    if (trimmed === '') return { ok: true, cap: null };
+    const cap = /^\d{1,7}$/.test(trimmed) ? Number(trimmed) : NaN;
+    return cap >= POOL_MIN && cap <= POOL_MAX ? { ok: true, cap } : { ok: false };
+  }
+
+  function poolRow(vm, host, busy) {
+    const label = jt('settings.team.pool.label', 'Pool context length');
+    const dirty = poolShown(host).trim() !== poolSaved(host);
+    const field = input({ id: 'teamPoolCap', value: poolShown(host), type: 'number', min: POOL_MIN, max: POOL_MAX, step: 1, disabled: busy, ariaLabel: label,
+      describedBy: 'teamPoolContextHelp', placeholder: jt('settings.team.pool.auto', 'Auto') });
+    const save = view.button(vm, 'pool-save', jt('settings.team.pool.save', 'Save'), { variant: 'primary', disabled: !dirty,
+      title: jt('settings.team.pool.saveTip', 'Saves the length. It applies the next time the server starts.') });
+    return inv().settingsField({ id: 'teamPoolContextRow', variant: 'row', titleId: 'teamPoolContextTitle', helpId: 'teamPoolContextHelp', labelFor: 'teamPoolCap', label,
+      help: jt('settings.team.pool.help', 'How much text one request to the team’s GPUs may hold. Leave it empty for Auto: it follows the model that answers, up to {max} tokens. Or type a lower limit, from {min}. It applies the next time the server starts.',
+        { max: POOL_MAX.toLocaleString(globalThis.jennyI18n?.tag?.() || 'en-US'), min: POOL_MIN.toLocaleString(globalThis.jennyI18n?.tag?.() || 'en-US') }),
+      controlHtml: '<div class="team-set-inline">' + field + save + '</div>' });
+  }
+
   /** The owner's Network group, or '' when this PC hosts no team it can start. */
   function networkGroup(vm, data, hosted) {
     const host = data.host;
@@ -227,6 +263,7 @@
     }
     if (on) html += onBody(vm, host, busy);
     html += codeRow(vm, host);
+    if (host.pool_context_cap !== undefined) html += poolRow(vm, host, vm.isBusy('pool-save'));
     return view.group('network', jt('settings.team.net.heading', 'Network'), { body: html + view.note(vm.errors.network) });
   }
 
@@ -283,6 +320,12 @@
     return out;
   }
 
+  // Clear token: the saved address and relay again, `token: null` (main removes the stored token; absent would keep it).
+  function clearBody(host) {
+    const s = saved(host);
+    return { enabled: true, ...(s.address ? { public_address: s.address } : {}), ...(s.relay ? { relay_url: s.relay } : {}), token: null };
+  }
+
   async function save(ctx, body) {
     const answer = await ctx.run('net-save', 'network', () => ctx.call('hostInternet', body));
     if (answer) {
@@ -292,6 +335,17 @@
     }
     // A failure answer may still have saved the token or the setting (`changed`): the host state is read again.
     await ctx.refreshAll();
+  }
+
+  // Saves the cap the field says (empty is Auto); one outside the bounds is refused here, with the host's own sentence.
+  async function savePool(ctx, host) {
+    const parsed = poolParse(poolShown(host));
+    if (!parsed.ok) { ctx.setNote('network', words.errorText({ reason: 'team_pool_context_invalid' })); ctx.render(); return; }
+    const answer = await ctx.run('pool-save', 'network', () => ctx.call('hostPoolContext', { context_cap: parsed.cap }));
+    if (!answer) return;
+    ui.pool = undefined;
+    if (answer.host) ctx.seed({ host: answer.host });
+    ctx.render(true);
   }
 
   async function showCode(ctx) {
@@ -356,7 +410,9 @@
       case 'net-on': void save(ctx, { enabled: true }); return true;
       case 'net-off': void save(ctx, { enabled: false }); return true;
       case 'net-save': void save(ctx, payload(ctx, host)); return true;
+      case 'net-clear-token': void save(ctx, clearBody(host)); return true;
       case 'net-discard': Object.assign(ui, { address: undefined, relay: undefined, tokenTyped: false }); ctx.render(true); return true;
+      case 'pool-save': void savePool(ctx, host); return true;
       case 'net-code': void showCode(ctx); return true;
       case 'net-code-copy': copy(ctx); return true;
       case 'enter-code': ctx.setConfirm('code:' + teamId); ctx.render(); return true;
@@ -368,6 +424,13 @@
   // Field text kept across redraws; the save bar appears and goes as the fields differ from what is saved.
   function onInput(event, ctx) {
     const id = event.target && event.target.id;
+    if (id === 'teamPoolCap') {
+      const host = ctx.data().host;
+      const before = host ? poolShown(host).trim() !== poolSaved(host) : false;
+      ui.pool = String(event.target.value || '');
+      if (host && (poolShown(host).trim() !== poolSaved(host)) !== before) ctx.render();
+      return true;
+    }
     const key = FIELDS[id];
     if (!key && id !== 'teamNetToken') return id === 'teamReconnectInput';
     const host = ctx.data().host;

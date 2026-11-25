@@ -9,19 +9,19 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from sidecar.ai.error_codes import (
-    CMP_TOOL_EXECUTION_FAILED,
-    CMP_TOOL_SUBAGENT_BUDGET_EXCEEDED,
-)
+from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED, CMP_TOOL_SUBAGENT_BUDGET_EXCEEDED
 from sidecar.ai.routing.delegate_contracts import DelegateRequest, DelegateTask
 from sidecar.ai.routing.iteration_limits import (
     AGENT_SURFACE_SUB_AGENT,
     effective_max_loop_wall_seconds,
+    local_sub_agent_iteration_budget,
     loop_profile_name,
     max_iterations_for_agent_surface,
 )
-from sidecar.ai.routing.sub_agent_invocation import (
+from sidecar.ai.routing.sub_agent_invocation import (  # noqa: F401 - re-exported names
+    DEFAULT_ALLOWED_TOOL_FAMILIES,
     DELEGATE_OPERATION,
+    READ_ONLY_DISABLED_TOOLS,
     SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
     SUBAGENT_CAPACITY_UNAVAILABLE_MESSAGE,
     SUBAGENT_DEADLINE_EXCEEDED_MESSAGE,
@@ -29,6 +29,7 @@ from sidecar.ai.routing.sub_agent_invocation import (
     SubAgentIdentity,
     SubAgentInvocationResult,
     build_sub_agent_identity,
+    build_subagent_tool_preferences,
     invoke_sub_agent,
     subagent_failure_result,
 )
@@ -37,7 +38,6 @@ from sidecar.ai.routing.subagent_model_routing import (
     resolve_subagent_model_route,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.subagent_slots import (
     SubAgentSlotLimitExceededError,
@@ -47,20 +47,6 @@ from sidecar.runtime.turn_state import TURN_STATE_CANCELLED
 
 PARENT_SYNTHESIS_RESERVE_MS = 60_000
 
-DEFAULT_ALLOWED_TOOL_FAMILIES = ("filesystem", "git", "code_intelligence")
-READ_ONLY_DISABLED_TOOLS = (
-    "subagent_run", "subagent_batch", "delegate",
-    "worktree_create", "worktree_select", "worktree_delete", "memory",
-)
-
-
-def build_subagent_tool_preferences(
-    allowed_tool_families: tuple[str, ...] | list[str],
-) -> dict[str, tuple[str, ...]]:
-    """Translate validated grants into existing request-scoped tool preferences."""
-    allowed = {str(item or "").strip() for item in allowed_tool_families if str(item or "").strip()}
-    disabled_families = tuple(sorted(KNOWN_TOOL_FAMILIES - allowed))
-    return {"disabled_tools": READ_ONLY_DISABLED_TOOLS, "disabled_tool_families": disabled_families}
 
 
 @dataclass(frozen=True)
@@ -394,6 +380,11 @@ def _invoke_task(  # noqa: PLR0913
     on_task_started: TaskStartedCallback | None = None,
     on_task_event: TaskEventCallback | None = None,
 ) -> ScheduledInvocation:
+    # Loaded with the first delegate task, before a slot is taken: it pulls in the
+    # helper-worktree and operation admission modules, which no turn without a delegate
+    # needs at sidecar start.
+    from sidecar.ai.routing.delegate_write import task_invoker
+
     if slot_lease is None:
         allocator = getattr(runtime, "sub_agent_slot_allocator", None)
         if allocator is None:
@@ -417,7 +408,10 @@ def _invoke_task(  # noqa: PLR0913
         result, route = invoke_routed_task(
             router=router,
             parent_context=parent_context,
-            task=task, identity=identity, invoke=invoke_sub_agent, route=route,
+            task=task, identity=identity, route=route, invoke=task_invoker(
+                router=router, parent_context=parent_context, runtime=runtime,
+                task=task, route=route, invoke=invoke_sub_agent),
+            local_step_budget=local_sub_agent_iteration_budget(getattr(router, "_config", None)),
             on_task_started=on_task_started, on_task_event=on_task_event,
             invocation_kwargs={
                 "messages": [{"role": "user", "content": str(task.prompt or "")}],

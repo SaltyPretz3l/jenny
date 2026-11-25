@@ -53,7 +53,7 @@ test('Readiness lists each area as a success row when nothing needs attention', 
   assert.equal(READY_ITEM_ID, 'model-ready');
   assert.ok(model.items.every((item) => item.tone === 'success'));
   assert.deepEqual(model.items.map((item) => item.sectionId), ['models', 'tools', 'tools', 'general', '__memory', 'skills']);
-  assert.deepEqual(model.items.map((item) => item.actionLabel), ['Review models', 'Open tools', 'Review tools', 'Open profile', 'Open memories', 'Open skills']);
+  assert.deepEqual(model.items.map((item) => item.actionLabel), ['Review models', 'Open tools', 'Review tools', 'Open General', 'Open memories', 'Open skills']);
   assert.equal(model.items[0].message, 'llama3 is the active model.');
   assert.equal(model.items[1].message, 'C:\\dev\\jenny');
   assert.equal(model.items[2].message, 'No enabled tool is blocked.');
@@ -161,14 +161,65 @@ test('Readiness groups missing workspace and blocked tools as one cause', () => 
   assert.equal(model.items[0].message, 'File tools need a folder to work in. Also blocks: 2 enabled tools (read_file, write_file).');
 });
 
-test('Readiness explains chat and file capabilities instead of an attention summary', () => {
-  const model = buildSettingsControlTowerModel({ state: { ...READY_STATE, workspaceRoot: { status: 'missing' } } });
+test('Readiness, all well: one status line, no chips, the checks inside a closed fold', () => {
+  const model = buildSettingsControlTowerModel({ state: READY_STATE });
   const doc = new JSDOM(renderSettingsControlTowerMarkup(model, { statusRow, actionButton, badge })).window.document;
-  const chips = [...doc.querySelectorAll('.inv-badge')];
-  assert.deepEqual(chips.map((chip) => chip.textContent), ['Chat ready', 'File tools need a folder']);
-  assert.ok(chips[0].classList.contains('inv-badge--success'));
-  assert.ok(chips[1].classList.contains('inv-badge--warning'));
-  assert.equal(doc.querySelector('.settings-control-tower-summary'), null);
+  assert.equal(doc.querySelector('.inv-badge'), null, 'the two chips are gone');
+  assert.equal(doc.querySelector('.settings-control-tower-summary'), null, 'the summary sentence is gone');
+  const line = doc.querySelectorAll('.settings-readiness-line');
+  assert.equal(line.length, 1);
+  assert.equal(line[0].textContent.trim(), 'Everything is ready: the model, your tools and setup.');
+  const fold = doc.querySelector('details.settings-fold');
+  assert.equal(fold.open, false);
+  assert.equal(fold.querySelector('summary').firstChild.textContent, 'Show details');
+  assert.equal(fold.querySelector('.settings-fold-count').textContent, '6 checks');
+  assert.equal(fold.querySelectorAll('.settings-control-tower-row').length, 6);
+  assert.equal(doc.querySelectorAll('.settings-control-tower-row').length, 6, 'no check sits outside the fold');
+});
+
+test('Readiness fold keeps its open state across a re-render', () => {
+  const doc = new JSDOM('<!doctype html><body><div id="host"></div></body>').window.document;
+  const host = doc.getElementById('host');
+  const model = buildSettingsControlTowerModel({ state: READY_STATE });
+  const paint = () => { host.innerHTML = renderSettingsControlTowerMarkup(model, { statusRow, actionButton, documentRef: doc }); };
+  paint();
+  assert.equal(host.querySelector('details').open, false);
+  host.querySelector('details').open = true;
+  paint();
+  assert.equal(host.querySelector('details').open, true, 'opened by the person, still open after the poll');
+  host.querySelector('details').open = false;
+  paint();
+  assert.equal(host.querySelector('details').open, false);
+});
+
+test('Readiness, attention: only the attention items sit outside the fold, with a singular and plural line', () => {
+  const one = buildSettingsControlTowerModel({ state: { ...READY_STATE, models: { status: { currentModel: '' } } } });
+  assert.deepEqual(itemIds(one), ['model-unavailable']);
+  assert.deepEqual(one.okItems.map((item) => item.id), ['workspace-ready', 'tools-ready', 'setup-ready', 'memory-ready', 'skills-ready']);
+  let doc = new JSDOM(renderSettingsControlTowerMarkup(one, { statusRow, actionButton, badge })).window.document;
+  assert.equal(doc.querySelector('.settings-readiness-line').textContent.trim(), '1 thing needs you before you can chat.');
+  assert.equal(doc.querySelector('.inv-badge'), null);
+  const outside = [...doc.querySelectorAll('.settings-control-tower-row')].filter((row) => !row.closest('details'));
+  assert.deepEqual(outside.map((row) => row.dataset.controlTowerItem), ['model-unavailable']);
+  const fold = doc.querySelector('details.settings-fold');
+  assert.equal(fold.open, false);
+  assert.equal(fold.querySelector('summary').firstChild.textContent, 'Show what is ready');
+  assert.deepEqual([...fold.querySelectorAll('.settings-control-tower-row')].map((row) => row.dataset.controlTowerItem), one.okItems.map((item) => item.id));
+
+  const two = buildSettingsControlTowerModel({ state: { ...READY_STATE, models: { status: { currentModel: '' } }, setup: { loaded: true, setupComplete: false } } });
+  assert.deepEqual(itemIds(two), ['model-unavailable', 'setup-incomplete']);
+  assert.equal(two.okItems.some((item) => item.id === 'setup-ready' || item.id === 'model-ready'), false, 'a failing area is never listed as fine');
+  doc = new JSDOM(renderSettingsControlTowerMarkup(two, { statusRow, actionButton })).window.document;
+  assert.equal(doc.querySelector('.settings-readiness-line').textContent.trim(), '2 things need you before you can chat.');
+});
+
+test('Readiness drops the fold when nothing is fine, and a failing area is not listed as fine', () => {
+  const model = buildSettingsControlTowerModel({ state: { models: { status: { currentModel: '' } }, workspaceRoot: '', featureState: { tools: { a: true }, availability: { tools: { a: { enabled: false } } } } } });
+  assert.equal(model.okItems.some((item) => item.id === 'tools-ready' || item.id === 'workspace-ready'), false);
+  const bare = buildSettingsControlTowerModel({ state: { models: { status: { currentModel: '' } } } });
+  assert.deepEqual(bare.okItems.map((item) => item.id), ['tools-ready', 'setup-ready']);
+  const empty = { ...bare, okItems: [] };
+  assert.equal(new JSDOM(renderSettingsControlTowerMarkup(empty, { statusRow, actionButton })).window.document.querySelector('details'), null);
 });
 
 test('Readiness setup action resumes setup and falls back to Readiness, where Setup lives (row 133)', () => {
@@ -180,23 +231,6 @@ test('Readiness setup action resumes setup and falls back to Readiness, where Se
   assert.ok(action);
   assert.equal(action.textContent, 'Resume setup');
   assert.equal(action.dataset.settingsControlSection, 'readiness');
-});
-
-test('Readiness capabilities cover ready, unknown, and independently blocked tools', () => {
-  const cases = [
-    [READY_STATE, ['Chat ready', 'File tools ready'], true],
-    [{ models: { currentModel: 'llama3' } }, ['Chat ready'], true],
-    [{ ...READY_STATE, models: {} }, ['Chat needs a model', 'File tools ready'], false],
-    [{ ...READY_STATE, featureState: { tools: { web: true }, availability: { tools: { web: { enabled: false } } } } }, ['Chat ready', 'Some tools are blocked'], false],
-  ];
-  for (const [state, labels, ready] of cases) {
-    const model = buildSettingsControlTowerModel({ state });
-    const doc = new JSDOM(renderSettingsControlTowerMarkup(model, { statusRow, actionButton, badge })).window.document;
-    assert.deepEqual([...doc.querySelectorAll('.inv-badge')].map((chip) => chip.textContent), labels);
-    assert.equal(Boolean(doc.querySelector('.settings-control-tower-summary')), ready);
-    if (ready) assert.equal(doc.querySelector('.settings-control-tower-summary').textContent, 'Settings are ready for the current local-first workflow.');
-    if (labels.includes('Some tools are blocked')) assert.deepEqual(itemIds(model), ['tools-blocked']);
-  }
 });
 
 test('Readiness groups only enabled blocked tools, with singular copy and at most three escaped names', () => {

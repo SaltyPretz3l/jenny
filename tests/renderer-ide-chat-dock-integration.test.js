@@ -376,8 +376,8 @@ test('approval-steer: dock live keeps the composer enabled + queue-eligible', (t
   chrome.renderComposerState();
   assert.equal(doc.getElementById('chatInput').disabled, false, 'dock composer stays LIVE during an approval gate');
   assert.equal(
-    doc.getElementById('sendButton').textContent,
-    'Queue — runs in Ask',
+    doc.getElementById('sendButton').getAttribute('aria-label'),
+    'Queue follow-up prompt — runs in Ask',
     'typed send is queue-eligible one-deep'
   );
 });
@@ -392,7 +392,7 @@ test('main chat during an approval: the draft stays editable and Send waits', (t
   chrome.renderComposerState();
   assert.equal(doc.getElementById('chatInput').disabled, false, 'the user can keep writing while deciding');
   assert.equal(doc.getElementById('sendButton').disabled, true, 'queueing stays dock-scoped');
-  assert.notEqual(doc.getElementById('sendButton').textContent, 'Queue — runs in Ask');
+  assert.equal(doc.getElementById('sendButton').classList.contains('composer-send-queue'), false);
 });
 
 test('approval-steer is flag-gated: with the flag OFF the draft is editable but Send does not queue', (t) => {
@@ -406,7 +406,7 @@ test('approval-steer is flag-gated: with the flag OFF the draft is editable but 
   chrome.renderComposerState();
   assert.equal(doc.getElementById('chatInput').disabled, false);
   assert.equal(doc.getElementById('sendButton').disabled, true);
-  assert.notEqual(doc.getElementById('sendButton').textContent, 'Queue — runs in Ask');
+  assert.equal(doc.getElementById('sendButton').classList.contains('composer-send-queue'), false);
 });
 
 test('chat state classes mirror onto #ideChatDockBody', () => {

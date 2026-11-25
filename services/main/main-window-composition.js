@@ -113,6 +113,12 @@ function createMainWindowWithDeps({
     browserWindowOptions.x = initialWindowState.x;
     browserWindowOptions.y = initialWindowState.y;
   }
+  // An agent run that must not appear over the owner's screen (row 190's CDP layout pass): JENNY_WINDOW_OFFSCREEN=1
+  // opens the window far off every display. Honoured only with the inactive reveal of agent launches and smokes.
+  if (revealWindowInactive && /^(1|true|yes|on)$/i.test(String(env.JENNY_WINDOW_OFFSCREEN || '').trim())) {
+    browserWindowOptions.x = -20000;
+    browserWindowOptions.y = -20000;
+  }
   const windowRef = new BrowserWindow(browserWindowOptions);
   setMainWindow(windowRef);
 

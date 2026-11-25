@@ -2,11 +2,11 @@
  * Model Library › engine blocks (UMD).
  *
  * The optional engine blocks that each follow a kill switch: the image engines
- * (`tools_image_generate_enabled`) and the managed NInfer runtime (`ninfer`,
- * row 54). The section controller owns the grid; this helper owns the block
+ * (`tools_image_generate_enabled`), NInfer (`ninfer`, row 54) and Strata (`strata`, row 200). The section
+ * controller owns the grid; this helper owns the block
  * controllers (creation behind their flags, a rebind on every parent render,
  * teardown) so the section stays under its line ceiling and the blocks follow
- * one lifecycle. It also registers the llama-server, NInfer, stable-diffusion.cpp
+ * one lifecycle. It also registers the llama-server, NInfer, Strata, stable-diffusion.cpp
  * and ComfyUI rows on the "Engines and providers" table (model-library-services.js);
  * their controls render into the shared Manage drawer, not the page.
  */
@@ -23,9 +23,11 @@
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var IMAGE_ENGINE_HOST_ID = 'modelLibraryImageEngineHost';
   var NINFER_HOST_ID = 'modelLibraryNinferHost';
+  var STRATA_HOST_ID = 'modelLibraryStrataHost';
   var FOLDERS_HOST_ID = 'modelLibraryFoldersHost';
   var LLAMA_ID = 'llama-server';
   var NINFER_ID = 'ninfer';
+  var STRATA_ID = 'strata';
   var SDCPP_ID = 'sdcpp';
   var COMFY_ID = 'comfyui';
   var SERVICES_READY_EVENT = 'model-library-services-ready';
@@ -40,26 +42,31 @@
       || (typeof require === 'function' ? require('./model-library-ninfer') : null);
   }
 
+  function resolveStrataModule() { // lazy; Monaco's AMD require throws until it loads
+    try { return (root && root.modelLibraryStrata) || (typeof require === 'function' ? require('./model-library-strata') : null); } catch (_e) { return null; }
+  }
+
   var escapeHtml = function (value) {
     return ((root && root.stringUtils) || require('../../shared/string-utils')).escapeHtml(value);
   };
 
   // deps: { windowRef, documentRef, imageEngineEnabled(), ninferEnabled(), ninfer: { onState, onUse },
+  //   strataEnabled(), strata: { onState },
   //   llamaServerEnabled(), llamaServer() -> { running, port, fileCount, unavailable },
   //   folders() -> the GGUF folders controller or null, services() -> the services instance or null }
   function createModelLibraryEngineBlocks(deps) {
     var d = deps || {};
     var disposed = false;
     var llamaServerEnabled = typeof d.llamaServerEnabled === 'function' ? d.llamaServerEnabled : function () { return false; };
-    var ninferPrimed = false;
-    var ninferUnsubscribe = null;
     var servicesRef = null;
     var listening = false;
     var imageEngineEnabled = typeof d.imageEngineEnabled === 'function' ? d.imageEngineEnabled : function () { return false; };
     var ninferEnabled = typeof d.ninferEnabled === 'function' ? d.ninferEnabled : function () { return false; };
+    var strataEnabled = typeof d.strataEnabled === 'function' ? d.strataEnabled : function () { return false; };
     var blocks = {
       imageEngine: { controller: null, enabled: imageEngineEnabled, hostId: IMAGE_ENGINE_HOST_ID, create: createImageEngine },
-      ninfer: { controller: null, enabled: ninferEnabled, hostId: NINFER_HOST_ID, create: createNinfer },
+      ninfer: { controller: null, enabled: ninferEnabled, hostId: NINFER_HOST_ID, create: createNinfer, bridge: 'ninfer', primed: false, unsubscribe: null },
+      strata: { controller: null, enabled: strataEnabled, hostId: STRATA_HOST_ID, create: createStrata, bridge: 'strata', primed: false, unsubscribe: null },
     };
 
     function createImageEngine() {
@@ -76,11 +83,23 @@
       if (!module || typeof module.createModelLibraryNinferController !== 'function') return null;
       var ninferDeps = d.ninfer || {};
       return module.createModelLibraryNinferController({
-        windowRef: d.windowRef, documentRef: d.documentRef, isEnabled: ninferEnabled, hostId: NINFER_HOST_ID, externalWatch: true, // watchNinfer owns onChanged
+        windowRef: d.windowRef, documentRef: d.documentRef, isEnabled: ninferEnabled, hostId: NINFER_HOST_ID, externalWatch: true, // watchBlock owns onChanged
         onState: function () {
           try { if (typeof ninferDeps.onState === 'function') ninferDeps.onState(); } finally { syncNinferRow(); }
         },
         onUse: ninferDeps.onUse,
+      });
+    }
+
+    function createStrata() {
+      var module = resolveStrataModule();
+      if (!module || typeof module.createModelLibraryStrataController !== 'function') return null;
+      var strataDeps = d.strata || {};
+      return module.createModelLibraryStrataController({
+        windowRef: d.windowRef, documentRef: d.documentRef, isEnabled: strataEnabled, hostId: STRATA_HOST_ID,
+        onState: function () {
+          try { if (typeof strataDeps.onState === 'function') strataDeps.onState(); } finally { syncStrataRow(); }
+        },
       });
     }
 
@@ -120,6 +139,20 @@
       renderDrawer: function (body) {
         body.innerHTML = '<div id="' + NINFER_HOST_ID + '"></div>';
         var controller = controllerFor(blocks.ninfer);
+        if (controller) { controller.bind(); controller.render(); }
+      },
+    };
+
+    var strataEntry = {
+      id: STRATA_ID, kind: 'chat', order: 40, name: 'Strata',
+      what: jt('models.library.strata.what', 'Runs Inkling 2 Mini from your own Strata install'),
+      getStatus: function () {
+        var controller = blocks.strata.controller;
+        return controller ? controller.summary() : null; // the registry words a missing status
+      },
+      renderDrawer: function (body) {
+        body.innerHTML = '<div id="' + STRATA_HOST_ID + '"></div>';
+        var controller = controllerFor(blocks.strata);
         if (controller) { controller.bind(); controller.render(); }
       },
     };
@@ -168,31 +201,32 @@
       syncRow(comfyEntry, on && controller.summary('comfyui') !== null);
     }
 
-    function syncNinferRow() {
-      var controller = blocks.ninfer.controller;
-      syncRow(ninferEntry, Boolean(controller) && ninferEnabled() && controller.summary() !== null);
+    function syncNinferRow() { syncManagedRow(blocks.ninfer, ninferEntry); }
+    function syncStrataRow() { syncManagedRow(blocks.strata, strataEntry); }
+
+    function syncManagedRow(block, entry) {
+      syncRow(entry, Boolean(block.controller) && block.enabled() && block.controller.summary() !== null);
     }
 
-    // The NInfer state also changes while its drawer is closed (a set-up in
-    // progress): the row listens for itself and lets the controller re-read.
-    function watchNinfer(controller) {
+    // A managed runtime's state also changes while its drawer is closed (a set-up or
+    // pack check in progress): the row listens for itself and lets the controller re-read.
+    function watchBlock(block) {
       var shell = d.windowRef && d.windowRef.jennyShell;
-      var api = shell && shell.ninfer;
+      var api = shell && shell[block.bridge];
       if (!api || typeof api.onChanged !== 'function') return;
       try {
-        var stop = api.onChanged(function () { void controller.refresh(); });
-        if (typeof stop === 'function') ninferUnsubscribe = stop;
+        var stop = api.onChanged(function () { void block.controller.refresh(); });
+        if (typeof stop === 'function') block.unsubscribe = stop;
       } catch (_error) { /* the row then updates with the next section render */ }
     }
 
-    function unwatchNinfer() {
-      ninferPrimed = false;
-      if (typeof ninferUnsubscribe === 'function') {
-        try { ninferUnsubscribe(); } catch (_error) { /* best effort */ }
+    function unwatchBlock(block) {
+      block.primed = false;
+      if (typeof block.unsubscribe === 'function') {
+        try { block.unsubscribe(); } catch (_error) { /* best effort */ }
       }
-      ninferUnsubscribe = null;
+      block.unsubscribe = null;
     }
-
 
     function controllerFor(block) {
       if (disposed || !block.enabled()) return null;
@@ -218,23 +252,23 @@
       syncImageRows();
     }
 
-    function renderNinfer() {
-      var controller = controllerFor(blocks.ninfer);
+    function renderManaged(block, syncBlockRow) {
+      var controller = controllerFor(block);
       if (!controller) {
-        if (blocks.ninfer.controller) blocks.ninfer.controller.dispose();
-        blocks.ninfer.controller = null;
-        unwatchNinfer();
-        syncNinferRow();
+        if (block.controller) block.controller.dispose();
+        block.controller = null;
+        unwatchBlock(block);
+        syncBlockRow();
         return;
       }
-      if (!ninferPrimed) {
-        ninferPrimed = true;
-        watchNinfer(controller);
+      if (!block.primed) {
+        block.primed = true;
+        watchBlock(block);
         void controller.refresh();
       }
-      var hostNode = d.documentRef && d.documentRef.getElementById ? d.documentRef.getElementById(NINFER_HOST_ID) : null;
+      var hostNode = d.documentRef && d.documentRef.getElementById ? d.documentRef.getElementById(block.hostId) : null;
       if (hostNode) { controller.bind(); controller.render(); }
-      syncNinferRow();
+      syncBlockRow();
     }
 
     // The services module loads with the Settings page, after the first render.
@@ -245,7 +279,8 @@
         listening = true;
         d.documentRef.addEventListener(SERVICES_READY_EVENT, onServicesReady);
       }
-      renderNinfer();
+      renderManaged(blocks.ninfer, syncNinferRow);
+      renderManaged(blocks.strata, syncStrataRow);
       renderImageEngine();
       syncRow(llamaEntry, llamaServerEnabled());
     }
@@ -254,22 +289,27 @@
       return controllerFor(blocks.ninfer);
     }
 
+    function strata() {
+      return controllerFor(blocks.strata);
+    }
+
     function dispose() {
       if (disposed) return;
       disposed = true;
       if (listening) d.documentRef.removeEventListener(SERVICES_READY_EVENT, onServicesReady);
       listening = false;
-      unwatchNinfer();
+      unwatchBlock(blocks.ninfer);
+      unwatchBlock(blocks.strata);
       var svc = servicesRef;
-      if (svc) { [LLAMA_ID, NINFER_ID, SDCPP_ID, COMFY_ID].forEach(function (id) { svc.unregister(id); }); }
+      if (svc) { [LLAMA_ID, NINFER_ID, STRATA_ID, SDCPP_ID, COMFY_ID].forEach(function (id) { svc.unregister(id); }); }
       Object.keys(blocks).forEach(function (key) {
         if (blocks[key].controller) blocks[key].controller.dispose();
         blocks[key].controller = null;
       });
     }
 
-    return { render: render, ninfer: ninfer, dispose: dispose };
+    return { render: render, ninfer: ninfer, strata: strata, dispose: dispose };
   }
 
-  return { createModelLibraryEngineBlocks: createModelLibraryEngineBlocks, NINFER_HOST_ID: NINFER_HOST_ID, IMAGE_ENGINE_HOST_ID: IMAGE_ENGINE_HOST_ID };
+  return { createModelLibraryEngineBlocks: createModelLibraryEngineBlocks, NINFER_HOST_ID: NINFER_HOST_ID, STRATA_HOST_ID: STRATA_HOST_ID, IMAGE_ENGINE_HOST_ID: IMAGE_ENGINE_HOST_ID };
 });

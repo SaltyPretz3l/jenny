@@ -4,6 +4,7 @@
 // config it writes for it:
 //
 //   <userData>/team-host/host-config.json   the config the host reads (--config)
+//   <userData>/team-host/pool-context-cap.json   the owner's optional cap on the pool's context length (OD-5)
 //   <userData>/team-host/profile/           the host profile (its own owner marker and lock)
 //   <userData>/team-host/secrets/           exists and stays empty: the key travels on the channel
 //   <userData>/team-host/runtime/           the hosted sidecar's home
@@ -131,8 +132,48 @@ function savedTeamName(saved) {
   return typeof name === 'string' && name.length > 0 ? name : null;
 }
 
-/** The pool's context length cap on every host Deploy writes (slice 4a-5); no setting changes it. */
-const DEPLOY_POOL_CONTEXT_LENGTH = 32768;
+// The pool's context length (OD-5, row 201). Auto, the default: the config carries the top of the host's accepted range
+// (server/config.js TEAM_POOL_CONTEXT_MAX), so the pool follows the serving node's own bounded `context_length` (the pool
+// gateway takes the smaller of the node's length and this one). The owner may cap it lower: `pool-context-cap.json`
+// beside the config, `{ context_cap }` from POOL_CONTEXT_MIN to POOL_CONTEXT_AUTO, applied to every config written
+// afterwards. It is a file of its own because the host's config schema is closed (`team.pool` takes `context_length` only).
+const POOL_CONTEXT_AUTO = 1048576;
+const POOL_CONTEXT_MIN = 2048;
+const POOL_CAP_NAME = 'pool-context-cap.json';
+const isPoolCap = (value) => Number.isSafeInteger(value) && value >= POOL_CONTEXT_MIN && value <= POOL_CONTEXT_AUTO;
+
+function poolCapOfRoot(root) {
+  try {
+    const value = readJson(path.join(root, POOL_CAP_NAME), { maxBytes: 1024 });
+    return value && Object.keys(value).length === 1 && isPoolCap(value.context_cap) ? value.context_cap : null;
+  } catch { return null; }
+}
+
+/** The owner's saved cap on the pool's context length, or null (Auto). Never throws. */
+function readPoolContextCap(userDataPath) {
+  return poolCapOfRoot(hostRootOf(userDataPath));
+}
+
+function removeCapFile(file) {
+  try { fs.unlinkSync(file); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+}
+
+/**
+ * Saves the owner's cap (a whole number from 2048 to 1048576), or null for Auto, for the next config written; a running
+ * host keeps the one it started with. Never creates the team host folder. { ok: true } or { ok: false, reason }.
+ */
+function writePoolContextCap(userDataPath, cap) {
+  if (cap !== null && !isPoolCap(cap)) return { ok: false, reason: 'team_pool_context_invalid' };
+  const root = hostRootOf(userDataPath);
+  try {
+    if (!fs.statSync(root).isDirectory()) return { ok: false, reason: 'team_host_not_deployed' };
+    if (cap === null) removeCapFile(path.join(root, POOL_CAP_NAME));
+    else writeJson(path.join(root, POOL_CAP_NAME), { context_cap: cap });
+  } catch (error) {
+    return { ok: false, reason: error?.code === 'ENOENT' ? 'team_host_not_deployed' : 'team_host_config_write_failed' };
+  }
+  return { ok: true };
+}
 
 /**
  * The schema 3 team config. Slice 4a-5 (E65): the GPU pool is always on (`team.pool`), so the host
@@ -142,7 +183,7 @@ const DEPLOY_POOL_CONTEXT_LENGTH = 32768;
  * is the Docker image's) and, on Linux, `profile_lock.py`; a packaged app runs its packaged sidecar.
  * A path with no file behind it is not written: the host then reports its model unavailable.
  */
-function buildHostConfig({ layout, name, directPort, lockPython = null, internet = null }) {
+function buildHostConfig({ layout, name, directPort, lockPython = null, internet = null, contextCap = poolCapOfRoot(layout.root) }) {
   return {
     schema_version: 3,
     host_mode: 'server',
@@ -155,7 +196,7 @@ function buildHostConfig({ layout, name, directPort, lockPython = null, internet
     workspace_root: null,
     ...(lockPython && fs.existsSync(lockPython) ? { python_executable: lockPython } : {}),
     team: { name, key_source: 'parent_channel', direct_port: directPort, projects_root: layout.projects,
-      ...(internet ? { internet } : {}), pool: { context_length: DEPLOY_POOL_CONTEXT_LENGTH } },
+      ...(internet ? { internet } : {}), pool: { context_length: isPoolCap(contextCap) ? contextCap : POOL_CONTEXT_AUTO } },
   };
 }
 
@@ -212,7 +253,7 @@ function probeDirectPort(port) {
 }
 
 module.exports = {
-  DEPLOY_POOL_CONTEXT_LENGTH, LOGS_DIR_NAME, buildHostConfig, carryFileTools, hostWasDeployed, notDeployedReason, pickDirectPort,
-  prepareHostLayout, probeDirectPort, readHostConfigState, readSavedHostConfig, savedDirectPort, savedInternet, savedTeamName,
-  writeHostConfig,
+  LOGS_DIR_NAME, POOL_CONTEXT_AUTO, POOL_CONTEXT_MIN, buildHostConfig, carryFileTools, hostWasDeployed, notDeployedReason,
+  pickDirectPort, prepareHostLayout, probeDirectPort, readHostConfigState, readPoolContextCap, readSavedHostConfig,
+  savedDirectPort, savedInternet, savedTeamName, writeHostConfig, writePoolContextCap,
 };

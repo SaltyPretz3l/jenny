@@ -5,6 +5,7 @@ const { JSDOM } = require('jsdom');
 const { createSetupController } = require('../renderer/features/renderer-setup-controller');
 const { createSetupHub } = require('../renderer/features/renderer-setup-hub');
 const { createScene: createAcknowledgementScene } = require('../renderer/features/setup-scenes/scene-acknowledgement');
+const { createScene: createFactoryResetScene } = require('../renderer/features/setup-scenes/scene-factory-reset');
 const { normalizeSetupPayload } = require('../renderer/services/renderer-setup-service');
 const inventoryStepModal = require('../renderer/inventory/step-modal');
 
@@ -43,15 +44,22 @@ function createHarness({
   setupState = {},
   updateState,
   acknowledgementFactory = createAcknowledgementScene,
+  factoryReset,
 } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="appShell"></div><div id="homeSetupModalRoot"></div></body></html>');
   const { document } = dom.window;
   const logs = [];
   const patches = [];
+  const views = [];
+  const toasts = [];
   let hubMounts = 0;
   let workspaceRootMounts = 0;
   let currentSetupState = { ...setupState };
   const setupService = {
+    async factoryReset() {
+      currentSetupState = factoryReset();
+      return { ...normalizeSetupPayload(makeBackendPayload(currentSetupState)), factoryResetResult: { completed: true } };
+    },
     async getState() {
       return normalizeSetupPayload(makeBackendPayload(currentSetupState));
     },
@@ -82,14 +90,15 @@ function createHarness({
         acknowledgement: acknowledgementFactory,
         setupHub: () => ({ mount() { hubMounts += 1; }, dispose() {} }),
         workspaceRoot: () => ({ mount() { workspaceRootMounts += 1; }, dispose() {} }),
+        factoryReset: createFactoryResetScene,
       },
       stepModal: inventoryStepModal,
     },
     callbacks: {
       appendClientLog(level, event, payload) { logs.push({ level, event, payload }); },
       showShellErrorToast() {},
-      showToastMessage() {},
-      setActiveView() {},
+      showToastMessage(message) { toasts.push(message); },
+      setActiveView(view) { views.push(view); },
     },
   });
   return {
@@ -98,6 +107,8 @@ function createHarness({
     dom,
     logs,
     patches,
+    views,
+    toasts,
     getHubMounts: () => hubMounts,
     getWorkspaceRootMounts: () => workspaceRootMounts,
     close() {
@@ -114,7 +125,30 @@ test('fresh profile mounts acknowledgement before the linear setup flow', async 
   await harness.controller.init();
 
   assert.ok(harness.document.querySelector('[data-step-modal="setupAcknowledgement"]'));
+  assert.equal(harness.document.querySelector('.inv-step-modal-status'), null, 'no empty status pill floats in the header');
   assert.equal(harness.getHubMounts(), 0);
+});
+
+test('reset onboarding reopens the acknowledgement in place, then the Hub, without a trip to Home', async (t) => {
+  const harness = createHarness({
+    setupState: { acknowledged_version: '1', first_run_completed: true, setup_complete: true },
+    factoryReset: () => ({}),
+  });
+  t.after(() => harness.close());
+  await harness.controller.init();
+  assert.equal(harness.document.querySelector('[data-step-modal="setupAcknowledgement"]'), null);
+
+  harness.controller.openFactoryReset();
+  const root = harness.document.getElementById('homeSetupModalRoot');
+  root.querySelector('[data-step-modal-action="confirm"]').click();
+  await settle();
+
+  assert.ok(root.querySelector('[data-step-modal="setupAcknowledgement"]'), 'first run reopened at the acknowledgement');
+  assert.deepEqual(harness.toasts, ['Onboarding reset. Setup has reopened.']);
+  root.querySelector('[data-step-modal-action="continue"]').click();
+  await settle();
+  assert.equal(harness.getHubMounts(), 1, 'then the Hub');
+  assert.deepEqual(harness.views, [], 'the user stays on the view they were on');
 });
 
 test('Resume keeps an unacknowledged profile gated until Continue persists', async (t) => {

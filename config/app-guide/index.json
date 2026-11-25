@@ -112,11 +112,11 @@
         "sandbox",
         "kill switch",
         "jenny_enable",
-        "mcp",
-        "tool families"
+        "live tab",
+        "computer use"
       ],
       "path": "tools-overview.md",
-      "summary": "The tool families Jenny can use, their approvals, per-chat switches, kill switches and the Docker sandbox."
+      "summary": "The tool families Jenny can use, their approvals, per-chat switches, the Computer row, the Live tab, kill switches and the Docker sandbox."
     },
     {
       "id": "workspace-ide",

@@ -130,6 +130,10 @@
     let notesMemo = { log: null, messages: null, length: 0, notes: NO_NOTES };
     const doc = o.root.ownerDocument;
     const byId = (id) => o.root.querySelector('[id="' + id + '"]');
+    // Two conversations can be in one document (the Team tab's and the Board's): every id this view makes carries the conversation's prefix.
+    const P = typeof o.idPrefix === 'string' ? o.idPrefix : '';
+    const ids = Object.freeze({ chip: P + IDS.chip, pill: P + IDS.pill, tools: P + IDS.tools, model: P + IDS.model });
+    const pref = (name) => P + 'teamPref' + name;
 
     // The GPUs this team offers, grouped by the PC's owner. A model is listed once, under the first PC that offers it.
     function offers() {
@@ -192,7 +196,7 @@
       const label = jt('team.conv.prefs.chipTitle', 'Tools for this conversation');
       const count = !v.available ? jt('team.conv.prefs.hostOff', 'off on this host') : v.off ? jt('team.conv.prefs.offCount', '{count} off', { count: v.off }) : '';
       const opened = open === 'tools';
-      const button = chipOf({ domId: IDS.chip, label: jt('team.conv.prefs.tools', 'Tools'), count, iconHtml: SLIDERS, hasPopup: true, ariaControls: opened ? IDS.tools : '', title: label,
+      const button = chipOf({ domId: ids.chip, label: jt('team.conv.prefs.tools', 'Tools'), count, iconHtml: SLIDERS, hasPopup: true, ariaControls: opened ? ids.tools : '', title: label,
         ariaLabel: jt('team.conv.prefs.chipLabel', 'Tools for this conversation: {on} of {total} on', { on: v.count, total: FAMILIES.length }),
         className: 'composer-tools-chip' + (count ? ' composer-tools-chip--off' : '') + (opened ? ' inv-chip--open' : '') });
       const chip = withAttrs(button.replace('aria-expanded="false"', 'aria-expanded="' + opened + '"'), v.locked ? 'aria-disabled="true"' : '');
@@ -209,11 +213,11 @@
         : '<span class="composer-tool-warn">' + escapeHtml(jt('team.conv.prefs.hostReason', 'Off on this host: file access on this team host is not available yet')) + '</span>';
       const shown = members === id;
       return '<div class="composer-tool-row" data-on="' + checked + '" data-blocked="' + !v.available + '"><span class="composer-tool-icon" aria-hidden="true">' + family.icon + '</span>'
-        + '<span class="composer-tool-text"><span class="composer-tool-label" id="teamPrefLabel-' + id + '">' + escapeHtml(label) + '</span><span class="composer-tool-sub" id="teamPrefSub-' + id + '">' + sub + '</span></span>'
+        + '<span class="composer-tool-text"><span class="composer-tool-label" id="' + pref('Label-' + id) + '">' + escapeHtml(label) + '</span><span class="composer-tool-sub" id="' + pref('Sub-' + id) + '">' + sub + '</span></span>'
         + '<span class="composer-tool-trail">'
-        + buttonOf({ plain: true, className: 'composer-tool-count', ariaExpanded: shown, ariaControls: 'teamPrefMembers-' + id, title: jt('team.conv.prefs.showMembers', 'Show the tools in {label}', { label }), dataset: { 'pref-members': id }, label: names })
-        + toggleOf({ domId: 'teamPrefSwitch-' + id, bare: true, labelledBy: 'teamPrefLabel-' + id, describedBy: 'teamPrefSub-' + id, checked, disabled })
-        + '</span><div class="composer-tool-members" id="teamPrefMembers-' + id + '"' + (shown ? '' : ' hidden') + '>' + family.members.map((n) => '<code>' + escapeHtml(n) + '</code>').join(', ') + '</div></div>';
+        + buttonOf({ plain: true, className: 'composer-tool-count', ariaExpanded: shown, ariaControls: pref('Members-' + id), title: jt('team.conv.prefs.showMembers', 'Show the tools in {label}', { label }), dataset: { 'pref-members': id }, label: names })
+        + toggleOf({ domId: pref('Switch-' + id), bare: true, labelledBy: pref('Label-' + id), describedBy: pref('Sub-' + id), checked, disabled })
+        + '</span><div class="composer-tool-members" id="' + pref('Members-' + id) + '"' + (shown ? '' : ' hidden') + '>' + family.members.map((n) => '<code>' + escapeHtml(n) + '</code>').join(', ') + '</div></div>';
     }
 
     function panelHtml(v) {
@@ -225,7 +229,7 @@
         + '<div class="composer-chat-list"><section><div class="composer-chat-section-label" dir="auto">' + escapeHtml(jt('team.conv.prefs.section', 'In this project · {project}', { project: o.projectName() })) + '</div>'
         + FAMILIES.map((f) => rowHtml(f, v)).join('') + '</section><p class="composer-chat-always-on">' + escapeHtml(jt('team.conv.prefs.alwaysOn', 'Always on: questions')) + '</p></div>'
         + '<div class="composer-chat-panel-foot">' + reset + '<span>' + escapeHtml(jt('team.conv.prefs.everyone', 'For everyone in this conversation')) + '</span></div>';
-      return withAttrs(popoverOf({ domId: IDS.tools, ariaLabel: title, className: 'composer-chat-panel', trustedHtml: inner }).replace(' hidden>', '>'), 'tabindex="-1"');
+      return withAttrs(popoverOf({ domId: ids.tools, ariaLabel: title, className: 'composer-chat-panel', trustedHtml: inner }).replace(' hidden>', '>'), 'tabindex="-1"');
     }
 
     // ---------------------------------------------------------- the model pill and its picker
@@ -235,8 +239,8 @@
       const title = v.model ? jt('team.conv.prefs.pickedTitle', 'Picked for this conversation') : jt('team.conv.prefs.defaultTitle', 'The team default, set by the host in Settings › Team');
       const dot = v.offline ? 'error' : v.offer.thinking.has(v.shown) ? 'ok' : '';
       const opened = open === 'model';
-      const button = chipOf({ domId: IDS.pill, label, iconHtml: dot ? '<span class="composer-model-pill-dot status-dot status-dot--' + dot + '" aria-hidden="true"></span>' : '', hasPopup: true,
-        ariaControls: opened ? IDS.model : '', title, ariaLabel: jt('team.conv.prefs.pillLabel', 'Model and thinking: {model}. {title}', { model: label, title }),
+      const button = chipOf({ domId: ids.pill, label, iconHtml: dot ? '<span class="composer-model-pill-dot status-dot status-dot--' + dot + '" aria-hidden="true"></span>' : '', hasPopup: true,
+        ariaControls: opened ? ids.model : '', title, ariaLabel: jt('team.conv.prefs.pillLabel', 'Model and thinking: {model}. {title}', { model: label, title }),
         className: 'composer-model-pill' + (opened ? ' inv-chip--open' : '') });
       const pill = withAttrs(button.replace('aria-expanded="false"', 'aria-expanded="' + opened + '"'), v.locked ? 'aria-disabled="true"' : '');
       return '<span class="team-conv-ctl team-conv-ctl--model">' + pill + (opened ? pickerHtml(v) : '') + '</span>';
@@ -252,20 +256,20 @@
 
     function pickerHtml(v) {
       const split = (name) => { const at = name.indexOf(':'); return at > 0 ? [name.slice(0, at), name.slice(at)] : [name, '']; };
-      const items = [optionHtml({ name: '', family: jt('team.conv.prefs.teamDefault', 'Team default'), tag: ' · ' + v.defaultName, active: v.model === null, loaded: v.offer.thinking.has(v.defaultName), id: 'teamPrefModel-default' }, v)];
-      if (v.offline) { const [family, tag] = split(v.model); items.push(optionHtml({ name: v.model, family, tag, active: true, offline: true, id: 'teamPrefModel-picked' }, v)); }
+      const items = [optionHtml({ name: '', family: jt('team.conv.prefs.teamDefault', 'Team default'), tag: ' · ' + v.defaultName, active: v.model === null, loaded: v.offer.thinking.has(v.defaultName), id: pref('Model-default') }, v)];
+      if (v.offline) { const [family, tag] = split(v.model); items.push(optionHtml({ name: v.model, family, tag, active: true, offline: true, id: pref('Model-picked') }, v)); }
       v.offer.groups.forEach((group, g) => {
         const who = (group.owner && column.clean(o.nameOf(group.owner), 64)) || group.pc;
         items.push('<div class="composer-model-picker-group" role="presentation" dir="auto">' + escapeHtml(jt('team.conv.prefs.onPc', 'On {name}’s PC', { name: who })) + '</div>');
-        group.models.forEach((m, i) => { const [family, tag] = split(m.name); items.push(optionHtml({ name: m.key, family, tag, active: v.model === m.key, loaded: true, id: 'teamPrefModel-' + g + '-' + i }, v)); });
+        group.models.forEach((m, i) => { const [family, tag] = split(m.name); items.push(optionHtml({ name: m.key, family, tag, active: v.model === m.key, loaded: true, id: pref('Model-' + g + '-' + i) }, v)); });
       });
       const segments = v.thinks ? '<div class="composer-model-picker-thinking"><span class="composer-model-picker-thinking-label">' + escapeHtml(jt('team.conv.prefs.thinking', 'Thinking')) + '</span>'
         + '<div class="composer-model-picker-segments" role="radiogroup" aria-label="' + escapeHtml(jt('team.conv.prefs.thinkingEffort', 'Thinking effort')) + '">'
-        + EFFORTS.map((e) => withAttrs(buttonOf({ plain: true, role: 'radio', className: 'composer-model-picker-segment' + (v.effort === e ? ' is-active' : ''), disabled: v.locked, domId: 'teamPrefEffort-' + e,
+        + EFFORTS.map((e) => withAttrs(buttonOf({ plain: true, role: 'radio', className: 'composer-model-picker-segment' + (v.effort === e ? ' is-active' : ''), disabled: v.locked, domId: pref('Effort-' + e),
           title: jt('team.conv.prefs.thinkingValue', 'Thinking: {effort}', { effort: effortLabel(e) }), dataset: { 'pref-effort': e }, trustedHtml: escapeHtml(effortLabel(e)) }), 'aria-checked="' + (v.effort === e) + '"')).join('') + '</div></div>' : '';
       const inner = '<div class="composer-model-picker">' + readOnly(v) + '<div class="composer-model-picker-list" role="listbox" aria-label="' + escapeHtml(jt('team.conv.prefs.modelLabel', 'Model')) + '">' + items.join('') + '</div>'
         + segments + '<div class="inv-popover-footer">' + escapeHtml(jt('team.conv.prefs.footer', 'Applies to this conversation, for everyone in it. The team default lives in Settings › Team.')) + '</div></div>';
-      return withAttrs(popoverOf({ domId: IDS.model, ariaLabel: jt('team.conv.prefs.modelPopover', 'Model and thinking'), trustedHtml: inner, className: 'composer-model-popover' }).replace(' hidden>', '>'), 'tabindex="-1"');
+      return withAttrs(popoverOf({ domId: ids.model, ariaLabel: jt('team.conv.prefs.modelPopover', 'Model and thinking'), trustedHtml: inner, className: 'composer-model-popover' }).replace(' hidden>', '>'), 'tabindex="-1"');
     }
 
     // The line above the field while the picked model's PC is gone; Send waits for it (the box reads `offline`).
@@ -287,7 +291,7 @@
     };
     function close(refocus) {
       if (!open) return;
-      const trigger = byId(open === 'tools' ? IDS.chip : IDS.pill);
+      const trigger = byId(open === 'tools' ? ids.chip : ids.pill);
       open = null;
       members = null;
       doc.removeEventListener('click', away);
@@ -301,7 +305,7 @@
       open = kind;
       members = null;
       o.redraw();
-      const pop = byId(kind === 'tools' ? IDS.tools : IDS.model);
+      const pop = byId(kind === 'tools' ? ids.tools : ids.model);
       const first = pop ? pop.querySelector('.composer-model-picker-option.is-active:not([disabled]), button:not([disabled])') || pop : null;
       if (first) first.focus({ preventScroll: true });
     }
@@ -334,12 +338,12 @@
       const t = event.target && event.target.closest ? event.target : null;
       if (!t) return false;
       const on = (selector) => t.closest(selector);
-      if (on('[id="' + IDS.chip + '"]')) { toggle('tools'); return true; }
-      if (on('[id="' + IDS.pill + '"]')) { toggle('model'); return true; }
+      if (on('[id="' + ids.chip + '"]')) { toggle('tools'); return true; }
+      if (on('[id="' + ids.pill + '"]')) { toggle('model'); return true; }
       const count = on('[data-pref-members]');
       if (count) { members = members === count.dataset.prefMembers ? null : count.dataset.prefMembers; o.redraw(); return true; }
-      const track = on('button[role="switch"][id^="teamPrefSwitch-"]');
-      if (track) { if (!track.disabled) void apply({ team_tools: { [track.id.slice('teamPrefSwitch-'.length)]: track.getAttribute('aria-checked') !== 'true' } }); return true; }
+      const track = on('button[role="switch"][id^="' + pref('Switch-') + '"]');
+      if (track) { if (!track.disabled) void apply({ team_tools: { [track.id.slice(pref('Switch-').length)]: track.getAttribute('aria-checked') !== 'true' } }); return true; }
       const reset = on('[data-pref-reset]');
       if (reset) { if (!reset.disabled) void apply({ team_tools: { read: true, write: true } }); return true; }
       const model = on('[data-pref-model]');

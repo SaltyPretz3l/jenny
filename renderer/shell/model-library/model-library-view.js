@@ -236,6 +236,7 @@
       // The managed NInfer runtime (row 54); MTP is the artifact's own feature.
       badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'NInfer' + (mtpOn ? ' \u00b7 MTP' : '') }));
     }
+    if (model.selectedEngine === 'strata') badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: 'Strata' })); // the owner's own Strata install (row 200)
     if (model.selectedEngine === 'llama-server') {
       // A model on its own llama-server build names it; the bundled build is implied.
       badges.push(inventoryBadge({
@@ -482,7 +483,7 @@
   }
 
   // ---- Settings > Models > Library: scope, one search, sort and keyed rows ----
-  var ENGINE_NAMES = { ollama: 'Ollama', 'llama-server': 'llama-server', ninfer: 'NInfer' };
+  var ENGINE_NAMES = { ollama: 'Ollama', 'llama-server': 'llama-server', ninfer: 'NInfer', strata: 'Strata' };
   var LIBRARY_SCOPES = ['all', 'mine', 'get'];
 
   function isHostedCard(card) { return card.installed === true && Boolean(card.engineType) && !mergeUtils.isLocalEngine(card); }
@@ -517,14 +518,14 @@
     return left - right || compareByName(a, b);
   }
 
-  // What the Library lists for a query, scope and sort. The running model is never listed (Running now shows it).
+  // What the Library lists for a query, scope and sort. The running model is never listed (Running now shows it), nor is a cloud model.
   function libraryRowsModel(merged, options) {
     var opts = objectOrEmpty(options);
     var cards = (Array.isArray(objectOrEmpty(merged).cards) ? merged.cards : []).filter(function (card) { return card && typeof card === 'object' && !Array.isArray(card); });
     var scope = LIBRARY_SCOPES.indexOf(opts.scope) >= 0 ? opts.scope : 'all';
     var query = String(opts.query == null ? '' : opts.query).trim().toLowerCase();
     var bySize = opts.sort === 'size';
-    var matched = cards.filter(function (card) { return card.active !== true && (!query || [libraryName(card), card.tag, card.quant, libraryEngineName(card)].join(' ').toLowerCase().indexOf(query) >= 0); });
+    var matched = cards.filter(function (card) { return card.active !== true && !isHostedCard(card) && (!query || [libraryName(card), card.tag, card.quant, libraryEngineName(card)].join(' ').toLowerCase().indexOf(query) >= 0); });
     var mine = matched.filter(function (card) { return card.installed === true; })
       .sort(bySize ? compareBySize : compareByName);
     var catalog = matched.filter(function (card) { return card.installed !== true; }).sort(bySize ? compareBySize : function (a, b) {
@@ -576,7 +577,7 @@
     }
     if (model.serving === true) flags.push(libraryFlag(jt('settings.models.library.flag.serving', 'Serving on :{port}', { port: model.servingPort }), jt('settings.models.library.flag.servingTip', 'Loaded on llama-server and holding GPU memory')));
     else if (model.servingPaused === true) flags.push(libraryFlag(jt('models.library.pausedForImageRender', 'Paused for an image render')));
-    if (model.preferredLocal === true) flags.push(libraryFlag(jt('settings.models.library.flag.localDefault', 'Local default')));
+    if (model.preferredLocal === true) flags.push(libraryFlag(jt('settings.models.library.flag.default', 'Default'), jt('settings.models.library.flag.defaultTip', 'New chats set to Default use this model')));
     if (loadFailure) flags.push(libraryFlag(jt('models.library.didNotLoad', "Didn't load"), '', true));
     if (model.installed !== true && model.recommended === true && model.fitState === 'fits') flags.push(libraryFlag(jt('models.library.bestFit', 'Best fit')));
     if (model.ollamaOnly === true) {
@@ -629,7 +630,13 @@
       options.label = jt('models.library.download', 'Download');
       options.ariaLabel = jt('models.library.downloadModel', 'Download {model}', { model: libraryName(card) });
     }
-    if (action === 'use') options.className += ' mrow-use';
+    if (action === 'use') {
+      options.className += ' mrow-use';
+      if (options.className.indexOf('--pending') < 0) {
+        options.label = jt('settings.models.library.load', 'Load');
+        options.ariaLabel = jt('settings.models.library.loadAria', 'Load {model}', { model: libraryName(card) });
+      }
+    }
     if (action === 'menu') options.className += ' mrow-menu';
     return options;
   }
@@ -682,6 +689,44 @@
       }) + '</div></div>';
   }
 
+  // Row 201 C1 / OD-1: a team model runs on a teammate's GPU, so it is never an "On this PC" row. It lists in
+  // its own read-only group: no Load, Tune, Set as default or menu (a team model is picked in a chat).
+  function teamModelName(entry) {
+    return String(entry.modelId || '') + ' \u00b7 ' + (String(entry.teamName || '').trim() || jt('settings.team.joined.unnamed', 'Unnamed team'));
+  }
+
+  function buildTeamModelRow(entry) {
+    var name = teamModelName(entry);
+    var context = formatContext(entry.contextLength);
+    var meta = [jt('models.library.team.sharedGpu', "A team's shared GPU")];
+    if (context) meta.push(jt('settings.models.library.context', '{size} context', { size: context }));
+    return '<div class="mrow" data-team-model="' + escapeHtml(entry.id) + '">'
+      + '<div class="mrow-main"><div class="mrow-title"><span class="mrow-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span></div>'
+      + '<div class="mrow-meta">' + escapeHtml(meta.join(' \u00b7 ')) + '</div>'
+      + '<div class="mrow-meta">' + escapeHtml(jt('team.engine.notice', 'The team’s host and the person whose hardware responds can read your prompts and replies.')) + '</div></div></div>';
+  }
+
+  // The group's rows for a scope and query, as keyed items; none outside "All" (it is not on this PC, and not a download).
+  function buildTeamModelItems(merged, options) {
+    var opts = objectOrEmpty(options);
+    var entries = Array.isArray(objectOrEmpty(merged).teamModels) ? merged.teamModels : [];
+    var query = String(opts.query == null ? '' : opts.query).trim().toLowerCase();
+    var shown = (opts.scope === 'mine' || opts.scope === 'get') ? [] : entries.filter(function (entry) {
+      return entry && entry.id && (!query || (teamModelName(entry) + ' ' + entry.id).toLowerCase().indexOf(query) >= 0);
+    });
+    if (!shown.length) return [];
+    return [{ key: ':team-sep', html: '<div class="mrow-sep" data-item="sep-team">' + escapeHtml(jt('models.library.fromTeams', 'From your teams')) + '</div>' }]
+      .concat(shown.map(function (entry) { return { key: entry.id, html: buildTeamModelRow(entry) }; }));
+  }
+
+  // The one line under the list that says where cloud models went.
+  function buildCloudNote() {
+    return '<p class="mp-more mp-more--inlist mlib-cloud-note" data-item="cloud"><span class="mp-quiet">'
+      + escapeHtml(jt('settings.models.library.cloudNote.before', "Cloud models are not listed here. You pick one in a chat's model button; their providers are under ")) + '</span>'
+      + libraryLink(jt('settings.models.library.cloudNote.link', 'Cloud providers'), 'cloud-providers')
+      + '<span class="mp-quiet">' + escapeHtml(jt('settings.models.library.cloudNote.after', '.')) + '</span></p>';
+  }
+
   // The Library list as one HTML string per element, keyed, so a caller can patch only what changed.
   // options: { query, scope, sort, showAllCatalog, actions, pulls, activation, shareOf(card), before }.
   function buildLibraryItems(merged, options) {
@@ -714,6 +759,7 @@
       }
       model.catalog.forEach(addRow);
     }
+    items.push.apply(items, buildTeamModelItems(merged, opts));
     if (!items.length) {
       var raw = String(opts.query == null ? '' : opts.query).trim();
       items.push({ key: ':empty', html: raw
@@ -721,6 +767,7 @@
           + ' ' + libraryLink(jt('settings.models.library.clear', 'Clear'), 'clear-search') + '</p>'
         : '<p class="model-library-empty mp-empty" data-item="empty">' + escapeHtml(jt('models.library.noFilterMatches', 'No models match this filter.')) + '</p>' });
     }
+    items.push({ key: ':cloud', html: buildCloudNote() });
     return { items: items, model: model };
   }
 
@@ -731,6 +778,7 @@
     buildLibraryItems: buildLibraryItems,
     buildLibraryList: buildLibraryList,
     libraryRowsModel: libraryRowsModel,
+    buildTeamModelItems: buildTeamModelItems,
     buildScopeChips: buildScopeChips,
     buildModelCard: buildModelCard,
     buildModelGrid: buildModelGrid,

@@ -10,7 +10,8 @@ const DEPENDENCY_CONTINUATION_KIND = 'before_dependency_wait';
 const DECISION_CONTINUATION_KIND = 'before_decision_wait';
 const MAX_CONTINUATION_BYTES = 1024 * 1024;
 const MIN_CONTINUATION_BYTES = 2;
-const MAX_CONTINUATION_TOOL_CALLS = 256;
+const MAX_CONTINUATION_TOOL_CALLS = 256; // calls in one batch
+const MAX_CONTINUATION_TOOL_CALL_LIMIT = 530; // a turn's budget: the 500 tool-calls-per-turn setting plus the browser's 30 steps
 const MAX_CONTINUATION_ITERATIONS = 10_000;
 const MAX_ACTIVE_BUDGET_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -183,7 +184,7 @@ function normalizePosition(value, completedSpawns = 0, decision = false) {
     fail('invalid_iteration_position');
   }
   const callLimit = integer(position.tool_call_limit, 'tool_call_limit',
-    { minimum: 1, maximum: MAX_CONTINUATION_TOOL_CALLS });
+    { minimum: 1, maximum: MAX_CONTINUATION_TOOL_CALL_LIMIT });
   const consumed = integer(position.tool_calls_consumed, 'tool_calls_consumed',
     { minimum: 1, maximum: callLimit });
   let activeBudget = position.active_budget_ms_remaining;
@@ -448,6 +449,7 @@ module.exports = {
   ContinuationContractError,
   MAX_CONTINUATION_BYTES,
   MAX_CONTINUATION_TOOL_CALLS,
+  MAX_CONTINUATION_TOOL_CALL_LIMIT,
   decodeContinuation,
   encodeContinuation,
   normalizeContinuation,

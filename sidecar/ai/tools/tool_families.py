@@ -15,6 +15,7 @@ KNOWN_TOOL_FAMILIES: frozenset[str] = frozenset(
         "browser",
         "browser_use",
         "code_intelligence",
+        "computer_use",
         "diagram",
         "discovery",
         "filesystem",
@@ -39,6 +40,8 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
     "artifact": ("create_artifact",),
     # The model-driven browser (row 114), not the retired "browser" family named below.
     "browser_use": ("browser",),
+    # The real mouse and keyboard in programs the owner grants (row 196).
+    "computer_use": ("computer",),
     "code_intelligence": ("lsp",),
     "discovery": ("tool_search",),
     "filesystem": (
@@ -119,7 +122,10 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
     ),
     "todo": ("todo_write", "todo_read"),
     "web": ("web_search", "fetch_url"),
-    "workspace": ("workspace_present", "preview_test", "verify", "image_generate"),
+    "workspace": (
+        "workspace_present", "preview_test", "verify", "image_generate",
+        "run_view_look", "run_view_restart",
+    ),
 }
 
 # Retired tool names that can still appear in persisted transcripts. They only
@@ -464,6 +470,8 @@ def aliases_for_tool(tool_name: str) -> tuple[str, ...]:
 
 BROWSER_STEP_FALLBACK = "Browser step finished."
 BROWSER_STEP_FAILED = "Browser step failed."
+COMPUTER_STEP_FALLBACK = "Computer step finished."
+COMPUTER_STEP_FAILED = "Computer step failed."
 
 
 def saved_tool_output(tool_name: str, output: str, metadata: object) -> str:
@@ -473,6 +481,13 @@ def saved_tool_output(tool_name: str, output: str, metadata: object) -> str:
     step summary the tool put in its metadata, so exports, transcripts and memory search never
     hold page text. Mirrors ``savedToolOutput`` in ``chat-stream-tool-payload-utils.js``.
     """
+    if tool_name == "computer":
+        # Row 196: a computer step keeps its one line, never the picture or what it typed.
+        line = metadata.get("step_summary") if isinstance(metadata, dict) else None
+        if isinstance(line, str) and line.strip():
+            return line.strip()[:200]
+        failed = isinstance(metadata, dict) and bool(metadata.get("failure_class"))
+        return COMPUTER_STEP_FAILED if failed else COMPUTER_STEP_FALLBACK
     if tool_name != "browser":
         return output
     summary = metadata.get("step_summary") if isinstance(metadata, dict) else None

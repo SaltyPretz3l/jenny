@@ -125,7 +125,7 @@
       },
       focusSearch: () => tab.focusSearch(null),
       call: tab.call,
-      exportStart: (teamId, scope) => tab.exportStart(teamId, scope),
+      exportStart: (teamId, scope, channelId) => tab.exportStart(teamId, scope, channelId),
       // Row 175 F1: true when the conversation was shown, false when it is no longer listed.
       openConversation: (teamId, sessionId) => (typeof tab.openConversation === 'function' ? tab.openConversation(teamId, sessionId) : Promise.resolve(false)),
       shown() {
@@ -158,7 +158,7 @@
       if (teamId && !api.hasTeam(teamId)) { api.note(jt('team.notify.gone', 'You are no longer in that team.')); return; }
       if (kind === 'new') { api.show(teamId, channels.NEW); return; }
       if (kind === 'person') { await openPerson(api, teamId, intent.memberId); return; }
-      if (kind === 'export') { api.exportStart(teamId, intent.scope); return; }
+      if (kind === 'export') { api.exportStart(teamId, intent.scope, intent.channelId); return; }
       if (kind === 'conversation') { await openConversation(api, intent); return; }
       if (kind !== 'open' || !intent.channelId) return;
       api.show(teamId, intent.channelId);
@@ -207,7 +207,8 @@
     const followsOf = (teamId) => { if (!follows.has(teamId)) follows.set(teamId, new Set()); return follows.get(teamId); };
     const nameOf = (teamId, id) => (chat.member(teamId, id) || {}).display_name || jt('team.chat.formerMember', 'Former member');
 
-    // The focused window shows this conversation at its latest messages.
+    // The focused window shows this conversation at its latest messages. A log that is not laid out (the list screen of a
+    // narrow window measures 0) is not on screen.
     function onScreen(teamId, channelId) {
       const doc = windowRef && windowRef.document;
       if (!tabApi || !doc || typeof doc.hasFocus !== 'function' || !doc.hasFocus() || !state || !state.ui || state.ui.activeView !== 'team') return false;
@@ -215,7 +216,7 @@
       if (!shown || shown.teamId !== teamId || shown.channelId !== channelId) return false;
       if (chat.timeline(teamId, channelId).hasNewer) return false;
       const log = shown.log;
-      return !log || log.clientHeight === 0 || log.scrollHeight - log.scrollTop - log.clientHeight <= BOTTOM_SLACK_PX;
+      return Boolean(log) && log.clientHeight > 0 && log.scrollHeight - log.scrollTop - log.clientHeight <= BOTTOM_SLACK_PX;
     }
 
     function titleFor(team, record, row, sender, many) {
@@ -227,7 +228,7 @@
         if (others.length === 2) return jt('team.notify.withTwo', '{sender}, with {first} and {second}', { sender, first: others[0], second: others[1] });
         return jt('team.notify.withMany', '{sender}, with {name} and {count} others', { sender, name: others[0], count: others.length - 1 });
       }
-      const title = jt('team.notify.inChannel', '{sender} in #{channel}', { sender, channel: channels.channelName(record.channel_id) });
+      const title = jt('team.notify.inChannel', '{sender} in #{channel}', { sender, channel: channels.channelName(record.channel_id, team.team_id) });
       return many ? jt('team.notify.inTeam', '{title} · {team}', { title, team: team.team_name || '' }) : title;
     }
 
@@ -260,7 +261,7 @@
       const candidate = {
         category: 'team', key: 'team:' + record.id, teamId: team.team_id, channelId, messageId: record.id, seq: record.seq,
         title: clip(titleFor(team, record, row, sender, teams().length > 1), TITLE_MAX), body, sender: clip(sender, 80),
-        conversation: clip(direct ? (others.length ? channels.namesText(others) : sender) : '#' + channels.channelName(channelId), TITLE_MAX),
+        conversation: clip(direct ? (others.length ? channels.namesText(others) : sender) : '#' + channels.channelName(channelId, team.team_id), TITLE_MAX),
       };
       if (root) candidate.threadRootId = root;
       const preview = clip(firstLine(channels.mentionText(record.text, (id) => nameOf(team.team_id, id))), PREVIEW_MAX);

@@ -59,6 +59,9 @@ class ChatGpuHandoffError extends Error {
   }
 }
 
+// The engines parked by a managed-server stop and restored with the same identity.
+const MANAGED_PLAN_ENGINES = new Set(['llama-server', 'ninfer', 'strata']);
+
 function createChatGpuHandoff({
   backendService,
   coordinator,
@@ -66,6 +69,9 @@ function createChatGpuHandoff({
   // The managed NInfer runtime: it owns the GPU only while the llama-server
   // manager is stopped, so a ready NInfer server is the engine to park.
   getNinferManager = () => null,
+  // Managed Strata (row 200), the highest GPU rank: a ready server is parked
+  // first, with its port and key retained for the exact restore.
+  getStrataManager = () => null,
   probeVram = probeNvidiaSmiVram,
   fetchImpl = globalThis.fetch,
   ollamaBaseUrl = DEFAULT_OLLAMA_BASE_URL,
@@ -193,6 +199,11 @@ function createChatGpuHandoff({
   async function evict() {
     const engineType = String(backendService?.currentEngineType || '').trim().toLowerCase();
     if (engineType === 'openai-compatible') {
+      const strata = getStrataManager();
+      const strataStatus = strata?.getStatus?.() || null;
+      if (strataStatus?.state === 'ready' && Number(strataStatus.pid) > 0) {
+        return parkManagedServer(strata, { engine: 'strata', pid: strataStatus.pid }, 'strata_stop_unconfirmed');
+      }
       const ninfer = getNinferManager();
       const ninferStatus = ninfer?.getStatus?.() || null;
       if (ninferStatus?.state === 'ready' && Number(ninferStatus.pid) > 0) {
@@ -249,9 +260,10 @@ function createChatGpuHandoff({
     let reason = 'vram_not_freed';
     while (true) {
       let evicted = true;
-      if (plan.engine === 'llama-server' || plan.engine === 'ninfer') {
+      if (MANAGED_PLAN_ENGINES.has(plan.engine)) {
+        // Strata's stop already confirmed its engine child gone too (strata-lifecycle.js).
         evicted = !isProcessAliveImpl(plan.pid);
-        if (!evicted) reason = plan.engine === 'ninfer' ? 'ninfer_still_alive' : 'llama_server_still_alive';
+        if (!evicted) reason = `${plan.engine.replace('-', '_')}_still_alive`;
       } else if (plan.engine === 'ollama') {
         const verdict = await verifyOllamaGpuEvicted({ fetchImpl, url: `${ollamaBaseUrl}/api/ps` });
         evicted = verdict.ok === true;
@@ -271,10 +283,10 @@ function createChatGpuHandoff({
   // Step 7: bring the chat engine back exactly. Ollama reloads on its next
   // request; a GPU-free engine needs nothing.
   async function restore(plan) {
-    if (plan.engine !== 'llama-server' && plan.engine !== 'ninfer') {
+    if (!MANAGED_PLAN_ENGINES.has(plan.engine)) {
       return { restored: true };
     }
-    const manager = plan.engine === 'ninfer' ? getNinferManager() : getLlamaServerManager();
+    const manager = { strata: getStrataManager, ninfer: getNinferManager, 'llama-server': getLlamaServerManager }[plan.engine]();
     let status = null;
     try {
       status = await manager?.ensureRunning?.(null, { reuseIdentity: true });

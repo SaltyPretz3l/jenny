@@ -12,8 +12,9 @@
 // Nothing here logs.
 //
 // The walks take each entry's kind from the directory listing (no `lstat` per entry; a file's size needs
-// one). The asynchronous forms yield to the event loop every YIELD_EVERY entries, so main keeps answering
-// and the host child's watchdog keeps its pings while a large team is exported, counted or removed.
+// one). The asynchronous forms yield to the event loop every YIELD_EVERY entries and size a batch's files with
+// the asynchronous `lstat`, SIZE_CONCURRENCY at a time, so main keeps answering and the host child's watchdog
+// keeps its pings while a large team is exported, counted or removed.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,6 +25,7 @@ const WINDOWS = process.platform === 'win32';
 const fold = (value) => (WINDOWS ? value.toLowerCase() : value);
 const DEFAULT_LIMIT = 2_000_000;
 const YIELD_EVERY = 64;
+const SIZE_CONCURRENCY = 16;
 // The stores' JSON files, as the inventory and the export read them (a segment, an index, the member store).
 const MAX_JSON_BYTES = 64 * 1024 * 1024;
 const SEGMENT = /^seg-([1-9][0-9]{0,8})\.json$/u;
@@ -96,6 +98,22 @@ function countEntry(totals, entry, childRel, abs, statSize) {
 }
 
 const sizeSync = (abs) => { try { return fs.lstatSync(abs).size; } catch { return null; } };
+const sizeAsync = async (abs) => { try { return (await fs.promises.lstat(abs)).size; } catch { return null; } };
+
+// The sizes of the listed files in `batch` (null for any other entry or an unreadable file), SIZE_CONCURRENCY at a time.
+async function sizesOf(dir, rel, batch) {
+  const sizes = new Array(batch.length).fill(null);
+  const wanted = batch.flatMap((entry, at) => (kindOf(entry) === 'file' ? [at] : []));
+  let next = 0;
+  const worker = async () => {
+    while (next < wanted.length) {
+      const at = wanted[next]; next += 1;
+      sizes[at] = await sizeAsync(path.join(dir, rel, batch[at].name));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SIZE_CONCURRENCY, wanted.length) }, worker));
+  return sizes;
+}
 
 // The entries under `dir`, depth first, never following a link: { files, bytes, dirs, links, unreadable,
 // truncated, linkPaths }. `onFile(rel, abs, size)` for each regular file, `onDir(rel, abs)` for each folder;
@@ -130,15 +148,19 @@ async function walkTreeAsync(dir, { onFile = null, onDir = null, limit = DEFAULT
     const rel = pending.pop();
     let entries;
     try { entries = await fs.promises.readdir(path.join(dir, rel), { withFileTypes: true }); } catch { totals.unreadable += 1; continue; }
-    for (const entry of entries) {
-      seen += 1;
-      if (seen > limit) { totals.truncated = true; return totals; }
-      if (seen % YIELD_EVERY === 0) await tick();
-      const childRel = rel ? path.join(rel, entry.name) : entry.name;
-      const abs = path.join(dir, childRel);
-      const { kind, size } = countEntry(totals, entry, childRel, abs, sizeSync);
-      if (kind === 'dir') { if (onDir) await onDir(childRel, abs); pending.push(childRel); }
-      else if (kind === 'file' && onFile) await onFile(childRel, abs, size);
+    for (let from = 0; from < entries.length; from += YIELD_EVERY) {
+      const batch = entries.slice(from, from + YIELD_EVERY);
+      const sizes = await sizesOf(dir, rel, batch);
+      for (const [at, entry] of batch.entries()) {
+        seen += 1;
+        if (seen > limit) { totals.truncated = true; return totals; }
+        const childRel = rel ? path.join(rel, entry.name) : entry.name;
+        const abs = path.join(dir, childRel);
+        const { kind, size } = countEntry(totals, entry, childRel, abs, () => sizes[at]);
+        if (kind === 'dir') { if (onDir) await onDir(childRel, abs); pending.push(childRel); }
+        else if (kind === 'file' && onFile) await onFile(childRel, abs, size);
+      }
+      if (batch.length === YIELD_EVERY) await tick();
     }
   }
   return totals;

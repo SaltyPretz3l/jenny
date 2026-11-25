@@ -18,6 +18,7 @@ The rail has six groups.
   - Approval rules: what Always allow has saved, with Remove.
   - Files and documents: File tools, Rich file reading, Image and PDF page reads, PDF reading add-on.
   - Web: Web tools and the search provider.
+  - Computer: Let chats use the computer (on by default; each chat still turns Computer on itself), the Stop key (Ctrl+Alt+Shift+F12, shown and not changeable, with a note when another program holds it) and Your programs (programs with no Start menu entry, with Add program, rename and Remove). Windows only; the group is greyed out elsewhere. See tools-overview.
   - Code and commands: Terminal commands, Run commands in a sandbox, Python execution, Code intelligence, Worktree tools, Delegated research.
 
 ### Work

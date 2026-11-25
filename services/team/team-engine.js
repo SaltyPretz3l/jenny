@@ -12,8 +12,11 @@
 //
 // The team's models are read through the same call (GET models, a JSON body of at
 // most 256 KiB, the whole read within 3 s), cached per team: read when the team
-// comes online and at most every 15 s when the list is read; a failed read is an
-// empty list. A manager once dropped is never taken back. Logs carry team ids,
+// comes online, when the member turns from pending to active while online, when the host
+// pushes `team_pool_nodes` (a GPU came or went) and at most every 15 s when the list is read.
+// A failed read keeps the last good list and marks it stale (row 201): the list is cleared only
+// after STALE_LIMIT failed reads in a row. Each model carries its context length and its vision and
+// thinking flags when the host names them. A manager once dropped is never taken back. Logs carry team ids,
 // counts and reasons only: never a key, a token, a body or a model list.
 
 const { TeamError } = require('./team-errors');
@@ -23,6 +26,8 @@ const LIST_TTL_MS = 15_000;
 const LIST_TIMEOUT_MS = 3000;
 const START_RETRY_MS = 5000;
 const START_TRIES = 5;
+const STALE_LIMIT = 3; // failed reads in a row before the held list is cleared
+const POOL_EVENT = 'team_pool_nodes';
 const MAX_LIST_BYTES = 256 * 1024;
 // The host scheduler's models-per-node bound (server/team/scheduler/limits.js `maxModelsPerNode`).
 const MAX_MODELS = 64;
@@ -47,23 +52,25 @@ function cleanName(value) {
 }
 
 // The model ids of an OpenAI-shaped models answer (distinct, well formed, at most MAX_MODELS) and,
-// beside them, each kept id's `context_length` when the host named one inside the bounds (slice 4f).
-// A bad length is dropped and its id kept.
+// beside them, each kept id's `context_length` when the host named one inside the bounds (slice 4f)
+// and its `vision` / `thinking` flags when the host named one as true. A bad length is dropped and its id kept.
 function modelsOf(text) {
   const parsed = JSON.parse(text);
   const rows = Array.isArray(parsed?.data) ? parsed.data : [];
   const ids = [];
   const contextLengths = {};
+  const capabilities = {};
   for (const row of rows) {
     const id = row?.id;
     if (isTeamEngineModelName(id) && !ids.includes(id)) {
       ids.push(id);
       const length = row.context_length;
       if (isProfileContextLength(length)) contextLengths[id] = length;
+      if (row.vision === true || row.thinking === true) capabilities[id] = { vision: row.vision === true, thinking: row.thinking === true };
     }
     if (ids.length >= MAX_MODELS) break;
   }
-  return { ids, contextLengths };
+  return { ids, contextLengths, capabilities };
 }
 
 // `promise`, or a rejection as soon as `signal` aborts; a late answer is closed.
@@ -105,7 +112,8 @@ function createTeamEngine({
   log = () => {}, now = Date.now, timers = { setTimeout, clearTimeout }, listTtlMs = LIST_TTL_MS,
   listTimeoutMs = LIST_TIMEOUT_MS, startRetryMs = START_RETRY_MS,
 } = {}) {
-  // team id -> { manager, port, name, online, active, models, contextLengths, readAt, reading, starts, retryAt }
+  // team id -> { manager, port, name, online, active, models, contextLengths, capabilities, stale, failures, readAt, reading,
+  //              again, unsubscribe, starts, retryAt }
   const teams = new Map();
   const dropped = new WeakSet(); // managers whose team was dropped: a late change from one is ignored
   const stops = new Set();
@@ -148,7 +156,7 @@ function createTeamEngine({
     const controller = new AbortController();
     const timer = timers.setTimeout(() => controller.abort(), listTimeoutMs);
     if (typeof timer?.unref === 'function') timer.unref();
-    let models = { ids: [], contextLengths: {} };
+    let models = null; // null: this read failed
     try {
       // The whole read is bounded, the connection's own client registration included.
       const upstream = await untilAborted(
@@ -163,19 +171,39 @@ function createTeamEngine({
   }
 
   function refreshModels(teamId, entry) {
-    if (entry.reading || stopped) return entry.reading;
+    if (stopped) return null;
+    if (entry.reading) return entry.reading;
     entry.readAt = now();
-    entry.reading = readModels(teamId, entry).then((models) => {
+    entry.reading = readModels(teamId, entry).then((read) => {
       entry.reading = null;
       if (teams.get(teamId) !== entry || stopped) return;
-      const changed = JSON.stringify(models) !== JSON.stringify({ ids: entry.models, contextLengths: entry.contextLengths });
+      entry.readAt = now();
+      // One failed read keeps the last good list, marked stale; STALE_LIMIT in a row clear it.
+      entry.failures = read ? 0 : entry.failures + 1;
+      const held = { ids: entry.models, contextLengths: entry.contextLengths, capabilities: entry.capabilities };
+      const models = read || (entry.failures >= STALE_LIMIT ? { ids: [], contextLengths: {}, capabilities: {} } : held);
+      const stale = !read && models.ids.length > 0;
+      const changed = JSON.stringify(models) !== JSON.stringify(held) || stale !== entry.stale;
       entry.models = models.ids;
       entry.contextLengths = models.contextLengths;
-      entry.readAt = now();
-      say('INFO', 'team.engine.models_read', { team_id: teamId, count: models.ids.length });
+      entry.capabilities = models.capabilities;
+      entry.stale = stale;
+      if (read) say('INFO', 'team.engine.models_read', { team_id: teamId, count: models.ids.length });
       if (changed) tell(onListChange);
+      if (entry.again) { entry.again = false; void refreshModels(teamId, entry); }
     });
     return entry.reading;
+  }
+
+  // The host says a GPU came, went or changed: read the list again now (once more if a read is on its way).
+  function onPoolEvent(teamId, entry, event) {
+    if (event?.event_type !== POOL_EVENT || stopped || teams.get(teamId) !== entry || !entry.online || !entry.active) return;
+    // Only what changes the pool's model list: a job starting or ending (busy slots) reads nothing (row 201 review).
+    const nodes = Array.isArray(event.nodes) ? event.nodes : [];
+    const sig = JSON.stringify(nodes.map((node) => [node?.node_id, node?.online, node?.paused, node?.models]));
+    if (sig === entry.poolSig) return;
+    entry.poolSig = sig;
+    if (entry.reading) entry.again = true; else void refreshModels(teamId, entry);
   }
 
   // A team's connection changed (team-service.js calls this on every manager change).
@@ -184,13 +212,20 @@ function createTeamEngine({
     const snapshot = manager.snapshot();
     let entry = teams.get(teamId);
     if (!entry || entry.manager !== manager) {
-      if (entry) { dropped.add(entry.manager); void stopPort(teamId, entry); }
-      entry = { manager, port: null, name: '', online: false, active: false, models: [], contextLengths: {}, readAt: 0,
-        reading: null, starts: 0, retryAt: 0 };
+      if (entry) { dropped.add(entry.manager); entry.unsubscribe(); void stopPort(teamId, entry); }
+      entry = { manager, port: null, name: '', online: false, active: false, models: [], contextLengths: {}, capabilities: {},
+        stale: false, failures: 0, readAt: 0, reading: null, again: false, poolSig: null, unsubscribe: () => {}, starts: 0, retryAt: 0 };
       teams.set(teamId, entry);
+      const created = entry;
+      if (typeof manager.onEvent === 'function') {
+        try {
+          created.unsubscribe = manager.onEvent((event) => onPoolEvent(teamId, created, event)) || (() => {});
+        } catch { say('WARN', 'team.engine.subscribe_failed', { team_id: teamId }); }
+      }
     }
     const before = JSON.stringify([entry.name, entry.online, entry.active]);
     const cameOnline = snapshot.state === 'online' && !entry.online;
+    const cameActive = snapshot.member_state === 'active' && !entry.active;
     entry.name = cleanName(snapshot.team_name);
     entry.online = snapshot.state === 'online';
     entry.active = snapshot.member_state === 'active';
@@ -198,7 +233,7 @@ function createTeamEngine({
       void stopPort(teamId, entry);
       tell(onTeamGone, teamId);
     } else startPort(teamId, entry);
-    if (cameOnline && entry.active) void refreshModels(teamId, entry);
+    if ((cameOnline || cameActive) && entry.online && entry.active) void refreshModels(teamId, entry);
     if (before !== JSON.stringify([entry.name, entry.online, entry.active])) tell(onListChange);
   }
 
@@ -210,6 +245,7 @@ function createTeamEngine({
     if (!entry) return Promise.resolve();
     teams.delete(teamId);
     dropped.add(entry.manager);
+    entry.unsubscribe();
     if (!quiet) tell(onTeamGone, teamId);
     tell(onListChange);
     return stopPort(teamId, entry, { quiet });
@@ -219,7 +255,7 @@ function createTeamEngine({
     stopped = true;
     const all = [...teams];
     teams.clear();
-    for (const [, entry] of all) dropped.add(entry.manager);
+    for (const [, entry] of all) { dropped.add(entry.manager); entry.unsubscribe(); }
     await Promise.all([...all.map(([teamId, entry]) => stopPort(teamId, entry)), ...stops]);
   }
 
@@ -232,7 +268,8 @@ function createTeamEngine({
       const entry = teams.get(teamId);
       if (!entry) return null;
       return { online: entry.online, active: entry.active, portReady: entry.port?.getStatus?.()?.state === 'ready',
-        models: [...entry.models], contextLengths: { ...entry.contextLengths } };
+        models: [...entry.models], contextLengths: { ...entry.contextLengths }, capabilities: { ...entry.capabilities },
+        stale: entry.stale };
     },
     // Every team that adds rows to the model list now; a list older than the TTL is read again for the next
     // call, and a port whose start failed is tried again.
@@ -243,7 +280,8 @@ function createTeamEngine({
         startPort(teamId, entry);
         if (now() - entry.readAt >= listTtlMs) void refreshModels(teamId, entry);
         if (entry.models.length > 0) {
-          out.push({ teamId, name: entry.name, models: [...entry.models], contextLengths: { ...entry.contextLengths } });
+          out.push({ teamId, name: entry.name, models: [...entry.models], contextLengths: { ...entry.contextLengths },
+            capabilities: { ...entry.capabilities } });
         }
       }
       return out;

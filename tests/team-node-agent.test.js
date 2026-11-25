@@ -176,7 +176,7 @@ test('no claim while the member\'s own turn runs; claims resume after', async (t
   busy = false;
   await drive(timers, () => host.of('team.node.claim').length === 1, 'a claim');
   assert.equal(agent.status().state, 'idle');
-  assert.equal(host.of('team.node.claim')[0].params.wait_ms, 25_000);
+  assert.equal(host.of('team.node.claim')[0].params.wait_ms, 10_000, 'the wait is capped by the host heartbeat (H12)');
 });
 
 test('the claim sequence starts past an earlier run\'s and a lost answer repeats its number', async (t) => {
@@ -440,6 +440,19 @@ test('R16-F01: a body naming another model in any case, twice, or none, never re
   const foreign = host.queueJob(Buffer.from(`{"model":"beta",${tail}}`), { model: 'beta' });
   await drive(timers, () => foreign.state === 'failed', 'a model this PC did not offer');
   assert.deepEqual([foreign.reason, host.of('request').length], ['model_not_loaded', reads], 'refused before the read');
+  assert.equal(engine.chats().length, 0, 'the engine received nothing');
+});
+
+test('C5: a body the host would not have forwarded (a dropped key, a capital inside messages, n above 1) is not run here', async (t) => {
+  const { agent, host, engine, timers } = await setup(t);
+  await agent.start();
+  const msg = '"messages":[{"role":"user","content":"hi"}]';
+  for (const text of [`{"model":"alpha",${msg},"keep_alive":0}`, `{"model":"alpha",${msg},"n":50}`,
+    `{"model":"alpha","messages":[{"role":"user","content":[{"type":"image_url","Image_Url":{"url":"x"}}]}]}`]) {
+    const job = host.queueJob(Buffer.from(text));
+    await drive(timers, () => job.state === 'failed', text);
+    assert.equal(job.reason, 'engine_error', text);
+  }
   assert.equal(engine.chats().length, 0, 'the engine received nothing');
 });
 

@@ -253,8 +253,8 @@ test('unmounting pane 1 releases every listener it registered on a node that out
   const paneRoot = pane1.root;
   const registered = tracker.entries.slice();
   assert.ok(registered.length > 0);
-  const layoutClose = doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close');
-  assert.ok(layoutClose, 'precondition: pane 1 carries its close glyph');
+  const layoutClose = doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close');
+  assert.ok(layoutClose, 'precondition: pane 1 header row carries its close button');
   layoutClose.click();
   await waitFor(window, () => composition.getPane(1) === null, 'pane 1 to unmount');
   await settle(window);
@@ -276,7 +276,7 @@ test('closing pane 1 leaves pane 0\'s file-diff registry (expansion overrides) i
   assert.ok(fileDiff && typeof fileDiff.registerFileDiffContext === 'function', 'precondition: the registry module is loaded');
   assert.equal(fileDiff.registerFileDiffContext({ diffId: 'diff-a', sessionId: 'session-a', materialize: () => {}, expanded: true }), true);
   assert.equal(fileDiff.getFileDiffExpanded('diff-a'), true, 'precondition: pane 0 holds an expanded override');
-  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
+  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close').click();
   await waitFor(window, () => composition.getPane(1) === null, 'pane 1 to unmount');
   await settle(window);
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');
@@ -355,7 +355,7 @@ test('a send in pane 0 leaves pane 1 selecting', async (t) => {
 test('closing pane 1 while it selects exits the mode and leaves no bar', async (t) => {
   const { window, doc, composition, pane1 } = await openTwoPanes(t);
   await selectInPaneOne(window, composition, pane1);
-  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
+  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close').click();
   await waitFor(window, () => composition.getPane(1) === null, 'pane 1 to unmount');
   await settle(window);
   assert.equal(composition.getPane(1), null, 'pane 1 is gone');

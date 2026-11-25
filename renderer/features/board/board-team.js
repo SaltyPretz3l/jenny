@@ -30,7 +30,6 @@
 
   const LOCKED = new Set(['revoked', 'pending', 'needs_repair', 'force_local']);
   const MENU_ROWS = 200; // the most rows one project or copy menu offers
-  const LISTS_WAIT_MS = 8000; // the longest a menu waits for the project lists (an answer that is no list is never followed by a better one)
   const remembered = new WeakMap(); // window -> { teamId, projectId }: the last team project shown (memory only)
   // Row 175 F11: a board another tab asked for, kept for the next Board page to attach the team (a live one takes it now).
   let pending = null;
@@ -61,7 +60,6 @@
     let tabReady = false;
     let hold = null; // { teamId, releases: [fn], off: fn } while a team project is shown or being shown
     let listsRelease = null; // the project store, held from the first menu open to dispose
-    const waiters = new Set(); // { off, resolve } of a menu open waiting for the project lists
     let restoreStop = null;
     let restoreTeam = '';
     let preparing = 0;
@@ -159,24 +157,25 @@
       if (!store || !projects) return;
       hold = { teamId, releases: [store.use({ rosters: 'all' }), projects.use()], off: projects.subscribe(onProject) };
     }
-    // The Team tab's scripts and every online team's project list: what the project menu and the copy menu draw.
+    // The Team tab's scripts and the hold on every online team's project list: what the project menu and the copy menu draw. It does not wait for an
+    // answer (a team that is slow must not hold the menu back): a menu draws what has come, a pending row for the rest, and `onLists` tells it more came.
     async function ensureLists() {
       if (!(await ensureTab())) return false;
       const projects = projectStore();
       if (!projects) return false;
       if (!listsRelease) listsRelease = projects.use();
-      const unread = () => activeTeams().some((team) => {
-        const state = team.state === 'online' ? projects.team(team.team_id) : null;
-        return team.state === 'online' && !(state && (Array.isArray(state.projects) || state.error));
-      });
-      await new Promise((resolve) => {
-        if (!unread()) { resolve(); return; }
-        const done = () => { waiter.off(); windowRef.clearTimeout(waiter.timer); waiters.delete(waiter); resolve(); };
-        const waiter = { resolve, off: projects.subscribe(() => { if (!unread()) done(); }), timer: windowRef.setTimeout(done, LISTS_WAIT_MS) };
-        waiters.add(waiter);
-      });
       return !disposed;
     }
+    // The online teams whose project list has not come (an answer that is an error is an answer).
+    function listsPending() {
+      const projects = projectStore();
+      if (!projects) return [];
+      return activeTeams().filter((team) => {
+        const state = team.state === 'online' ? projects.team(team.team_id) : null;
+        return team.state === 'online' && !(state && (Array.isArray(state.projects) || state.error));
+      }).map((team) => team.team_id);
+    }
+    const onLists = (fn) => { const projects = projectStore(); return projects ? projects.subscribe(fn) : () => {}; };
 
     const releaseUnlessShown = () => { if (!shownTeam() && !preparing && !restoring) release(); };
 
@@ -201,10 +200,12 @@
       }
     }
 
-    // The projects of every team this member is in, a project once, at most `room` of them in all (a row needs an id that is a string).
+    // The projects of every team this member is in, a project once, at most `room` of them in all (a row needs an id that is a string);
+    // a team whose list has not come is there with `pending: true` and no projects.
     function teamsWithProjects(room = MENU_ROWS) {
       const projects = projectStore();
       if (!projects) return [];
+      const waiting = new Set(listsPending());
       return activeTeams().map((team) => {
         const state = projects.team(team.team_id);
         const seen = new Set();
@@ -216,8 +217,8 @@
           room -= 1;
           list.push({ id: row.id, name: projectName(row.name), role: roleOf(team.team_id, row.id) });
         }
-        return { id: team.team_id, name: teamName(team), projects: list };
-      }).filter((team) => team.projects.length);
+        return { id: team.team_id, name: teamName(team), projects: list, pending: waiting.has(team.team_id) };
+      }).filter((team) => team.projects.length || team.pending);
     }
 
     // The app's one context menu.
@@ -231,7 +232,7 @@
     }
     const nameOrFormer = (memberId) => nameOf(memberId) || jt('board.team.formerMemberCap', 'Former member');
 
-    const data = { ensureLists, contextMenu, nameOrFormer, isSelf, iso, MENU_ROWS, forget: () => remembered.delete(windowRef), roleOf, selfId, nameOf, ctxOf, teamsWithProjects, pick, projectStore, clean,
+    const data = { ensureLists, listsPending, onLists, contextMenu, nameOrFormer, isSelf, iso, MENU_ROWS, forget: () => remembered.delete(windowRef), roleOf, selfId, nameOf, ctxOf, teamsWithProjects, pick, projectStore, clean,
       openHistory: () => (history ? history.open() : false), historyOpen: () => Boolean(history && history.isOpen()), resync: () => sync() };
 
     /* ------------------------------------------------------------ watching the project shown */
@@ -388,8 +389,6 @@
         if (typeof offTeams === 'function') offTeams();
         offTeams = null;
         if (restoreStop) restoreStop();
-        waiters.forEach((waiter) => { waiter.off(); windowRef.clearTimeout(waiter.timer); waiter.resolve(); });
-        waiters.clear();
         if (chat) chat.dispose();
         if (presence) presence.dispose();
         if (history) history.dispose();

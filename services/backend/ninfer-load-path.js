@@ -5,10 +5,12 @@
 
 const { AI_ERROR_CODES } = require('./error-codes');
 const { managedModelKey } = require('../shell-config-engines');
+const { isStrataModel } = require('./strata-load-path');
 
 const SERVER_LABELS = Object.freeze({
   llama_server: 'llama-server',
   ninfer: 'NInfer runtime',
+  strata: 'Strata server',
 });
 
 // The pinned NInfer artifact a model id names (its model_id, as the sidecar
@@ -61,16 +63,29 @@ async function stopManagedServerOrAbort(service, manager, kind, to) {
 }
 
 // The managed server an openai-compatible load failure belongs to, stamped on
-// the record so every surface names NInfer or llama-server for what was
-// attempted rather than for whatever serves later. '' for other engines or
-// when no managed server is involved (a user-run endpoint).
+// the record so every surface names Strata, NInfer or llama-server for what was
+// attempted rather than for whatever serves later: the live manager (the launch
+// gates let at most one run), else the most recently changed one that crashed
+// or holds an error, ties going to the higher rank (Strata > NInfer >
+// llama-server). '' for other engines or when no managed server is involved (a
+// user-run endpoint).
 function managedServerKindForFailure(service, engine) {
   if (String(engine || '').trim() !== 'openai-compatible') return '';
   const live = (status) => ['starting', 'ready', 'stopping'].includes(String(status?.state || ''));
-  const ninfer = service?.options?.getNinferManager?.()?.getStatus?.() || null;
-  const llama = service?.options?.getLlamaServerManager?.()?.getStatus?.() || null;
-  if (ninfer && (live(ninfer) || ninfer.state === 'crashed' || (ninfer.lastError && !live(llama)))) return 'ninfer';
-  return llama && (live(llama) || llama.state === 'crashed' || Boolean(llama.lastError)) ? 'llama-server' : '';
+  const statuses = [
+    ['strata', service?.options?.getStrataManager],
+    ['ninfer', service?.options?.getNinferManager],
+    ['llama-server', service?.options?.getLlamaServerManager],
+  ].map(([kind, getter]) => [kind, getter?.()?.getStatus?.() || null]).filter(([, status]) => status);
+  const running = statuses.find(([, status]) => live(status));
+  if (running) return running[0];
+  let best = null;
+  for (const [kind, status] of statuses) {
+    if (status.state !== 'crashed' && !status.lastError) continue;
+    const at = Number(status.changedAt) || 0;
+    if (!best || at > best.at) best = { kind, at };
+  }
+  return best ? best.kind : '';
 }
 
 // The managed server behind an openai-compatible catalog entry, so the picker
@@ -86,6 +101,7 @@ function managedServerKindForModel(service, modelId, { routing = false } = {}) {
   if (!id) return '';
   if (findNinferArtifactForModel(service, id)
     && (!routing || Boolean(service?.options?.getNinferManager?.()))) return 'ninfer';
+  if (isStrataModel(service, id)) return 'strata';
   const token = managedModelKey(id);
   const managed = service?.configService?.getLocalEngines?.()?.openaiCompatible?.managed || null;
   if (managed?.enabled === true && managed.perModel?.[token]?.engine === 'llama-server') return 'llama-server';

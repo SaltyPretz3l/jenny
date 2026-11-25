@@ -120,7 +120,7 @@ function s4ThinkingMarkup(status = 'complete', label = 'Thought') {
 test('S4: reasoning header metrics belong to the pane session', (t) => {
   const { patch, metrics } = createS4PatchFixture(t, { thinkingMarkup: s4ThinkingMarkup('streaming', 'Thinking') });
   patch({ thinkingMarkup: s4ThinkingMarkup() });
-  assert.deepEqual(metrics, [['B', 'reasoning_header_rewrite']]);
+  assert.deepEqual(metrics, [['B', 'reasoning_header_morph']]);
 });
 
 test('S4: a flip-to-complete settle cannot settle a panel that starts collapsing', async (t) => {

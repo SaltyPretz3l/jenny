@@ -6,7 +6,7 @@
  * No extension arguments are consumed by this bounded, one-shot tool. */
 
 const { normalizeString } = require('../../shared/normalize');
-const { MAX_TYPE_TEXT_LENGTH, PRESS_KEYS, resolvePressKeyAlias } = require('../../browser-interaction-utils');
+const { MAX_TYPE_TEXT_LENGTH, PRESS_KEYS, PRESS_KEYS_TEXT, resolvePressKeyAlias } = require('../../browser-interaction-utils');
 
 const INPUT_KEYS = new Set(['path', 'viewport', 'wait_ms', 'screenshot', 'events', 'observe']);
 const EVENT_KEYS = new Set(['action', 'selector', 'key', 'text', 'press_enter']);
@@ -63,7 +63,7 @@ function normalizePreviewEvent(raw) {
   const unknown = unknownEventArgumentFailure(raw);
   if (unknown) return { failure: unknown };
   if ((action === 'press') !== (raw.key !== undefined) || (action === 'press' && !PRESS_KEYS.includes(key))) {
-    return { failure: invalidEvent(`A press event requires key to be one of: ${PRESS_KEYS.join(', ')}; key is not allowed on other actions.`) };
+    return { failure: invalidEvent(`A press event requires key to be one of: ${PRESS_KEYS_TEXT}; key is not allowed on other actions.`) };
   }
   if (selector.length > MAX_EVENT_SELECTOR_CHARS) {
     return { failure: invalidEvent(`An event selector may be at most ${MAX_EVENT_SELECTOR_CHARS} characters.`) };

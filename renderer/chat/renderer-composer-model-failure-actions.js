@@ -28,6 +28,7 @@
           case 'models':
           case 'showFits': return d.openSettingsSection?.('models');
           case 'diagnostics': return d.openLogs?.();
+          case 'stopLiveRun': return await defaultReader?.stopLiveRun?.(failure, d);
           case 'retry': return await d.loadModel?.(loadPayload(failure));
           case 'loadSmaller': {
             if (typeof d.persistContext !== 'function') return;

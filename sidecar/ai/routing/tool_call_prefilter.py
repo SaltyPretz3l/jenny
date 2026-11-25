@@ -16,6 +16,7 @@ from typing import Any
 from sidecar.ai.error_codes import (
     CMP_MODE_TOOL_BLOCKED,
     CMP_TOOL_COERCED_ARGS_REJECTED,
+    CMP_TOOL_COMPUTER_LOOK_FIRST,
     CMP_TOOL_DISABLED,
     CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
 )
@@ -201,6 +202,36 @@ def _preparation_blocked(call: Any, request_context: Any) -> Any | None:
     )
 
 
+# The computer tool (iteration_limits.COMPUTER_USE_TOOL_ID, named here to keep this leaf's imports
+# within their limit) and its actions that only look; every other action changes the screen.
+COMPUTER_USE_TOOL_ID = "computer"
+_COMPUTER_LOOK_ACTIONS = frozenset({"screenshot", "windows", "wait"})
+
+
+def _computer_changes(call: Any) -> bool:
+    return call.tool_id == COMPUTER_USE_TOOL_ID and (
+        not isinstance(call.arguments, dict)
+        or call.arguments.get("action") not in _COMPUTER_LOOK_ACTIONS
+    )
+
+
+def _computer_look_first(call: Any, tool_result: Any, changed: bool) -> tuple[Any, bool]:
+    """Settle a second changing `computer` call of one message; return (result, changed so far)."""
+    if tool_result is not None or not _computer_changes(call):
+        return tool_result, changed
+    if not changed:
+        return None, True
+    return _blocked_outcome(
+        call,
+        output=(
+            "Tool 'computer' was not executed: look at the new picture before acting again. "
+            "Send one changing step at a time."
+        ),
+        error_code=CMP_TOOL_COMPUTER_LOOK_FIRST,
+        metadata={"computer_look_first": True},
+    ), True
+
+
 def pre_filter_tool_calls(  # noqa: PLR0913
     tool_calls: tuple[Any, ...] | list[Any],
     *,
@@ -227,6 +258,8 @@ def pre_filter_tool_calls(  # noqa: PLR0913
     """
     remaining: list[tuple[Any, int]] = []
     remaining_hidden_names = _remaining_deferred_names(kernel, tool_resolution_context)
+    # One changing `computer` step a model message: the second would be aimed at an unseen screen.
+    computer_changed = False
     for call in tool_calls:
         kernel._assert_valid_tool_call(call)
         outcome_index += 1
@@ -398,6 +431,8 @@ def pre_filter_tool_calls(  # noqa: PLR0913
                         "reason": placeholder_reason,
                     },
                 )
+
+        tool_result, computer_changed = _computer_look_first(call, tool_result, computer_changed)
 
         if tool_result is None:
             remaining.append((call, outcome_index))

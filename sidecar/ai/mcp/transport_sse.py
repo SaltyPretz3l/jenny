@@ -163,57 +163,6 @@ class SSEMCPTransport(MCPTransport):
         _raise_if_cancelled(cancel_handle, message="MCP HTTP request cancelled")
         return self._require_result(response, "tools/call")
 
-    def list_resources(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {}
-        if isinstance(cursor, str) and cursor.strip():
-            params["cursor"] = cursor.strip()
-        response = self._request(
-            "resources/list",
-            params,
-            timeout_seconds=timeout_seconds,
-            cancel_handle=cancel_handle,
-        )
-        return self._require_result(response, "resources/list")
-
-    def read_resource(
-        self,
-        uri: str,
-        *,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        response = self._request(
-            "resources/read",
-            {"uri": uri},
-            timeout_seconds=timeout_seconds,
-            cancel_handle=cancel_handle,
-        )
-        return self._require_result(response, "resources/read")
-
-    def list_resource_templates(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {}
-        if isinstance(cursor, str) and cursor.strip():
-            params["cursor"] = cursor.strip()
-        response = self._request(
-            "resources/templates/list",
-            params,
-            timeout_seconds=timeout_seconds,
-            cancel_handle=cancel_handle,
-        )
-        return self._require_result(response, "resources/templates/list")
-
     def close(self) -> None:
         # No pooled sockets are held between requests (each request opens and
         # closes its own connection); just drop session + token state. Idempotent

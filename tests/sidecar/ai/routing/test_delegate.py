@@ -482,7 +482,7 @@ def test_cloud_children_receive_configured_limit_and_one_parent_derived_deadline
         parent_agent_id="main@parent-request",
     )
 
-    assert {item["iteration_budget_override"] for item in captured} == {10}
+    assert {item["iteration_budget_override"] for item in captured} == {60}
     assert {item["max_runtime_ms"] for item in captured} == {
         schedule.effective_max_total_runtime_ms
     }
@@ -1116,3 +1116,97 @@ def test_parent_cancel_keeps_completed_child_report_on_interrupted_result(
     assert report["tasks"][0]["answer"] == "Child A finished: the entry point is main.js."
     progress = [item["params"] for item in notifications if item["method"] == "agent.progress"]
     assert not any(item.get("terminal") for item in progress)
+
+
+def test_cloud_budget_gives_the_parent_a_long_answer_whole() -> None:
+    answer = "x" * 12_000
+    report = {"ordinal": 1, "status": "completed", "answer": answer, "evidence": []}
+
+    local = build_compact_delegate_settlement(execution="single", task_reports=[report])
+    cloud = build_compact_delegate_settlement(
+        execution="single", task_reports=[report], answer_chars=16_000
+    )
+
+    assert cloud.report["results"][0]["answer"] == answer
+    assert "answer_truncated" not in cloud.report["results"][0]
+    assert len(local.report["results"][0]["answer"]) <= MAX_DELEGATE_ANSWER_CHARS
+    assert local.report["results"][0]["answer_truncated"] is True
+    assert len(local.output) <= MAX_DELEGATE_OUTPUT_CHARS
+
+
+def test_cloud_output_bound_still_holds_for_three_long_answers() -> None:
+    reports = [
+        {"ordinal": n, "status": "completed", "answer": "y" * 40_000, "evidence": []}
+        for n in (1, 2, 3)
+    ]
+    settlement = build_compact_delegate_settlement(
+        execution="parallel", task_reports=reports, answer_chars=16_000
+    )
+    assert len(settlement.output) <= 16_000 * 3 + 4_000
+    assert all(item["answer_truncated"] is True for item in settlement.report["results"])
+
+
+def test_parent_copy_is_read_whole_and_taken_out_of_the_report() -> None:
+    reply = "z" * 12_000
+    report = {
+        "ordinal": 1,
+        "status": "completed",
+        "answer": reply[:4_000],
+        "answer_truncated": True,
+        "parent_answer": reply,
+        "evidence": [],
+    }
+
+    settlement = build_compact_delegate_settlement(
+        execution="single", task_reports=[report], answer_chars=16_000
+    )
+
+    assert settlement.report["results"][0]["answer"] == reply
+    # The monitor's copy was cut at 4,000; the parent's was not, so nothing is flagged.
+    assert "answer_truncated" not in settlement.report["results"][0]
+    assert "parent_answer" not in report
+
+
+def test_a_write_task_is_refused_before_it_starts_off_auto_or_off_cloud() -> None:
+    """Row 184 W3: the scheduler routes a write task through delegate_write's checks."""
+    outcome = execute_delegate_tool(
+        router=SimpleNamespace(_config=parse_runtime_config({})),
+        arguments={"tasks": [{"prompt": "Fix the typo in README.md", "mode": "write"}]},
+        runtime=_runtime(),
+        outcome_type=ToolExecutionOutcome,
+        call_id="call",
+    )
+    payload = json.loads(outcome.output)
+    assert payload["results"][0]["status"] == "failed"
+    assert "cloud model" in payload["results"][0]["error"]
+    assert outcome.metadata["subagent_batch_report"]["tasks"][0]["budget"]["iterations_used"] == 0
+
+
+def test_a_write_task_reports_its_worktree_to_the_parent_and_the_monitor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arguments = {"tasks": [{"prompt": "Fix the typo", "mode": "write"}]}
+    task = validate_delegate_arguments(arguments).tasks[0]
+    identity = scheduler_module.build_sub_agent_identity(
+        parent_request_id="parent-request", canonical_call_id="call",
+        parent_agent_id="main@parent-request", ordinal=1, operation="delegate",
+    )
+    worktree = {"branch": "jenny-helper/fix-1a2b3c4d", "path": "C:/wt/fix", "kept": True,
+                "files_changed": 1, "insertions": 1, "deletions": 1, "commits": 0}
+    result = SubAgentInvocationResult(
+        status="completed", response_text="Fixed README.md.",
+        decision=_decision("Fixed README.md."), iterations_used=2, worktree=worktree,
+    )
+    schedule = DelegateSchedule(
+        execution="single",
+        invocations=(ScheduledInvocation(task, identity, result, 10, 8, 120_000, True),),
+        effective_max_total_runtime_ms=120_000,
+        parent_synthesis_reserve_ms=0,
+    )
+    monkeypatch.setattr(delegate_module, "schedule_delegate_tasks", lambda **_kwargs: schedule)
+    outcome = execute_delegate_tool(
+        router=SimpleNamespace(_config=parse_runtime_config({})),
+        arguments=arguments, runtime=_runtime(), outcome_type=ToolExecutionOutcome, call_id="call",
+    )
+    assert json.loads(outcome.output)["results"][0]["worktree"] == worktree
+    assert outcome.metadata["subagent_batch_report"]["tasks"][0]["worktree"] == worktree

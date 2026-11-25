@@ -315,3 +315,36 @@ test('row 175: at most 200 project conversation rows in all', async (t) => {
   t.after(h.restore);
   assert.equal(teamItems().filter((item) => item.id.startsWith('team:conv:')).length, 200);
 });
+
+// Row 201 C10.3: from a project conversation, "Export this conversation" names it and exports that conversation, never #team.
+test('row 201: Export this conversation from a project conversation names it and exports it; a project page offers none', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h } = await projects.openProjects();
+  t.after(h.restore);
+  h.view.qa('[data-team-tab-action="conv-open"]')[1].click();
+  await projects.flush();
+  const exporter = globalThis.rendererTeamExport.getExporter();
+  const started = [];
+  const real = exporter.start;
+  exporter.start = (options) => { started.push(options); return Promise.resolve(false); };
+  t.after(() => { exporter.start = real; });
+  const one = byId(teamItems(), 'team:export-one');
+  assert.equal(one.description, 'Blog post draft', 'a human name, never #conv:sess_…');
+  assert.equal(byId(teamItems(), 'team:search').description, 'Blog post draft');
+  one.run();
+  await projects.flush();
+  assert.deepEqual(started.map((o) => [o.teamId, o.scope, o.channelId]), [[projects.OTHER, 'one', 'conv:' + projects.S2]]);
+  h.view.qa('[data-team-tab-action="project-open"]')[0].click();
+  await projects.flush();
+  assert.equal(byId(teamItems(), 'team:export-one'), undefined, 'nothing to export on a project page');
+  assert.equal(byId(teamItems(), 'team:search').description, 'jenny-site', 'the project by its name');
+});
+
+// Row 201 (OD-8): a project channel's palette row is named by its project, through the channels module's one resolver.
+test('row 201: a project channel is listed in the palette by its project\'s name, never its id', async (t) => {
+  const projects = require('./helpers/team-project-renderer-host');
+  const { h } = await projects.openProjects();
+  t.after(h.restore);
+  const row = byId(teamItems(), 'team:chan:' + projects.OTHER + ':chan_' + projects.P1);
+  assert.equal(row.label, '#jenny-site');
+});

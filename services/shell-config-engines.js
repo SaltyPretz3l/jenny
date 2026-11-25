@@ -1,6 +1,7 @@
 const path = require('path');
 const { normalizeString } = require('./backend/path-utils');
 const { canonicalizeModelToken } = require('./backend/llama-server-acceleration');
+const { normalizeStrataBlock } = require('./strata-settings');
 
 const DEFAULT_OFFLINE_INTELLIGENCE = Object.freeze({
   mode: 'disabled',
@@ -56,6 +57,10 @@ const DEFAULT_LOCAL_ENGINES = Object.freeze({
     vision: true,
     watchdog: Object.freeze({ enabled: false, maxWatts: 460, maxTempC: 83 }),
   }),
+  // The managed Strata runtime (row 200): launch settings the owner picks in
+  // the Tune drawer, the boot target (lastUsed), windows the engine reported at
+  // unmeasured pairings, and the opt-in watchdog (strata-settings.js).
+  strata: Object.freeze(normalizeStrataBlock({})),
 });
 const NINFER_ARTIFACT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const NINFER_CONTEXT_SIZES = Object.freeze([16384, 32768, 65536, 131072, 153600, 196608, 262144]);
@@ -344,6 +349,7 @@ function normalizeLocalEngines(value = {}) {
     ),
     embedding: normalizeEmbeddingSettings(source.embedding),
     ninfer: normalizeNinferSettings(source.ninfer),
+    strata: normalizeStrataBlock(source.strata),
   };
 }
 

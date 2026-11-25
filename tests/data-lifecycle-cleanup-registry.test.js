@@ -21,15 +21,15 @@ describe('cleanup registry covers the stores later features write', () => {
       fs.mkdirSync(userDataPath, { recursive: true });
       fs.mkdirSync(path.join(runtimePath, 'operation-ledger'), { recursive: true });
       fs.writeFileSync(path.join(runtimePath, 'operation-ledger', 'ledger.json'), '{}');
-      const dirs = ['operation-ledger', 'workspace-recovery', 'session-shadow', 'exports', 'turn-event-journal.json.journal'];
+      const dirs = ['operation-ledger', 'workspace-recovery', 'session-shadow', 'exports', 'turn-event-journal.json.journal', 'strata'];
       for (const name of dirs) {
         fs.mkdirSync(path.join(userDataPath, name));
         fs.writeFileSync(path.join(userDataPath, name, 'record.json'), '{}');
       }
       const files = [
         'workspace-active-use.json', 'model-fit-observations.json', 'model-load-durations.json',
-        'chatgpt-plan-usage.json', 'profile-owner.json', 'ninfer-serve.pid', 'outside-files.json',
-        'sidecar-memory.db', 'sidecar-memory.db-wal', 'sidecar-memory.db-shm',
+        'chatgpt-plan-usage.json', 'profile-owner.json', 'ninfer-serve.pid', 'strata-serve.pid', 'outside-files.json',
+        'sidecar-memory.db', 'sidecar-memory.db-wal', 'sidecar-memory.db-shm', 'run-commands.json', 'run-gpu-memory.json',
       ];
       for (const name of files) fs.writeFileSync(path.join(userDataPath, name), 'data');
       for (const name of [...dirs, ...files]) assert.equal(KNOWN_USER_DATA_CHILDREN.includes(name), true, name);

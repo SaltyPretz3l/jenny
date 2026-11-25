@@ -72,6 +72,16 @@ test('a first stream with no cursor starts with resync_required; host events the
   assert.ok(!text.includes(`${epoch}:`), 'no full event id in a log');
 });
 
+test('row 201: a team_renamed event renames the team on this device too; a bad name changes nothing', async (t) => {
+  const { host, manager, seen } = await onlineMember(t);
+  const before = manager.snapshot().team_name;
+  host.publishEvent('team_renamed', { name: 'x'.repeat(129) });
+  host.publishEvent('team_renamed', { name: 'Lantern Works' });
+  assert.ok(await waitUntil(() => ofType(seen, 'team_renamed').length === 2));
+  assert.notEqual(before, 'Lantern Works');
+  assert.equal(manager.snapshot().team_name, 'Lantern Works');
+});
+
 test('two listeners both receive events; one unsubscribing leaves the other', async (t) => {
   const { host, manager } = await onlineMember(t);
   const a = [];

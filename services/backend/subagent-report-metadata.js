@@ -93,7 +93,22 @@ function normalizeSubagentReport(value) {
     const text = safeRoute(value[key]);
     if (text) report[key] = text;
   }
+  const worktree = normalizeWorktree(value.worktree);
+  if (worktree) report.worktree = worktree;
   return report;
+}
+
+// Row 184 W3: where a write task's change is. Counts are null when git could not be read.
+function normalizeWorktree(value) {
+  if (!isRecord(value) || typeof value.kept !== 'boolean') return null;
+  const branch = safeText(value.branch, MAX_ID_CHARS);
+  const worktreePath = safeText(value.path, MAX_PROMPT_CHARS, KEEP_PATHS);
+  if (!branch || !worktreePath) return null;
+  const result = { branch, path: worktreePath, kept: value.kept };
+  for (const key of ['files_changed', 'insertions', 'deletions', 'commits']) {
+    result[key] = optionalInteger(value[key], 0, MAX_TOKEN_COUNT);
+  }
+  return result;
 }
 
 // Ephemeral cumulative snapshot; never attach it to persisted report metadata.

@@ -437,3 +437,50 @@ test('X4b-F06: an empty holder left at the family folder\'s name is removed; a f
     { ok: false, reason: 'model_destination_invalid' });
   assert.equal(fs.readFileSync(foreign.familyDir, 'utf8'), 'x');
 });
+
+test('a resume with every byte already verified takes the transfer up with the host again, so its complete is not lost', async (t) => {
+  const env = disk(t, 'model', { existing: true });
+  await crashAt(env, (name, d) => name === 'moved' && d.index === 1);
+  // A host that knows a transfer once this receiver accepted or resumed it; a complete for another one reaches nothing.
+  const known = new Set();
+  const completed = [];
+  const base = fx.fakeTransport(env.bytes);
+  const transport = { ...base,
+    accept: async (payload) => { known.add(payload.offerId); return base.accept(payload); },
+    resume: async (payload) => { known.add(payload.offerId); return base.resume(payload); },
+    complete: async (payload) => { if (known.has(payload.offerId)) completed.push(payload.offerId); return base.complete(payload); } };
+  const receiver = createModelReceiver({ roots: () => [env.root], transport, hasher: fx.fakeHasher(), limits: fx.LIMITS,
+    validateManifest: fx.testValidator() });
+  const result = await receiver.start({ offer: env.offer, root: env.root });
+  assert.equal(result.state, 'complete', JSON.stringify(result));
+  assert.deepEqual(completed, [env.offer.offerId], 'the host heard the transfer complete');
+  assert.equal(base.count('takePart'), 0, 'nothing was pulled again');
+  // A host that refuses the take-up (the offer is gone) does not stop a set that is already whole from being placed.
+  const gone = disk(t, 'model', { existing: true });
+  await crashAt(gone, (name, d) => name === 'moved' && d.index === 1);
+  const refusing = createModelReceiver({ roots: () => [gone.root], hasher: fx.fakeHasher(), limits: fx.LIMITS, validateManifest: fx.testValidator(),
+    transport: { ...fx.fakeTransport(gone.bytes), resume: async () => { throw Object.assign(new Error('gone'), { code: 'team_not_found' }); },
+      accept: async () => { throw Object.assign(new Error('gone'), { code: 'team_not_found' }); } } });
+  assert.equal((await refusing.start({ offer: gone.offer, root: gone.root })).state, 'complete');
+});
+
+test('a folder that appears at the family name during the rename (POSIX ENOTEMPTY or ENOTDIR) is a taken name, as EEXIST is', async (t) => {
+  for (const code of ['EEXIST', 'ENOTEMPTY', 'ENOTDIR']) {
+    const env = disk(t);
+    let calls = 0;
+    const renameFolder = async (from, to) => {
+      calls += 1;
+      if (calls === 1) {
+        fs.mkdirSync(to);
+        fs.writeFileSync(path.join(to, OTHER), 'theirs');
+        throw Object.assign(new Error('raced'), { code });
+      }
+      fs.renameSync(from, to);
+    };
+    const result = await createModelReceiver({ roots: () => [env.root], transport: fx.fakeTransport(env.bytes), hasher: fx.fakeHasher(),
+      limits: fx.LIMITS, validateManifest: fx.testValidator(), renameFolder }).start({ offer: env.offer, root: env.root });
+    assert.equal(result.state, 'complete', `${code}: ${JSON.stringify(result)}`);
+    assert.equal(fs.readFileSync(path.join(env.familyDir, OTHER), 'utf8'), 'theirs', `${code}: their folder is untouched`);
+    assert.equal(fs.existsSync(path.join(`${env.familyDir}-2`, env.main)), true, `${code}: the set went into the next folder`);
+  }
+});

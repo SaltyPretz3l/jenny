@@ -67,7 +67,7 @@ function describeBodies(document) {
 
 test('live box: a settled open phase stays marked through an active-turn-root repaint while the turn is in flight', async (t) => {
   const app = await loadRendererApp({ shell: {
-    features: { state: { featureFlags: { ...buildFeatureFlagDefaults(), reasoning_live_box: true } } },
+    features: { state: { featureFlags: buildFeatureFlagDefaults() } },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: SESSION_ID, title: 'live box turn gap', conversation_mode: 'chat', preferred_model: 'gpt-test',
@@ -81,6 +81,7 @@ test('live box: a settled open phase stays marked through an active-turn-root re
   t.after(() => app.dispose());
   const { window, shell } = app;
   const document = window.document;
+  assert.equal(document.documentElement.dataset.reasoningLiveBox, 'on', 'the capped-body CSS attribute is always on');
   const emit = async (payload, settleMs = 10) => {
     await shell.__emitChat({ sessionId: SESSION_ID, streamId: STREAM_ID, ...payload });
     await waitForUi(window, settleMs);

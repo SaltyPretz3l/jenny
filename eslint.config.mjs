@@ -6,11 +6,6 @@ const browserShellFiles = [
   "plugins/official/**/view/**/*.js",
 ];
 
-const rendererContextCompositionFiles = [
-  "renderer/app/renderer-app-controller-composition.js",
-  "renderer/app/renderer-app-lifecycle-composition.js",
-];
-
 const noFollowRemoval = "Use removeTree/removeTreeSync from services/fs-remove-no-follow.js: Node's rm follows junctions after a Windows EPERM.";
 
 export default [
@@ -118,14 +113,6 @@ export default [
     },
     rules: {
       "no-redeclare": "off",
-    },
-  },
-  {
-    files: rendererContextCompositionFiles,
-    rules: {
-      "no-undef": "off",
-      "no-useless-assignment": "off",
-      "no-with": "off",
     },
   },
 ];

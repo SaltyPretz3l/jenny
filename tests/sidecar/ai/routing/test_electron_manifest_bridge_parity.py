@@ -52,6 +52,13 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         # Added deliberately (row 114): the model-driven browser. Every action is side-effecting
         # (policy auto; consent is asked inside the tool), so plan mode withholds it.
         "browser",
+        # Added deliberately (row 197): the Live tab's look and restart, offered per turn by
+        # services/backend/run-view-tool-gate.js; Windows only.
+        "run_view_look",
+        "run_view_restart",
+        # Added deliberately (row 196): the real mouse and keyboard in granted programs; consent
+        # (grants) is asked inside the tool, offered only to a local engine that can see; Windows only.
+        "computer",
         # Added deliberately (row 59 cp5a): a model-facing session proposal tool and
         # the preparation-only handoff completion. Both are record producers like
         # `propose_command`; the second is offered only with `handoff_preparation`.
@@ -171,6 +178,8 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_workspace_present_enabled": True,
         "tools_preview_test_enabled": True,
         "tools_browser_use_enabled": True,
+        "tools_run_view_enabled": True,
+        "tools_computer_use_enabled": True,
         "tools_verify_enabled": True,
         "tools_image_generate_enabled": True,
         "tools_home_enabled": True,
@@ -194,7 +203,8 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
     return SimpleNamespace(
         _config=RuntimeConfig(**flags),
         _mcp_client=_MCPClient(),
-        _engine=SimpleNamespace(supports_tool_calling=True),
+        # A model that can see: `computer` (row 196) is offered only to one.
+        _engine=SimpleNamespace(supports_tool_calling=True, capabilities={"vision": True}),
         _active_cancel_handle=None,
     )
 
@@ -225,6 +235,15 @@ def test_the_expected_bridge_roster_matches_the_manifest(tmp_path) -> None:
         "Extend EXPECTED_ELECTRON_BRIDGE_TOOLS deliberately, then confirm the "
         "new tool actually reaches the provider schema below."
     )
+
+
+def test_the_computer_tool_needs_a_model_that_can_see(tmp_path) -> None:
+    kernel = _kernel(str(tmp_path))
+    assert "computer" in _payload_names(kernel, plan_mode=False)
+    kernel._engine = SimpleNamespace(supports_tool_calling=True)
+    names = _payload_names(kernel, plan_mode=False)
+    assert "computer" not in names
+    assert "browser" in names  # only the computer tool depends on sight
 
 
 def test_electron_owned_manifest_tools_reach_the_provider_schema(tmp_path) -> None:
@@ -274,6 +293,8 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_workspace_present_enabled", {"workspace_present"}),
         ("tools_preview_test_enabled", {"preview_test"}),
         ("tools_browser_use_enabled", {"browser"}),
+        ("tools_run_view_enabled", {"run_view_look", "run_view_restart"}),
+        ("tools_computer_use_enabled", {"computer"}),
         ("tools_verify_enabled", {"verify"}),
         ("tools_image_generate_enabled", {"image_generate"}),
         ("tools_home_enabled", {"home"}),

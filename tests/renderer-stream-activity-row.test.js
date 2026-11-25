@@ -577,3 +577,24 @@ test('a manual compaction wears the compaction row with no stream until the coor
   assert.equal(row.getSessionTypedActivity('session-1'), null);
   assert.equal(heard.length, 2, 'and the sprite hears it end');
 });
+
+test('row 192 C4: a live turn with a steps heading shows no generic line; typed lines stay', (t) => {
+  const { doc, timeline, clock, row } = makeHarness(t);
+  const heading = doc.createElement('div');
+  heading.className = 'chat-row';
+  heading.setAttribute('data-row-kind', 'work_ledger');
+  heading.setAttribute('data-ledger-state', 'live');
+  timeline.querySelector('.chat-message-content').prepend(heading);
+  noteEvent(row, 'delta');
+  clock.nowMs = 2000;
+  row.tick();
+  assert.equal(findRow(timeline), null, 'the heading already says the turn is working');
+  clock.nowMs = 40000; row.tick(); assert.ok(findRow(timeline), 'a long stall still says so under the heading');
+  heading.setAttribute('data-ledger-state', 'ok');
+  row.tick();
+  assert.ok(findRow(timeline), 'a settled heading (an earlier turn) does not hide it');
+  heading.setAttribute('data-ledger-state', 'waiting');
+  noteEvent(row, 'context_compacting', { compactionPhase: 'tool_loop' });
+  row.tick();
+  assert.equal(findRow(timeline)?.dataset.turnActivityKind, 'compaction', 'a typed line still shows');
+});

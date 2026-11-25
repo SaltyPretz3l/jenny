@@ -1,7 +1,8 @@
 /* renderer/features/renderer-ide-preview-html-surface.js — the IDE Preview's HTML
  * surface. build() inlines linked workspace files into the page (assets module)
  * and words the note; mount() stages the new frame beside the old one and swaps
- * only when it is ready, so a rebuild never blanks the page. */
+ * only when it is ready, so a rebuild never blanks the page. It also owns the
+ * stage's read lanes (readSource for text, readDataUrl for images) and mountImage. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -82,6 +83,9 @@
     const assetsUtils = d.assetsUtils;
     const editorHost = d.editorHost || null;
     const getWorkspaceFsApi = typeof d.getWorkspaceFsApi === 'function' ? d.getWorkspaceFsApi : () => null;
+    const getFileOperations = typeof d.getFileOperations === 'function' ? d.getFileOperations : () => null;
+    const appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : () => {};
+    const maxPreviewBytes = d.maxPreviewBytes;
 
     // Entries are { host, path, handle, dead }; a dead entry is never current or pending.
     let current = null;
@@ -116,13 +120,74 @@
         const api = getWorkspaceFsApi();
         if (typeof api?.readImage !== 'function') return { ok: false, reason: 'unavailable' };
         const r = await api.readImage({ path: assetPath });
-        if (!r || r.ok !== true) return { ok: false, reason: failReason(r?.code) };
+        if (!r || r.ok !== true) return { ok: false, reason: failReason(r?.code), code: r?.code };
         if (typeof r.base64 !== 'string' || typeof r.mime !== 'string' || !r.mime.startsWith('image/')) {
           return { ok: false, reason: 'unavailable' };
         }
-        return { ok: true, dataUrl: `data:${r.mime};base64,${r.base64}`, bytes: r.size };
+        // version: the file's identity, so an unchanged image is skipped without comparing ~13 MB strings.
+        return { ok: true, dataUrl: `data:${r.mime};base64,${r.base64}`, bytes: r.size, version: r.fileVersion ? `${r.rootId}:${r.generation}:${r.fileVersion}` : '' };
       } catch (error) {
-        return { ok: false, reason: failReason(error?.code) };
+        return { ok: false, reason: failReason(error?.code), code: error?.code };
+      }
+    }
+
+    // An image preview (row 199): one picture fitted to the body.
+    function mountImage(dataUrl, alt, { onLoad, onError }) {
+      const bodyEl = getBodyEl();
+      if (!bodyEl) return;
+      const doc = bodyEl.ownerDocument;
+      const wrap = doc.createElement('div');
+      wrap.className = 'ide-preview-image';
+      const img = doc.createElement('img');
+      img.alt = alt;
+      img.decoding = 'async';
+      img.onload = onLoad;
+      img.onerror = onError;
+      img.src = dataUrl;
+      wrap.appendChild(img);
+      bodyEl.replaceChildren(wrap);
+    }
+
+    // The text lane: a live editor buffer first, else the bounded versioned read.
+    async function readSource(path) {
+      if (editorHost?.hasDocument?.(path)) {
+        return { ok: true, text: String(editorHost.getValue(path) || ''), editable: true };
+      }
+      try {
+        const operations = getFileOperations();
+        let payload = null;
+        if (operations?.beginPreview && operations?.readForPreview) {
+          const intent = operations.beginPreview(path);
+          const read = await operations.readForPreview(intent, { maxBytes: maxPreviewBytes });
+          if (read.stale || !read.payload) return { ok: false, reason: 'stale' };
+          payload = read.payload;
+        } else {
+          // Compatibility until composition supplies the shared owner. This
+          // remains versioned/bounded and never falls back to raw readFile.
+          const api = getWorkspaceFsApi();
+          if (typeof api?.readText !== 'function') return { ok: false, reason: 'unavailable' };
+          payload = await api.readText({ path, intent: 'preview', maxBytes: maxPreviewBytes });
+          if (!payload
+            || payload.ok !== true
+            || typeof payload.content !== 'string'
+            || typeof payload.rootId !== 'string'
+            || !payload.rootId
+            || !Number.isSafeInteger(payload.generation)
+            || typeof payload.fileVersion !== 'string'
+            || !payload.fileVersion) return { ok: false, reason: 'invalid' };
+        }
+        return {
+          ok: true,
+          text: payload.content,
+          // Uncoerced: only an explicit `false` (the compat branch may omit it) routes to the binary state.
+          editable: payload.editable,
+          signature: `${payload.rootId}:${payload.generation}:${payload.pathKey}:${payload.fileVersion}`,
+        };
+      } catch (error) {
+        appendClientLog('WARN', 'ide_preview_stage.read_failed', {
+          message: String(error?.message || error || ''),
+        });
+        return { ok: false, reason: 'missing' };
       }
     }
 
@@ -261,6 +326,9 @@
       isDependency: (path) => dependencies.has(path),
       loadOutsideImages,
       mount,
+      mountImage,
+      readDataUrl,
+      readSource,
       resetScroll: () => { scroll = { path: '', y: 0 }; },
     };
   }

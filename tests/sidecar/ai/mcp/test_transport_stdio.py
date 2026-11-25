@@ -457,62 +457,6 @@ def test_send_request_cancels_while_waiting_for_the_transport_lock() -> None:
     assert not canceller.is_alive(), "the cancelling thread never finished"
 
 
-def test_stdio_transport_resource_methods_send_expected_requests() -> None:
-    transport = _stub_transport()
-    calls: list[tuple[str, dict[str, object], float | None]] = []
-
-    def _send_request(
-        method: str,
-        params: dict[str, object],
-        *,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, object]:
-        del cancel_handle
-        calls.append((method, params, timeout_seconds))
-        if method == "resources/list":
-            return {
-                "result": {
-                    "resources": [{"uri": "file:///notes.md", "name": "Notes"}],
-                    "nextCursor": "page-2",
-                }
-            }
-        if method == "resources/read":
-            return {
-                "result": {
-                    "contents": [
-                        {
-                            "uri": params["uri"],
-                            "mimeType": "text/markdown",
-                            "text": "hello",
-                        }
-                    ]
-                }
-            }
-        if method == "resources/templates/list":
-            return {
-                "result": {
-                    "resourceTemplates": [{"uriTemplate": "file:///{path}"}],
-                }
-            }
-        raise AssertionError(method)
-
-    transport._send_request = _send_request  # type: ignore[method-assign]
-
-    resources = transport.list_resources(cursor="page-1", timeout_seconds=2.5)
-    read_result = transport.read_resource("file:///notes.md", timeout_seconds=3.0)
-    templates = transport.list_resource_templates(timeout_seconds=4.0)
-
-    assert resources["resources"][0]["uri"] == "file:///notes.md"
-    assert read_result["contents"][0]["text"] == "hello"
-    assert templates["resourceTemplates"][0]["uriTemplate"] == "file:///{path}"
-    assert calls == [
-        ("resources/list", {"cursor": "page-1"}, 2.5),
-        ("resources/read", {"uri": "file:///notes.md"}, 3.0),
-        ("resources/templates/list", {}, 4.0),
-    ]
-
-
 def test_transport_uses_configured_request_timeout() -> None:
     config = MCPServerConfig(
         name="stub_server",

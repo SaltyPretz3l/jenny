@@ -21,6 +21,7 @@ const { managedModelKey } = require('./shell-config-engines');
 const { modelInstallState, resolveDefaultChatModel } = require('./backend/backend-chat-model-resolution');
 const { inferEngineTypeFromModel } = require('./backend/backend-service-utils');
 const { managedServerKindForModel } = require('./backend/ninfer-load-path');
+const { isReservedTeamModelId } = require('./backend/team-engine-models');
 
 const text = (value) => (typeof value === 'string' ? value.trim() : '');
 const modelKey = (name) => text(name).toLowerCase().replace(/:latest$/, '');
@@ -60,11 +61,13 @@ function createCheckModelGate(service, { readSizeLabel = createSizeLabelReader()
 
   function resolve(summary) {
     const block = read(() => service.configService?.getState?.()?.primaryChat, null) || {};
-    const chosen = [block.checkModel, block.model, summary?.preferred_model].map(text).find(Boolean)
+    // Row 201 C1: a team model (a teammate's GPU) is never a check model, whichever slot saved it.
+    const local = (id) => id && !isReservedTeamModelId(service, id);
+    const chosen = [block.checkModel, block.model, summary?.preferred_model].map(text).find(local)
       || text(read(() => resolveDefaultChatModel(service), ''));
     if (chosen) return { model: chosen, fromLoaded: false };
     const loaded = text(service.currentModel);
-    return loaded ? { model: loaded, fromLoaded: true } : null;
+    return local(loaded) ? { model: loaded, fromLoaded: true } : null;
   }
 
   function sizeLabelOf(model) {

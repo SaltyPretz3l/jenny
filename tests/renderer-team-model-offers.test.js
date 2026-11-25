@@ -103,7 +103,8 @@ test('an offer in another team names the team; the shown team\'s offer comes fir
   assert.equal(plain(card(h).querySelector('.inv-toast__message')), 'Priya · Bonsai 12B · 1.9 GB · Studio', 'the other team named');
 });
 
-test('the join card keeps its place in front; the offer shows once the person is set aside', async (t) => {
+// Row 201 H24: a join request never hides an offer; each has its own card, the join card first.
+test('the join card keeps its place in front and the offer shows beside it; setting the person aside leaves the offer', async (t) => {
   const active = ROSTER.filter((member) => member.state === 'active');
   const h = harness({ show: false, host: hostState(), teams: [snapshot()], models: true, answers: {
     members: () => ({ ok: true, members: active.concat(SAM) }), modelState: modelState([offer()]) } });
@@ -111,10 +112,14 @@ test('the join card keeps its place in front; the offer shows once the person is
   layout(h);
   h.showTab();
   await flush();
-  assert.equal(card(h).querySelector('.inv-toast__eyebrow').textContent, 'Wants to join');
+  const eyebrows = () => h.view.qa('.team-notice .inv-toast .inv-toast__eyebrow').map((el) => el.textContent);
+  assert.deepEqual(eyebrows(), ['Wants to join', 'Offers you a model']);
   card(h).querySelector('[data-team-notice="later"]').click();
   await flush();
-  assert.equal(card(h).querySelector('.inv-toast__eyebrow').textContent, 'Offers you a model');
+  assert.deepEqual(eyebrows(), ['Offers you a model']);
+  act(h, 'offer-later').click();
+  await flush();
+  assert.deepEqual(eyebrows(), [], 'Later on the offer clears its own card');
 });
 
 test('hostile names are cleaned, cut and escaped on the card', async (t) => {

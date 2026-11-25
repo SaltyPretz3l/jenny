@@ -53,7 +53,7 @@ test('incomplete empty heroes name the next steps without indirect Home copy', (
   for (const hero of document.querySelectorAll('.hero-stage')) {
     assert.doesNotMatch(hero.textContent, /Companion Home|below/);
     assert.equal(hero.querySelector('.hero-title').textContent, "Let's finish setting up Jenny");
-    assert.equal(hero.querySelector('.hero-subtitle').textContent, 'Choose a model route and a workspace folder to finish.');
+    assert.equal(hero.querySelector('.hero-subtitle').textContent, 'Choose a model route to finish.');
   }
 });
 
@@ -132,10 +132,10 @@ test('empty heroes follow model state per pane, clear on other branches, and ren
 
 for (const [label, steps, subtitle] of [
   ['model only', { workspaceRoot: 'done', localModel: 'skipped', endpoint: 'error' }, 'Choose a model route to finish.'],
-  ['folder only with local model', { workspaceRoot: 'error', localModel: 'done', endpoint: 'pending' }, 'Choose a workspace folder so file tools can work.'],
-  ['folder only with endpoint', { workspaceRoot: 'skipped', localModel: 'pending', endpoint: 'done' }, 'Choose a workspace folder so file tools can work.'],
+  ['folder only with local model', { workspaceRoot: 'error', localModel: 'done', endpoint: 'pending' }, 'A few optional steps are left.'],
+  ['folder only with endpoint', { workspaceRoot: 'skipped', localModel: 'pending', endpoint: 'done' }, 'A few optional steps are left.'],
   ['optional steps', { workspaceRoot: 'done', localModel: 'pending', endpoint: 'done' }, 'A few optional steps are left.'],
-  ['missing step detail', undefined, 'Choose a model route and a workspace folder to finish.'],
+  ['missing step detail', undefined, 'Choose a model route to finish.'],
 ]) {
   test(`setup subtitle reflects ${label}`, (t) => {
     const { document, render } = heroHarness(t, steps);
@@ -143,6 +143,24 @@ for (const [label, steps, subtitle] of [
     assert.equal(document.querySelector('.hero-subtitle').textContent, subtitle);
   });
 }
+
+test('a failed load or a missing model outranks the setup-incomplete hero', (t) => {
+  const { document, state, render } = heroHarness(t, { workspaceRoot: 'pending', localModel: 'pending', endpoint: 'pending' });
+  state.backend = { phase: 'model_unavailable', model_lifecycle: { failure: { cause: 'timeout', model: 'large:8b' } } };
+  render();
+  const hero = document.querySelector('.hero-stage');
+  assert.equal(hero.querySelector('.hero-title').textContent, "large:8b didn't load");
+  assert.equal(hero.dataset.modelState, 'failed');
+  assert.equal(hero.classList.contains('hero-setup-incomplete'), false);
+  assert.equal(hero.querySelector('.hero-resume-setup:not(.hidden)'), null, 'no Resume setup beside the failure');
+  state.backend = { phase: 'ready' };
+  state.modelList = { available: true, data: [] };
+  render();
+  assert.equal(hero.querySelector('.hero-title').textContent, 'Pick a model to start');
+  state.modelList.data = [{ id: 'fit:3b' }];
+  render();
+  assert.equal(hero.querySelector('.hero-title').textContent, "Let's finish setting up Jenny", 'a usable model hands back to setup');
+});
 
 test('Resume setup is absent without the seam and appears when it becomes available', (t) => {
   const { document, render } = heroHarness(t, undefined, null);
@@ -272,22 +290,23 @@ test('a project name and path are text, never markup', (t) => {
   assert.match(factsOf(hero).textContent, /^C:\\<b>x<\/b> · /);
 });
 
-test('no model: the subtitle shows and the cloud hint carries a sign-in link button', (t) => {
+test('no model: the subtitle shows and the cloud hint carries API key and sign-in link buttons', (t) => {
   const { document, state, render } = projectHarness(t);
   state.modelList = { available: true, data: [] };
   render();
   for (const hero of document.querySelectorAll('.hero-stage')) {
     assert.equal(hero.querySelector('.hero-subtitle').classList.contains('hidden'), false);
     assert.equal(hero.querySelector('.hero-title').textContent, 'Pick a model to start');
-    const link = factsOf(hero).querySelector('button[data-hero-action="cloud"]');
-    assert.ok(link, 'the ChatGPT hint is a link');
-    assert.equal(link.type, 'button');
-    assert.equal(link.textContent, 'sign in with ChatGPT');
-    assert.equal(factsOf(hero).textContent, 'Or sign in with ChatGPT.');
+    const links = [...factsOf(hero).querySelectorAll('button')];
+    assert.deepEqual(links.map((link) => [link.type, link.dataset.heroAction, link.textContent]), [
+      ['button', 'api-key', 'add an API key'],
+      ['button', 'cloud', 'sign in with ChatGPT'],
+    ]);
+    assert.equal(factsOf(hero).textContent, 'Or add an API key or sign in with ChatGPT.');
   }
   const link = factsOf(heroOf(document, 0)).querySelector('button');
   render();
-  assert.equal(factsOf(heroOf(document, 0)).querySelector('button'), link, 'the same hint keeps its link node');
+  assert.equal(factsOf(heroOf(document, 0)).querySelector('button'), link, 'the same hint keeps its link nodes');
   state.modelList.data = [{ id: 'fit:3b' }];
   render();
   assert.equal(factsOf(heroOf(document, 0)).querySelector('button'), null);

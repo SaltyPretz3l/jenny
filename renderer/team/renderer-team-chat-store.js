@@ -17,6 +17,8 @@
  *   jump opens a window around a seq; only the latest open counts (an earlier
  *   one answers `superseded`). A read toward the newest never claims a seq it
  *   could not have covered: a message pushed meanwhile is read later.
+ * - A `messages` push with `reset` replaces the window and counts as a new open: it bumps the window's `turn`, so an open, older or
+ *   newer read asked for before it is dropped when it answers, and live delivery goes on.
  * - Read marks are paced per channel (and, E59, per thread) in
  *   renderer-team-chat-reads.js: at most one every 2 s, the latest position at
  *   the end of the window, never two in flight, none for 10 s after a refusal.
@@ -424,8 +426,13 @@
           if (!line) return; // a channel not opened here: main keeps it
           landed(state, payload.messages);
           if (payload.reset === true) {
+            // The window is replaced: a read asked for before it (open, older, newer) describes a window that is gone.
+            line.turn += 1;
             line.list = payload.messages.filter(isTimelineMessage).sort(bySeq);
             line.hasNewer = false;
+            line.newerAt = line.list.length ? line.list[line.list.length - 1].seq : lastSeqOf(teamId, payload.channel_id);
+            line.loaded = true;
+            line.error = null;
             line.hasMore = line.list.length > 0 && line.list[0].seq > Math.max(1, line.floorSeq || 1);
           } else {
             mergeMessages(line, payload.messages);

@@ -397,3 +397,41 @@ test('3-4b: the trash stamp is the shared one from bounded-log', async (t) => {
   assert.equal(require('node:fs').readFileSync(require.resolve('../../server/team/project-folders'), 'utf8')
     .includes('toISOString'), false, 'no second copy of the stamp');
 });
+
+test('readListed walks every folder on the way before it looks at the leaf: a link is never probed', async (t) => {
+  const { base, projectsRoot, folders } = setup(t);
+  const project = path.join(projectsRoot, 'project_files');
+  const outside = path.join(base, 'outside');
+  fs.mkdirSync(path.join(project, 'real'), { recursive: true });
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'secret.txt'), 'private');
+  fs.writeFileSync(path.join(project, 'real', 'note.txt'), 'note');
+  const answer = await folders.readListed('project_files', 'real/note.txt', 100);
+  assert.deepEqual([answer.ok, answer.size, answer.bytes.toString()], [true, 4, 'note'], 'a plain nested file still reads');
+  for (const kind of linkKinds()) {
+    const link = path.join(project, `via-${kind}`);
+    if (!tryLink(outside, link, kind)) continue;
+    const probed = [];
+    const real = fs.lstatSync;
+    t.mock.method(fs, 'lstatSync', (file, ...rest) => { probed.push(String(file)); return real(file, ...rest); });
+    const refused = await folders.readListed('project_files', `via-${kind}/secret.txt`, 100);
+    t.mock.restoreAll();
+    assert.deepEqual(refused, { ok: false, reason: 'team_download_changed' }, kind);
+    assert.deepEqual(probed.filter((file) => file.endsWith('secret.txt')), [], `${kind}: the external leaf was probed`);
+  }
+});
+
+test('a file that vanishes between the listing and its lstat is skipped by the measure, not a failed walk', async (t) => {
+  const { projectsRoot, folders } = setup(t);
+  const project = path.join(projectsRoot, 'project_files');
+  fs.mkdirSync(project);
+  for (const name of ['keep.txt', 'gone.txt']) fs.writeFileSync(path.join(project, name), 'abc');
+  const real = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (file, ...rest) => {
+    if (String(file).endsWith('gone.txt')) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+    return real(file, ...rest);
+  });
+  const measured = await folders.measure('project_files');
+  t.mock.restoreAll();
+  assert.deepEqual([measured.ok, measured.bytes, measured.files], [true, 3, 1]);
+});

@@ -88,7 +88,7 @@ test('canonical session display prefers actual model and hydrated transcript fac
   assert.equal(malformed.contextLimit, 0);
 });
 
-test('rehydrated session facts agree across sidebar and chats strip', async (t) => {
+test('rehydrated session facts agree across the transcript and the Chats list row', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => app.dispose());
   const { window, shell } = app;
@@ -111,15 +111,5 @@ test('rehydrated session facts agree across sidebar and chats strip', async (t) 
   );
   assert.match(sidebarTitle.getAttribute('title'), /Model: actual-new/);
 
-  window.document.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 30);
-  window.document.getElementById('chatsPanelCollapseToggle').click();
-  await waitForUi(window, 50);
-  const chip = window.document.querySelector(`[data-strip-session-id="${session.id}"]`);
-  assert.ok(chip);
-  chip.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
-  await waitForUi(window, 20);
-  const peekMeta = window.document.getElementById('chatsStripPeekMeta').textContent;
-  assert.match(peekMeta, /actual-new/);
-  assert.match(peekMeta, /2 messages/);
+  assert.ok(window.document.querySelector('#chatWorkbench [data-wb-view="chats"]')?.contains(sidebarTitle), 'the row lives in the workbench Chats list');
 });

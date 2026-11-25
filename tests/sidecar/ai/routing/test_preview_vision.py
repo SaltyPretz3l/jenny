@@ -639,3 +639,184 @@ def test_bridge_keeps_the_generated_image_for_the_matching_call_without_a_screen
     assert execute_electron_tool(request("image_generate")).preview_image == wire("image_1")
     assert execute_electron_tool(request("image_generate", "other")).preview_image is None
     assert execute_electron_tool(request("jenny_status")).preview_image is None
+
+
+# --- Row 184 W2: images that builtin read_file and python_execute produce -------------------
+
+def _two_shapes_png() -> bytes:
+    import io
+
+    from PIL import Image, ImageDraw
+
+    canvas = Image.new("RGB", (64, 32), "white")
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle((4, 4, 28, 28), fill="red")
+    draw.ellipse((36, 4, 60, 28), fill="blue")
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+SHAPES = _two_shapes_png()
+BUILTIN = MCPToolDescriptor(
+    name="python_execute", description="", input_schema={}, side_effecting=True,
+    source_kind="builtin", server_name="jenny_local_tools",
+)
+
+
+def _attachment(data: bytes = SHAPES, kind: str = "chart", mime: str = "image/png") -> dict:
+    from sidecar.ai.tools.trusted_attachments import build_trusted_attachment
+
+    return build_trusted_attachment(
+        kind=kind, mime_type=mime, data=data, source_tool="python_execute", width=64, height=32,
+    )
+
+
+def _tool_images(  # noqa: PLR0913 - the scenario knobs, spelled out.
+    runtime, *attachments, tool="python_execute", descriptor=BUILTIN,
+                 engine=None, success=True, key="chart_1"):
+    from sidecar.ai.routing.preview_vision import admit_tool_images
+
+    outcome = SimpleNamespace(success=success, trusted_attachments=attachments)
+    return admit_tool_images(
+        runtime, engine or Engine(),
+        ToolCallRequest(tool_id=tool, arguments={}, call_id=key), outcome,
+        replace(descriptor, name=tool),
+    )
+
+
+def _python_rows(key="chart_1", content="Plotted."):
+    return [
+        {"role": "user", "content": "Plot it and check the chart."},
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"id": key, "name": "python_execute", "arguments": {}}]},
+        {"role": "tool", "name": "python_execute", "tool_call_id": key, "content": content},
+    ]
+
+
+def test_a_python_chart_reaches_the_next_engine_request_as_one_image():
+    runtime = LoopRuntime()
+    delivery, notice = _tool_images(runtime, _attachment())
+    assert delivery == "queued"
+    assert "queued for the next model request" in notice
+    messages, _ = prepare_preview_messages(
+        kernel(), runtime, _python_rows(content="Plotted.\n" + notice),
+        system="", tools=[], max_tokens=128,
+    )
+    images = [image for row in messages for image in row.get("images", [])]
+    assert len(images) == 1
+    assert images[0].data == SHAPES
+    assert (images[0].width, images[0].height, images[0].mime_type) == (64, 32, "image/png")
+    assert messages[-1]["role"] == "user"
+    assert "python_execute call chart_1" in messages[-1]["content"]
+
+
+def test_a_read_file_image_is_queued_the_same_way():
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.open(io.BytesIO(SHAPES)).convert("RGB").save(buffer, format="JPEG")
+    runtime = LoopRuntime()
+    attachment = _attachment(buffer.getvalue(), kind="image", mime="image/jpeg")
+    assert _tool_images(runtime, attachment, tool="read_file")[0] == "queued"
+    assert runtime.preview_images["chart_1"].image.mime_type == "image/jpeg"
+
+
+def test_only_the_first_of_several_charts_is_queued():
+    runtime = LoopRuntime()
+    delivery, notice = _tool_images(runtime, _attachment(), _attachment())
+    assert delivery == "queued"
+    assert "2 images; only the first is queued" in notice
+    assert list(runtime.preview_images) == ["chart_1"]
+
+
+@pytest.mark.parametrize("case", [
+    {"tool": "run_command"},
+    {"descriptor": replace(BUILTIN, server_name="electron_tool_bridge")},
+    {"descriptor": replace(BUILTIN, source_kind="mcp")},
+    {"descriptor": replace(BUILTIN, server_name="some_mcp_server")},
+    {"success": False},
+])
+def test_other_sources_and_failed_results_are_not_admitted(case):
+    runtime = LoopRuntime()
+    assert _tool_images(runtime, _attachment(), **case) == ("", "")
+    assert runtime.preview_images == {}
+
+
+def test_a_pdf_page_or_no_attachment_is_not_admitted():
+    runtime = LoopRuntime()
+    assert _tool_images(runtime) == ("", "")
+    assert _tool_images(runtime, _attachment(kind="pdf_page")) == ("", "")
+    assert runtime.preview_images == {}
+
+
+def test_a_model_without_vision_is_told_it_has_not_seen_the_image():
+    runtime = LoopRuntime()
+    engine = Engine()
+    engine.capabilities = {"vision": False}
+    delivery, notice = _tool_images(runtime, _attachment(), engine=engine)
+    assert delivery == "unsupported"
+    assert "cannot see images" in notice
+    assert runtime.preview_images == {}
+
+
+def test_bytes_that_fail_validation_are_not_queued():
+    runtime = LoopRuntime()
+    broken = {**_attachment(), "data_base64": base64.b64encode(b"not an image").decode()}
+    assert _tool_images(runtime, broken)[0] == "unavailable"
+    assert runtime.preview_images == {}
+
+
+def test_a_full_image_budget_refuses_the_chart():
+    runtime = LoopRuntime()
+    for index in range(4):
+        assert _tool_images(runtime, _attachment(), key=f"c{index}")[0] == "queued"
+    assert _tool_images(runtime, _attachment(), key="c4")[0] == "budget_exceeded"
+
+
+def test_a_replayed_chart_row_says_no_pixels_accompany_it():
+    from sidecar.ai.routing.preview_vision import ATTACHMENT_QUEUED
+
+    messages, _ = prepare_preview_messages(
+        kernel(), LoopRuntime(), _python_rows(content="Plotted.\n" + ATTACHMENT_QUEUED),
+        system="", tools=[], max_tokens=128,
+    )
+    assert messages[-1]["role"] == "tool"
+    assert "No image pixels accompany this result" in messages[-1]["content"]
+    plain, _ = prepare_preview_messages(
+        kernel(), LoopRuntime(), _python_rows(), system="", tools=[], max_tokens=128,
+    )
+    assert plain[-1]["content"] == "Plotted."
+
+
+class _BuiltinClient:
+    available_tools = []
+
+    def __init__(self, result):
+        self.result = result
+
+    def tool_descriptor(self, name):
+        return replace(BUILTIN, name=name, side_effecting=False)
+
+    def execute_tool(self, *_args, **_kwargs):
+        return self.result
+
+
+def test_execute_tool_queues_a_read_file_image_and_says_so():
+    harness = kernel()
+    harness._mcp_client = _BuiltinClient(MCPToolResult(
+        "read_file", "Read image chart.png (64x32).", True,
+        trusted_attachments=(_attachment(kind="image"),),
+    ))
+    runtime = LoopRuntime(request_id="w2", session_id="w2")
+    outcome = execute_tool(
+        harness,
+        ToolCallRequest(tool_id="read_file", arguments={"path": "chart.png"}, call_id="read_1"),
+        request_id="w2", session_id="w2", read_snapshot_cache={}, runtime=runtime,
+    )
+    assert outcome.success
+    assert outcome.metadata["model_delivery_status"] == "queued"
+    assert outcome.output.endswith("visual review is not yet complete.")
+    assert runtime.preview_images["read_1"].image.data == SHAPES

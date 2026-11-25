@@ -23,6 +23,38 @@
 
   var LOCAL_ENGINE_TYPES = Object.freeze(['ollama', 'vllm', 'openai-compatible']);
 
+  // Row 201 C1 / OD-1: the one renderer predicate for a team model lives with the composer picker's helpers.
+  // Resolved at call time: this script loads before them, and a test requires them directly.
+  function pickerUtils() {
+    if (globalThis.rendererComposerModelPickerUtils) return globalThis.rendererComposerModelPickerUtils;
+    return typeof require === 'function' ? require('../../chat/renderer-composer-model-picker-utils') : null;
+  }
+
+  // Splits team model rows (a teammate's GPU) from the rows that are on this PC.
+  function partitionTeamModels(installed) {
+    var utils = pickerUtils();
+    var local = [];
+    var team = [];
+    var seen = new Set();
+    (Array.isArray(installed) ? installed : []).forEach(function (entry) {
+      if (!utils || !utils.isTeamModel(entry)) { local.push(entry); return; }
+      var source = objectOrEmpty(entry);
+      var id = String(source.id || '').trim();
+      var parsed = utils.parseTeamModel(id);
+      if (!parsed || seen.has(id)) return;
+      seen.add(id);
+      var contextLength = Number(source.context_length);
+      team.push({
+        id: id,
+        modelId: parsed.modelId,
+        teamId: String(source.team_id || parsed.teamId),
+        teamName: String(source.team_name || '').trim(),
+        contextLength: Number.isSafeInteger(contextLength) && contextLength > 0 ? contextLength : 0,
+      });
+    });
+    return { local: local, team: team };
+  }
+
   function canonicalTag(value) {
     return canonicalOllamaTag(value);
   }
@@ -498,6 +530,67 @@
     }).filter(Boolean);
   }
 
+  // Row 200: the Inkling 2 Mini card served by the owner's Strata install (`source.strata`, see
+  // model-library-strata.js libraryInput). No VRAM figure; a pack failure or Windows block locks it with a reason.
+  function buildStrataCards(source, context, installedByKey) {
+    var strata = objectOrEmpty(source.strata);
+    var tag = String(strata.id || '').trim();
+    if (!tag) return [];
+    var key = canonicalTag(tag);
+    var manager = objectOrEmpty(strata.manager);
+    var aliases = (Array.isArray(strata.aliases) && strata.aliases.length ? strata.aliases : [tag]).map(managedAliasKey);
+    var aliasMatches = Boolean(manager.alias) && aliases.indexOf(managedAliasKey(manager.alias)) >= 0;
+    var serving = manager.state === 'ready' && aliasMatches;
+    var lock = objectOrEmpty(strata.lock);
+    var card = {
+      key: key,
+      tag: tag,
+      displayName: String(strata.displayName || tag),
+      tier: '',
+      params: String(strata.params || ''),
+      quant: String(strata.quant || ''),
+      contextLength: nonNegativeNumber(strata.contextLength),
+      sizeBytes: nonNegativeNumber(strata.sizeBytes),
+      downloadSizeMb: 0,
+      vramRequiredMb: 0,
+      ramRequiredMb: 0,
+      installed: true,
+      engineVisible: true,
+      ollamaOnly: false,
+      engineType: 'openai-compatible',
+      available: true,
+      active: key === context.activeKey || serving || Boolean(installedByKey && installedByKey.get(key)?.loaded),
+      preferredLocal: Boolean(context.preferredKey && key === context.preferredKey),
+      recommended: false,
+      reason: '',
+      fitState: 'unknown',
+      fitRatio: 0,
+      fitLabel: fitUtils.fitLabelFor('unknown', 0, 0),
+      fitSource: 'catalog',
+      fitConfidence: 'low',
+      accelerationEligible: false,
+      mtpRunnable: false,
+      accelerationHeadroomMb: 0,
+      managedKey: managedModelKey(tag),
+      engines: {
+        ollama: { available: false },
+        llamaServer: { available: false, modelPath: '', drafter: false },
+      },
+      selectedEngine: 'strata',
+      mtp: { eligible: false, enabled: false, headroomMb: 0 },
+      serving: serving,
+      servingPaused: manager.state === 'stopped' && manager.identityRetained === true && aliasMatches,
+      servingPort: serving ? nonNegativeNumber(manager.port) : 0,
+      customBuild: 0,
+      libraryGguf: false,
+      source: 'installed',
+    };
+    if (lock.message) {
+      card.loadFailure = { cause: 'other', message: String(lock.message), context: null, at: '', engine: 'openai-compatible', model: tag, managed: 'strata' };
+    }
+    return [card];
+  }
+
   function orderModelCards(cards) {
     var source = Array.isArray(cards) ? cards : [];
     return source.filter(function (card) { return card && card.installed === true; })
@@ -557,7 +650,8 @@
       source.memory,
       acceleration.headroomMb
     );
-    var installedByKey = normalizeInstalledEntries(source.installed);
+    var split = partitionTeamModels(source.installed);
+    var installedByKey = normalizeInstalledEntries(split.local);
     var ollamaByKey = normalizeOllamaTags(source.ollamaTags);
     var fitEstimatesByKey = new Map();
     (Array.isArray(source.fitEstimates) ? source.fitEstimates : []).forEach(function (entry) {
@@ -615,10 +709,12 @@
 
     // The engine lists an installed NInfer model too; its pin card owns that
     // row (size, context, MTP) rather than a bare "Not in catalog" card.
+    // The engine lists a Strata-served model too (`managed: 'strata'`); its own card owns that row.
     var ninferCards = buildNinferCards(source, context, installedByKey);
-    var ninferKeys = new Set(ninferCards.map(function (card) { return card.key; }));
+    var strataCards = buildStrataCards(source, context, installedByKey);
+    var managedKeys = new Set(ninferCards.concat(strataCards).map(function (card) { return card.key; }));
     installedByKey.forEach(function (entry, key) {
-      if (usedKeys.has(key) || ninferKeys.has(key)) return;
+      if (usedKeys.has(key) || managedKeys.has(key)) return;
       usedKeys.add(key);
       cards.push(buildInstalledCard(
         entry,
@@ -638,7 +734,7 @@
         sizeBytes: entry.sizeBytes,
       }, true, context, entry, fitEstimatesByKey.get(key) || null));
     });
-    ninferCards.forEach(function (card) {
+    ninferCards.concat(strataCards).forEach(function (card) {
       if (usedKeys.has(card.key)) return;
       usedKeys.add(card.key);
       cards.push(card);
@@ -657,6 +753,7 @@
       catalogMeta: source.catalogMeta && typeof source.catalogMeta === 'object'
         && !Array.isArray(source.catalogMeta) ? source.catalogMeta : null,
       cards: orderModelCards(cards),
+      teamModels: split.team,
     };
   }
 

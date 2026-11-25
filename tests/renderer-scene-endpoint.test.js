@@ -127,6 +127,24 @@ function heldSave() {
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+test('the URL hint adds the Strata start line only for an OpenAI-compatible server', (t) => {
+  const { rootEl } = mount(t, {});
+  const hintText = () => rootEl.querySelector('#setup-endpoint-url').closest('.inv-url-field').textContent;
+  const choose = (value) => {
+    const engine = rootEl.querySelector('#setup-endpoint-engine');
+    engine.value = value;
+    engine.dispatchEvent(new engine.ownerDocument.defaultView.Event('change', { bubbles: true }));
+  };
+
+  assert.equal(hintText().includes('--no-api-key'), false);
+  choose('openai-compatible');
+  assert.match(hintText(), /Use a localhost or private-network URL\. http\(s\):\/\/ only\. Running Strata\? Start it with --no-api-key --parallel 4/);
+  choose('vllm');
+  assert.equal(hintText().includes('Strata'), false);
+  choose('ollama');
+  assert.equal(hintText().includes('Strata'), false);
+});
+
 test('a second Save click while a save is in flight does not start another save', async (t) => {
   const held = heldSave();
   const { rootEl } = mount(t, held.service);

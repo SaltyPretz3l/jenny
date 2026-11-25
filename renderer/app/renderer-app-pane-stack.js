@@ -12,8 +12,7 @@
  *         pipeline and shell (bound)
  *
  * deps: state, layoutController, call (the composition's injected-option
- * caller), syncPaneComposer, autosizeInput, getPaneRenderListener (the W6b
- * listener, read per render), safely.
+ * caller), syncPaneComposer, autosizeInput.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -47,8 +46,6 @@
     var call = deps.call;
     var syncPaneComposer = deps.syncPaneComposer;
     var autosizeInput = deps.autosizeInput;
-    var getPaneRenderListener = deps.getPaneRenderListener;
-    var safely = deps.safely;
 
     /* The shell's stream-handler factory for a pane that is not pane 0: a
        facade over pane 0's ONE handler. One IPC subscription, one render
@@ -119,11 +116,6 @@
         }, pane.controllers),
         overrides: Object.assign({}, GLOBAL_CHROME_NOOPS, {
           syncPaneLayout: undefined,
-          reconcileChatDockHost: function () {
-            var paneRenderListener = getPaneRenderListener();
-            if (paneRenderListener) safely(function () { paneRenderListener(paneId); });
-            return false;
-          },
           syncComposerInputHeight: function () { autosizeInput(pane.dom.chatInput); },
           getCurrentSessionMessages: function () { return call('getSessionMessages', getSessionId()) || []; },
           getCurrentVisibleMessages: function () { return call('getVisibleSessionMessages', getSessionId()) || []; },

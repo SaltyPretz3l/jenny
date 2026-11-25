@@ -31,6 +31,61 @@
   justify-content: flex-end;
 }
 
+/* Row 192 C10: on a finished, failed or stopped Jenny turn the details line is always shown (a running turn
+   renders none); its buttons appear on hover or keyboard focus within the turn. User rows keep the hover rule,
+   a steer message inside the turn included (chat-thread.css). The line wraps in a narrow pane. */
+.chat-entry.assistant:not(.pending) .chat-hover-row:not(.chat-steer-entry *) {
+  flex-wrap: wrap;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.chat-entry.assistant .chat-hover-meta {
+  white-space: normal;
+}
+
+.chat-entry.assistant .chat-hover-row:not(.chat-steer-entry *) .chat-hover-actions {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chat-entry.assistant:hover .chat-hover-row:not(.chat-steer-entry *) .chat-hover-actions,
+.chat-entry.assistant:focus-within .chat-hover-row:not(.chat-steer-entry *) .chat-hover-actions {
+  opacity: 1;
+}
+
+/* Row 192 C8: what a settled turn left behind, one line of quiet text links under the answer. */
+.turn-outcomes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-3);
+  font-size: var(--tl-font-ui);
+  color: var(--text-muted);
+}
+
+.turn-outcome-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.turn-outcome-link:hover,
+.turn-outcome-link:focus-visible {
+  color: var(--text-primary);
+}
+
 .chat-hover-meta {
   min-width: 0;
   flex: 1 1 auto;
@@ -188,8 +243,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-hover-row {
+  .chat-hover-row,
+  .chat-entry.assistant .chat-hover-row .chat-hover-actions {
     transition: none;
+  }
+  .chat-hover-row {
     transform: none !important;
   }
   /* At 0ms the forwards fade ends at opacity 0; keep "Copied!" visible
@@ -219,8 +277,8 @@
   }
 }
 
-/* Row 38 item 7: Branch and Elaborate show their word on the hover row (the
-   row itself appears only on hover); universal icons stay icon-only. */
+/* Row 38 item 7: Branch and Elaborate show their word on the hover row (its
+   buttons appear only on hover or focus); universal icons stay icon-only. */
 .chat-hover-action--labeled {
   width: auto;
   grid-auto-flow: column;

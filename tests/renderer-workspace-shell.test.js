@@ -124,12 +124,10 @@ test('workspace rail stays visible while split artifact review is open in chat',
   const rail = doc.getElementById('workspaceRailShell');
   const workspace = doc.getElementById('workspace');
   const sidebar = doc.getElementById('viewPanel');
-  const sidebarResizer = doc.getElementById('sidebarResizer');
   const splitToggle = doc.getElementById('artifactSplitViewToggle');
 
   workspace.getBoundingClientRect = () => ({ top: 0, left: 0, right: 1600, bottom: 900, width: 1600, height: 900 });
   sidebar.getBoundingClientRect = () => ({ top: 0, left: 0, right: 320, bottom: 900, width: 320, height: 900 });
-  sidebarResizer.getBoundingClientRect = () => ({ top: 0, left: 320, right: 330, bottom: 900, width: 10, height: 900 });
   window.dispatchEvent(new window.Event('resize'));
   await waitForUi(window, 40);
 

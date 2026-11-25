@@ -37,7 +37,7 @@ test('message menu on a conversation row: right-click, the Menu key and Shift+F1
   await flush();
   rightClick(m, rowOf(m, 'messageId', 'm1').querySelector('.team-msg__text'));
   assert.equal(shown.length, 1, 'a right-click on a prompt row opens the menu');
-  assert.deepEqual(values(shown[0]), ['copy', 'copy-markdown', 'work', 'copy-link', 'copy-source', 'pin', '-', 'branch', 'regenerate', 'edit']);
+  assert.deepEqual(values(shown[0]), ['copy', 'copy-markdown', 'work', 'copy-link', 'copy-source', '-', 'branch', 'regenerate', 'edit'], 'no Pin to board item: it was never available');
   assert.equal(item(shown[0], 'branch').disabled, undefined, 'a writer may branch');
   assert.match(item(shown[0], 'regenerate').description, /who asked, or a project admin/, 'not the author: greyed with its reason');
   assert.match(item(shown[0], 'edit').description, /who asked can edit/);
@@ -73,8 +73,7 @@ test('copy, copy as Markdown, copy link and copy with source write the clipboard
   assert.match(wrote[3], /^> \*\*Jenny\*\*, jenny-site, 2026-11-12\n> It reads it once in \*\*load\*\*\.$/);
   assert.match(toast(m), /Copied with source/);
   item(shown[0], 'work').action();
-  assert.ok(m.q('#teamTurnPop'), 'the turn’s popover opened');
-  assert.match(item(shown[0], 'pin').description, /Board/, 'Pin to board greyed with its reason');
+  assert.ok(m.q('[id$="teamTurnPop"]'), 'the turn’s popover opened');
 });
 
 test('Regenerate on the latest prompt: the confirm names the replaced answer, then projectRegenerate and the control take', async (t) => {
@@ -111,7 +110,7 @@ test('a refused regenerate says why in the confirm and takes no lease', async (t
   assert.equal(m.sent('conversationControl').length, 0);
 });
 
-test('Edit and resend: only for the author; the edited text is sent, capped at 32,000 characters; Esc cancels', async (t) => {
+test('Edit and resend: only for the author; the edited text is sent, capped as the message box caps it; Esc cancels', async (t) => {
   const shown = fakeMenu(t);
   const m = mount(t, { answers: { projectEditResend: { ok: true, session_id: S1, revision: 'r2' } }, open: withMessages([mine('m1'), message('m2', 'assistant', 'x')]) });
   await flush();
@@ -119,7 +118,7 @@ test('Edit and resend: only for the author; the edited text is sent, capped at 3
   item(shown[0], 'edit').action();
   const field = m.q('[data-conv-act-panel="edit"] textarea');
   assert.equal(field.value, 'Why twice?');
-  assert.equal(field.maxLength, 32000);
+  assert.equal(field.maxLength, require('../renderer/team/renderer-team-project-box').PROMPT_MAX, 'the box’s own limit, not a smaller one');
   key(m, field, 'Escape');
   assert.equal(m.q('[data-conv-act-panel]'), null, 'Esc closes the editor');
   rightClick(m, rowOf(m, 'messageId', 'm1'));
@@ -140,6 +139,28 @@ test('Edit and resend: only for the author; the edited text is sent, capped at 3
   assert.equal(item(shown[2], 'edit').disabled, true, 'another member’s question cannot be edited');
 });
 
+test('Edit and resend sends a question longer than 32,000 characters up to the box’s limit, and says too long past it', async (t) => {
+  const shown = fakeMenu(t);
+  const { PROMPT_MAX } = require('../renderer/team/renderer-team-project-box');
+  const m = mount(t, { answers: { projectEditResend: { ok: true, session_id: S1, revision: 'r2' } }, open: withMessages([mine('m1'), message('m2', 'assistant', 'x')]) });
+  await flush();
+  rightClick(m, rowOf(m, 'messageId', 'm1'));
+  item(shown[0], 'edit').action();
+  const field = m.q('[data-conv-act-panel="edit"] textarea');
+  field.value = 'q'.repeat(PROMPT_MAX + 1);
+  field.dispatchEvent(new m.window.Event('input', { bubbles: true }));
+  m.q('[data-conv-act="edit-save"]').click();
+  await flush();
+  assert.equal(m.sent('projectEditResend').length, 0, 'one past the limit is not sent');
+  assert.match(m.q('[data-conv-act-panel="edit"] [role="status"]').textContent, /too long/);
+  const again = m.q('[data-conv-act-panel="edit"] textarea');
+  again.value = 'q'.repeat(PROMPT_MAX);
+  again.dispatchEvent(new m.window.Event('input', { bubbles: true }));
+  m.q('[data-conv-act="edit-save"]').click();
+  await flush();
+  assert.deepEqual(m.sent('projectEditResend').map((p) => p.prompt.length), [PROMPT_MAX], 'the whole limit goes');
+});
+
 test('Branch from here opens the new conversation', async (t) => {
   const shown = fakeMenu(t);
   const asked = [];
@@ -153,6 +174,27 @@ test('Branch from here opens the new conversation', async (t) => {
   await flush();
   assert.deepEqual(m.sent('projectBranch'), [{ team_id: OTHER, project_id: P1, session_id: S1, message_id: 'm2' }]);
   assert.deepEqual(asked, [{ kind: 'conversation', teamId: OTHER, sessionId: S2, projectId: P1 }]);
+});
+
+test('Branch from here in Board stays there: onOpenConversation returning true skips the Team tab hand-off (H23.4)', async (t) => {
+  const shown = fakeMenu(t);
+  const asked = [];
+  const saved = globalThis.rendererTeamNotify;
+  globalThis.rendererTeamNotify = { request: (intent) => { asked.push(intent); return true; } };
+  t.after(() => { if (saved === undefined) delete globalThis.rendererTeamNotify; else globalThis.rendererTeamNotify = saved; });
+  const opened = [];
+  let result = true;
+  const m = mount(t, { board: { onOpenConversation: (id) => { opened.push(id); return result; } }, answers: { projectBranch: { ok: true, session_id: S2, revision: 'r1' } }, open: withMessages([mine('m1', MAYA), message('m2', 'assistant', 'x')]) });
+  await flush();
+  rightClick(m, rowOf(m, 'turnId', 'after:m1'));
+  item(shown[0], 'branch').action();
+  await flush();
+  assert.deepEqual(opened, [S2], 'Board is asked to open the branch');
+  assert.deepEqual(asked, [], 'it opened there, so the Team tab is not asked');
+  result = false;
+  item(shown[0], 'branch').action();
+  await flush();
+  assert.equal(asked.length, 1, 'Board declined: the Team tab hand-off is the fallthrough');
 });
 
 test('Ask a teammate from an approval card sends approval_id and lists the project’s members minus yourself; the head asks too', async (t) => {

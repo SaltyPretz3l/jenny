@@ -184,6 +184,16 @@ def engine_supports_tool_calling(kernel: Any) -> bool:
     return True
 
 
+def engine_takes_pictures(kernel: Any) -> bool:
+    """vision_turn.engine_supports_vision, read without importing it (imports at limit)."""
+    engine = getattr(kernel, "_engine", None)
+    modalities = getattr(engine, "supported_modalities", None) or ()
+    if any(getattr(item, "name", None) == "VISION" for item in modalities):
+        return True
+    capabilities = getattr(engine, "capabilities", {})
+    return isinstance(capabilities, dict) and capabilities.get("vision") is True
+
+
 def engine_supports_inband_tool_calling(kernel: Any) -> bool:
     value = getattr(kernel._engine, "supports_inband_tool_calling", None)
     if isinstance(value, bool):
@@ -225,6 +235,7 @@ def _context_from_request(
             config=scoped_config,
             engine_supports_tool_calling=engine_supports_tool_calling(kernel),
             engine_supports_inband_tool_calling=engine_supports_inband_tool_calling(kernel),
+        engine_supports_vision=engine_takes_pictures(kernel),
             mode=getattr(kernel._config, "mode", None),
             plan_mode=False,
             read_only=False,
@@ -250,6 +261,7 @@ def _context_from_request(
         config=scoped_config,
         engine_supports_tool_calling=engine_supports_tool_calling(kernel),
         engine_supports_inband_tool_calling=engine_supports_inband_tool_calling(kernel),
+        engine_supports_vision=engine_takes_pictures(kernel),
         mode=request_context.mode,
         plan_mode=request_context.plan_mode,
         propose_mode=request_context.propose_mode,

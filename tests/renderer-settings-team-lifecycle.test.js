@@ -330,3 +330,75 @@ test('with the server stopped, Delete this team follows fork 8: main\'s saved me
   await flush();
   assert.ok(mine.q('[data-team-action="del-open"]'));
 });
+
+// ---------------------------------------------------- team review fixes (row 201): OD-11 export and delete
+
+test('export says the 10-character password minimum before the first submit', async (t) => {
+  const h = owner(t, {}, { hostInventory: { ok: true, inventory: INVENTORY } });
+  await flush();
+  h.click('[data-team-group="ownership"] [data-team-action="export-open"]');
+  await flush();
+  const form = h.q('[data-team-export-form]');
+  assert.match(text(form), /The password needs at least 10 characters\./, 'said before anything is sent');
+  assert.equal(h.sent('hostExport').length, 0);
+  const hint = form.querySelector('[id="teamExportPassHint"]');
+  assert.ok(hint, 'the hint has an id');
+  assert.equal(h.q('#teamExportPass').getAttribute('aria-describedby'), 'teamExportPassHint');
+});
+
+test('Escape in the export form closes only it, and focus goes back to Export…; Enter in the password field submits it', async (t) => {
+  const h = owner(t, {}, { hostInventory: { ok: true, inventory: INVENTORY }, hostExport: { ok: true, folder: 'D:/Backups/Studio', bytes: 5 } });
+  await flush();
+  const doc = h.window.document;
+  const key = (el, name) => el.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }));
+  h.click('[data-team-group="ownership"] [data-team-action="export-open"]');
+  await flush();
+  key(h.q('#teamExportPass'), 'Escape');
+  assert.equal(h.q('#teamExportPass'), null, 'Escape closes Export');
+  assert.equal(doc.activeElement, h.q('[data-team-group="ownership"] [data-team-action="export-open"]'), 'focus returns to the button that opened it');
+  // Inside the delete confirmation Escape closes the nested export first and leaves the confirmation.
+  h.click('[data-team-action="del-open"]');
+  await flush();
+  h.click('[data-team-group="delete"] [data-team-action="export-open"]');
+  await flush();
+  key(h.q('#teamExportPass'), 'Escape');
+  assert.equal(h.q('#teamExportPass'), null);
+  assert.ok(h.q('[data-team-group="delete"] .team-del'), 'the delete confirmation stays');
+  h.click('[data-team-action="confirm-cancel"]');
+  await flush();
+  h.click('[data-team-group="ownership"] [data-team-action="export-open"]');
+  await flush();
+  h.type('#teamExportPass', PASSWORD);
+  h.type('#teamExportPass2', PASSWORD);
+  key(h.q('#teamExportPass2'), 'Enter');
+  await flush();
+  assert.deepEqual(h.sent('hostExport').map((c) => c.payload), [{ password: PASSWORD }], 'Enter submits the form');
+});
+
+test('the delete confirmation takes an emoji team name typed in full, and Enter then deletes', async (t) => {
+  const name = '🙂'.repeat(30); // 30 characters for the host, 60 UTF-16 units
+  const h = harness({ host: host({ team_name: name }), teams: [snapshot({ team_name: name })],
+    answers: { hostInventory: { ok: true, inventory: INVENTORY }, hostDelete: { ok: true, host: { ...NONE } } } });
+  t.after(h.restore);
+  await flush();
+  h.click('[data-team-action="del-open"]');
+  await flush();
+  const field = h.q('#teamDeleteName');
+  const cap = field.getAttribute('maxlength');
+  assert.ok(cap === null || Number(cap) >= name.length, `the field's cap (${cap}) lets the whole name be typed`);
+  h.type('#teamDeleteName', name);
+  await flush();
+  assert.equal(h.q('[data-team-action="del-go"]').disabled, false, 'the same characters match');
+  h.window.document.querySelector('#teamDeleteName').dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(h.sent('hostDelete').map((c) => c.payload), [{ name }]);
+});
+
+test('the delete inventory lists custom channels beside the project channels', async (t) => {
+  const chat = { ...INVENTORY.chat, custom_channels: 3 };
+  const h = owner(t, {}, { hostInventory: { ok: true, inventory: { ...INVENTORY, chat } } });
+  await flush();
+  h.click('[data-team-action="del-open"]');
+  await flush();
+  assert.match(text(del(h).querySelector('.team-del__what')), /3 custom channels/);
+});

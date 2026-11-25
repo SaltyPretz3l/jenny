@@ -12,7 +12,7 @@ const {
 
 const HINT_COPY = {
   ask: 'Jenny asks before running tools that change things.',
-  auto: 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.',
+  auto: 'Tools and project Python run without asking. Blocked commands and denies prompt.',
   plan: 'Read-only: Jenny plans first and presents it before acting.',
   propose: 'Jenny suggests exact changes for you to review. Nothing in your files changes until you accept.',
 };

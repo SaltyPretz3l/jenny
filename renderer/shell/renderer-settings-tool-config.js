@@ -43,7 +43,7 @@
       key: 'imageRead',
       fieldType: 'toggle',
       storage: 'config',
-      default: false,
+      default: true,
       configFlag: 'tools_image_read_enabled',
       toolIds: Object.freeze(['read_file']),
     },
@@ -70,6 +70,14 @@
       default: false,
       configFlag: 'tools_python_runtime_enabled',
       toolIds: Object.freeze(['python_execute']),
+    },
+    {
+      key: 'computer',
+      fieldType: 'toggle',
+      storage: 'config',
+      default: true,
+      configFlag: 'tools_computer_use_enabled',
+      toolIds: Object.freeze(['computer']),
     },
     {
       key: 'lsp',

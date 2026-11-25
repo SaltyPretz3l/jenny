@@ -42,7 +42,6 @@ class _Config:
     system_prompt_profile = "auto"
     assistant_name = "Jenny"
     tools_workspace_manifest_enabled = False
-    tools_task_capsule_enabled = False
     # 30% char-fallback headroom (A9-F5): a 32,768-token budget window.
     context_length = 46_812
     max_tokens = 8_192

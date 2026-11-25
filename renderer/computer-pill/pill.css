@@ -1,0 +1,32 @@
+/* renderer/computer-pill/pill.css: the computer-use frame and pill (row 196, C6). Tokens only. */
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+
+/* The frame: a 3 px line round the screen; warning colour while the owner has control. */
+.cu-frame { position: fixed; inset: 0; border: 3px solid var(--accent-cyan); pointer-events: none; box-sizing: border-box; }
+.cu-frame--paused { border-color: var(--state-warning, var(--accent-amber)); }
+
+/* The pill: one line with a status dot, what Jenny is doing, and its actions. The body drags the window. */
+.cu-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-surface, var(--bg-base));
+  color: var(--text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-body);
+  white-space: nowrap;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.cu-pill-text { white-space: nowrap; }
+.cu-pill-key {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  padding-inline-end: 6px;
+}
+.cu-pill .btn { -webkit-app-region: no-drag; }
+.cu-pill [hidden] { display: none; }

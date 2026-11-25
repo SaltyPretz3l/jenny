@@ -38,7 +38,9 @@ const {
   PUBLIC_KEY_BYTES, decodeBase64url, encodeBase64url, deriveTeamId, keyPairFromSeed,
 } = require('./ids');
 const { safeLogger } = require('./safe-logger');
-const { MAX_RELAY_URL_CHARS, isCanonicalRelayUrl, isDnsHostName } = require('./transport/relay-url');
+const {
+  MAX_RELAY_TOKEN_CHARS, MAX_RELAY_URL_CHARS, isCanonicalRelayUrl, isDnsHostName, isRelayToken,
+} = require('./transport/relay-url');
 
 const INVITE_PREFIX = 'jteam1_';
 const INVITE_PREFIX_V2 = 'jteam2_';
@@ -46,12 +48,9 @@ const MAX_INVITE_CHARS = 512;
 const V1_MAX_CHARS = 256;
 const MAX_HINTS = 4;
 const MAX_HOST_NAME_CHARS = 63;
-const MAX_RELAY_TOKEN_CHARS = 48;
 const CHECKSUM_BYTES = 4;
 const SLOT_MS = 10 * 60 * 1000;
 const VERSION_PREFIX = /^jteam([1-9]\d{0,3})_/u;
-// An HTTP bearer token's characters (RFC 6750 b64token), so the bridge can send it as is.
-const RELAY_TOKEN = /^[A-Za-z0-9._~+/-]+=*$/u;
 
 function malformed() {
   return hostFailure('invalid', 'team_invite_malformed');
@@ -176,10 +175,6 @@ function isHostNameValue(value) {
   if (value === null) return true;
   return Boolean(value) && typeof value === 'object' && Object.keys(value).length === 2 && isHostName(value.name)
     && Number.isInteger(value.port) && value.port >= 1 && value.port <= 65535;
-}
-
-function isRelayToken(text) {
-  return typeof text === 'string' && text.length >= 1 && text.length <= MAX_RELAY_TOKEN_CHARS && RELAY_TOKEN.test(text);
 }
 
 // name_len | name | name_port, or null for a bad value.

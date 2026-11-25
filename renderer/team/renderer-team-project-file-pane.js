@@ -199,7 +199,9 @@
     const focusKey = (scope) => { const a = doc.activeElement; return a && scope.contains(a) && a.dataset ? a.dataset.teamFilesAction || 'segment' : ''; };
     function refocus(scope, key) {
       if (!key) return;
-      const next = scope.querySelector('[data-team-files-action="' + key + '"]') || scope.querySelector('[data-team-files-action="close"]');
+      // The Rendered / Source control is redrawn with the head: its chosen option takes the focus (not Close).
+      const segment = key === 'segment' ? scope.querySelector('[data-inv-segmented="' + segmentId + '"] [role="radio"][aria-checked="true"]') : null;
+      const next = segment || scope.querySelector('[data-team-files-action="' + key + '"]') || scope.querySelector('[data-team-files-action="close"]');
       if (next) next.focus({ preventScroll: true });
     }
 

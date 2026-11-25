@@ -179,8 +179,8 @@ test('reset keeps state for the same message and clears it for a new one', (t) =
   );
 });
 
-// Controller integration: the hook in patchBubbleUnits (flag OFF byte-identical; reduced motion inert).
-test('flag OFF: streaming tail unit write is byte-identical to the plain path', () => {
+// Controller integration: the hook in patchBubbleUnits (always on; reduced motion inert).
+function runTailPatches(matches) {
   const dom = new JSDOM(`<!doctype html><body><div id="timeline">
     <article data-message-id="assistant_fade"><div data-streaming-bubble="true">
       <div class="chat-stream-unit" data-stream-unit-index="0"><p>Hello</p></div>
@@ -190,8 +190,7 @@ test('flag OFF: streaming tail unit write is byte-identical to the plain path', 
   const controller = createStreamRevealController({
     windowRef: dom.window,
     chatTimeline: timeline,
-    state: { features: { featureFlags: {} } },
-    reducedMotionQuery: { matches: false },
+    reducedMotionQuery: { matches },
     escapeSelectorValue: (value) => String(value || ''),
   });
   const message = { id: 'assistant_fade', role: 'assistant', status: 'streaming', content: '' };
@@ -212,53 +211,15 @@ test('flag OFF: streaming tail unit write is byte-identical to the plain path', 
       }),
     });
   }
-  const unit = timeline.querySelector('[data-stream-unit-index="0"]');
-  assert.equal(unit.querySelector('.chat-stream-token'), null);
-  assert.equal(unit.innerHTML, '<p>Hello world!</p>');
-  dom.window.close();
-});
+  return { dom, timeline };
+}
 
-test('flag ON + reduced motion: no token spans; motion enabled fades the suffix', () => {
-  const runPatches = (matches) => {
-    const dom = new JSDOM(`<!doctype html><body><div id="timeline">
-      <article data-message-id="assistant_fade"><div data-streaming-bubble="true">
-        <div class="chat-stream-unit" data-stream-unit-index="0"><p>Hello</p></div>
-      </div></article>
-    </div></body>`);
-    const timeline = dom.window.document.getElementById('timeline');
-    const controller = createStreamRevealController({
-      windowRef: dom.window,
-      chatTimeline: timeline,
-      state: { features: { featureFlags: { chat_stream_token_fade: true } } },
-      reducedMotionQuery: { matches },
-      escapeSelectorValue: (value) => String(value || ''),
-    });
-    const message = { id: 'assistant_fade', role: 'assistant', status: 'streaming', content: '' };
-    controller.commitFullRender({ currentSessionId: 'session-1', streamingMessage: message });
-    for (const html of ['<p>Hello world</p>', '<p>Hello world!</p>']) {
-      controller.queuePatch({
-        currentSessionId: 'session-1',
-        streamingMessage: message,
-        messages: [message],
-        buildMessageNodeState: () => ({
-          bubbleInnerHtml: html,
-          streamUnits: [{ html, revealed: true }],
-          streamChangedStart: 0,
-          pending: true,
-          entryReveal: false,
-          status: 'streaming',
-          finalizedAt: '',
-        }),
-      });
-    }
-    return { dom, timeline };
-  };
-
-  const reduced = runPatches(true);
+test('reduced motion: no token spans; motion enabled fades the suffix', () => {
+  const reduced = runTailPatches(true);
   assert.equal(reduced.timeline.querySelector('.chat-stream-token'), null);
   reduced.dom.window.close();
 
-  const animated = runPatches(false);
+  const animated = runTailPatches(false);
   const bubble = animated.timeline.querySelector('[data-streaming-bubble="true"]');
   assert.ok(Array.from(bubble.querySelectorAll('.chat-stream-token'))
     .some((span) => span.textContent === '!'));

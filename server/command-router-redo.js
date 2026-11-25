@@ -18,7 +18,8 @@ const { memberAuthor } = require('../services/backend/message-author');
  *   the free one, as a send does (another holder: `control_lease_unavailable`, retryable), and the backend's
  *   edit-and-regenerate runs on that prompt with the conversation's own options. The session store has no
  *   earlier-version mechanism, so as with the local chat's regenerate and edit the replaced answer is not kept; the
- *   prompt row keeps its author. Answers { session_id, stream_id?, revision }.
+ *   prompt row keeps its author. Answers { session_id, stream_id?, revision, control_generation } (the lease's, to hold
+ *   and release the seat the redo just took).
  * - `team.project.branch` { message_id }: a new conversation of the same project holding the messages up to and
  *   including that one (services/backend/session-branching.js, as the local branch), titled "Branch of <title>".
  *   Answers { session_id, revision }.
@@ -124,15 +125,15 @@ function createRedoHandlers({
     return { anchor, memberId };
   }
 
-  // The caller keeps their lease or takes the free one, as a send's controller does: null, or the refusal.
+  // The caller keeps their lease or takes the free one, as a send's controller does: { lease }, or { failure }.
   function takeSeat(command, context, memberId) {
     const sessionId = command.params.session_id;
     const current = leases.get(sessionId);
     const theirs = current && current.client_id === command.client_id && current.device_id === context.deviceId;
     const lease = current && !theirs ? null : leases.acquire(sessionId, command.client_id, context.deviceId, false, memberId);
-    if (!lease) return hostFailure('conflict', 'control_lease_unavailable', command.request_id, true);
+    if (!lease) return { failure: hostFailure('conflict', 'control_lease_unavailable', command.request_id, true) };
     if (!current) publishLease(sessionId, lease);
-    return null;
+    return { lease };
   }
 
   function startOptions(command, anchor) {
@@ -160,7 +161,7 @@ function createRedoHandlers({
       const admitted = redoAdmission(command, context);
       if (admitted.failure) return admitted.failure;
       const seat = takeSeat(command, context, admitted.memberId);
-      if (seat) return seat;
+      if (seat.failure) return seat.failure;
       let started;
       try { started = await backend.editAndRegenerate(startOptions(command, admitted.anchor)); }
       catch (error) { return startRefusal(error, command.request_id); }
@@ -168,8 +169,9 @@ function createRedoHandlers({
       if (gate(command, context)) return indeterminate(command);
       publish('session_changed', { session_id: sessionId, revision, reason: 'chat_saved' });
       const streamId = started?.streamId ?? started?.stream_id;
+      // The lease's generation rides on the answer, so the client holds and releases the seat it was just given.
       return { ok: true, session_id: sessionId, ...(typeof streamId === 'string' && STREAM_ID.test(streamId)
-        ? { stream_id: streamId } : {}), revision };
+        ? { stream_id: streamId } : {}), revision, control_generation: seat.lease.generation };
     }));
   }
 
@@ -192,6 +194,8 @@ function createRedoHandlers({
     if (refused) return refused;
     if (!canAdmit()) return hostFailure('unavailable', 'disk_pressure', command.request_id, true);
     return runReceipt(command, context, () => queue.run(command.params.session_id, async () => {
+      const again = gate(command, context);
+      if (again) return again;
       const ids = backend.sessionStore?.getSessionIds?.();
       if (!Array.isArray(ids) || ids.length >= MAX_SESSIONS) return hostFailure('limit', 'session_capacity', command.request_id);
       const branchId = await forkAt(command);

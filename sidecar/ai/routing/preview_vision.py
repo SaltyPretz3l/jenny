@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -14,13 +16,20 @@ from sidecar.ai.engines.vision_input import (
     MAX_VISION_AGGREGATE_BYTES,
     MAX_VISION_ATTACHMENTS,
     VisionImage,
+    VisionInputError,
+    vision_image_from_bytes,
 )
-from sidecar.ai.routing.iteration_limits import BROWSER_USE_TOOL_ID
+from sidecar.ai.routing.iteration_limits import (
+    BROWSER_USE_TOOL_ID,
+    COMPUTER_USE_TOOL_ID,
+    RUN_VIEW_LOOK_TOOL_ID,
+)
 from sidecar.ai.routing.vision_turn import (
     current_turn_anchor_index,
     engine_supports_vision,
     vision_token_surcharge,
 )
+from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
 from sidecar.ai.tools.preview_image import native_preview_image
 
 # A model that cannot see its picture must not describe it from the prompt.
@@ -36,6 +45,14 @@ _UNSEEN_GENERATED_IMAGE = (
 
 _NO_PIXELS_THIS_REQUEST = (
     "\nNo screenshot pixels accompany this result in the current model request."
+)
+# Row 184 W2: builtin results whose admitted image attachments the model may see. The
+# attachments already passed admit_trusted_attachments (builtin read_file/python_execute only).
+ATTACHMENT_VISION_TOOLS = frozenset({"read_file", "python_execute"})
+_ATTACHMENT_VISION_KINDS = frozenset({"image", "chart"})
+ATTACHMENT_QUEUED = "Image queued for the next model request; visual review is not yet complete."
+_NO_IMAGE_PIXELS_THIS_REQUEST = (
+    "\nNo image pixels accompany this result in the current model request."
 )
 _EARLIER_REQUEST_RESULT = (
     "\nThis result is from an earlier request. Any screenshot it captured is not resent now, "
@@ -59,6 +76,16 @@ def _room(runtime: Any, image: VisionImage) -> bool:
     )
 
 
+# The tools whose bounded PNG may reach a vision chat model (the bridge checks the same list).
+_PICTURE_TOOL_IDS = frozenset({
+    "preview_test", "image_generate", BROWSER_USE_TOOL_ID, RUN_VIEW_LOOK_TOOL_ID,
+    COMPUTER_USE_TOOL_ID,
+})
+# A computer step's result says "Picture:" when it carried the window's picture
+# (services/computer-use/result-format.js).
+COMPUTER_PICTURE_MARK = "Picture:"
+
+
 def admit_preview(
     runtime: Any,
     engine: Any,
@@ -71,10 +98,13 @@ def admit_preview(
     if (
         getattr(descriptor, "source_kind", "") != "builtin"
         or getattr(descriptor, "server_name", "") != "electron_tool_bridge"
-        or call.tool_id not in {"preview_test", "image_generate", BROWSER_USE_TOOL_ID}
+        or call.tool_id not in _PICTURE_TOOL_IDS
         or (call.tool_id == "preview_test" and call.arguments.get("screenshot") is not True)
-        or (call.tool_id == BROWSER_USE_TOOL_ID and call.arguments.get("action") != "screenshot")
+        or (call.tool_id == BROWSER_USE_TOOL_ID
+            and call.arguments.get("action") not in BROWSER_IMAGE_ACTIONS)
         or (generated and not result.success)
+        # Row 196: a computer step without a picture (windows, a refusal) has nothing to admit.
+        or (call.tool_id == COMPUTER_USE_TOOL_ID and getattr(result, "preview_image", None) is None)
     ):
         return "", ""
     if runtime is None or not engine_supports_vision(engine):
@@ -89,24 +119,78 @@ def admit_preview(
         return "unavailable", _UNSEEN_GENERATED_IMAGE if generated else (
             "Model image unavailable: missing or invalid bounded screenshot."
         )
+    if not _queue(runtime, call, image):
+        return "budget_exceeded", _UNSEEN_GENERATED_IMAGE if generated else (
+            "Model image unavailable: current-turn image budget is full."
+        )
+    return "queued", (
+        "Image queued for the next model request."
+        if generated
+        else "Screenshot queued for the next model request; visual review is not yet complete."
+    )
+
+
+def _queue(runtime: Any, call: Any, image: VisionImage) -> bool:
     # Evict only observations already supplied on an earlier generation. A batch
     # with too many unseen captures refuses extras rather than silently losing one.
+    # A computer picture replaces every earlier one (row 196): only the newest screen counts.
+    if call.tool_id == COMPUTER_USE_TOOL_ID:
+        images = runtime.preview_images
+        for stale in [k for k, entry in images.items() if entry.tool_id == COMPUTER_USE_TOOL_ID]:
+            del images[stale]
     while not _room(runtime, image):
         victim = next(
             (key for key, entry in runtime.preview_images.items() if entry.supplied),
             None,
         )
         if victim is None:
-            return "budget_exceeded", _UNSEEN_GENERATED_IMAGE if generated else (
-                "Model image unavailable: current-turn image budget is full."
-            )
+            return False
         del runtime.preview_images[victim]
     runtime.preview_images[call.call_id] = PreviewObservation(image, tool_id=call.tool_id)
-    return "queued", (
-        "Image queued for the next model request."
-        if generated
-        else "Screenshot queued for the next model request; visual review is not yet complete."
+    return True
+
+
+def admit_tool_images(
+    runtime: Any,
+    engine: Any,
+    call: Any,
+    outcome: Any,
+    descriptor: Any,
+) -> tuple[str, str]:
+    """Row 184 W2: queue the first admitted image of a builtin read_file or python_execute.
+
+    Keyed on the tool id, the descriptor and the sidecar's own admitted attachments,
+    never on the payload's claims; the bytes are decoded and validated again here.
+    """
+    images = [
+        entry for entry in getattr(outcome, "trusted_attachments", ()) or ()
+        if isinstance(entry, dict) and entry.get("kind") in _ATTACHMENT_VISION_KINDS
+    ]
+    if (
+        not images
+        or not getattr(outcome, "success", False)
+        or call.tool_id not in ATTACHMENT_VISION_TOOLS
+        or getattr(descriptor, "source_kind", "") != "builtin"
+        or getattr(descriptor, "server_name", "") != BUILTIN_MCP_SERVER_NAME
+    ):
+        return "", ""
+    if runtime is None or not engine_supports_vision(engine):
+        return "unsupported", "The active model cannot see images, so it has not seen this one."
+    first = images[0]
+    try:
+        image = vision_image_from_bytes(
+            base64.b64decode(str(first.get("data_base64") or ""), validate=True),
+            declared_mime_type=str(first.get("mime_type") or ""),
+        )
+    except (VisionInputError, binascii.Error, ValueError):
+        return "unavailable", "Model image unavailable: the image did not pass validation."
+    if not _queue(runtime, call, image):
+        return "budget_exceeded", "Model image unavailable: current-turn image budget is full."
+    more = (
+        f" This result has {len(images)} images; only the first is queued."
+        if len(images) > 1 else ""
     )
+    return "queued", ATTACHMENT_QUEUED + more
 
 
 def prune_previews(runtime: Any, messages: list[Any]) -> None:
@@ -124,6 +208,10 @@ def preview_token_cost(runtime: Any) -> int:
     )
 
 
+# Browser actions whose result is a screenshot (wait ends with one).
+BROWSER_IMAGE_ACTIONS = frozenset({"screenshot", "wait"})
+
+
 def _is_browser_screenshot(call: Any) -> bool:
     """Whether one replayed assistant tool call is a browser screenshot, whatever its shape."""
     if not isinstance(call, dict):
@@ -139,7 +227,7 @@ def _is_browser_screenshot(call: Any) -> bool:
             raw = json.loads(raw)
         except ValueError:
             return False
-    return isinstance(raw, dict) and raw.get("action") == "screenshot"
+    return isinstance(raw, dict) and raw.get("action") in BROWSER_IMAGE_ACTIONS
 
 
 def _with_observations(
@@ -197,12 +285,19 @@ def _with_observations(
             )
         elif row.get("name") == "preview_test" or (
             row.get("name") == BROWSER_USE_TOOL_ID and key in browser_shots
+        ) or (
+            row.get("name") == COMPUTER_USE_TOOL_ID
+            and COMPUTER_PICTURE_MARK in str(row.get("content", ""))
         ):
             output[-1]["content"] = str(row.get("content", "")) + (
                 _EARLIER_REQUEST_RESULT
                 if anchor is not None and index < anchor
                 else _NO_PIXELS_THIS_REQUEST
             )
+        elif row.get("name") in ATTACHMENT_VISION_TOOLS and ATTACHMENT_QUEUED in str(
+            row.get("content", ""),
+        ):
+            output[-1]["content"] = str(row.get("content", "")) + _NO_IMAGE_PIXELS_THIS_REQUEST
         elif unseen_generated and key in unseen_generated:
             output[-1]["content"] = str(row.get("content", "")) + "\n" + _UNSEEN_GENERATED_IMAGE
         if not pending:

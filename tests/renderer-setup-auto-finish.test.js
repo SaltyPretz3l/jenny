@@ -215,9 +215,8 @@ test('a still-pending step refuses the auto-finish', async (t) => {
   assert.equal(state.setup.setupComplete, false);
 });
 
-test('every step reviewed but the gate closed refuses the auto-finish', async (t) => {
-  // Reviewed does not mean ready: skipping workspace root leaves health short of
-  // 'complete', which is exactly the state a disabled Finish button describes.
+test('a skipped workspace folder does not hold back the auto-finish', async (t) => {
+  // The folder is optional: a ready model route alone completes setup.
   const { controller, state, calls } = harness(t, {
     steps: { ...ALL_DONE_STEPS, workspace_root: 'skipped' },
     readiness: {
@@ -230,8 +229,7 @@ test('every step reviewed but the gate closed refuses the auto-finish', async (t
   await controller.init();
   await settle();
 
-  assert.equal(completeCalls(calls).length, 0, 'canFinish false must never auto-finish');
-  assert.equal(state.setup.setupComplete, false);
+  assert.equal(completeCalls(calls).length, 1, 'a model route alone finishes setup');
 });
 
 test('an already-complete setup calls nothing', async (t) => {
@@ -293,9 +291,9 @@ test('an active flow stands the auto-finish down, and Settings can still re-open
   await settle();
   assert.equal(state.setup.setupComplete, true, 'setup persisted itself first');
 
-  // The Settings entry point: showFromSettings routes back to Home...
+  // The Settings entry point leaves the current view alone...
   controller.showFromSettings();
-  assert.equal(views.at(-1), 'home');
+  assert.deepEqual(views, []);
 
   // ...and "Run setup again" still mounts the guided flow even though setup now
   // reports complete -- resumeSetup gates on the STEPS, never on setupComplete.

@@ -363,6 +363,23 @@
   font-weight: var(--tl-weight-body);
   color: var(--tl-status-error);
 }
+
+/* Steps heading (row 192): the Answers summary row as one heading for a turn's
+   work. The lead ("Step 6", "45 steps") carries the label weight; a failed
+   count reads muted because the steps under it carry their own state; the
+   sentence wraps in a narrow pane instead of cutting. */
+.work-ledger-lead {
+  color: var(--text-primary);
+  font-weight: var(--tl-weight-label);
+}
+
+.work-ledger .tool-run-failed {
+  color: var(--text-muted);
+}
+
+.work-ledger .tool-run-summary {
+  white-space: normal;
+}
 /* ── Container rest state: transparent, railless ── */
 
 .reasoning-row-stack {
@@ -502,7 +519,7 @@
 .reasoning-row-panel-body > .reasoning-stream-unit[data-su-fp="elided-note"] > :first-child { margin-top: 0; }
 .reasoning-row-panel-body > .reasoning-stream-unit:last-child > :last-child { margin-bottom: 0; }
 
-/* Live box (row 101 Phase 2, owner pick A; flag reasoning_live_box): in the
+/* Live box (row 101 Phase 2, owner pick A): in the
  * Thinking view a streaming body grows until it fills the chat viewport, then
  * scrolls inside itself so the timeline holds still and the reader sees a
  * screenful at a time. em units follow Appearance text size and chat zoom;
@@ -746,4 +763,24 @@
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+
+/* Row 196 C8/C9: the count under an answer and the held step's pause line (one quiet line each). */
+.computer-step-tally,
+.computer-pause-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--tl-font-ui);
+  color: var(--text-secondary);
+}
+.computer-step-tally {
+  margin-top: var(--space-2);
+}
+.computer-pause-line {
+  padding: var(--space-1) 0 0 var(--space-2);
+}
+.computer-pause-line .btn:first-of-type {
+  margin-inline-start: var(--space-2);
 }

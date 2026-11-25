@@ -8,9 +8,25 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  // api-provider/<instance>/<modelId> shows the provider's own model id.
+  // Row 201 C1 / OD-1: a team model (team/<teamId>/<modelId>) is a third source class beside local and cloud.
+  // The renderer's one predicate: a well-formed team id, or a catalog entry that carries team_id.
+  var TEAM_MODEL_ID = /^team\/(team_[A-Za-z0-9_-]{1,64})\/(.+)$/;
+  function parseTeamModel(value) {
+    var match = TEAM_MODEL_ID.exec(String(value || '').trim());
+    return match ? { teamId: match[1], modelId: match[2] } : null;
+  }
+  function isTeamModel(value) {
+    if (value && typeof value === 'object') {
+      return (typeof value.team_id === 'string' && value.team_id.trim() !== '') || parseTeamModel(value.id) !== null;
+    }
+    return parseTeamModel(value) !== null;
+  }
+
+  // api-provider/<instance>/<modelId> shows the provider's own model id; a team model shows the team's own model id.
   function displayModelId(value) {
     var id = String(value || '').trim();
+    var team = parseTeamModel(id);
+    if (team) return team.modelId;
     var match = /^api-provider\/[a-z][a-z0-9-]{1,31}\/(.+)$/.exec(id);
     return match ? match[1] : id;
   }
@@ -24,11 +40,8 @@
     var remainder = displayModelId(id);
     var org = '';
     var engineHint = '';
-    // A team model (team/<teamId>/<modelId>) shows the team's own model id.
-    var teamMatch = /^team\/team_[A-Za-z0-9_-]{1,64}\/(.+)$/.exec(remainder);
-    if (teamMatch) {
+    if (parseTeamModel(id)) {
       engineHint = 'team';
-      remainder = teamMatch[1];
     } else if (/^codex-cli\//i.test(remainder)) {
       engineHint = 'codex-cli';
       remainder = remainder.replace(/^codex-cli\//i, '');
@@ -65,7 +78,7 @@
     // Row 123: each team is its own group, named by the team.
     var teamId = String(source.teamId || '').trim();
     if (teamId && engineType === 'openai-compatible') {
-      return { key: 'team:' + teamId, label: String(source.teamName || '').trim() || teamId, order: 65 };
+      return { key: 'team:' + teamId, label: String(source.teamName || '').trim() || jt('settings.team.joined.unnamed', 'Unnamed team'), order: 65 };
     }
     // Row 78: each API-key provider is its own group, named by the user's label.
     if (engineType === 'api-provider') {
@@ -259,9 +272,8 @@
     return ' · ' + selectedEffortLabel(source);
   }
 
-  // The model a "Default" chat (preferred_model '') runs on: the Settings
-  // default for local inference unless a cloud engine is active, otherwise the
-  // loaded model. Mirrors backend-chat-model-resolution.js resolveDefaultChatModel.
+  // The model a "Default" chat (preferred_model '') runs on: the Settings default on this PC under any
+  // engine (row 194), otherwise the loaded model. Mirrors backend-chat-model-resolution.js resolveDefaultChatModel.
   function resolveDefaultChatModel(state) {
     var source = state || {};
     var status = source.status || {};
@@ -269,8 +281,8 @@
     var loaded = String(status.model || modelList.active_model || '').trim();
     var loadedEngine = String(status.engine || status.engine_type || modelList.engine_type || '').trim().toLowerCase();
     var preferred = String((source.offline && source.offline.preferredLocalModel) || '').trim();
-    var cloud = loadedEngine === 'chatgpt' || loadedEngine === 'codex-cli' || loadedEngine === 'api-provider';
-    if (!preferred || preferred === loaded || cloud) return { model: loaded, engineType: loadedEngine };
+    if (isTeamModel(preferred)) preferred = ''; // row 201: a saved team id is no default on this PC; it reads as unset
+    if (!preferred || preferred === loaded) return { model: loaded, engineType: loadedEngine };
     // The catalog lists one engine family at a time, so an unlisted default (NInfer while Ollama
     // runs) is still the default; its engine is known only when listed.
     var models = Array.isArray(modelList.data) ? modelList.data : [];
@@ -297,9 +309,15 @@
     var source = input || {};
     var preferredModel = String(source.preferredModel || '').trim();
     var backendModel = String(source.backendModel || '').trim();
+    // Row 194: a Default chat runs on this PC; say so, and say when the model still has to load.
+    var local = backendModel && source.defaultLocal === true;
+    var waits = local && String(source.loadedModel || '').trim() !== backendModel;
     var title = preferredModel
       ? 'Model: ' + displayModelId(preferredModel)
-      : (backendModel ? 'Model: default (' + displayModelId(backendModel) + ')' : 'Model: default');
+      : local ? (waits
+        ? jt('composer.modelPicker.pillDefaultLocalWaits', 'Default: {model}, on this PC. Jenny loads it with your next message', { model: displayModelId(backendModel) })
+        : jt('composer.modelPicker.pillDefaultLocal', 'Default: {model}, on this PC', { model: displayModelId(backendModel) }))
+        : (backendModel ? 'Model: default (' + displayModelId(backendModel) + ')' : 'Model: default');
     if (source.effortSupported === true) {
       title += '. Thinking: ' + selectedEffortLabel(source);
     }
@@ -333,6 +351,48 @@
     return { fit: size >= 7, params_b: Math.round(size * 10) / 10, source: engine !== null ? 'engine' : 'name' };
   }
 
+  /* Row 192 C14: a model that runs on a cloud engine is marked on the model
+     button. The provider is the picker's group label for that engine (a team
+     model is a local endpoint, not a cloud engine). '' for a local model. */
+  var CLOUD_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.6 12.5a3 3 0 0 1-.4-5.97 4 4 0 0 1 7.7 1.02A2.5 2.5 0 0 1 11.5 12.5z"/></svg>';
+  function resolveCloudProvider(modelId, engineType, catalog) {
+    var id = String(modelId || '').trim();
+    var raw = id ? (Array.isArray(catalog) ? catalog : []).find(function (entry) { return entry && String(entry.id || '') === id; }) : null;
+    var source = raw && typeof raw === 'object' ? raw : { id: id };
+    var apiMatch = /^api-provider\/([a-z][a-z0-9-]{1,31})\//.exec(id);
+    var engine = String(source.engine_type || source.engineType || engineType || '').trim().toLowerCase()
+      || (/^codex-cli\//i.test(id) ? 'codex-cli' : apiMatch ? 'api-provider' : /^gpt-(?!oss)/i.test(id) ? 'chatgpt' : ''); // gpt-oss is a local model
+    if (!id || CLOUD_ENGINES[engine] !== 1) return '';
+    return resolveModelGroup({
+      id: id, engineType: engine, provider: source.provider,
+      apiProviderInstanceId: source.apiProviderInstanceId || (apiMatch ? apiMatch[1] : ''),
+    }).label;
+  }
+
+  // { label, title, ariaTitle } for the pill of a chat whose resolved model is a cloud one; null otherwise.
+  function describeCloudPill(inputs, state) {
+    var source = inputs || {};
+    var preferred = String(source.preferredModel || '').trim();
+    var resolved = preferred ? { model: preferred, engineType: '' } : resolveDefaultChatModel(state);
+    var provider = resolveCloudProvider(resolved.model, resolved.engineType, state && state.modelList && state.modelList.data);
+    if (!provider) return null;
+    var title = jt('composer.modelPicker.cloudPillTitle', 'Cloud model. Your messages leave this computer and go to {provider}.', { provider: provider });
+    return {
+      label: jt('composer.modelPicker.cloudPillLabel', '{provider} · {model}', { provider: provider, model: formatComposerModelPillLabel(source) }),
+      title: title,
+      ariaTitle: buildPillTitle(source) + '. ' + title,
+    };
+  }
+
+  // The cloud class and the leading cloud icon on a model pill; both leave with a local model.
+  function syncCloudMark(pill, cloud) {
+    if (!pill) return;
+    if (pill.classList.contains('composer-model-pill--cloud') !== Boolean(cloud)) pill.classList.toggle('composer-model-pill--cloud', Boolean(cloud));
+    var icon = pill.querySelector('.composer-model-pill-cloud-icon');
+    if (cloud && !icon) pill.insertAdjacentHTML('afterbegin', '<span class="inv-chip-icon composer-model-pill-cloud-icon" aria-hidden="true">' + CLOUD_ICON + '</span>');
+    else if (!cloud && icon) icon.remove();
+  }
+
   // Jenny's pinned model, for the Jenny chat's session only.
   function resolvePinnedModel(snapshot, sessionId) {
     var snap = snapshot && typeof snapshot === 'object' ? snapshot : {};
@@ -346,6 +406,8 @@
     classifyCheckModel: classifyCheckModel,
     resolvePinnedModel: resolvePinnedModel,
     displayModelId: displayModelId,
+    isTeamModel: isTeamModel,
+    parseTeamModel: parseTeamModel,
     splitModelId: splitModelId,
     resolveModelGroup: resolveModelGroup,
     normalizeCatalogEntry: normalizeCatalogEntry,
@@ -355,5 +417,8 @@
     formatComposerModelPillLabel: formatComposerModelPillLabel,
     buildPillTitle: buildPillTitle,
     resolveDefaultChatModel: resolveDefaultChatModel,
+    resolveCloudProvider: resolveCloudProvider,
+    describeCloudPill: describeCloudPill,
+    syncCloudMark: syncCloudMark,
   };
 });

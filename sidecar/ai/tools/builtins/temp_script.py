@@ -8,6 +8,8 @@ import os
 import re
 import shutil
 import tempfile
+import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
-from sidecar.ai.tools.builtins import output_chunk_slot
+from sidecar.ai.tools.builtins import new_image_note, output_chunk_slot
 from sidecar.ai.tools.builtins.shell import (
     _parse_command,
     run_command_tool,
@@ -60,6 +62,7 @@ def run_temp_script_tool(
     arguments: dict[str, object], workspace: WorkspaceGuard
 ) -> ToolHandlerResult:
     script, cwd, language = _validated_inputs(arguments)
+    call_started_at = time.time()
     language = language or ("cmd" if os.name == "nt" else "sh")
     temp_root = _create_temp_root()
     extension = SCRIPT_INTERPRETERS[language][1]
@@ -129,6 +132,27 @@ def run_temp_script_tool(
         )
     return _redact_temp_details(
         result, temp_root=temp_root, language=language, interpreter=interpreter,
+        image_note=lambda payload: _script_image_note(
+            payload, script=script, cwd=cwd, workspace=workspace, started_at=call_started_at,
+        ),
+    )
+
+
+def _script_image_note(
+    payload: dict[str, object],
+    *,
+    script: str,
+    cwd: str | None,
+    workspace: WorkspaceGuard,
+    started_at: float,
+) -> str:
+    """Images the script wrote: named in its source or its output."""
+    root = workspace.root
+    bases = [] if root is None or cwd is None else [root / cwd]
+    return new_image_note.new_image_note(
+        root,
+        texts=(script, str(payload.get("stdout") or ""), str(payload.get("stderr") or "")),
+        started_at=started_at, base_dirs=bases,
     )
 
 
@@ -315,7 +339,12 @@ def _redact_temp_path(value: str, temp_root: Path) -> str:
 
 
 def _redact_temp_details(
-    result: ToolHandlerResult, *, temp_root: Path, language: str, interpreter: str | None
+    result: ToolHandlerResult,
+    *,
+    temp_root: Path,
+    language: str,
+    interpreter: str | None,
+    image_note: Callable[[dict[str, object]], str],
 ) -> ToolHandlerResult:
     details = {
         "language": language,
@@ -336,6 +365,8 @@ def _redact_temp_details(
         payload.update(details)
         payload["command"] = "[temporary script]"
         payload.pop("cwd", None)
+        if note := image_note(payload):
+            payload[new_image_note.NOTE_KEY] = note
         if language == "python" and "ModuleNotFoundError:" in str(payload.get("stderr", "")):
             payload["hint"] = (
                 "Temporary Python scripts run outside the workspace. For a workspace "

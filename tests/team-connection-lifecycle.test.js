@@ -175,12 +175,12 @@ test('one refusal on the probe after a lost leave answer is not proof: unconfirm
 
 test('an own-device revoke racing removeTeam writes nothing after the removal', async (t) => {
   const { host, me } = await savedMember(t);
-  const service = host.createService();
+  const service = host.createService({ requestTimeoutMs: 300 });
   await service.startExisting();
   await host.waitForState(me.teamId, 'online');
-  // The revoke commits (the host drops the key, so its answer is lost); the probe's dial is held.
-  const revokeDevice = host.env.store.revokeDevice.bind(host.env.store);
-  host.env.store.revokeDevice = (input) => { host.holdDials(); return revokeDevice(input); };
+  // The revoke's answer is lost with no refusal of the greeted key (a refusal ends the call at once, with no probe;
+  // tests/team-connection-recovery.test.js), so the probe runs; its dial is held.
+  host.env.store.revokeDevice = () => { host.holdDials(); return new Promise(() => {}); };
   const dials = host.reach.dials.length;
   const revoking = service.handle('deviceRevoke', { team_id: me.teamId, device_id: me.device_id });
   assert.ok(await waitUntil(() => host.reach.dials.length > dials), 'the probe is dialling');

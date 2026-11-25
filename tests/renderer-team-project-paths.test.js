@@ -32,7 +32,7 @@ const click = (h, el) => el.dispatchEvent(new h.window.MouseEvent('click', { bub
 const key = (h, el, name, extra = {}) => el.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...extra }));
 const column = (h) => h.view.q('aside.team-preview');
 const logChips = (h) => [...h.view.qa('[data-conv-region="log"] .team-msg__text [data-team-path]')];
-const popChips = (h) => [...h.view.qa('#teamTurnPop [data-team-path]')];
+const popChips = (h) => [...h.view.qa('[id$="teamTurnPop"] [data-team-path]')];
 const leave = (h) => click(h, h.view.q('[data-team-channel="chan_team"]'));
 const menuItems = (h) => [...h.window.document.querySelectorAll('.inv-context-menu [role="menuitem"]')];
 
@@ -51,7 +51,7 @@ async function conversation(t, { answers = {}, files = true, ...options } = {}) 
 async function popover(h) {
   click(h, h.view.q('.team-turn-chip[data-turn-id="turn_1"]'));
   await flush();
-  return h.view.q('#teamTurnPop');
+  return h.view.q('[id$="teamTurnPop"]');
 }
 
 test('path chip opens the explorer: a tool row in Jenny\'s work opens the file in the preview column', async (t) => {
@@ -68,7 +68,7 @@ test('path chip opens the explorer: a tool row in Jenny\'s work opens the file i
   await flush();
   assert.equal(column(h).querySelector('.team-preview__name').textContent, 'app.js');
   assert.deepEqual(h.sent('projectFileRead').map((c) => c.payload), [{ team_id: OTHER, project_id: P1, path: 'src/app.js' }]);
-  assert.equal(h.view.q('#teamTurnPop .team-turn-pop__scroll') !== null, true, 'the popover stays beside it');
+  assert.equal(h.view.q('[id$="teamTurnPop"] .team-turn-pop__scroll') !== null, true, 'the popover stays beside it');
 });
 
 test('a path in Jenny\'s answer is a chip; a path outside the project, a drive, a hidden folder and a bare word stay code', async (t) => {
@@ -99,8 +99,8 @@ test('no chips when the host serves no files: the popover row and the answer sta
   const { h } = await conversation(t, { files: false });
   await popover(h);
   assert.deepEqual([popChips(h).length, logChips(h).length], [0, 0]);
-  assert.equal(h.view.q('#teamTurnPop [data-chat-path-open], #teamTurnPop .tool-path-chip'), null);
-  assert.match(h.view.q('#teamTurnPop').textContent, /src\/app\.js/, 'still readable as text');
+  assert.equal(h.view.q('[id$="teamTurnPop"] [data-chat-path-open], [id$="teamTurnPop"] .tool-path-chip'), null);
+  assert.match(h.view.q('[id$="teamTurnPop"]').textContent, /src\/app\.js/, 'still readable as text');
   const files = h.view.q('[data-project-action="files-open"]');
   assert.equal(files.disabled, true, 'greyed, not hidden');
   assert.match(files.getAttribute('title'), /cannot give Jenny access to files/);
@@ -178,7 +178,7 @@ test('a chip for a file that is gone opens the explorer, which says so', async (
 test('@ in the box offers the project\'s files, filtered as you type, at most 50, and inserts the chosen path', async (t) => {
   const many = Array.from({ length: 120 }, (_v, i) => file('src/part-' + String(i).padStart(3, '0') + '.js'));
   const { h } = await conversation(t, { answers: { projectFiles: page([...ENTRIES, ...many]) } });
-  const field = h.view.q('#teamConversationInput');
+  const field = h.view.q('[id$="teamConversationInput"]');
   const type = (value, at = value.length) => { field.value = value; field.setSelectionRange(at, at); field.dispatchEvent(new h.window.Event('input', { bubbles: true })); };
   const options = () => [...h.view.qa('.team-menu--files [role="option"]')];
   type('look at @');
@@ -210,7 +210,7 @@ test('@ in the box offers the project\'s files, filtered as you type, at most 50
 
 test('the box\'s @ button opens the same picker; a click on an option inserts at the caret', async (t) => {
   const { h } = await conversation(t);
-  const field = h.view.q('#teamConversationInput');
+  const field = h.view.q('[id$="teamConversationInput"]');
   field.value = 'see ';
   field.setSelectionRange(4, 4);
   const at = h.view.q('[data-project-action="at-file"]');
@@ -260,6 +260,16 @@ test('F16: the shown conversation is kept with its project and opened once at th
   }
 });
 
+// Row 201 H22.4: leaving the conversation for a project page (not a channel) also puts the channel back as what is kept.
+test('F16: leaving the shown conversation for its project page forgets it, so the next start opens the channel', async (t) => {
+  const stored = (h) => JSON.parse(h.window.localStorage.getItem('jenny.teamShown.v1') || '{}');
+  const { h } = await conversation(t);
+  assert.deepEqual(stored(h), { [OTHER]: { kind: 'conversation', projectId: P1, sessionId: S1 } });
+  click(h, h.view.qa('[data-team-tab-action="project-open"]')[0]);
+  await flush();
+  assert.deepEqual(stored(h), {}, 'the channel is what is kept again');
+});
+
 test('the Team tab says which conversation is on screen, so Home marks its row', async (t) => {
   const { h } = await conversation(t);
   const notify = require('../renderer/team/renderer-team-notify');
@@ -274,7 +284,7 @@ test('the Team tab says which conversation is on screen, so Home marks its row',
 
 test('file names from the host are text in the picker; the Board\'s column (off) has no chips, no Files button and no picker', async (t) => {
   const { h } = await conversation(t, { answers: { projectFiles: page([file('src/<img src=x onerror=alert(1)>.txt'), file('a/b.js')]) } });
-  const field = h.view.q('#teamConversationInput');
+  const field = h.view.q('[id$="teamConversationInput"]');
   field.value = '@';
   field.setSelectionRange(1, 1);
   field.dispatchEvent(new h.window.Event('input', { bubbles: true }));

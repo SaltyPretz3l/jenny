@@ -502,6 +502,7 @@ module.exports = {
   configurationDigest,
   defaultDocument,
   normalizedServerConfig,
+  normalizeEnv,
   normalizePrompts,
   approvedPrompts,
   projectServerConfig,

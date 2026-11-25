@@ -145,7 +145,8 @@ test('T5: a writer viewing the board decides; every decision is audited with pro
   // A writer who is not viewing the board is refused; so is one viewing another board.
   for (const verb of ['accept', 'reject']) assert.equal(await s.refused(() => decide(s, 'carl', verb, id), verb), 'team_board_not_viewing');
   await view(s, 'bob', Y);
-  assert.equal(await s.refused(() => decide(s, 'bob', 'accept', id, undefined, { id: Y.id, live: X.live }), 'bob'), 'team_board_not_found');
+  // The caller's own rules come before anything is read: a forged pair is a board bob is not viewing in that project.
+  assert.equal(await s.refused(() => decide(s, 'bob', 'accept', id, undefined, { id: Y.id, live: X.live }), 'bob'), 'team_board_not_viewing');
   for (const params of [{ proposal_id: '' }, { proposal_id: id, n: 0 }, { proposal_id: id, n: 1.5 }, { proposal_id: id, action: 'accept' },
     { proposal_id: id, member_id: s.id('alice') }, {}]) {
     assert.equal((await s.h.send('carl', 'team.board.proposal.accept', { ...s.at(X), ...params })).error?.reason,

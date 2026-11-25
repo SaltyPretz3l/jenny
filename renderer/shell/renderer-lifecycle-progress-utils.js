@@ -194,7 +194,7 @@
     if (makeInert) {
       var roots = doc.body.children ? Array.prototype.slice.call(doc.body.children) : [];
       for (var rootIndex = 0; rootIndex < roots.length; rootIndex++) {
-        if (roots[rootIndex] !== overlayEl) { markStartupBranchInert(roots[rootIndex]); }
+        if (roots[rootIndex] !== overlayEl && roots[rootIndex].tagName !== 'SCRIPT') { markStartupBranchInert(roots[rootIndex]); }
       }
       return;
     }

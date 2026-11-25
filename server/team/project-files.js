@@ -52,7 +52,7 @@ const { PATH_INVALID, ROOT_UNAVAILABLE, TARGET_EXISTS } = require('./project-fol
 const { createProjectManifests } = require('./project-manifests');
 const { createProjectQuota } = require('./project-quota');
 const { safeLogger } = require('./safe-logger');
-const { TRANSFER_LIMITS, foldKey } = require('./transfer-manifest');
+const { TRANSFER_LIMITS, foldKey, validateManifest } = require('./transfer-manifest');
 
 // Each operation, and whether it is a receipted mutation (the rest are answered without a receipt).
 const RECEIPTED = Object.freeze({
@@ -266,7 +266,11 @@ function createProjectFiles({
     const key = foldKey(folderName);
     if (child.state !== 'absent' || [...uploads.values()].some((record) => record.projectId === projectId
       && record.folderKey === key)) return hostFailure('conflict', TARGET_EXISTS);
-    const declared = files.reduce((total, entry) => total + (Number.isSafeInteger(entry?.size) ? entry.size : 0), 0);
+    // The manifest is checked (closed entries, non-negative whole sizes, names, hashes) before the quota walk, which
+    // the core would otherwise only reach after: a manifest that cannot be valid costs no walk.
+    const checked = validateManifest(files);
+    if (!checked.ok) return checked;
+    const declared = checked.totalBytes;
     const over = await quota.refusal(projectId, files.length, declared) || quota.diskRefusal(declared);
     if (over) return over;
     const ownerId = ownerKey(actor.member_id, actor.device_id, projectId);
@@ -327,6 +331,10 @@ function createProjectFiles({
       taken.files.map((entry) => ({ path: entry.path, size: entry.size, stagedPath: entry.stagedPath })),
       { ready: () => (turnRunning(record.projectId) !== false ? BUSY : null) });
     forgetUpload(record, { done: true });
+    // Deliberate (row 201): a failed install, a late busy one included (a turn that started during the build), ends the
+    // upload and removes its staging. The build links the staged files into the install folder and unlinks the staged
+    // names, so the verified bytes are no longer in the staging to keep; the member's upload ends with the same
+    // reason word, and the client discards and starts again (it never sends a second commit).
     if (!installed.ok) return { answer: installRefusal(installed.reason), cleanup: true };
     quota.installed(record.projectId, installed.bytes, installed.files);
     listings.delete(record.projectId);

@@ -32,6 +32,8 @@ const {
   noteToolObservationPromotions,
 } = require('./tool-observation-promotion');
 const { releaseImageBridgeExecutions } = require('./electron-tool-bridge');
+const { withRunViewEngineGate } = require('./run-view-tool-gate');
+const { withComputerEngineGate } = require('./computer-use-tool-gate');
 const {
   admitTurnContextRows, managedToolPreferenceInput, wireContextKinds,
   buildLeanContextPreferences,
@@ -314,12 +316,14 @@ async function startManagedSidecarChatStream(service, {
       const lockdownRequest = resolveSessionLockdownRequest(service, sessionSummary,
         { requestedEngine, requestedModel }, managedToolPreferenceInput(toolPreferences, { service, sessionId: resolvedSessionId,
           session: sessionSummary, catalog: service.currentStatus?.tools_status, handoffPreparation: sessionHandoffPreparation, applicationTurn }));
-      const requestToolPreferences = lockdownRequest.toolPreferences;
+      let requestToolPreferences = lockdownRequest.toolPreferences;
       const modelTimingStartedAt = Date.now();
       runtimeAssertCurrent?.();
       // streamId: this turn is already in activeStreams (attachController, above), so the engine-switch guard must not count it as somebody else's live response.
       model = await service._resolveModel(requestedModel, requestedEngine, streamId);
       lockdownRequest.assertResolvedEngine(); // catalog hints / engine pins can switch engines during resolution
+      // The Live tab's look and the computer tool (row 196) go only to a local engine: decided now that the resolver has picked it (only adds denials).
+      requestToolPreferences = withComputerEngineGate(service, withRunViewEngineGate(service, requestToolPreferences));
       runtime.setModel(model);
       recordTiming('chat.model_resolved', modelTimingStartedAt, 'model_resolved', {
         model,
@@ -327,6 +331,8 @@ async function startManagedSidecarChatStream(service, {
       ensureNotAborted();
       // A local GGUF tag is indistinguishable from an Ollama tag by name alone, so ask the running engine.
       const engineType = requestedEngine || String(service?.currentEngineType || '').trim().toLowerCase() || inferEngineTypeFromModel(model);
+      const liveStream = service.activeStreams?.get?.(streamId);
+      if (liveStream) liveStream.engineType = engineType; // row 194: the stats cadence reads the card only for a stream on a local engine
       if (runtimeRoute && (engineType !== runtimeRoute.engine_type
         || String(service.currentEngineType || '').trim().toLowerCase() !== runtimeRoute.engine_type)) {
         throw Object.assign(new Error('The captured provider is no longer selected for this turn.'), {

@@ -29,6 +29,25 @@ test('metadata replaces atomically and rejects corrupt or oversized reads', (t) 
   assert.equal(fs.readFileSync(file, 'utf8'), '{broken');
 });
 
+// H15: a Windows scanner holding the target for a moment fails the rename with EBUSY; the write retries it.
+test('a metadata rename that fails EBUSY twice is retried and lands', (t) => {
+  const file = path.join(fixture(t), 'metadata.json');
+  writeJson(file, { version: 1 });
+  const rename = fs.renameSync;
+  let failures = 0;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (to === file && failures < 2) {
+      failures += 1;
+      throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    }
+    return rename(from, to);
+  });
+  writeJson(file, { version: 2 });
+  assert.equal(failures, 2);
+  assert.deepEqual(readJson(file), { version: 2 });
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), ['metadata.json'], 'no temp file is left');
+});
+
 test('mounted credentials never fall back to arbitrary keys or files', (t) => {
   const directory = fixture(t);
   const store = new FileSecretStore({ directory });

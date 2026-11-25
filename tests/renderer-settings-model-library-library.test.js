@@ -52,7 +52,8 @@ test('scope chips and Show more switch the rows; the catalog collapses to one li
   assert.equal(h.card.querySelector('[data-inv-chip="scope-get"]').getAttribute('aria-pressed'), 'true');
   click(h.windowRef, h.card.querySelector('[data-inv-chip="scope-mine"]'));
   assert.deepEqual(rowKeys(h), ['installed:1b']);
-  assert.equal(h.card.querySelector('.mp-more--inlist'), null);
+  assert.equal(h.card.querySelector('.mp-more--inlist:not(.mlib-cloud-note)'), null, 'the "more fit" line is gone');
+  assert.equal(h.card.querySelector('.mrow-list > :last-child').className, 'mp-more mp-more--inlist mlib-cloud-note', 'the cloud line ends the list in every scope');
 });
 
 test('typing in the search field filters in place, keeps the input node focused with its caret, and the Pull row is the one primary button', async (t) => {
@@ -142,7 +143,8 @@ test('a refresh with unchanged data keeps every row node', async (t) => {
   await flush();
   click(h.windowRef, h.card.querySelector('[data-model-library-section-action="show-catalog"]'));
   const before = [...h.card.querySelectorAll('.mrow-list > *')];
-  assert.equal(before.length, 3);
+  assert.equal(before.length, 4, 'two rows, the separator and the cloud line');
+  assert.ok(before[3].classList.contains('mlib-cloud-note'));
   await h.controller.refresh({ force: true });
   const after = [...h.card.querySelectorAll('.mrow-list > *')];
   assert.equal(after.length, before.length);

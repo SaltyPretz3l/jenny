@@ -4,9 +4,7 @@ Owns the non-streaming/streaming router turn (``_build_router_response``).
 
 Import direction: this module imports the shared leaf helpers from
 ``chat_response_builders`` and the decision serializer from
-``chat_decision_render``.  Patch targets that tests set on the
-``sidecar.runtime.chat`` module object (``AgentExecutor``) are resolved late
-through ``_chat_hub`` so the monkeypatch surface stays intact.
+``chat_decision_render``.
 """
 
 from __future__ import annotations
@@ -19,9 +17,7 @@ from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
     is_feature_flag_enabled,
 )
-from sidecar.ai.routing.agent_executor import AgentExecutor, AgentProgressEvent
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-from sidecar.protocol import AGENT_PROGRESS_METHOD
 from sidecar.runtime.chat_decision_render import _chat_response_from_decision
 from sidecar.runtime.chat_helpers import notification_context
 from sidecar.runtime.chat_models import (
@@ -39,7 +35,6 @@ from sidecar.runtime.chat_tool_observations import chat_response_with_tool_obser
 from sidecar.runtime.diagnostics import diagnostics_context
 from sidecar.runtime.ipc_payloads import IpcPayloadExternalizer
 from sidecar.runtime.multiplexer import TurnCancellationHandle
-from sidecar.runtime.rpc import notification
 
 
 def _build_router_response(
@@ -60,41 +55,11 @@ def _build_router_response(
     cancel_handle: TurnCancellationHandle | None = None,
     canonical_seq_state: dict[str, int] | None = None,
 ) -> ChatResponse:
-    from . import chat as _chat_hub
-
     request_id = request_context.request_id
     trace_id = request_context.trace_id
     session_id = request_context.session_id
     stack = brain_container.stack
     payload_externalizer = IpcPayloadExternalizer.from_config(stack.config)
-    progress_notifications: list[dict[str, Any]] = []
-
-    def emit_agent_progress(event: AgentProgressEvent) -> None:
-        progress_payload: dict[str, Any] = {
-            **notification_context(request_id, trace_id=trace_id, session_id=session_id),
-            "task_id": event.task_id,
-            "task_type": event.task_type,
-            "source": event.source,
-            "status": event.status,
-            "stage": event.stage,
-            "percent": event.percent,
-            "summary": event.summary,
-            "message": event.summary,
-            "terminal": event.terminal,
-            "success": event.success,
-        }
-        if event.agent_id:
-            progress_payload["agent_id"] = event.agent_id
-        if event.parent_agent_id:
-            progress_payload["parent_agent_id"] = event.parent_agent_id
-        if event.terminal_subcode:
-            progress_payload["terminal_subcode"] = event.terminal_subcode
-        progress_notifications.append(
-            notification(
-                AGENT_PROGRESS_METHOD,
-                progress_payload,
-            )
-        )
 
     # -- Build LoopRuntime with event serialization callback ----------
     from sidecar.ai.routing.iteration_limits import (
@@ -250,7 +215,6 @@ def _build_router_response(
             sub_agent_slot_allocator=getattr(stack, "sub_agent_slot_allocator", None),
         )
 
-    executor: AgentExecutor | None = None
     with diagnostics_context(
         request_id=request_id,
         trace_id=trace_id,
@@ -260,46 +224,26 @@ def _build_router_response(
         try:
             if cancel_handle is not None:
                 cancel_handle.raise_if_cancelled()
-            feature_flags = stack.config.feature_flags or {}
-            if _chat_hub._executor_runtime_enabled(feature_flags):
-                executor = _chat_hub.AgentExecutor(
-                    router=stack.router,
-                    on_progress=emit_agent_progress,
-                    feature_flags=feature_flags,
-                )
-                decision = executor.execute(
-                    request_context=request_context,
-                    messages=messages,
-                    latest_user_content=latest_user_content,
-                    learned_lessons=learned_lessons,
-                    canonical_session_messages=(
-                        canonical_session_messages
-                        if isinstance(canonical_session_messages, list)
-                        else None
-                    ),
-                    runtime=runtime,
-                )
-            else:
-                decision = stack.router.build_chat_decision(
-                    request_context=request_context,
-                    request_id=request_id,
-                    messages=messages,
-                    latest_user_content=latest_user_content,
-                    mode=request_context.mode,
-                    approvals_pre_granted=request_context.approvals_pre_granted,
-                    session_id=session_id,
-                    learned_lessons=learned_lessons,
-                    reasoning_effort=request_context.reasoning_effort,
-                    session_start_date=request_context.session_start_date,
-                    canonical_session_messages=(
-                        canonical_session_messages
-                        if isinstance(canonical_session_messages, list)
-                        else None
-                    ),
-                    runtime=runtime,
-                    plan_mode=request_context.plan_mode,
-                    tool_preferences=request_context.tool_preferences,
-                )
+            decision = stack.router.build_chat_decision(
+                request_context=request_context,
+                request_id=request_id,
+                messages=messages,
+                latest_user_content=latest_user_content,
+                mode=request_context.mode,
+                approvals_pre_granted=request_context.approvals_pre_granted,
+                session_id=session_id,
+                learned_lessons=learned_lessons,
+                reasoning_effort=request_context.reasoning_effort,
+                session_start_date=request_context.session_start_date,
+                canonical_session_messages=(
+                    canonical_session_messages
+                    if isinstance(canonical_session_messages, list)
+                    else None
+                ),
+                runtime=runtime,
+                plan_mode=request_context.plan_mode,
+                tool_preferences=request_context.tool_preferences,
+            )
         except TerminalChatStateError as error:
             if runtime is not None:
                 from sidecar.ai.routing.tool_loop import flush_unflushed_terminal_output
@@ -309,7 +253,6 @@ def _build_router_response(
                 request_id=request_id,
                 status=error.status,
                 terminal_subcode=error.terminal_subcode,
-                notifications=progress_notifications,
                 tool_observation_stack=stack,
             )
         except ToolExecutionFailure as error:
@@ -333,7 +276,7 @@ def _build_router_response(
             ChatResponse(
                 request_id=request_id,
                 result={"request_id": request_id, "status": "awaiting_approval"},
-                notifications=progress_notifications,
+                notifications=[],
                 approval_request={
                     **notification_context(request_id, trace_id=trace_id, session_id=session_id),
                     **decision.approval_request.to_payload(),
@@ -349,7 +292,6 @@ def _build_router_response(
         session_title=session_title,
         brain_container=brain_container,
         decision=decision,
-        progress_notifications=progress_notifications,
         budget_messages=messages,
         stream_notifications=stream_notifications,
         notification_writer=notification_writer,

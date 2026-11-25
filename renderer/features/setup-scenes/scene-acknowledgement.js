@@ -37,7 +37,6 @@
         id: 'setupAcknowledgement',
         eyebrow: jt('setup.acknowledgement.eyebrow', 'Before you start'),
         title: jt('setup.acknowledgement.title', 'How Jenny works'),
-        status: ' ',
         bodyHtml: bodyHtml,
         actions: [{
           id: 'continue',
@@ -45,6 +44,24 @@
           variant: 'primary',
         }],
       });
+    }
+
+    // The header status pill exists only to explain a failed save; it is added
+    // in place so the pressed button (and its focus) survives as Retry.
+    function showSaveFailed() {
+      var status = rootEl.querySelector('.inv-step-modal-status');
+      var row = rootEl.querySelector('.inv-step-modal-title-row');
+      if (!status && row) {
+        status = rootEl.ownerDocument.createElement('span');
+        status.className = 'inv-step-modal-status';
+        row.appendChild(status);
+      }
+      if (status) {
+        status.setAttribute('role', 'alert');
+        status.textContent = jt('setup.acknowledgement.saveFailed', 'Could not save your answer. Try again.');
+      }
+      var button = rootEl.querySelector('[data-step-modal-action="continue"]');
+      if (button) button.textContent = jt('common.retry', 'Retry');
     }
 
     function syncContinueState() {
@@ -56,8 +73,8 @@
     async function handleContinue() {
       if (continueInFlight || !rootEl) return;
       continueInFlight = true;
-      var status = rootEl.querySelector('.inv-step-modal-status');
-      if (status) status.textContent = '';
+      var staleStatus = rootEl.querySelector('.inv-step-modal-status');
+      if (staleStatus) staleStatus.remove();
       syncContinueState();
       try {
         await onContinue();
@@ -66,14 +83,7 @@
           message: error && error.message ? error.message : String(error),
         });
         continueInFlight = false;
-        if (rootEl) {
-          if (status) {
-            status.setAttribute('role', 'alert');
-            status.textContent = jt('setup.acknowledgement.saveFailed', 'Could not save your answer. Try again.');
-          }
-          var button = rootEl.querySelector('[data-step-modal-action="continue"]');
-          if (button) button.textContent = jt('common.retry', 'Retry');
-        }
+        if (rootEl) showSaveFailed();
         syncContinueState();
       }
     }

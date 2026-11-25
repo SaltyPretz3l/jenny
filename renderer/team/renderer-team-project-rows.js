@@ -5,6 +5,12 @@
  * as the body. The hover toolbar has Copy on a row with saved text and "Show work" on Jenny's rows; reactions, pins,
  * replies and edit are not here (the host has no route for them on a project conversation's messages).
  *
+ * Keyboard (C10.1): the rows are one tab stop with a roving index, as the #team timeline's are: `rove(scroll)` leaves
+ * exactly one `.team-msg` at tabindex 0 (the one the reader was on, else the last), `key(event, scroll)` moves it with
+ * the arrow keys, Home and End, `note(event, scroll)` follows a click or a Tab into a row. The toolbar's buttons are
+ * tab stops of their own row (the toolbar shows while the row has the focus), and the Menu key or Shift+F10 on the
+ * row opens the message menu (renderer-team-project-actions.js): Branch, Regenerate, Edit and resend.
+ *
  * Text from the host is untrusted: names are cleaned of control, bidi and zero-width characters and escaped; a body
  * reaches the page only through the `markdown` the controller passes (the app's sanitized rendering). `lead` and `foot`
  * come from the controller as trusted markup. Each row's markup is kept by its id while what it draws stays the same,
@@ -29,6 +35,7 @@
   const COPY_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5v-7a1 1 0 0 1 1-1h7"/></svg>';
   const WORK_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><path d="M9.5 3.5v9"/></svg>';
   const SEP = '\u0000';
+  const rowKey = (el) => (el.dataset.turnId ? 't:' + el.dataset.turnId : 'm:' + (el.dataset.messageId || ''));
 
   const str = (v) => (typeof v === 'string' ? v : '');
   const when = (v) => (typeof v === 'string' || typeof v === 'number' ? v : '');
@@ -38,6 +45,7 @@
   function createRows({ nameOf, markdown, liveMarkdown = markdown, timeText, dayLabel }) {
     const cache = new Map(); // 'm:' or 't:' + id -> { key, html }
     const bodies = new Map(); // the same key -> { text, html }
+    let active = ''; // the key of the row that holds the tab stop
     const nameFor = (id) => tl.clean(nameOf(id), 64);
 
     // As renderer-team-channels.js resolves an author, with the person's name ("Maya", not "You", as #team).
@@ -78,9 +86,9 @@
     function actsHtml(s) {
       const copyLabel = jt('team.conv.copy', 'Copy message');
       const workLabel = jt('team.turn.showWorkTitle', 'Show Jenny’s work');
-      const work = s.turn ? actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: workLabel, title: workLabel, tabIndex: -1,
+      const work = s.turn ? actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: workLabel, title: workLabel,
         dataset: { 'project-action': 'turn-open', 'turn-id': s.id }, trustedHtml: WORK_ICON }) : '';
-      const copy = s.copyId ? actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: copyLabel, title: copyLabel, tabIndex: -1,
+      const copy = s.copyId ? actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: copyLabel, title: copyLabel,
         dataset: { 'project-action': 'copy', 'message-id': s.copyId }, trustedHtml: COPY_ICON }) : '';
       if (!work && !copy) return '';
       return '<div class="team-acts" role="toolbar" aria-label="' + escapeHtml(jt('team.acts.label', 'Message actions')) + '">' + work + copy + '</div>';
@@ -136,6 +144,25 @@
       },
       size: () => cache.size,
       clear() { cache.clear(); bodies.clear(); },
+      // The roving tab stop over the rows in `scroll`: after each write of the log, the one row that holds it again.
+      rove(scroll) {
+        const list = Array.from(scroll.querySelectorAll('.team-msg'));
+        const stop = list.find((el) => rowKey(el) === active) || list[list.length - 1];
+        for (const el of list) if (el.tabIndex !== (el === stop ? 0 : -1)) el.tabIndex = el === stop ? 0 : -1;
+      },
+      // A row (or a control in it) took the focus: it holds the tab stop now.
+      note(event, scroll) {
+        const el = event.target && event.target.closest ? event.target.closest('.team-msg') : null;
+        if (!el || !scroll.contains(el)) return;
+        active = rowKey(el);
+        this.rove(scroll);
+      },
+      // Arrow keys, Home and End on a focused row (the #team timeline's own move).
+      key(event, scroll) {
+        row.moveRowFocus(event, scroll);
+        const now = scroll.ownerDocument.activeElement;
+        if (now && now.classList && now.classList.contains('team-msg') && scroll.contains(now)) active = rowKey(now);
+      },
     };
   }
 

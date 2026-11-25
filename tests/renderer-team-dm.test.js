@@ -409,8 +409,9 @@ test('fix 1: the standing line never shrinks (the names give way) and takes its 
   const wide = css.slice(0, narrowAt);
   const narrow = css.slice(narrowAt);
   assert.match(wide, /\.team-head__name\[title\] \{ flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; \}/u, 'the names truncate');
-  assert.match(wide, /\.team-head__sub\[data-standing="true"\] \{ flex: 0 0 auto; min-width: max-content; overflow: visible; \}/u,
-    'the line keeps its whole sentence: no shrink, its own width as the floor');
+  assert.match(wide, /\.team-head__sub\[data-standing="true"\] \{ flex: 0 0 auto; min-width: 0; max-width: 100%; overflow: visible; white-space: normal; \}/u,
+    'the line keeps its whole sentence: no shrink, it wraps onto a row of its own when the header is too narrow (H23.5)');
+  assert.match(wide, /\.team-head:has\(> \.team-head__sub\[data-standing="true"\]\) \{ flex-wrap: wrap; row-gap: 2px; \}/u, 'also in a 3-column layout over 720 px');
   assert.match(narrow, /\.team-head:has\(> \.team-head__sub\[data-standing="true"\]\) \{ flex-wrap: wrap;/u);
   assert.match(narrow, /\.team-head__sub\[data-standing="true"\] \{ display: inline; order: 1; flex-basis: 100%; min-width: 0; white-space: normal; \}/u,
     'under 720 px it is shown on a row of its own and wraps rather than cut');

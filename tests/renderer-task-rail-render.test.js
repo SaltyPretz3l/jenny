@@ -206,7 +206,7 @@ test('buildSessionChecklist keeps the finished snapshot when todo_write clears a
   assert.deepEqual(buildSessionChecklist([cleared]), { items: [], updatedAt: '' });
 });
 
-test('task rail renders checklist groups per filter and keeps checklist rows read-only', () => {
+test('the Tasks list shows follow-ups only: Jenny\'s checklist lives in Session', () => {
   const rows = buildTaskRows({
     currentSessionId: 'current',
     sessions: [{ id: 'current', linked_task_id: 'follow-up' }],
@@ -222,33 +222,14 @@ test('task rail renders checklist groups per filter and keeps checklist rows rea
     { content: 'Working item', status: 'in_progress' },
     { content: 'Finished item', status: 'completed' },
   ], updatedAt: '2026-09-21T09:00:00.000Z' };
+  for (const filter of ['open', 'done', 'all']) {
+    const html = renderTaskRailSurface(rows, { filter }, { checklist, checklistFoldOpen: true });
+    assert.doesNotMatch(html, /checklist|task-rail-check|Pending item|Working item|Finished item/i, filter);
+  }
   const openHtml = renderTaskRailSurface(rows, { filter: 'open' }, { checklist });
-  // The panel header carries the title; the rail's toolbar row carries the counts.
-  assert.match(openHtml, /<span class="inv-segmented-option-label">Open 3<\/span>[\s\S]*?<span class="inv-segmented-option-label">Done 1<\/span>/);
+  // The toolbar row counts follow-ups only: the open step and the finished step are not tasks.
+  assert.match(openHtml, /<span class="inv-segmented-option-label">Open 1<\/span>[\s\S]*?<span class="inv-segmented-option-label">Done<\/span>/);
   assert.doesNotMatch(openHtml, /task-rail-title-text|task-rail-summary|task-rail-footer/);
-  assert.match(openHtml, /<b>Jenny&#39;s checklist<\/b><span>1 of 3 done<\/span>/);
-  assert.match(openHtml, /data-check-status="pending"[\s\S]*?Pending item/);
-  assert.match(openHtml, /data-check-status="in_progress"[\s\S]*?Working item[\s\S]*?class="task-rail-check-meta">now/);
-  // Finished steps fold into one line in Open; the fold opens them in place.
-  assert.doesNotMatch(openHtml, /Finished item/);
-  assert.match(openHtml, /<button[^>]*class="task-rail-check-fold"[^>]*data-action="task-rail-checklist-fold"[^>]*aria-expanded="false"[\s\S]*?<span>1 done<\/span><\/button>/);
-  const checklistMarkup = openHtml.slice(
-    openHtml.indexOf('class="task-rail-check"'),
-    openHtml.indexOf('<div class="task-rail-group"><b>Follow-ups</b>')
-  );
-  assert.doesNotMatch(checklistMarkup, /data-inv-checkbox|data-action=/);
-  // Unfolded, the fold stays as the toggle that folds them back.
-  const unfolded = renderTaskRailSurface(rows, { filter: 'open' }, { checklist, checklistFoldOpen: true });
-  assert.match(unfolded, /data-action="task-rail-checklist-fold"[^>]*aria-expanded="true"[\s\S]*Pending item[\s\S]*Working item[\s\S]*Finished item/);
-
-  const doneHtml = renderTaskRailSurface(rows, { filter: 'done' }, { checklist });
-  assert.match(doneHtml, /Finished item/);
-  assert.doesNotMatch(doneHtml, /Pending item|Working item|task-rail-check-fold/);
-  const allHtml = renderTaskRailSurface(rows, { filter: 'all' }, { checklist });
-  assert.match(allHtml, /Pending item/);
-  assert.match(allHtml, /Working item/);
-  assert.match(allHtml, /Finished item/);
-  assert.doesNotMatch(allHtml, /task-rail-check-fold/);
 });
 
 test('a follow-up row is its title and one fact; the title opens notes, origin and the chat action', () => {
@@ -440,7 +421,7 @@ test('All projects omits empty groups and counts only open rows in a heading', (
   assert.match(all, /<b>Beta<\/b><span>0 open<\/span>/);
 });
 
-test('the filter counts what the scope shows: open follow-ups plus open checklist steps', () => {
+test('the filter counts the follow-ups the scope shows', () => {
   const rows = scopedRows([
     { followUpId: 'a1', title: 'A1', projectId: 'project_a' },
     { followUpId: 'a2', title: 'A2', projectId: 'project_a' },
@@ -451,11 +432,9 @@ test('the filter counts what the scope shows: open follow-ups plus open checklis
   const all = renderTaskRailSurface(rows, UI, { scope: scopeHelper({ mode: 'all', projectId: '', projectName: '' }) });
   assert.equal(label(all, 'open'), 'Open 3');
   assert.equal(label(all, 'done'), 'Done 1');
-  const scoped = renderTaskRailSurface(rows, UI, {
-    scope: scopeHelper(), checklist: { items: [{ content: 'Step', status: 'pending' }, { content: 'Was', status: 'completed' }] },
-  });
-  assert.equal(label(scoped, 'open'), 'Open 3', 'two Alpha follow-ups and one open step');
-  assert.equal(label(scoped, 'done'), 'Done 2');
+  const scoped = renderTaskRailSurface(rows, UI, { scope: scopeHelper() });
+  assert.equal(label(scoped, 'open'), 'Open 2', 'the two Alpha follow-ups');
+  assert.equal(label(scoped, 'done'), 'Done 1');
   const empty = renderTaskRailSurface([], UI, { scope: scopeHelper() });
   assert.equal(label(empty, 'open'), 'Open', 'no count when there is nothing');
   assert.equal(label(empty, 'done'), 'Done');
@@ -480,13 +459,12 @@ test('empty copy names the project for a single-project Open filter and is uncha
   assert.match(every, /No tasks yet\. Ask Jenny to file one, or add one above\./);
 });
 
-test('the checklist stays first and visible in every scope', () => {
+test('an empty scope shows the empty copy, never a checklist', () => {
   const checklist = { items: [{ content: 'Chat step', status: 'pending' }], updatedAt: '' };
   const rows = scopedRows([{ followUpId: 'b1', title: 'Beta one', projectId: 'project_b' }]);
   const html = renderTaskRailSurface(rows, UI, { checklist, scope: scopeHelper() });
-  assert.match(html, /<b>Jenny&#39;s checklist<\/b>/);
-  assert.match(html, /Chat step/);
-  assert.doesNotMatch(html, /No open tasks in/, 'the empty copy is only for an empty list');
+  assert.doesNotMatch(html, /Chat step/);
+  assert.match(html, /No open tasks in Alpha/);
 });
 
 test('send-list sits on the first follow-up heading and only while the scope has open follow-ups', () => {
@@ -506,4 +484,46 @@ test('send-list sits on the first follow-up heading and only while the scope has
   const allScope = renderTaskRailSurface(mixed, { filter: 'all' }, { scope: scopeHelper({ mode: 'all', projectId: '', projectName: '' }) });
   assert.match(allScope, /<b>Alpha<\/b><span>0 open &middot; this chat<\/span><\/div>[\s\S]*<b>Beta<\/b><span>1 open<\/span><button[^>]*data-action="task-rail-send-list"/);
   assert.equal((allScope.match(/task-rail-send-list/g) || []).length, 1);
+});
+
+test('the Tasks content starts with one head row: the project name and a Tasks | Notes switch carrying the open count', () => {
+  const rows = scopedRows([
+    { followUpId: 'w1', title: 'Site copy', projectId: 'project_web' },
+    { followUpId: 'w2', title: 'Site footer', projectId: 'project_web' },
+    { followUpId: 'w3', title: 'Site done', projectId: 'project_web', section: 'done' },
+  ]);
+  const names = new Map([['project_web', 'Website']]);
+  const html = renderTaskRailSurface(rows, UI, {
+    scope: scopeHelper({ projectId: 'project_web', projectName: 'Website', chatProjectId: 'project_web', projectNames: names, projectOrder: ['project_web'] }),
+  });
+  assert.equal((html.match(/class="project-tab-head"/g) || []).length, 1);
+  assert.match(html, /<section class="task-rail-surface"[^>]*><div class="project-tab-head">/);
+  assert.match(html, /<b class="project-tab-name" title="Website">Website<\/b>/);
+  const group = html.match(/<div class="inv-segmented[^"]*" role="radiogroup" aria-label="Show tasks or notes"[^>]*>([\s\S]*?)<\/div>/);
+  assert.ok(group, 'the switch is a radio group named for what it does');
+  const radios = group[1].match(/<button[^>]*role="radio"[^>]*>[\s\S]*?<\/button>/g) || [];
+  assert.equal(radios.length, 2);
+  assert.match(radios[0], /data-value="tasks"[^>]*aria-checked="true"|aria-checked="true"[^>]*data-value="tasks"/);
+  assert.match(radios[0], />Tasks 2</, 'open follow-ups only: the finished one is not counted');
+  assert.match(radios[1], /data-value="notes"[^>]*aria-checked="false"/);
+  assert.match(radios[1], />Notes</);
+});
+
+test('the head row says "No project" without one, escapes the name and carries the full name in title', () => {
+  const none = renderTaskRailSurface([], UI, {});
+  assert.match(none, /<b class="project-tab-name" title="No project">No project<\/b>/);
+  assert.match(none, />Tasks<\/span><\/button>/, 'no count at zero');
+  const html = renderTaskRailSurface([], UI, { scope: scopeHelper({ projectNames: new Map([['project_a', '<i>Long</i> name']]) }) });
+  assert.equal(html.includes('<i>Long</i>'), false);
+  assert.ok(html.includes('title="&lt;i&gt;Long&lt;/i&gt; name"'));
+});
+
+test('the Undo line shows only while a deleted task can still come back; its row stays hidden', () => {
+  const rows = scopedRows([{ followUpId: 'a1', title: 'Alpha one', projectId: 'project_a' }, { followUpId: 'a2', title: 'Alpha two', projectId: 'project_a' }]);
+  const calm = renderTaskRailSurface(rows, UI, { scope: scopeHelper() });
+  assert.doesNotMatch(calm, /project-tab-undo/);
+  const state = { companion: { openLoopsBoard: { active: [task({ followUpId: 'a1', projectId: 'project_a' }), task({ followUpId: 'a2', title: 'Two', projectId: 'project_a' })], deferred: [], recentResolved: [], archived: [] } }, ui: { taskRail: { hiddenIds: ['a1'] } } };
+  assert.deepEqual(buildTaskRows(state).map((row) => row.followUpId), ['a2'], 'a held-back deletion is out of the list');
+  const held = renderTaskRailSurface(rows, { ...UI, pendingDelete: { id: 'a1', projectId: 'project_a' } }, { scope: scopeHelper() });
+  assert.match(held, /<div class="task-rail-list">[\s\S]*<\/div><div class="project-tab-undo" role="status"><span>Task deleted\.<\/span><button[^>]*data-action="task-rail-undo-delete"[^>]*>[\s\S]*?Undo[\s\S]*?<\/button><\/div><\/section>/);
 });

@@ -26,6 +26,7 @@
 // - Force local (E64) refuses every call and feeds no event; a revoked or dropped team closes its boards, and each
 //   open one is told `gone` (`team_board_closed`), so the page reads it again and shows why it cannot.
 
+const { ENTRIES_MAX } = require('../../server/team/boards/board-host-index');
 const ids = require('../boards/board-ids');
 const { createBoardClient } = require('./board-client');
 const { importBoard } = require('./board-import');
@@ -38,7 +39,8 @@ const { failureAnswer, invalidRequest, isFailureAnswer, teamFailure } = require(
 const { liveLink } = require('./transfer-common');
 
 const MAX_OPEN = 8;
-const MAX_ROWS = 256;
+// A project holds at most the host index's entries, live and in the trash together: a list of that many is whole.
+const MAX_ROWS = ENTRIES_MAX;
 const NAME_MAX = 200;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const WORD = /^[a-z][a-z0-9_]{0,79}$/u;
@@ -47,13 +49,15 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const isRev = (value) => Number.isSafeInteger(value) && value >= 0;
 const isName = (value) => typeof value === 'string' && value.length >= 1 && value.length <= NAME_MAX;
 const isMember = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 160;
+// The host index rebuilds a board it could not read with no known creator (`created_by: null`).
+const isCreator = (value) => value === null || isMember(value);
 const invalidAnswer = () => teamFailure('CONNECTION_FAILED', 'team_response_invalid');
 const word = (value) => (typeof value === 'string' && WORD.test(value) ? value : null);
 
 // A host list row as the renderer sees it, or null: exactly these fields, each checked.
 function row(value, deleted) {
   if (!isObject(value) || !ids.isBoardId(value.id) || !isName(value.name) || !isRev(value.rev)) return null;
-  if (!ISO.test(value.created_at) || !ISO.test(value.updated_at) || !isMember(value.created_by)) return null;
+  if (!ISO.test(value.created_at) || !ISO.test(value.updated_at) || !isCreator(value.created_by)) return null;
   const out = { id: value.id, name: value.name, rev: value.rev, created_at: value.created_at, updated_at: value.updated_at,
     created_by: value.created_by };
   if (!deleted) return out;

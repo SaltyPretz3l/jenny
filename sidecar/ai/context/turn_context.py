@@ -3,8 +3,8 @@
 llama-server and Ollama reuse only the longest byte-identical prefix of the
 previous request, and a hybrid recurrent model (Ornith 1.5, ``qwen35``) reuses
 nothing at all once the prompt changes before its end. Context that changes
-with every user message (the requested-tool hint, the workspace listing, the
-task capsule, memory recall, Electron's active-file and codebase overlays)
+with every user message (the requested-tool hint, the workspace listing,
+memory recall, Electron's active-file and codebase overlays)
 therefore cannot sit in the leading system run: it would re-prefill the whole
 conversation on every follow-up turn.
 
@@ -56,7 +56,6 @@ TURN_CONTEXT_BASE_KEY = "turn_context_base"
 TURN_SECTION_NAMES: tuple[str, ...] = (
     "requested_tool_availability",
     "workspace_manifest",
-    "task_capsule",
     "current_info_guidance",
     "workspace_source_guidance",
 )

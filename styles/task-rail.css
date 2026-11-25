@@ -1,28 +1,34 @@
-.chat-timeline-tasks-toggle {
-  position: relative;
+/* The Project tab's one head row: the project's name, then Tasks | Notes. */
+.project-tab-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-block-end: 1px solid var(--border-subtle);
 }
 
-.chat-timeline-utility-count {
-  position: absolute;
-  top: -4px;
-  inset-inline-end: -5px;
-  min-width: 1.35em;
-  height: 1.35em;
-  padding: 0 0.3em;
-  border: 1px solid var(--bg-base);
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--widget-button-primary-color);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  /* em box: the count grows with the caption role under Text size. */
-  line-height: calc(1.35em - 2px);
-  text-align: center;
+.project-tab-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-footnote);
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
-.chat-timeline-utility-count[hidden],
-.chat-timeline-utility-count[data-task-count="0"] {
-  display: none;
+/* The line under a list after a delete: muted footnote text and Undo; no box, no border. */
+.project-tab-undo {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
 }
 
 /* Tasks keeps the shared 36px header (title "Tasks" and its Close). */
@@ -226,77 +232,6 @@
   color: var(--accent);
 }
 
-/* Jenny's checklist: the task-rail 6 px dots; the step she is on reads first. */
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold {
-  display: grid;
-  grid-template-columns: var(--tl-dot-size) minmax(0, 1fr) auto;
-  column-gap: var(--space-4);
-  align-items: baseline;
-  margin: 0 var(--space-3);
-  padding: var(--space-2) var(--space-3);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-text {
-  color: var(--text-secondary);
-  font-size: var(--font-size-body);
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-meta {
-  color: var(--tl-status-active);
-  font-size: var(--font-size-caption);
-}
-
-/* The dot sits on the text's x-height, not above the first line. */
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-dot {
-  width: var(--tl-dot-size);
-  height: var(--tl-dot-size);
-  border-radius: 50%;
-  background: var(--text-decorative);
-  transform: translateY(-1px);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-text {
-  color: var(--text-primary);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-dot {
-  background: var(--tl-status-active);
-  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-dot,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold .task-rail-check-dot {
-  background: var(--tl-status-ok);
-  opacity: 0.7;
-}
-
-/* Marked off like a finished follow-up, so All reads at a glance. */
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-text {
-  color: var(--text-muted);
-  text-decoration: line-through;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold {
-  width: calc(100% - 2 * var(--space-3));
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--font-size-footnote);
-  text-align: start;
-  cursor: pointer;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold:hover,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold:focus-visible {
-  background: var(--rail-hover-bg);
-  color: var(--text-secondary);
-}
-
 /* Follow-up rows: checkbox, title, one fact. No dividers; hover like the chat list. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
   margin: 0 var(--space-3);
@@ -450,34 +385,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-dot {
-    animation: none;
-  }
-
   .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
     transition: none;
   }
 }
 
-/* Project notes entry (FG-002 C3): toggle accent dot and the chat row for a Jenny write. */
-.chat-timeline-notes-toggle {
-  position: relative;
-}
-
-.chat-timeline-notes-dot {
-  position: absolute;
-  inset-block-start: 3px;
-  inset-inline-end: 3px;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-}
-
-.chat-timeline-notes-dot[hidden] {
-  display: none;
-}
-
+/* Project notes entry (FG-002 C3): the chat row for a Jenny write. */
 /* In a narrow chat pane the actions wrap under the text instead of clipping
    Undo to its first letter. */
 .notes-chat__row {

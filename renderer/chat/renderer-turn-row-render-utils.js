@@ -41,6 +41,7 @@
   const toolCallUtils = resolveTurnRowModule('toolCallUtils', './tool-call-utils');
   const interactiveCards = resolveTurnRowModule('rendererTurnRowInteractiveCards', './renderer-turn-row-interactive-cards');
   const planDocumentUtils = resolveTurnRowModule('rendererPlanDocument', '../features/renderer-plan-document');
+  const computerStepDisplay = resolveTurnRowModule('rendererComputerStepDisplay', './renderer-computer-step-display');
 
   // Class-E projected-row call-id resolver (2-key subset, payload-first), shared with
   // tool-call-utils.resolveProjectedRowCallId; falls back to the same String().trim()
@@ -391,7 +392,8 @@
             disabled: renderOptions.resumeSendBusy === true,
           })
         : '';
-      return `${kickerMarkup}${bubbleMarkup}${sourceListMarkup}${attachmentsMarkup}${buildDiscardedReceiptMarkup(row, sourceMessage, renderOptions)}${resumeMarkup}`;
+      const computerTallyMarkup = bubbleMarkup ? computerStepDisplay?.buildTallyMarkup(row, renderOptions, escapeHtml) || '' : '';
+      return `${kickerMarkup}${bubbleMarkup}${sourceListMarkup}${computerTallyMarkup}${attachmentsMarkup}${buildDiscardedReceiptMarkup(row, sourceMessage, renderOptions)}${resumeMarkup}`;
     }
 
     function buildReasoningRenderMessage(row, messages, options) {
@@ -634,10 +636,10 @@
         : '';
     }
 
-    function buildPlanDocumentRowMarkup(row) {
+    function buildPlanDocumentRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       return planDocumentUtils?.fullDocumentMarkup
-        ? planDocumentUtils.fullDocumentMarkup(payload, { escapeHtml, renderMarkdown })
+        ? planDocumentUtils.fullDocumentMarkup(payload, { escapeHtml, renderMarkdown, ...planDocumentUtils.describePlanRow(payload.plan_id, options?.siblingRows, options?.rowIndex, messages) })
         : '';
     }
 
@@ -726,6 +728,8 @@
         /* Same-turn dedupe (renderer-turn-row-error-dedupe-utils.js): one card per failed turn; a suppressed row returns '' HERE so it cannot leak back in via the fallback below. */
         const dedupe = resolveTurnErrorDedupe(row, options, normalizeId);
         if (dedupe.suppress) return '';
+        // A calm stop under the latest plan it cut off: the plan card says so and offers Build it (row 198).
+        if (errorRecoveryUtils?.resolveErrorSeverity?.(renderMessage) === 'calm' && planDocumentUtils?.hasStoppedLatestPlan?.(options?.siblingRows, messages)) return '';
         const errorCodeMarkup = buildErrorCodeNoticeMarkup(row, renderMessage, dedupe.suppressedErrors, messages, options);
         if (errorCodeMarkup) {
           return errorCodeMarkup;

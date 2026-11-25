@@ -338,12 +338,12 @@ test('caps at the edge and one past: 400 messages, 32 tools, 32 receipts, 16 out
   assert.match(box(edge), /Up to 3 messages can wait\. Send or discard one first\./);
   const chip = edge.q('[data-conv-region="live"] .team-turn-chip');
   chip.click();
-  assert.ok(edge.q('#teamTurnPop'), 'the popover is open');
+  assert.ok(edge.q('[id$="teamTurnPop"]'), 'the popover is open');
   edge.restore();
-  assert.equal(edge.q('#teamTurnPop'), null, 'dispose closes the popover');
+  assert.equal(edge.q('[id$="teamTurnPop"]'), null, 'dispose closes the popover');
   assert.equal(edge.conv.resources().listeners, 0);
   chip.click();
-  assert.equal(edge.q('#teamTurnPop'), null, 'no listener answers a click');
+  assert.equal(edge.q('[id$="teamTurnPop"]'), null, 'no listener answers a click');
   assert.equal(edge.sent('conversationSend').length, 0, 'nothing queued was sent');
   queues._reset();
   const outcomes = Array.from({ length: 17 }, (_v, i) => request({ request_seq: i + 1, asker_member_id: DOT, session_id: S1, state: 'allowed', answered_by: MAYA, outcome_tool: 'edit_file', rule_seq: i + 1 }));
@@ -387,7 +387,7 @@ test('hostile text at 500 characters: a project, a title, a tool, a member, a fo
   m.frame();
   // The popover's sub line names whose turn it was and the model that answered.
   m.q('.team-turn-chip[data-turn-id="after:m1"]').click();
-  assert.match(m.q('#teamTurnPop .team-turn-pop__title span').textContent, /<b data-evil.*’s turn.*<u data-evil/);
+  assert.match(m.q('[id$="teamTurnPop"] .team-turn-pop__title span').textContent, /<b data-evil.*’s turn.*<u data-evil/);
   m.conv.push({ kind: 'viewers', session_id: S1, viewers: ['member_evil'] });
   for (const seq of [4, 5]) m.conv.push({ kind: 'rule_answered', session_id: S1, request_seq: seq, outcome: 'allowed' });
   await flush();
@@ -512,7 +512,7 @@ test('the pen is greyed with its reason for a reader and while another member dr
   await flush();
   assert.deepEqual([pen(m).disabled, pen(m).getAttribute('title')], [true, 'Maya is driving. You can rename when their turn ends']);
   pen(m).click();
-  assert.equal(m.q('#teamConversationTitle'), null);
+  assert.equal(m.q('[id$="teamConversationTitle"]'), null);
   m.event('control_changed', { state: 'released' });
   assert.equal(pen(m).disabled, false);
 });
@@ -566,11 +566,11 @@ test('in the tab: the hint opens Settings > Team, and a GPU appearing removes it
   assert.match(region(h).textContent, /Nobody is sharing a GPU with Dot lab right now/);
   region(h).querySelector('[data-conv-box="above"] button').click();
   assert.deepEqual(h.opened, ['team']);
-  const input = region(h).querySelector('#teamConversationInput');
+  const input = region(h).querySelector('[id$="teamConversationInput"]');
   pools([NODE]);
   await flush();
   assert.doesNotMatch(region(h).textContent, /Nobody is sharing/);
-  assert.equal(region(h).querySelector('#teamConversationInput'), input, 'the same field: no reload');
+  assert.equal(region(h).querySelector('[id$="teamConversationInput"]'), input, 'the same field: no reload');
   assert.equal(h.sent('conversationOpen').length, 1);
 });
 

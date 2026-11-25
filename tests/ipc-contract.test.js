@@ -584,12 +584,12 @@ test('apiProviders descriptors pin the ten invoke channels and the changed subsc
   assert.equal(keys.some((key) => /get-?key|readKey/i.test(key)), false);
 });
 
-test('backgroundJobs descriptors pin the snapshot, kill, output-tail, clear-finished and changed channels', () => {
+test('backgroundJobs descriptors pin the snapshot, kill, output-tail, clear-finished, restore-finished and changed channels', () => {
   const expected = {
     'backgroundJobs.getState': { kind: 'invoke', channel: 'background-jobs:get-state' },
     'backgroundJobs.kill': { kind: 'invoke', channel: 'background-jobs:kill' },
     'backgroundJobs.readOutput': { kind: 'invoke', channel: 'background-jobs:read-output' },
-    'backgroundJobs.clearFinished': { kind: 'invoke', channel: 'background-jobs:clear-finished' },
+    'backgroundJobs.clearFinished': { kind: 'invoke', channel: 'background-jobs:clear-finished' }, 'backgroundJobs.restoreFinished': { kind: 'invoke', channel: 'background-jobs:restore-finished' },
     'backgroundJobs.onChanged': { kind: 'subscribe', channel: 'background-jobs:changed' },
   };
   for (const [method, descriptor] of Object.entries(expected)) {

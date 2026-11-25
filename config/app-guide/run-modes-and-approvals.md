@@ -7,7 +7,7 @@ Run modes decide how much Jenny asks before it acts. Approvals are the individua
 The run-mode chip in the composer shows the current mode. Click it for a menu, or press Shift+Tab in the message box to cycle Ask, Auto, Plan, Propose. Alt+P toggles Plan directly. You can change mode while a reply is streaming. Pending approvals stay pending and are decided under the mode they were raised in; the new mode applies to later calls.
 
 - Ask (the default): Jenny asks before running tools that change things. Read-only inspection does not necessarily ask; each tool's approval policy decides.
-- Auto: tools run without asking. Python, blocked commands and explicit denies still prompt, and destructive shell commands still ask. Turning on Auto shows a confirmation dialog ("Turn on Auto run?") that also states your inactivity-pause setting.
+- Auto: tools run without asking. That includes Python in the project folder (it can still reach files and the network outside it) and deleting a file Jenny wrote or edited earlier in the same turn. Python with no project folder, other deletes, blocked commands and explicit denies still prompt, and destructive shell commands still ask. Turning on Auto shows a confirmation dialog ("Turn on Auto run?") that also states your inactivity-pause setting.
 - Plan: read-only. Jenny plans first and presents the plan before acting.
 - Propose: Jenny suggests exact changes for you to review. Nothing in your files changes until you accept.
 

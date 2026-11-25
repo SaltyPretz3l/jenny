@@ -12,20 +12,22 @@ function modelEntry(node, modelId) {
 /**
  * Whether `node` may serve a lease for `want` ({ model, wantsVision,
  * allowedNodes }). `allowedNodes` is null or absent for any node, else the node
- * ids the lease may use. Options: excludedNodeId
- * (the retry exclusion for this conversation key), ignoreSlots (eligibility in
- * principle, used before queueing). A model's context length never decides
- * eligibility: each turn is sized for its own leased model (slice 4f).
+ * ids the lease may use. Options: excludedNodeIds
+ * (the retry exclusions for this conversation key), ignoreSlots (eligibility in
+ * principle, used before queueing), permit (a last check, asked only of a node
+ * that passed every other test: false refuses it; the host's re-check that a
+ * node's owner may read the conversation). A model's context length never
+ * decides eligibility: each turn is sized for its own leased model (slice 4f).
  */
-function isEligible(node, want, { excludedNodeId = null, ignoreSlots = false } = {}) {
+function isEligible(node, want, { excludedNodeIds = null, ignoreSlots = false, permit = null } = {}) {
   if (!node.online || node.paused) return false;
   if (want.allowedNodes && !want.allowedNodes.includes(node.node_id)) return false;
   if (!ignoreSlots && node.busy_slots >= node.slots) return false;
-  if (excludedNodeId !== null && node.node_id === excludedNodeId) return false;
+  if (excludedNodeIds !== null && excludedNodeIds.includes(node.node_id)) return false;
   const entry = modelEntry(node, want.model);
   if (!entry) return false;
   if (want.wantsVision && entry.vision !== true) return false;
-  return true;
+  return permit === null || permit(node) === true;
 }
 
 function servedBefore(a, b) {
@@ -37,8 +39,8 @@ function servedBefore(a, b) {
  * eligible node with the oldest last_served_at (registration order breaks ties).
  * Returns null when no eligible node has a free slot.
  */
-function chooseNode(nodes, want, { affinityNodeId = null, excludedNodeId = null } = {}) {
-  const eligible = nodes.filter((node) => isEligible(node, want, { excludedNodeId }));
+function chooseNode(nodes, want, { affinityNodeId = null, excludedNodeIds = null, permit = null } = {}) {
+  const eligible = nodes.filter((node) => isEligible(node, want, { excludedNodeIds, permit }));
   if (eligible.length === 0) return null;
   const affinity = affinityNodeId === null ? null : eligible.find((node) => node.node_id === affinityNodeId);
   if (affinity) return affinity;
@@ -50,13 +52,14 @@ function onlineSlots(nodes) {
   return nodes.reduce((sum, node) => (node.online && !node.paused ? sum + node.slots : sum), 0);
 }
 
-// The union of online models by id (smallest context length: two nodes serving one
+// The union of models by id over the nodes that can take work now (online and not paused: a paused node
+// advertises nothing and lowers no minimum), with the smallest context length (two nodes serving one
 // model, the smaller is the safe one; any vision or thinking), the largest of those
 // lengths across models (what the gateway's /props reports), and the online slots.
 function poolSummary(nodes) {
   const union = new Map();
   for (const node of nodes) {
-    if (!node.online) continue;
+    if (!node.online || node.paused) continue;
     for (const entry of node.models) {
       const prior = union.get(entry.id);
       const lengths = [prior?.context_length, entry.context_length].filter((n) => Number.isSafeInteger(n));

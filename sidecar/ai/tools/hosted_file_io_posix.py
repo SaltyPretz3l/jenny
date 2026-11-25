@@ -13,7 +13,7 @@ import logging
 import os
 import secrets
 import stat
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
@@ -252,7 +252,18 @@ def write_atomic(  # noqa: PLR0913
             _regular(temporary_status)
             if _identity(temporary_status) != temporary_identity:
                 raise path_failure()
-            os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            if previous is None and expected is None:
+                # An exclusive create: `link` fails on a name that appeared since the check, where
+                # `replace` would clobber it. The temporary name is dropped once the leaf is linked.
+                try:
+                    os.link(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd,
+                            follow_symlinks=False)
+                except FileExistsError:
+                    return False
+                with suppress(OSError):  # the cleanup below retries it
+                    os.unlink(temporary, dir_fd=parent_fd)
+            else:
+                os.replace(temporary, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
             try:
                 os.fsync(parent_fd)
             except OSError as error:

@@ -275,12 +275,10 @@
   background: var(--bg-surface);
 }
 
-.board-toolbar {
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.board-toolbar::-webkit-scrollbar {
+/* A tool that does not fit is hidden by the toolbar script and listed in its More menu; the bar never scrolls or clips. */
+.board-toolbar [data-board-tool][hidden],
+.board-toolbar [data-board-more][hidden],
+.board-toolbar .board-sep[hidden] {
   display: none;
 }
 
@@ -574,7 +572,13 @@
 }
 
 .board-list__new {
+  flex-wrap: wrap;
   gap: var(--space-1);
+}
+
+/* In a narrow list column a button label stays on one line; a whole button moves to the next row instead. */
+.board-list__new > * {
+  white-space: nowrap;
 }
 
 /* ---- 500-card pass (row 150 hardening, P5-A): cards far outside the view cost the browser nothing ------------ */

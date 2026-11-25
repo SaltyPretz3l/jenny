@@ -125,7 +125,7 @@
       get terminals() { return terminals; }, get testOutputPanel() { return testOutputPanel; }, get testRunnerWiring() { return testRunnerWiring; },
       get themeBridge() { return themeBridge; }, get toErrorMessage() { return toErrorMessage; }, get tree() { return tree; },
       get watchController() { return watchController; }, get welcome() { return welcome; }, get windowRef() { return windowRef; },
-      get wordWrap() { return wordWrap; }, get workbenchWiring() { return workbenchWiring; }, get workspaceChats() { return workspaceChats; },
+      get wordWrap() { return wordWrap; }, get workbenchWiring() { return workbenchWiring; }, get gitLinks() { return gitLinks; },
     };
     const lifecycle = viewLifecycleUtils.createIdeViewLifecycle({
       state, getDom, windowRef, registerCleanup, appendClientLog, getIde, ideStateUtils, editorPrefsUtils, commandsUtils, parts,
@@ -427,7 +427,7 @@
       appendClientLog, showShellErrorToast, showToastMessage, renderTabs, schedulePersist, requestRender: renderIde, showPanel,
       onChange: () => { tree?.applyGitDecorations(); statusBar?.render(); gutterDecorations?.refreshActive(); },
       // F8 (row 40 W6): rows Jenny changed carry a marker that opens her turn in Changes.
-      getJennyChange: (path) => workspaceChats?.jennyChangeFor(path) || null,
+      getJennyChange: (path) => gitLinks?.jennyChangeFor(path) || null,
       onOpenJennyChange: ({ turnId, fileKey }) => ideChatDock?.openChanges?.({ turnId, fileKey }),
       // Single Source Control view; its host + active-gate follow the panel's
       // location like the other panels.
@@ -475,8 +475,8 @@
       showShellErrorToast,requestRender:renderIde,setActiveView:callbacks.setActiveView});
     // Focus fallback when a panel closes or hides: the editor (true only if focus got there).
     const focusIdeEditor = () => { editorHost?.focus?.(); const host = getDom().ideEditorHost; return Boolean(host?.contains?.(host.ownerDocument?.activeElement)); };
-    // The Workspace's chats (row 40 W6) and the Workspace Chat Dock (ide_chat_dock), built in renderer-ide-controller-wiring.js.
-    const { workspaceChats, ideChatDock } = wiring.createChatSurfaces(parts);
+    // The chat's Git links (row 40 W6 F8) and the Workspace Chat Dock (ide_chat_dock), built in renderer-ide-controller-wiring.js.
+    const { gitLinks, ideChatDock } = wiring.createChatSurfaces(parts);
     // Layout: the workbench reconcile, then every panel's render (each self-targets
     // its own view host and self-gates on its view being visible), then the dock.
     const layout = layoutUtils.createIdeLayout?.({
@@ -731,7 +731,7 @@
         return await task.sendCommand(command) === true ? { ok: true, session_id: task.getSessionId() || sessionId } : { ok: false, reason: 'send_failed' };
       },
       // Transcript diff rows resolve a ledger changeId to its record and open the diff://change/ review tab.
-      openLedgerChangeById: (changeId, options) => { const id = String(changeId || '').trim(); const ledger = options?.secondChat === true ? workspaceChats?.secondLedger() : getChangeLedger(); const change = id ? (ledger?.changes || []).find((entry) => String(entry?.changeId || '') === id) : null; return change ? openChangeDiff(change, { pane: options?.secondChat === true ? 1 : 0 }) : false; },
+      openLedgerChangeById: (changeId) => { const id = String(changeId || '').trim(); const ledger = getChangeLedger(); const change = id ? (ledger?.changes || []).find((entry) => String(entry?.changeId || '') === id) : null; return change ? openChangeDiff(change, { pane: 0 }) : false; },
     };
   }
 

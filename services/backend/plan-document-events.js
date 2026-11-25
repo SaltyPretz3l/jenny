@@ -297,7 +297,8 @@ function markAcceptedPlanApproved({ service, sessionId, planId }) {
   }
   const latest = latestMessage?.plan_document;
   if (!latest || String(latest.plan_id || '') !== pid) return { ok: false, reason: 'not_latest' };
-  if (String(latest.state || '') !== 'accepted') return { ok: false, reason: 'not_accepted' };
+  // A latest plan cut off by a stop before a decision is buildable too (row 198).
+  if (!['accepted', 'abandoned'].includes(String(latest.state || ''))) return { ok: false, reason: 'not_accepted' };
   const plan = normalizePlan(latest);
   if (!plan) return { ok: false, reason: 'unrenderable' };
   if (typeof store.appendTurnEvents !== 'function') return { ok: false, reason: 'unavailable' };
@@ -316,7 +317,7 @@ function markAcceptedPlanApproved({ service, sessionId, planId }) {
   if (priorEvent) {
     approvedEvent = {
       ...priorEvent,
-      event_id: String(priorEvent.event_id || '').replace(/:accepted$/u, ':approved'),
+      event_id: String(priorEvent.event_id || '').replace(/:(accepted|abandoned)$/u, ':approved'),
       event_seq: undefined, status: 'approved', completed_at: new Date().toISOString(),
       payload: { ...(priorEvent.payload || {}), transition: 'approved', render_collapsed: true },
     };

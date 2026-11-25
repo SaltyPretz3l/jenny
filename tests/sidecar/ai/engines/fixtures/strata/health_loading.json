@@ -1,0 +1,11 @@
+{
+ "status": "ok",
+ "max_context": 0,
+ "model": "inkling-2-mini-sq-20",
+ "family": "inkling2",
+ "images": false,
+ "api_key": false,
+ "image_generation": false,
+ "loaded": false,
+ "service": "strata"
+}

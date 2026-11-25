@@ -300,23 +300,27 @@ test('a paired propose_command result renders the proposal card, anything else k
   }
 });
 
-test('row 178: an allowed terminal_run receipt links to the terminal its paired result names', () => {
-  require('../renderer/chat/renderer-approval-block-cards');
+// Row 192 D2 A moved the receipt onto the step: the answered row renders empty, and the
+// allowed terminal_run step itself keeps the "Open in terminal" link (row 178) beside its note.
+test('row 178: an allowed terminal_run step links to the terminal its paired result names; its answered row is empty', () => {
+  const previousCards = globalThis.rendererApprovalBlockCards;
+  globalThis.rendererApprovalBlockCards = require('../renderer/chat/renderer-approval-block-cards'); // the app's load order
   const opened = [];
   globalThis.rendererChatTerminalPanel = { open: (options) => { opened.push(options); return Promise.resolve(true); } };
   try {
     const renderer = createToolRenderer({ renderApprovalBlock });
     const gap = (decision) => ({ kind: 'approval_gap', turn_id: 't1', tool_call_id: 'call-t', payload: { tool_call_id: 'call-t', tool_name: 'terminal_run', state: 'resolved', decision, input: { command: 'winget install x' } } });
+    const call = { kind: 'tool_call', turn_id: 't1', row_id: 'r-t', tool_call_id: 'call-t', payload: { tool_call_id: 'call-t', tool_name: 'terminal_run', state: 'completed', input: { command: 'winget install x' } } };
     const result = { kind: 'tool_result', tool_call_id: 'call-t', payload: { tool_call_id: 'call-t', tool_name: 'terminal_run', metadata: { result_kind: 'terminal_run', terminal: 3 } } };
-    const html = renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [gap('allowed'), result] });
-    assert.match(html, /data-terminal-open-slot="3"/);
-    assert.match(html, /data-terminal-open-session="s-1"/);
-    // Denied, no paired result, or no panel: no link.
-    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('denied'), [], { sessionId: 's-1', siblingRows: [result] }), /data-terminal-open-slot/);
-    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [] }), /data-terminal-open-slot/);
+    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [gap('allowed'), result] }), /data-terminal-open-slot/);
+    const step = renderer.buildToolCallRowMarkup(call, [], { sessionId: 's-1', siblingRows: [call, gap('allowed'), result], pairedToolResultRow: result });
+    assert.match(step, /data-terminal-open-slot="3"/);
+    assert.match(step, /data-terminal-open-session="s-1"/);
+    assert.match(step, /tool-call-approval-note" data-approval-decision="allowed"/);
     delete globalThis.rendererChatTerminalPanel;
-    assert.doesNotMatch(renderer.buildApprovalGapMarkup(gap('allowed'), [], { sessionId: 's-1', siblingRows: [result] }), /data-terminal-open-slot/);
+    assert.doesNotMatch(renderer.buildToolCallRowMarkup(call, [], { sessionId: 's-1', siblingRows: [call, result], pairedToolResultRow: result }), /data-terminal-open-slot/);
   } finally {
     delete globalThis.rendererChatTerminalPanel;
+    globalThis.rendererApprovalBlockCards = previousCards;
   }
 });

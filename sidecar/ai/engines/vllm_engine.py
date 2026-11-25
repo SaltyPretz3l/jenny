@@ -11,6 +11,7 @@ from sidecar.ai.engines.local_server_props import (
     ThinkingControl,
     context_length_from_props,
     probe_server_modalities,
+    props_base_url,
     thinking_control_from_props,
     vision_from_props,
 )
@@ -217,6 +218,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         name = str(model_path or "").strip()
         if not name:
             raise ValueError("model_path must not be empty")
+        self._json_mode_failures = 0  # the consecutive-failure latch counts one binding
         try:
             models = self._query_models()
             if models is None:
@@ -225,6 +227,8 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
             served = [str(m.get("id", "")) for m in models if isinstance(m, dict)]
             matched = next((s for s in served if _model_matches(name, s)), None)
             if matched is None:
+                if not served and self._server_reports_loading():
+                    raise EngineConnectionError(self._build_loading_message())
                 available = ", ".join(served) if served else "(none)"
                 raise EngineConnectionError(self._build_not_serving_message(name, available))
 
@@ -305,6 +309,12 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         return (
             f"{self._DISPLAY_NAME} server is not reachable. Start it with "
             f"'{self._START_COMMAND_HINT}' or ensure it is already running."
+        )
+
+    def _build_loading_message(self) -> str:
+        return (
+            f"{self._DISPLAY_NAME} at {self._base_url} is still loading its model. "
+            "Wait for it to finish, then try again."
         )
 
     def _build_not_serving_message(self, requested: str, available: str) -> str:
@@ -434,6 +444,24 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
     def _assert_ready(self) -> None:
         if not self._ready or not self.model_name:
             raise ModelNotLoadedError()
+
+    def _server_reports_loading(self) -> bool:
+        """Whether the server's root ``/health`` says its model is still loading.
+
+        A server that is restarting its engine lists no models, which reads the
+        same as a server serving something else. Only a JSON object whose
+        ``loaded`` is exactly ``False`` counts; any other answer, or none, keeps
+        the plain "not serving" error. Never raises.
+        """
+        # An absolute URL: ``/health`` lives at the server root, beside ``/v1``.
+        # The engine's own pooled service sends it, with the engine's headers.
+        try:
+            body = self._service.get_json(
+                f"{props_base_url(self._base_url)}/health", timeout=_HEALTH_TIMEOUT_SECONDS
+            )
+            return isinstance(body, dict) and body.get("loaded") is False
+        except Exception:  # noqa: BLE001 - an optional probe never raises.
+            return False
 
     def _query_models(self) -> list[dict[str, Any]] | None:
         """Probe ``/models``, or ``None`` when the server is unreachable.

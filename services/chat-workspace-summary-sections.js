@@ -303,6 +303,64 @@ function backgroundJobEntries(rows, seen, entries) {
   }
 }
 
+// The Live tab's program (services/run-view `runsForChat` rows already filtered
+// to this project). `state` is the token the Runs list reads; `run_state` is the
+// raw run state. Idle and unknown states are not tasks.
+const LIVE_STATES = Object.freeze({
+  building: 'running',
+  starting: 'running',
+  no_window: 'running',
+  running: 'running',
+  minimized: 'running',
+  stopping: 'running',
+  close_refused: 'running',
+  build_failed: 'failed',
+  ended_early: 'failed',
+  closed: 'completed',
+});
+const LIVE_BUCKETS = Object.freeze({ running: 'active', failed: 'failed', completed: 'completed' });
+
+function liveState(row) {
+  return Object.hasOwn(LIVE_STATES, row?.state) ? LIVE_STATES[row.state] : null;
+}
+
+function isoOfMs(value) {
+  const ms = msOrNull(value);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+function liveItem(row, sessionId) {
+  return {
+    source_kind: 'live_run',
+    operation_id: `live:${row.projectId}`,
+    session_id: sessionId,
+    project_id: row.projectId,
+    state: liveState(row),
+    run_state: row.state,
+    title: boundedTitle(row.label) || '',
+    started_at: isoOfMs(row.startedAtMs),
+    finished_at: isoOfMs(row.endedAtMs),
+    exit_code: Number.isInteger(row.exitCode) ? row.exitCode : null,
+    output_ref: null,
+  };
+}
+
+function liveEntries(rows, seen, entries) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const state = liveState(row);
+    const id = typeof row?.projectId === 'string' && row.projectId ? `live:${row.projectId}` : '';
+    if (!state || !id || seen.has(id)) continue;
+    seen.add(id);
+    entries.push({
+      bucket: LIVE_BUCKETS[state],
+      live: state === 'running',
+      at: msOrNull(row.endedAtMs) || msOrNull(row.startedAtMs) || 0,
+      row,
+      run: true,
+    });
+  }
+}
+
 function workspaceTestEntries(rows, seen, entries) {
   for (const row of Array.isArray(rows) ? rows : []) {
     const id = String(row?.runId || '');
@@ -339,31 +397,35 @@ function linkedEntries(rows, seen, entries) {
 // summaries of the session's direct linked children (null when the session
 // runtime is unavailable). `jobRows` is the background-job tracker's
 // snapshots for this session (null when the tracker is unavailable).
-// session_runtime (the session's own work) has no
-// per-session source yet and is reported unsupported unless a caller says
-// otherwise, so coverage stays partial and a zero count is withheld (null =
-// "not known"): a nonzero count is a certain lower bound, zero would claim
+// `liveRows` is the Live tab's run for this chat and project. A composition
+// without the Live tab has no such run, so it never counts as unsupported.
+// The chat's own foreground turn is not a background task, so it is not a
+// source here (it was once listed as an unsupported session_runtime source,
+// which kept every summary partial). When one of the three real sources is
+// unsupported, coverage is partial and a zero count is withheld (null = "not
+// known"): a nonzero count is a certain lower bound, zero would claim
 // completeness. Rows are deduplicated across sources by operation id.
 function buildBackgroundTasksSection({
-  sampledAt, sessionId, rows, workspaceTestSupported, sessionRuntimeSupported = false, linkedRows = null, jobRows = null,
+  sampledAt, sessionId, rows, workspaceTestSupported, linkedRows = null, jobRows = null, liveRows = null,
   failedSources = [],
 }) {
   const linkedSupported = Array.isArray(linkedRows);
   const jobsSupported = Array.isArray(jobRows);
+  const liveList = Array.isArray(liveRows) ? liveRows : [];
   const unsupported = [];
   if (!workspaceTestSupported) unsupported.push('workspace_test');
-  if (!sessionRuntimeSupported) unsupported.push('session_runtime');
   if (!linkedSupported) unsupported.push('linked_chat_turn');
   if (!jobsSupported) unsupported.push('background_job');
   const coverage = unsupported.length === 0 ? 'complete' : 'partial';
   let counts = { active: null, waiting: null, failed: null, completed: null };
   let items = [];
-  if (workspaceTestSupported || linkedSupported || jobsSupported) {
+  if (workspaceTestSupported || linkedSupported || jobsSupported || liveList.length > 0) {
     const seen = new Set();
     const entries = [];
     if (workspaceTestSupported) workspaceTestEntries(rows, seen, entries);
     if (linkedSupported) linkedEntries(linkedRows, seen, entries);
     if (jobsSupported) backgroundJobEntries(jobRows, seen, entries);
+    liveEntries(liveList, seen, entries);
     const tally = { active: 0, waiting: 0, failed: 0, completed: 0 };
     for (const entry of entries) tally[entry.bucket] += 1;
     counts = Object.fromEntries(Object.entries(tally)
@@ -371,7 +433,7 @@ function buildBackgroundTasksSection({
     items = entries
       .sort((left, right) => Number(!left.live) - Number(!right.live) || right.at - left.at)
       .slice(0, MAX_TASK_ITEMS)
-      .map((entry) => (entry.job ? jobItem(entry.row, sessionId)
+      .map((entry) => (entry.job ? jobItem(entry.row, sessionId) : entry.run ? liveItem(entry.row, sessionId)
         : entry.linked ? linkedItem(entry.row) : taskItem(entry.row, sessionId)));
   }
   return section(failedSources.length ? 'stale' : 'available', {

@@ -43,6 +43,10 @@
     function ninferFlagEnabled() { return state.features?.featureFlags?.ninfer === true; }
     function ninferLibraryInput() { return d.getEngineBlocks()?.ninfer()?.libraryInput() || null; }
 
+    // The Strata block (row 200) follows its own kill switch; an ineligible state renders nothing.
+    function strataFlagEnabled() { return state.features?.featureFlags?.strata === true; }
+    function strataLibraryInput() { return d.getEngineBlocks()?.strata()?.libraryInput() || null; }
+
     function mergeSignature() {
       return [
         activeModel(),
@@ -51,6 +55,7 @@
         JSON.stringify(state.localEngines?.openaiCompatible?.managed || null),
         Boolean(state.accelerationCatalog),
         JSON.stringify(ninferLibraryInput()),
+        JSON.stringify(strataLibraryInput()),
       ].join('\n');
     }
 
@@ -114,9 +119,10 @@
           families: state.accelerationCatalog?.families || [],
         },
         ninfer: ninferLibraryInput(),
+        strata: strataLibraryInput(),
       });
       // The pull-recommendation an empty chat offers is an Ollama tag; an NInfer row downloads through its block.
-      var recommended = result.cards.find(function (card) { return card.recommended === true && card.fitState === 'fits' && card.installed !== true && card.selectedEngine !== 'ninfer'; });
+      var recommended = result.cards.find(function (card) { return card.recommended === true && card.fitState === 'fits' && card.installed !== true && card.selectedEngine !== 'ninfer' && card.selectedEngine !== 'strata'; });
       var previousTag = state.modelRecommendation?.tag;
       state.modelRecommendation = recommended ? { tag: recommended.tag, downloadSizeMb: recommended.downloadSizeMb } : null;
       if (previousTag !== state.modelRecommendation?.tag) windowRef.dispatchEvent(new windowRef.CustomEvent('jenny:model-state-changed'));
@@ -145,6 +151,8 @@
       imageEngineFlagEnabled: imageEngineFlagEnabled,
       ninferFlagEnabled: ninferFlagEnabled,
       ninferLibraryInput: ninferLibraryInput,
+      strataFlagEnabled: strataFlagEnabled,
+      strataLibraryInput: strataLibraryInput,
       signatureUnchanged: signatureUnchanged,
       buildMerged: buildMerged,
     };

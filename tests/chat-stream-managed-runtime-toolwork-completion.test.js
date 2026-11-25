@@ -183,3 +183,40 @@ test('visible text still completes exactly as before when a tool ran', async () 
     'a normal visible answer is never duplicated with fallback text'
   );
 });
+
+test('a turn that ends on the next-step card settles without the fallback text', async () => {
+  const { service, persistedMessages, logs } = buildServiceStub();
+  const runtime = buildRuntime(service, 'stream-toolwork-next-step');
+
+  sendToolRoundTrip(runtime, { success: true, callId: 'call_commit' });
+  runtime.handleNotification({
+    method: 'tool.result',
+    params: { tool_call_id: 'call_card', tool_name: 'suggest_next_step', success: true },
+  }, NOTIFICATION_DEPS);
+
+  const result = await runtime.settleTerminalResult({ status: 'completed' });
+  assert.equal(result.status, 'completed');
+  assert.equal(runtime.isVisibleCompletionEmitted(), true);
+  assert.equal(logs.some((entry) => entry.event === 'chat.toolwork_only_completion'), false);
+  assert.equal(
+    persistedMessages.some((message) =>
+      String(message.content || '').includes('did not return a visible final answer')),
+    false,
+    'the card is the end of the reply'
+  );
+});
+
+test('a tool after the next-step card brings the fallback back', async () => {
+  const { service, persistedMessages } = buildServiceStub();
+  const runtime = buildRuntime(service, 'stream-toolwork-card-then-tool');
+
+  runtime.handleNotification({
+    method: 'tool.result',
+    params: { tool_call_id: 'call_card', tool_name: 'suggest_next_step', success: true },
+  }, NOTIFICATION_DEPS);
+  sendToolRoundTrip(runtime, { success: true, callId: 'call_after' });
+
+  await runtime.settleTerminalResult({ status: 'completed' });
+  assert.ok(persistedMessages.some((message) =>
+    String(message.content || '').includes('Tool work completed successfully')));
+});

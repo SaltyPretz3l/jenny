@@ -38,6 +38,8 @@ test('O1/O5: day-old temps of each profile store are removed and logged', async 
     stamped('shell-config.json', OLD),
     stamped('home-ai-journal.json', OLD),
     'mcp-servers.json.4242.0123456789ab.tmp',
+    'run-commands.json.4242.0123456789ab.tmp',
+    'run-gpu-memory.json.4242.0123456789ab.tmp',
     path.join('background-memory', stamped('scheduled_tasks.json', OLD)),
     path.join('project-notes', stamped('proj_abc.json', OLD)),
     path.join('boards', stamped('board_00000000-0000-4000-8000-000000000001.json', OLD)),

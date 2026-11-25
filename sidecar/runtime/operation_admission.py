@@ -262,7 +262,24 @@ def build_operation_admission_callback(  # noqa: PLR0913
             timeout_seconds=timeout_seconds or 30.0,
         ))
 
+    def _helper_worktree(*, action: str, operation_id: str, **fields: Any) -> Any:
+        from sidecar.runtime.helper_worktree_admission import request_helper_worktree
+
+        return request_helper_worktree(
+            request_id=request_id,
+            session_id=str(session_id or ""),
+            authority_revision=execution_context.authority_revision,
+            operation_id=operation_id,
+            action=action,
+            write_message=write_message,
+            response_reader_factory=response_reader_factory,
+            cancel_handle=cancel_handle,
+            **fields,
+        )
+
     _admit.acquire_resource = _acquire_resource  # type: ignore[attr-defined]
+    # Row 184 W3: a writing helper's worktree is issued on this same request.
+    _admit.helper_worktree = _helper_worktree  # type: ignore[attr-defined]
     return _admit
 
 

@@ -691,7 +691,7 @@ def _classify_http_response_error(status_code: int, body: Any) -> str:
         return "rate_limit"
     if _is_context_overflow_message(message):
         return "context_overflow"
-    if "prompt is too long" in message:
+    if _is_prompt_too_long_message(message):
         return "prompt_too_long"
     if status_code == _HTTP_STATUS_UNAUTHORIZED:
         return "invalid_api_key"
@@ -746,6 +746,13 @@ def _extract_error_message(body: Any) -> str:
 
 def _is_context_overflow_message(message: str) -> bool:
     return "input length and `max_tokens` exceed context limit" in message
+
+
+def _is_prompt_too_long_message(message: str) -> bool:
+    # Strata (row 200 S0b, recorded): "request exceeds the context window: prompt (N tokens)
+    # leaves no room to answer in the context (M); requests are never truncated". It shortens
+    # an oversized max_tokens itself, so this refusal always means the prompt is too long.
+    return "prompt is too long" in message or "request exceeds the context window" in message
 
 
 # ---------------------------------------------------------------------------

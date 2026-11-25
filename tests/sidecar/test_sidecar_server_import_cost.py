@@ -103,7 +103,12 @@ import sys
 # helper and namespaced model ids), subagent_local_engine, and model_profile_resolution (split
 # out of container); row 180 adds turn_steers (the multiplexer's steer notification handlers)
 # and user_steers (the tool loop's steer intake).
-_MEASURED_SIDECAR_MODULES = 434
+# 2026-11-22: 432. Rows 183-184 had taken the graph to 439 over the cap: auto_approval_scope
+# (tool_execution_admission) stays, and delegate_write brought helper_worktree_admission,
+# operation_admission and tool_resource_admission with it. The scheduler now loads delegate_write
+# with the first delegate task (-4), and the never-enabled agent_executor wrapper and its
+# sidecar.ai.tasks package were deleted (-3).
+_MEASURED_SIDECAR_MODULES = 432
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to

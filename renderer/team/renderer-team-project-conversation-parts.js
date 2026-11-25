@@ -373,10 +373,12 @@
 
   // `head`: the region the head is drawn in; `named()`: the title as the host has it ('' when untitled); `shown()`: the
   // title to draw; `reason()`: why this member cannot rename now, or ''; `rename(title)`: conversationRename, null when
-  // the view is gone; `renamed(title)` runs on success; `redraw()` draws the head again; `maxLength`: the title's.
-  function createTitle({ head, named, shown, reason, rename, renamed, errorText, redraw, timers, maxLength }) {
+  // the view is gone; `renamed(title)` runs on success; `redraw()` draws the head again; `maxLength`: the title's;
+  // `idPrefix`: the conversation's, so two conversations in one document keep their own field id.
+  function createTitle({ head, named, shown, reason, rename, renamed, errorText, redraw, timers, maxLength, idPrefix = '' }) {
     let editing = null; // { value, busy, note }
-    const field = () => head.querySelector('#' + RENAME_ID);
+    const fieldId = idPrefix + RENAME_ID;
+    const field = () => head.querySelector('[id="' + fieldId + '"]');
     const focus = (el) => { if (el) el.focus({ preventScroll: true }); };
     function end() { editing = null; redraw(); focus(head.querySelector('[data-project-action="rename"]')); }
     // Enter or leaving the field saves a changed name. The field is not redrawn while the call is out: it keeps the
@@ -397,7 +399,7 @@
       // The title with its pen (greyed with its reason), or the field in its place.
       html() {
         if (editing) {
-          return '<div class="team-inline-name team-head__title">' + globalThis.inventoryTextField({ id: RENAME_ID, value: editing.value, ariaLabel: jt('team.projects.convNameLabel', 'Conversation name'),
+          return '<div class="team-inline-name team-head__title">' + globalThis.inventoryTextField({ id: fieldId, value: editing.value, ariaLabel: jt('team.projects.convNameLabel', 'Conversation name'),
             maxLength }) + '</div>' + (editing.note ? '<span class="team-head__sub" role="status" dir="auto">' + escapeHtml(editing.note) + '</span>' : '');
         }
         const why = reason();
@@ -417,7 +419,7 @@
       // saves, decided a moment later: a redraw of the head takes the field away too (the browser reports that as
       // leaving it) and the focus is then put on the new one, which is not the person leaving.
       handle(event) {
-        if (!editing || !event.target || event.target.id !== RENAME_ID) return false;
+        if (!editing || !event.target || event.target.id !== fieldId) return false;
         const r = editing;
         if (event.type === 'input') editing.value = event.target.value;
         else if (event.type === 'focusout') timers.set(() => { if (editing === r && !r.busy && head.ownerDocument.activeElement !== field()) void save(); }, 0);

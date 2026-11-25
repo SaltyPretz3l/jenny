@@ -191,14 +191,39 @@
     return template.innerHTML;
   }
 
-  function bodyOf({ messages, doc, chain, renderer, sessionKey, live, turnKey, adopt }) {
+  // The body's markup before the sweep: the chain's, or the plain body (`plain`) when the chain cannot draw it.
+  function rawBodyOf({ messages, doc, chain, renderer, sessionKey, live, turnKey }) {
     const list = (Array.isArray(messages) ? messages : []).filter((m) => m && typeof m === 'object');
-    if (!doc || typeof doc.createElement !== 'function' || !chain || !renderer) return plainBody(list);
-    try {
-      return swept(chainBody(list, chain, renderer, sessionKey, live, turnKey), doc, adopt);
-    } catch (_error) {
-      return plainBody(list);
+    const plain = () => ({ list, html: plainBody(list), plain: true });
+    if (!doc || typeof doc.createElement !== 'function' || !chain || !renderer) return plain();
+    try { return { list, html: chainBody(list, chain, renderer, sessionKey, live, turnKey), plain: false }; } catch (_error) { return plain(); }
+  }
+
+  function bodyOf(args) {
+    const raw = rawBodyOf(args);
+    try { return raw.plain ? raw.html : swept(raw.html, args.doc, args.adopt); } catch (_error) { return plainBody(raw.list); }
+  }
+
+  function htmlFragment(doc, html) {
+    const template = doc.createElement('template');
+    template.innerHTML = html || '';
+    return template.content;
+  }
+
+  // The body's markup as one sanitized fragment, which the popover patches as it is (no serialize and second parse). `rows`
+  // (row id -> { raw, node }) is the last draw's: a top-level row whose markup did not change is not walked by the sweep again, its
+  // swept copy is put in its place. The sweep sees every other node where it stands, so `adopt` finds the ancestors it looks for.
+  function sweptFragment(html, doc, adopt, rows) {
+    const fragment = htmlFragment(doc, html);
+    const found = Array.from(fragment.querySelectorAll('[data-row-id]')).filter((el) => !el.parentElement || !el.parentElement.closest('[data-row-id]'))
+      .map((el) => { const id = el.getAttribute('data-row-id'); const raw = el.outerHTML; const hit = rows.get(id); return { el, id, raw, hit: hit && hit.raw === raw ? hit : null, mark: null }; });
+    for (const row of found) if (row.hit) { row.mark = doc.createComment(''); row.el.replaceWith(row.mark); }
+    sweepAffordances(fragment, adopt);
+    rows.clear();
+    for (const row of found) {
+      if (row.hit) { row.mark.replaceWith(row.hit.node.cloneNode(true)); rows.set(row.id, row.hit); } else if (fragment.contains(row.el)) rows.set(row.id, { raw: row.raw, node: row.el.cloneNode(true) });
     }
+    return fragment;
   }
 
   /** The chain's markup for one turn of local-shape messages, swept of local affordances; the plain body without the chain. */
@@ -257,8 +282,8 @@
   }
 
   /** The popover in `host` (an empty container). `onAction(kind, detail)` gets 'stop' | 'prev' | 'next' | 'close'.
-   * `liveMarkdown` draws streaming text (no shared cache); `deps` overrides chain keys (tests). */
-  function createTurnPop({ host, doc, markdown, liveMarkdown, sessionKey, onAction, deps, paths } = {}) {
+   * `liveMarkdown` draws streaming text (no shared cache); `deps` overrides chain keys (tests); `idPrefix`: the conversation's. */
+  function createTurnPop({ host, doc, markdown, liveMarkdown, sessionKey, onAction, deps, paths, idPrefix = '' } = {}) {
     const d = doc || (host && host.ownerDocument) || globalThis.document;
     const key = clean(sessionKey, 200) || 'team-turn-pop';
     const act = typeof onAction === 'function' ? onAction : () => {};
@@ -274,10 +299,12 @@
     let follow = NO_FOLLOW;
     let liveBox = null;
     let last = {};
-    let shown = { head: '', main: '', body: '', foot: '' };
+    let shown = { head: '', main: null, body: '', foot: '' };
     // What the chain body was last drawn from: the same messages list, live flag and turn draw the same body, so a
     // repaint (the turn's clock, another region's change) skips the chain unless a toggle changed it.
     let drawnFrom = null;
+    const rows = new Map(); // the swept rows of the last body, by row id (sweptFragment)
+    let rowsPaths = false;
     let followTurn = null;
     let readerToggle = false;
     let disposed = false;
@@ -324,20 +351,30 @@
       return moved;
     }
     function patchInto(el, html) {
-      const template = d.createElement('template');
-      template.innerHTML = html;
-      patcher.patchChildren(el, template.content);
+      patcher.patchChildren(el, htmlFragment(d, html));
     }
 
+    // The body's markup before the sweep ({ html, plain, list }): the same messages, live flag and turn draw the same one.
     function mainOf(m, turnId) {
       const from = [m.messages, m.live === true, turnId, Boolean(paths && paths.enabled())];
       if (drawnFrom && from.every((v, i) => v === drawnFrom[i])) return shown.main;
       const usable = ensureChain();
       if (usable && renderer) applyToggles();
-      const main = bodyOf({ messages: m.messages, doc: d, chain: usable, renderer: usable ? renderer : null, sessionKey: key, live: m.live === true, turnKey: turnId, adopt: paths && paths.adopt });
+      const main = rawBodyOf({ messages: m.messages, doc: d, chain: usable, renderer: usable ? renderer : null, sessionKey: key, live: m.live === true, turnKey: turnId });
       // A list the chain could not draw yet (its scripts not loaded) is tried again on the next render.
       drawnFrom = usable ? from : null;
       return main;
+    }
+    // The whole body as a fragment: the asker's name, the swept chain body, the end line, the questions and approvals.
+    function bodyFragment(main, lead, tail) {
+      const on = Boolean(paths && paths.enabled());
+      if (on !== rowsPaths) { rows.clear(); rowsPaths = on; }
+      let middle;
+      try { middle = main.plain ? htmlFragment(d, main.html) : sweptFragment(main.html, d, paths && paths.adopt, rows); } catch (_error) { rows.clear(); middle = htmlFragment(d, plainBody(main.list)); }
+      const fragment = d.createDocumentFragment();
+      fragment.append(htmlFragment(d, lead), middle, htmlFragment(d, tail));
+      fragment.normalize(); // text the sweep split joins again, as the parse of a string had it
+      return fragment;
     }
     // The phases a reader sees open while they stream: the ones a draw closes collapse through the local auto-collapse
     // instead of snapping shut. Not on the reader's own toggle.
@@ -377,10 +414,13 @@
       shown.main = main;
       // Questions and approvals: patched node by node with the rest, so a picked radio or typed answer survives.
       const extra = typeof m.extraHtml === 'string' && m.extraHtml ? '<div class="team-turn-pop__extra" data-pop-key="extra">' + m.extraHtml + '</div>' : '';
-      const body = promptByHtml(m.promptBy) + main + endHtml(m.end) + extra;
+      const lead = promptByHtml(m.promptBy);
+      const tail = endHtml(m.end) + extra;
+      // What the body was drawn from, not the swept markup: an unchanged one is not swept, patched or serialized at all.
+      const body = [Boolean(paths && paths.enabled()), lead, main.html, tail].join('\u0001');
       if (body === shown.body) return false;
       const handoff = openLivePhases();
-      patchInto(scrollEl, body);
+      patcher.patchChildren(scrollEl, bodyFragment(main, lead, tail));
       shown.body = body;
       settle(handoff);
       return true;
@@ -495,12 +535,14 @@
     function build() {
       host.innerHTML = '<aside class="team-turn-pop" id="teamTurnPop" role="complementary" aria-label="' + escapeHtml(jt('team.turn.label', 'Jenny’s work in this turn'))
         + '"><div class="team-turn-pop__head"></div><div class="team-turn-pop__scroll" tabindex="-1"></div><p class="team-turn-pop__foot"></p></aside>';
+      host.firstElementChild.id = idPrefix + 'teamTurnPop'; // two conversations in one document keep their own id
       aside = host.querySelector('aside.team-turn-pop');
       headEl = aside.querySelector('.team-turn-pop__head');
       scrollEl = aside.querySelector('.team-turn-pop__scroll');
       footEl = aside.querySelector('.team-turn-pop__foot');
-      shown = { head: '', main: '', body: '', foot: '' };
+      shown = { head: '', main: null, body: '', foot: '' };
       drawnFrom = null;
+      rows.clear();
       followTurn = null;
       follow = F && typeof F.createPopFollow === 'function' ? F.createPopFollow({ el: scrollEl }) : NO_FOLLOW;
       aside.addEventListener('click', onClick);
@@ -516,7 +558,8 @@
       if (liveBox) liveBox.dispose();
       liveBox = null;
       aside = headEl = scrollEl = footEl = null;
-      shown = { head: '', main: '', body: '', foot: '' };
+      shown = { head: '', main: null, body: '', foot: '' };
+      rows.clear();
       if (host) host.textContent = '';
     }
     // The popover's tool-row overrides, and the lazy detail contexts of the rows it drew (no per-session clear exists

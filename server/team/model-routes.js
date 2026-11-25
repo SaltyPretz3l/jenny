@@ -227,15 +227,21 @@ function createModelRoutes({ sharing, limits, logger = null, clock = Date.now, t
 
   // Streams the relay's buffer in chunks as the socket drains, re-running the checks once a second, until it has
   // gone out, the client went away, or the socket made no progress for the stall limit. The part keeps its place in
-  // the transfer's window until then: `release()` hands it back on every exit (R14-F03).
+  // the transfer's window until then: `release()` hands it back on every exit (R14-F03). A response already gone, or
+  // one that throws on its headers or a write, ends the same way: nothing armed is left behind.
   function streamPart(ctx, actor, transferId, bytes, release) {
     const { response } = ctx;
     return new Promise((resolve) => {
+      if (response.destroyed) {
+        release?.();
+        resolve(true);
+        return;
+      }
       let offset = 0;
       let seen = 0;
       let lastAt = clock();
       let stop = null;
-      function pump() {
+      function write() {
         while (offset < bytes.length) {
           const chunk = bytes.subarray(offset, offset + STREAM_CHUNK);
           offset += chunk.length;
@@ -243,6 +249,9 @@ function createModelRoutes({ sharing, limits, logger = null, clock = Date.now, t
           if (response.write(chunk) === false) return;
         }
       }
+      const pump = () => {
+        try { write(); } catch { cut('write_failed'); }
+      };
       const finish = () => {
         stop?.();
         stop = null;
@@ -267,8 +276,13 @@ function createModelRoutes({ sharing, limits, logger = null, clock = Date.now, t
         if (written !== seen) { seen = written; lastAt = clock(); }
         else if (clock() - lastAt >= STALL_MS) cut('stalled');
       });
-      response.writeHead(200, { ...PART_HEADERS, 'Content-Length': bytes.length });
-      pump();
+      try {
+        response.writeHead(200, { ...PART_HEADERS, 'Content-Length': bytes.length });
+        write();
+      } catch {
+        cut('write_failed');
+        return;
+      }
       seen = response.socket?.bytesWritten ?? offset;
     });
   }

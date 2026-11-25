@@ -19,41 +19,22 @@
 .chat-context-panel.collapsed .context-panel-scroll { visibility: hidden; }
 .chat-context-panel.collapsed > * { opacity: 0; translate: var(--side-panel-slide) 0; }
 
-/* The context panel's column motion (see "Side-panel column motion" above): it transitions the width and
-   fades / slides its content only while #chatView carries data-panel-motion opening | closing. */
-.chat-view:is([data-panel-motion="opening"], [data-panel-motion="closing"]) > .chat-context-panel {
-  transition:
-    width var(--motion-duration-regular) var(--motion-ease-emphasis),
-    min-width var(--motion-duration-regular) var(--motion-ease-emphasis),
-    max-width var(--motion-duration-regular) var(--motion-ease-emphasis);
-}
-.chat-view:is([data-panel-motion="opening"], [data-panel-motion="closing"]) > .chat-context-panel > * {
-  transition:
-    opacity var(--motion-duration-regular) var(--motion-ease-standard),
-    translate var(--motion-duration-regular) var(--motion-ease-emphasis),
-    visibility 0s linear 0s;
-}
-/* Closing keeps the content visible until it has faded out. */
-.chat-view[data-panel-motion="closing"] > .chat-context-panel > * {
-  transition-delay: 0s, 0s, var(--motion-duration-regular);
-}
-
 .chat-view.artifact-review-mode > .chat-context-panel {
   display: none;
 }
 
-.artifact-review-resizer {
+.chat-pane-resizer {
   grid-column: 2;
   grid-row: 1 / -1;
-  width: var(--artifact-review-resizer-width, 10px);
+  width: var(--chat-pane-resizer-width, 10px);
   cursor: col-resize;
   position: relative;
   z-index: var(--z-content);
 }
 
-.artifact-review-resizer.hidden { display: none; }
+.chat-pane-resizer.hidden { display: none; }
 
-.artifact-review-resizer::before {
+.chat-pane-resizer::before {
   content: '';
   position: absolute;
   top: 0;
@@ -67,18 +48,14 @@
     width var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-/* Beside the side panel its own border is the divider; a resting centre line drew a second line next to it.
-   The line still shows on hover, drag and focus, and stays between two chat panes (.chat-pane-resizer). */
-.artifact-review-resizer:not(.chat-pane-resizer)::before { background: transparent; }
-
-.artifact-review-resizer:hover::before,
-.artifact-review-resizer.dragging::before,
-.artifact-review-resizer:focus-visible::before {
+.chat-pane-resizer:hover::before,
+.chat-pane-resizer.dragging::before,
+.chat-pane-resizer:focus-visible::before {
   width: 2px;
   background: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
 }
 
-.artifact-review-resizer:focus-visible {
+.chat-pane-resizer:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: -2px;
 }
@@ -90,9 +67,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  width: var(--artifact-review-width, 420px);
-  min-width: var(--artifact-review-width, 420px);
-  max-width: var(--artifact-review-width, 420px);
+  width: 420px;
+  min-width: 420px;
+  max-width: 420px;
   border-inline-start: 1px solid var(--artifact-studio-divider, var(--border-default));
   background: var(--bg-base);
   overflow: hidden;
@@ -100,21 +77,11 @@
   contain: layout style paint;
 }
 
-.chat-view.artifact-review-open:not(.artifact-review-maximized) > .artifact-review-panel {
-  min-width: 0;
-  max-width: max(0px, calc(100vw - var(--sidebar-current-width, 0px) - var(--artifact-review-resizer-width, 10px) - 320px));
-}
-
 .artifact-review-panel.hidden { display: none; }
 
-/* The overlay drawer and the over-pane panel restart this slide whenever they are unhidden. The side-by-side
-   column has its own motion (below) and nothing animates when it is restored or resized. */
+/* The panel restarts this slide whenever it is unhidden. */
 .artifact-review-panel:not(.hidden) {
   animation: artifact-review-slide-in var(--motion-duration-regular) var(--motion-ease-standard);
-}
-
-.chat-view.artifact-review-open > .artifact-review-panel:not(.hidden) {
-  animation: none;
 }
 
 @keyframes artifact-review-slide-in {
@@ -122,75 +89,13 @@
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* ── Side-panel column motion (row 59 checkpoint 1) ──
-   renderer-side-panel-motion.js drives this through #chatView[data-panel-motion]
-   (measuring | opening | closing), --side-panel-content-width on #chatView and
-   --chat-measure-lock on each .chat-pane. Open: the column grows from 0 while the panel's content, already at its
-   final width, fades in sliding --space-8 from the end edge; close mirrors it. The reading text keeps the locked
-   measure for the whole motion, so it reflows once (open: at the start; close: at the end), never per frame.
-   "measuring" has no rule on purpose: the end state is applied with no motion so it can be measured. */
+/* The collapsed context panel's content sits --space-8 toward the end edge. */
 .chat-view { --side-panel-slide: var(--space-8); }
 [dir="rtl"] .chat-view { --side-panel-slide: calc(var(--space-8) * -1); }
-
-.chat-view[data-panel-motion="opening"].artifact-review-open > .artifact-review-panel:not(.hidden) {
-  animation: side-panel-column-open var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
-}
-.chat-view[data-panel-motion="closing"].artifact-review-open > .artifact-review-panel:not(.hidden) {
-  animation: side-panel-column-close var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
-}
-.chat-view[data-panel-motion="opening"] > .artifact-review-resizer:not(.chat-pane-resizer, .hidden) {
-  animation: side-panel-resizer-in var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
-}
-.chat-view[data-panel-motion="closing"] > .artifact-review-resizer:not(.chat-pane-resizer, .hidden) {
-  animation: side-panel-resizer-out var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
-}
-.chat-view[data-panel-motion] > .artifact-review-panel > *,
-.chat-view[data-panel-motion] > .chat-context-panel > * {
-  min-inline-size: var(--side-panel-content-width, 0px);
-}
-.chat-view[data-panel-motion="opening"] > .artifact-review-panel > * {
-  animation: side-panel-content-in var(--motion-duration-regular) var(--motion-ease-emphasis) backwards;
-}
-.chat-view[data-panel-motion="closing"] > .artifact-review-panel > * {
-  animation: side-panel-content-out var(--motion-duration-regular) var(--motion-ease-emphasis) forwards;
-}
-
-@keyframes side-panel-column-open { from { width: 0; min-width: 0; max-width: 0; } }
-@keyframes side-panel-column-close { to { width: 0; min-width: 0; max-width: 0; } }
-@keyframes side-panel-resizer-in { from { width: 0; } }
-@keyframes side-panel-resizer-out { to { width: 0; } }
-@keyframes side-panel-content-in { from { opacity: 0; translate: var(--side-panel-slide) 0; } }
-@keyframes side-panel-content-out { to { opacity: 0; translate: var(--side-panel-slide) 0; } }
-
-/* Narrow layouts use a right-anchored overlay while artifact-review-open is
-   withheld and the resizer is parked. */
-.artifact-review-panel.artifact-review-overlay {
-  position: absolute;
-  top: var(--artifact-overlay-top, 44px);
-  inset-inline-end: 0;
-  bottom: var(--artifact-overlay-bottom, 220px);
-  grid-column: auto;
-  grid-row: auto;
-  height: auto;
-  width: min(var(--artifact-review-width, 420px), 92vw);
-  min-width: 0;
-  max-width: 92vw;
-  z-index: var(--z-overlay, 40);
-  background: var(--bg-base);
-  box-shadow: -18px 0 42px color-mix(in srgb, black 34%, transparent);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .artifact-review-panel:not(.hidden) {
     animation: none;
-  }
-  .chat-view[data-panel-motion] > .artifact-review-panel,
-  .chat-view[data-panel-motion] > .artifact-review-panel > *,
-  .chat-view[data-panel-motion] > .artifact-review-resizer,
-  .chat-view[data-panel-motion] > .chat-context-panel,
-  .chat-view[data-panel-motion] > .chat-context-panel > * {
-    animation: none !important;
-    transition: none !important;
   }
 }
 

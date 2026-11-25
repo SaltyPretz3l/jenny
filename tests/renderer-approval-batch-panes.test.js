@@ -142,6 +142,11 @@ test('CTR-006: each pane timeline gets its own batch banner and a batch click re
   assert.ok(banner(paneB), 'pane B has a banner');
   assert.equal(paneA.querySelectorAll('.approval-batch-banner').length, 1);
   assert.equal(paneB.querySelectorAll('.approval-batch-banner').length, 1);
+  for (const pane of [paneA, paneB]) {
+    // Row 192 C7: the bar answers once or denies; a standing grant lives on each card only.
+    assert.deepEqual([...banner(pane).querySelectorAll('button')].map((button) => button.getAttribute('data-approval-batch-action')),
+      ['approve-all-once', 'deny-all']);
+  }
 
   click(window, batchButton(paneB, 'approve-all-once'));
   await flush();

@@ -333,11 +333,11 @@ test('solveLayout opens the most recently used side stack beside two editor grou
   assert.ok(tight.sizes['editor-1'] >= EDITOR_MIN_WIDTH);
 });
 
-test('solveLayout folds a column of two chats as one unit to keep the editor floor', () => {
+test('solveLayout folds a column of two stacks as one unit to keep the editor floor', () => {
   const ops = require('../renderer/shared/workbench-layout-ops');
-  const layout = ops.addStackBeside(revealView(createDefaultLayout(), 'chat'), ['chat-2', 'changes-2'], 'chat', 'col', 320, 780);
+  const layout = ops.addStackBeside(revealView(createDefaultLayout(), 'chat'), ['terminal-2', 'terminal-3'], 'chat', 'col', 320, 780);
   const chat = findView(layout, 'chat').stackId;
-  const chat2 = findView(layout, 'chat-2').stackId;
+  const chat2 = findView(layout, 'terminal-2').stackId;
   const right = layout.root.children[2].node.id;
   const col = layout.root.children[1].node.id;
   [700, 600].forEach((width) => {
@@ -433,4 +433,34 @@ test('solveLayout does not mutate the layout', () => {
   const snapshot = deepClone(layout);
   solveLayout(layout, { width: 700, height: 300, lastUsed: { 'stack-1': 4 } });
   assert.deepEqual(layout, snapshot);
+});
+
+/* ---------- caller-supplied centre minimum (row 190) ---------- */
+
+test('solveLayout: centreMinWidth raises the centre floor; absent, results are unchanged', () => {
+  const layout = createDefaultLayout('chat');
+  const chats = stackOf(layout, 'chats');
+  const right = stackOf(layout, 'session');
+  const opts = { width: 1200, height: 800 };
+  const one = solveLayout(layout, opts);
+  assert.deepEqual(solveLayout(layout, { ...opts, centreMinWidth: EDITOR_MIN_WIDTH }), one, 'the default is EDITOR_MIN_WIDTH');
+  assert.deepEqual(one.folded, [], 'one pane fits beside both stacks at 1200px');
+  const two = solveLayout(layout, { ...opts, centreMinWidth: 2 * EDITOR_MIN_WIDTH });
+  const centre = collectNodes(layout.root).find((n) => n.kind === 'editor');
+  assert.ok(two.sizes[centre.id] >= 2 * EDITOR_MIN_WIDTH, 'two panes keep 360px each');
+  assert.ok(two.sizes[chats.id] + two.sizes[right.id] < one.sizes[chats.id] + one.sizes[right.id], 'the side stacks gave way');
+  const tight = solveLayout(layout, { width: 900, height: 800, centreMinWidth: 2 * EDITOR_MIN_WIDTH });
+  assert.ok(tight.folded.length >= 1, 'a stack folds when shrinking cannot make room');
+  assert.ok(tight.sizes[centre.id] >= 2 * EDITOR_MIN_WIDTH);
+  assert.equal(model.minExtent(centre, 'row', 1, 720), 720);
+  assert.equal(model.minExtent(centre, 'row', 1.5, 720), 1080, 'the floor scales with the text size');
+  assert.equal(model.minExtent(centre, 'row', 1), EDITOR_MIN_WIDTH);
+});
+
+test('solveLayout: a junk centreMinWidth falls back to the constant', () => {
+  const layout = createDefaultLayout();
+  const base = solveLayout(layout, { width: 1000, height: 700 });
+  [0, -5, NaN, 'wide', null, Infinity].forEach((v) => {
+    assert.deepEqual(solveLayout(layout, { width: 1000, height: 700, centreMinWidth: v }), base, String(v));
+  });
 });

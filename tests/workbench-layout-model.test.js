@@ -362,3 +362,20 @@ test('toLegacy reports a right-hand rail and left dock from tree position', () =
   assert.equal(out.chatDockSide, 'left');
   assert.equal(out.chatDockOpen, true);
 });
+
+/* ---------- Chat profile (row 190) through the layout ops ---------- */
+
+test('chat profile: an optional view joins the right stack, survives a round trip and can leave again', () => {
+  const ops = require('../renderer/shared/workbench-layout-ops');
+  const base = createDefaultLayout('chat');
+  const joined = ops.addView(base, 'browser', 'project');
+  assert.equal(joined.profile, 'chat', 'the ops keep the profile');
+  assert.deepEqual(stackOf(joined, 'session').views, ['session', 'artifacts', 'changes', 'project', 'browser']);
+  assert.equal(stackOf(joined, 'session').active, 'browser');
+  assert.deepEqual(model.normalizeLayout(JSON.parse(JSON.stringify(joined)), 'chat'), joined);
+  assert.equal(ops.addView(base, 'explorer', 'project').profile, 'chat');
+  assert.equal(findView(ops.addView(base, 'explorer', 'project'), 'explorer'), null, 'a Workspace view never joins');
+  const left = ops.removeView(joined, 'browser');
+  assert.equal(findView(left, 'browser'), null);
+  assert.equal(left.profile, 'chat');
+});

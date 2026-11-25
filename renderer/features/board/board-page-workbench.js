@@ -29,10 +29,17 @@
     const doc = rootEl.ownerDocument;
     let layout = store.loadLayout();
     let disposed = false;
+    // Row 190 Wave 4: the dock (board-chat-dock.js) names its chat on the shown Chat tab and opens its picker there.
+    let chatTab = null;
+    const chatShown = () => workbench.isViewVisible('chat') && workbench.getActiveView('chat') === 'chat';
 
     const views = {
       boards: { label: () => jt('board.view.boards', 'Boards'), icon: ICONS.boards },
-      chat: { label: () => jt('board.view.chat', 'Chat'), icon: ICONS.chat },
+      chat: {
+        label: () => (chatTab && chatTab.label(chatShown())) || jt('board.view.chat', 'Chat'),
+        icon: ICONS.chat,
+        onActiveTabClick: (tab) => { if (chatTab) chatTab.onActiveTabClick(tab); },
+      },
       changes: { label: () => jt('board.view.changes', 'Changes'), icon: ICONS.changes },
     };
 
@@ -61,7 +68,7 @@
       getEditorElement: () => centreEl,
       getGroupElement: () => null,
       focusEditor: focusCanvas,
-      resetLayout: () => commit(layoutModel.createDefaultLayout('board')),
+      resetLayout: () => { if (roomStack) roomStack.releaseViews(); commit(layoutModel.createDefaultLayout('board')); },
       getFontScale: () => {
         const win = doc.defaultView;
         const raw = win && win.getComputedStyle ? Number.parseFloat(win.getComputedStyle(doc.documentElement).getPropertyValue('--font-scale')) : NaN;
@@ -81,6 +88,19 @@
     changesHost.setAttribute('data-board-changes-host', '');
     workbench.hostFor('changes').appendChild(changesHost);
 
+    // Row 190 Wave 4, row 195: the side panel's Artifacts, Project and Runs join the chat's stack when one opens here (renderer-chat-right-stack.js).
+    const rightStackUtils = deps.rightStackUtils || globalThis.rendererChatRightStack || null;
+    const layoutOps = deps.layoutOps || globalThis.jennyWorkbenchLayoutOps || null;
+    const roomStack = rightStackUtils && rightStackUtils.createRoomStack && layoutOps ? rightStackUtils.createRoomStack({
+      workbench, getLayout: () => layout, commit, model: layoutModel, ops: layoutOps, jt, doc,
+      modeViews: { artifact: 'artifacts', tasks: 'project', notes: 'project', background_tasks: 'runs', subagents: 'runs' }, near: ['runs', 'project', 'artifacts', 'changes', 'chat'],
+    }) : null;
+    if (roomStack) Object.assign(views, roomStack.views());
+    const leaveRoom = roomStack ? rightStackUtils.registerRoom('board', () => (disposed ? null : roomStack)) : () => {};
+
+    const isOpen = (id) => { const found = layoutModel.findView(layout, id); return Boolean(found) && found.collapsed !== true; };
+    const setOpen = (id, open) => { if (disposed) return; if (open) workbench.revealView(id); else workbench.collapseStackOf(id); };
+
     return {
       workbench,
       chatHost,
@@ -88,8 +108,11 @@
       focusCanvas,
       getLayout: () => layout,
       // The chat column is open while its stack is not collapsed, whichever of its tabs shows.
-      isChatOpen: () => { const found = layoutModel.findView(layout, 'chat'); return Boolean(found) && found.collapsed !== true; },
-      setChatOpen: (open) => { if (disposed) return; if (open) workbench.revealView('chat'); else workbench.collapseStackOf('chat'); },
+      isChatOpen: () => isOpen('chat'),
+      setChatOpen: (open) => setOpen('chat', open),
+      setChatTab: (hooks) => { chatTab = hooks || null; if (!disposed) workbench.render(); },
+      // Ctrl+B and Ctrl+Alt+B: flips the `boards` or `chat` column; false once disposed.
+      toggle: (id) => !disposed && (setOpen(id, !isOpen(id)), true),
       // Shows the Changes view and puts focus on its heading (board-proposals-view.js keeps that heading in the host).
       revealChanges: () => {
         if (disposed) return false;
@@ -102,6 +125,7 @@
       dispose() {
         if (disposed) return;
         disposed = true;
+        leaveRoom();
         workbench.dispose();
       },
     };

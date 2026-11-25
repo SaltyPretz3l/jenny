@@ -323,9 +323,9 @@ test('reconcile: a lost acknowledgment with no submission is retryable needs_att
 
 test('startup also expires due pending proposals and ignores unrelated records', async (t) => {
   const fx = createFixture(t);
-  const pending = (await fx.publishGit(1)).proposal;
-  const dismissed = (await fx.publishGit(2)).proposal;
+  const dismissed = (await fx.publishGit(1)).proposal;
   await fx.decide(dismissed, 'dismiss');
+  const pending = (await fx.publishGit(2)).proposal;
   fx.advanceDays(8);
   fx.service.reconcileOnStartup();
   assert.equal(fx.record(pending.proposal_id).decision_state, 'expired');
@@ -383,4 +383,28 @@ test('submitContinuation uses an injected request builder and the record key', a
   assert.deepEqual(result, { outcome: 'ack', work_id: 'w1', turn_id: 't1' });
   assert.deepEqual(submits[0][0], { built: ['sess_a', 1] });
   assert.equal(submits[0][1].idempotencyKey, R.runtimeIdempotencyKey('a'.repeat(64)));
+});
+
+function promptFor(choice, input = {}) {
+  return continuation.buildContinuationPrompt({
+    normalized_input: { summary: 'Did it.', question: 'Commit?', paths: ['src/a.js'], ...input },
+    decision: { choice },
+  });
+}
+
+test('the continuation prompt lists what was not checked, after the files', () => {
+  for (const choice of ['commit', 'test_first']) {
+    const prompt = promptFor(choice, { not_checked: ['start the game', 'look at the screenshot'] });
+    assert.match(prompt, /- src\/a\.js\n\nNot checked when proposed:\n- start the game\n- look at the screenshot\n/u, choice);
+  }
+  assert.doesNotMatch(promptFor('commit'), /Not checked when proposed/u);
+});
+
+test('only Test first asks to start the app or capture its screen when the repository documents it', () => {
+  const rule = /- If the repository documents a way to start the app or capture its screen, run that too and look at the result \(if you can see images, open a screenshot with read_file\)\./u;
+  const prompt = promptFor('test_first');
+  assert.match(prompt, rule);
+  assert.ok(prompt.indexOf('Follow the repository instructions for how to run checks.')
+    < prompt.search(/If the repository documents a way to start the app/u), 'it follows the run-checks rule');
+  assert.doesNotMatch(promptFor('commit'), /start the app/u);
 });

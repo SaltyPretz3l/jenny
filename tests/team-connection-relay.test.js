@@ -2,8 +2,8 @@
 
 // The saved relay on the member's dial (TEAM_INTERNET_SPEC "5-5c as built"): the connection manager reads the
 // saved `relay_url` and its token for every dial and passes `{ url, token }` to the member bridge's start line; a
-// relay the bridge reports as `relay_denied` is not asked again by that manager, which goes on dialling the
-// direct addresses; a token store that cannot answer dials nothing. Against the real host and the fake bridge
+// relay the bridge reports as `relay_denied` is not asked again by that manager, which goes on to the remaining
+// address sets (the direct hints) without it in the same attempt; a token store that cannot answer dials nothing. Against the real host and the fake bridge
 // child, with a bridge stub that reports a relay reason in place of a dial.
 
 const assert = require('node:assert/strict');
@@ -136,24 +136,39 @@ test('a token store that throws dials nothing, is offline with the key store fai
   assert.equal(JSON.stringify([member.host.logs, state]).includes(RELAY_TOKEN), false);
 });
 
-// Fault: a refused relay token presented again on every retry; or the loop going on to the next address set.
-test('relay_denied stops the address sets, and every later dial passes no relay and does not read the token', async (t) => {
+// Fault (review Part III): a denied relay token ending the attempt before the direct address hints were tried, or
+// presented again on the next set or the next retry.
+test('relay_denied goes on to the remaining address sets without the relay and never reads the token again', async (t) => {
   const member = await relayMember(t, { token: RELAY_TOKEN, twoSets: true });
   const store = countingStore(member.deviceKeys);
   const before = member.host.memberSpawner.children.length;
   const timers = countingTimers();
-  const { manager, dials } = relayManager(t, member, { store, timers, replies: ['relay_denied', 'host_unreachable', 'host_unreachable'] });
+  const { manager, dials } = relayManager(t, member, { store, timers, replies: ['relay_denied'] });
   manager.start();
   assert.ok(await waitUntil(() => manager.snapshot().state === 'online', { attempts: 200 }));
+  assert.equal(dials.length, 2, 'the second set was dialled in the same attempt');
   assert.deepEqual(dials[0].relay, { url: RELAY, token: RELAY_TOKEN });
-  assert.deepEqual(dials[1].addresses, dials[0].addresses, 'the next dial starts a new attempt from the first set');
-  assert.ok(dials.slice(1).every((dial) => dial.relay === null), 'no relay after the refusal');
+  assert.notDeepEqual(dials[1].addresses, dials[0].addresses, 'the next dial is the next address set');
+  assert.equal(dials[1].relay, null, 'no relay after the refusal');
   assert.equal(store.reads, 1, 'the token was read once and not again');
   assert.equal(Object.hasOwn(startLines(member.host, before)[0], 'relay'), false, 'the direct dial that connected had no relay');
-  assert.ok(timers.delays[0] <= 20 && timers.delays[0] >= 16, `the normal backoff: ${timers.delays}`);
-  assert.deepEqual(dials[2].shown, ['offline', 'relay_denied'], 'while the direct dial fails the state says why');
-  assert.deepEqual(dials[3].shown, ['offline', 'relay_denied']);
+  assert.deepEqual(timers.delays.filter((ms) => ms <= 80), [], 'no backoff wait between the sets');
   assert.equal(JSON.stringify([member.host.logs, manager.snapshot()]).includes(RELAY_TOKEN), false);
+});
+
+test('a relay_denied attempt whose remaining sets fail says relay_denied, and the retry passes no relay', async (t) => {
+  const member = await relayMember(t, { token: RELAY_TOKEN, twoSets: true });
+  const store = countingStore(member.deviceKeys);
+  const timers = countingTimers();
+  const { manager, dials } = relayManager(t, member, { store, timers,
+    replies: ['relay_denied', 'host_unreachable', 'host_unreachable'] });
+  manager.start();
+  assert.ok(await waitUntil(() => manager.snapshot().state === 'online', { attempts: 200 }));
+  assert.deepEqual(dials[1].shown, ['connecting', null], 'the second set followed in the same attempt');
+  assert.deepEqual(dials[2].shown, ['offline', 'relay_denied'], 'the failed attempt says why');
+  assert.ok(dials.slice(1).every((dial) => dial.relay === null), 'no relay after the refusal');
+  assert.equal(store.reads, 1);
+  assert.ok(timers.delays[0] <= 20 && timers.delays[0] >= 16, `the normal backoff: ${timers.delays}`);
 });
 
 test('relay_denied is reported as offline with CMP-TEAM-0001, and a second manager asks the relay again', async (t) => {
@@ -170,14 +185,14 @@ test('relay_denied is reported as offline with CMP-TEAM-0001, and a second manag
   assert.deepEqual(second.dials[0].relay, { url: RELAY, token: RELAY_TOKEN }, 'a new manager passes the relay again');
 });
 
-test('relay_unreachable is retried with the relay on the next attempt', async (t) => {
+test('relay_unreachable is offline, and retried with the relay on the next attempt', async (t) => {
   const member = await relayMember(t, { token: RELAY_TOKEN });
   const { manager, dials } = relayManager(t, member, { replies: ['relay_unreachable'] });
   manager.start();
   assert.ok(await waitUntil(() => manager.snapshot().state === 'online'));
   assert.deepEqual(dials[0].relay, { url: RELAY, token: RELAY_TOKEN });
   assert.deepEqual(dials[1].relay, { url: RELAY, token: RELAY_TOKEN }, 'asked again');
-  assert.deepEqual(dials[1].shown, ['reconnecting', 'relay_unreachable']);
+  assert.deepEqual(dials[1].shown, ['offline', 'relay_unreachable']);
 });
 
 // Fault (slice 5-6): the member row's Connection line has nothing to say how this Jenny reaches the host, or it

@@ -17,12 +17,14 @@
     module.exports = factory({
       actionButton: require('../inventory/action-button'),
       textField: require('../inventory/text-field'),
+      taskRail: require('./renderer-task-rail-render'),
     });
     return;
   }
   root.rendererProjectNotesRailRender = factory({
     actionButton: root.inventoryActionButton,
     textField: root.inventoryTextField,
+    taskRail: root.rendererTaskRailRender,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (inventory) {
   'use strict';
@@ -39,8 +41,6 @@
     save_failed: ['retry'],
     load_failed: ['retry'],
   };
-  const TASKS_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 4h7M6.25 8h7M6.25 12h7"/><path d="m2.5 4 .75.75L4.75 3.25M2.5 8l.75.75L4.75 7.25M2.5 12l.75.75 1.5-1.5"/></svg>';
-  const NOTES_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5h9v11h-9z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></svg>';
 
   function relativeTime(iso, now) {
     const at = Date.parse(String(iso || ''));
@@ -119,6 +119,15 @@
     return { entryId: entry.id, verb: measured.verb, lines: measured.lines, at: entry.at, undoable: !userEdited && entry.undoable === true };
   }
 
+  // The strip for one project's state. No Undo under an unsaved draft: it would rebase the
+  // draft on a note the user has not seen.
+  function stripForState(ps, now) {
+    const strip = ps.note ? buildChangeStrip(ps.note, {
+      now, hiddenEntryId: ps.hiddenStripEntryId, userEditedAfter: ps.userEditedAt, diff: ps.diff,
+    }) : null;
+    return strip && ps.dirty ? { ...strip, undoable: false } : strip;
+  }
+
   // The journal's recorded line range of the latest Jenny write, as the highlight
   // set, when the strip would show that write. null otherwise.
   function recordedHighlight(note, options) {
@@ -128,15 +137,24 @@
     return new Set(Array.from({ length: lines.added }, (_, offset) => lines.start + offset));
   }
 
-  function renderHeader(model, helpers) {
-    const { escapeHtml, actionButton } = helpers;
-    const tasksLabel = jt('artifactPanelV2Render.tasks', 'Tasks');
-    const notesLabel = jt('projectNotes.title', 'Notes');
-    return '<header class="notes-rail__header"><b>' + escapeHtml(model.projectName || '') + '</b>'
-      + '<span class="notes-rail__mode">'
-      + actionButton({ id: 'notes-rail-switch-tasks', plain: true, className: 'chat-timeline-utility-button notes-rail__mode-button', ariaLabel: tasksLabel, title: tasksLabel, trustedHtml: TASKS_ICON })
-      + actionButton({ id: 'notes-rail-mode-notes', plain: true, className: 'chat-timeline-utility-button notes-rail__mode-button', ariaLabel: notesLabel, title: notesLabel, ariaPressed: true, trustedHtml: NOTES_ICON })
-      + '</span></header>';
+  // The Project tab's one head row, shared with the Tasks side (renderer-task-rail-render.js).
+  function renderHead(model, helpers) {
+    return typeof inventory.taskRail?.projectHeadHtml === 'function' ? inventory.taskRail.projectHeadHtml({
+      projectName: model.projectName, side: 'notes', openCount: model.openCount, escapeHtml: helpers.escapeHtml,
+    }) : '';
+  }
+
+  // Open follow-ups of a project: the number beside Tasks on the switch.
+  function openCountFor(state, projectId) {
+    const tr = inventory.taskRail;
+    return typeof tr?.buildTaskRows === 'function' ? tr.openTaskCount(tr.buildTaskRows(state), projectId) : 0;
+  }
+
+  // A chat that is not in the session list yet has no project: the head and one line.
+  function renderNoProject(helpers) {
+    const escapeHtml = typeof helpers?.escapeHtml === 'function' ? helpers.escapeHtml : fallbackEscapeHtml;
+    return '<div class="notes-rail notes-rail--empty">' + renderHead({ projectName: '', openCount: 0 }, { escapeHtml })
+      + '<div class="notes-rail__empty">' + escapeHtml(jt('projectNotes.noProject', 'Open a chat to see its project notes.')) + '</div></div>';
   }
 
   function renderStrip(strip, helpers) {
@@ -195,7 +213,7 @@
     const { escapeHtml } = helpers;
     const text = String(model.note?.text || '');
     const body = text.trim() === ''
-      ? '<div class="notes-rail__empty">' + escapeHtml(jt('projectNotes.empty', 'No notes for {project} yet. Jenny keeps status and decisions here as she works, and you can write here too.', { project: model.projectName || '' })) + '</div>'
+      ? '<div class="notes-rail__empty">' + escapeHtml(jt('projectNotes.emptyState', 'No notes for {project} yet. Ask Jenny to note something, or click here to write one.', { project: model.projectName || '' })) + '</div>'
       : renderPreviewLines(text, model.highlightLines, helpers);
     return '<div class="notes-rail__preview" role="button" tabindex="0" data-action="notes-rail-edit" aria-label="'
       + escapeHtml(jt('projectNotes.editHint', 'Click to edit')) + '">' + body + '</div>';
@@ -236,7 +254,7 @@
       ? jt('projectNotes.footerEditing', 'Esc or click outside to finish · saved automatically · Markdown')
       : jt('projectNotes.footer', 'Click anywhere to edit · saved automatically · Markdown');
     return '<section class="notes-rail" aria-label="' + h.escapeHtml(jt('projectNotes.title', 'Notes')) + '">'
-      + renderHeader(m, h) + renderStrip(m.changeStrip, h)
+      + renderHead(m, h) + renderStrip(m.changeStrip, h)
       + '<div class="notes-rail__body">' + renderBody(m, h) + '</div>'
       + renderError(m.error, h)
       + '<footer class="notes-rail__footer">' + h.escapeHtml(footer) + '</footer></section>';
@@ -288,13 +306,21 @@
     else if (html && anchor) anchor.insertAdjacentHTML(position, html);
   }
 
+  // Focus that fell to <body> returns to the rail: the open editor, else the note.
+  function focusRail(panelEl) {
+    const active = panelEl?.ownerDocument?.activeElement;
+    if (!active || active === panelEl.ownerDocument.body || !active.isConnected) {
+      (panelEl.querySelector('[data-notes-editor]') || panelEl.querySelector('[data-action="notes-rail-edit"]'))?.focus?.();
+    }
+  }
+
   // A click that ends a text selection inside the preview is not a request to edit.
   function previewClickIgnored(target, selection) {
     return Boolean(selection && !selection.isCollapsed && selection.toString() !== '' && target.contains?.(selection.anchorNode));
   }
 
   return {
-    renderNotesRailSurface, renderStrip, renderError, buildChangeStrip, recordedHighlight, relativeTime, diffLines, measureChange,
+    renderNotesRailSurface, renderNoProject, openCountFor, stripForState, focusRail, renderStrip, renderError, buildChangeStrip, recordedHighlight, relativeTime, diffLines, measureChange,
     prepareSurface, paintSurface, swapPart, previewClickIgnored, MAX_NOTE_CHARS,
   };
 });

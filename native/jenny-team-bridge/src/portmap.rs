@@ -88,20 +88,35 @@ impl Mapper for Router {
     }
 
     fn deactivate(&self) -> Pending<'_> {
-        let mut external = self.0.watch_external_address();
+        let external = self.0.watch_external_address();
         let mapped = external.borrow().is_some();
         // A local port of `None`: the service drops the mapping and sends the router a delete
         // (`portmapper-0.19.3/src/lib.rs:235-244`, `:593-622`).
         self.0.deactivate();
-        Box::pin(async move {
-            if mapped {
-                // The service clears the address and then awaits the router's release, with no
-                // signal when that is done (`lib.rs:489-496`): the client stays alive (this
-                // future never resolves) until the caller's bound ends it and drops the client.
-                let _ = external.wait_for(Option::is_none).await;
-                std::future::pending::<()>().await;
+        // The service handles its messages one at a time, in order, and awaits the router's
+        // release inside the deactivate (`lib.rs:489-496`, `:581-587`): a probe sent after it is
+        // answered only once that release has returned, so its answer is the signal the crate
+        // does not give. A probe already running, or a fresh one, answers after that too.
+        let answer = mapped.then(|| self.0.probe());
+        Box::pin(released(mapped, external, async move {
+            if let Some(answer) = answer {
+                let _ = answer.await;
             }
-        })
+        }))
+    }
+}
+
+/// Resolves once the mapping's delete has gone out: the address is cleared and `barrier` (the
+/// probe answered after the release) resolved. Nothing to wait for when nothing was mapped; the
+/// caller bounds it either way.
+async fn released(
+    mapped: bool,
+    mut external: watch::Receiver<Option<SocketAddrV4>>,
+    barrier: impl Future<Output = ()>,
+) {
+    if mapped {
+        let _ = external.wait_for(Option::is_none).await;
+        barrier.await;
     }
 }
 
@@ -286,5 +301,33 @@ async fn report(out: &Out, sent: &mut Option<Phase>, phase: Phase) {
     if *sent != Some(phase) {
         *sent = Some(phase);
         out.send(line(phase)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Part III performance 5: a clean stop waits for the delete to go out, not for the bound.
+    #[tokio::test]
+    async fn a_mapped_deactivate_returns_once_the_delete_is_out() {
+        let (_router, external) = watch::channel(None::<SocketAddrV4>);
+        let done = timeout(
+            Duration::from_millis(200),
+            released(true, external, async {}),
+        )
+        .await;
+        assert!(done.is_ok(), "the release returned before the stop's bound");
+    }
+
+    #[tokio::test]
+    async fn a_mapped_deactivate_waits_for_the_delete() {
+        let (_router, external) = watch::channel(None::<SocketAddrV4>);
+        let held = timeout(
+            Duration::from_millis(100),
+            released(true, external, std::future::pending::<()>()),
+        )
+        .await;
+        assert!(held.is_err(), "a delete still in flight holds the release");
     }
 }

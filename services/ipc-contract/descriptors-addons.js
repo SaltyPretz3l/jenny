@@ -85,6 +85,18 @@ module.exports = Object.freeze({
   'ninfer.dismissSuggestion': invokeMethod('ninfer:dismiss-suggestion'),
   'ninfer.updateSettings': invokeMethod('ninfer:update-settings'),
   'ninfer.onChanged': subscribeMethod('ninfer:changed'),
+  // strata.*: the managed Strata runtime (row 200, Windows). Flag off answers getState with
+  // { eligible: false, reason: 'strata_flag_off' } and every action with that reason. Trusted-sender-
+  // authorized in services/main/strata-ipc-registration.js; no key, PID or path crosses. onChanged says
+  // only what moved ({ source: 'runtime' | 'manager', ... }); main emits it from strata-runtime-wiring.js
+  // and runtime-shutdown.js.
+  'strata.getState': invokeMethod('strata:get-state'),
+  'strata.start': invokeMethod('strata:start'),
+  'strata.stop': invokeMethod('strata:stop'),
+  'strata.restart': invokeMethod('strata:restart'),
+  'strata.updateSettings': invokeMethod('strata:update-settings'),
+  'strata.reverify': invokeMethod('strata:reverify'),
+  'strata.onChanged': subscribeMethod('strata:changed'),
   // browserUse.*: the browser panel beside a chat (row 114). Payloads are closed:
   // { session_id } or, for show/setBounds, { session_id, bounds: { x, y, width, height } }.
   // Answers are { ok, ... } or { ok: false, reason } (browser_unavailable, no_page,
@@ -111,6 +123,39 @@ module.exports = Object.freeze({
   'browserUse.toggleSound': invokeMethod('browser-use:toggle-sound'),
   'browserUse.setAdBlock': invokeMethod('browser-use:set-ad-block'),
   'browserUse.onChanged': subscribeMethod('browser-use:changed'),
+  // runView.*: the chat's Live tab (row 197). Payloads are closed (services/run-view/run-view-ipc.js):
+  // { projectId, worktree? } for get, plus command / chatId / mode / place per method. Answers are
+  // { ok, ... } or { ok: false, reason } (disabled, unsupported_platform, sandbox_only, bad_request, ...).
+  // Trusted-sender-authorized in services/main/run-view-ipc-registration.js; onState pushes the run
+  // snapshot { projectId, state, generation, chatId, sourceId, hwnd, exitCode, buildTail, reason } and
+  // onKeepLastFrame { projectId, generation } before a run's window goes away.
+  'runView.get': invokeMethod('run-view:get'),
+  'runView.confirmCommand': invokeMethod('run-view:confirm-command'),
+  'runView.start': invokeMethod('run-view:start'),
+  'runView.stop': invokeMethod('run-view:stop'),
+  'runView.restart': invokeMethod('run-view:restart'),
+  'runView.showWindow': invokeMethod('run-view:show-window'),
+  'runView.armCapture': invokeMethod('run-view:arm-capture'),
+  'runView.output': invokeMethod('run-view:output'),
+  'runView.setRestartAfterChanges': invokeMethod('run-view:set-restart-after-changes'),
+  'runView.onState': subscribeMethod('run-view:state'),
+  'runView.onKeepLastFrame': subscribeMethod('run-view:keep-last-frame'),
+  // computerUse.*: the computer tool's owner controls (row 196, C4). Trusted-sender-authorized in
+  // services/main/computer-use-ipc-registration.js; none of them starts the service. Payloads: { sessionId }
+  // for grants / resume / stop, plus { path } for revoke; { path, name } for renameProgram, { path } for
+  // removeProgram; addProgram opens main's own .exe picker. onTurnState pushes { sessionId, state, action,
+  // programName } and onStatus the status() answer when it changes.
+  'computerUse.status': invokeMethod('computer-use:status'),
+  'computerUse.grants': invokeMethod('computer-use:grants'),
+  'computerUse.revoke': invokeMethod('computer-use:revoke'),
+  'computerUse.resume': invokeMethod('computer-use:resume'),
+  'computerUse.stop': invokeMethod('computer-use:stop'),
+  'computerUse.listPrograms': invokeMethod('computer-use:list-programs'),
+  'computerUse.addProgram': invokeMethod('computer-use:add-program'),
+  'computerUse.renameProgram': invokeMethod('computer-use:rename-program'),
+  'computerUse.removeProgram': invokeMethod('computer-use:remove-program'),
+  'computerUse.onTurnState': subscribeMethod('computer-use:turn-state'),
+  'computerUse.onStatus': subscribeMethod('computer-use:status-changed'),
   'appSound.getState': invokeMethod('app-sound:get-state'),
   'appSound.setMuted': invokeMethod('app-sound:set-muted'),
   'appSound.onChanged': subscribeMethod('app-sound:changed'),

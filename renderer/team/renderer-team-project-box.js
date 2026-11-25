@@ -10,7 +10,8 @@
  *
  * The approval card is the app's own builder (renderer/chat/renderer-approval-block.js, `oneOffOnly`: Allow once and
  * Deny) with this card's always button before Deny: "Always allow" for the project's admins (E66), "Allow once, ask for
- * always" for writers, only for write_file and edit_file and never in Plan mode; then the scope note and whose turn
+ * always" for writers, only for write_file and edit_file and never in Plan mode, nor while the project's rules are paused (project
+ * files on: the host's gate answers nothing, so a rule would never fire; the card offers the one-off answers only); then the scope note and whose turn
  * asked. A reader's card has no buttons. A write_file or edit_file card shows the exact fields the host sent
  * (`exact_approval`, row 175 F5: every reader of the conversation sees them, only a writer gets Allow and Deny); one
  * the host marked too large shows the card's note and withholds Allow; a host that sent none (an older one) keeps the
@@ -103,10 +104,11 @@
     const name = column.plain(title, 60);
     return name ? jt('team.conv.channelPlaceholder', 'Message “{title}”', { title: name }) : jt('team.conv.boxLabel', 'Message Jenny in this conversation');
   }
-  function composerFieldHtml(title = '') {
+  // `prefix`: the conversation's own (renderer-team-project-conversation.js): two conversations in one document never share an id.
+  function composerFieldHtml(title = '', prefix = '') {
     const label = placeholderOf(title);
-    return '<textarea class="team-composer__input" id="' + BOX_ID + '" dir="auto" rows="1" spellcheck="true" maxlength="' + PROMPT_MAX + '" aria-label="' + escapeHtml(label)
-      + '" placeholder="' + escapeHtml(label) + '" aria-describedby="' + HINT_ID + '" data-project-input="prompt" data-dictation-target="team-box"></textarea>';
+    return '<textarea class="team-composer__input" id="' + escapeHtml(prefix + BOX_ID) + '" dir="auto" rows="1" spellcheck="true" maxlength="' + PROMPT_MAX + '" aria-label="' + escapeHtml(label)
+      + '" placeholder="' + escapeHtml(label) + '" aria-describedby="' + escapeHtml(prefix + HINT_ID) + '" data-project-input="prompt" data-dictation-target="team-box"></textarea>';
   }
   // Item 16: the composer's mic (its icon and title) on the dictation controller's generic target; greyed with its reason while dictation is off.
   function micHtml() {
@@ -138,7 +140,7 @@
   // The hint beside the icons: the Board's line, "Jenny is answering…" while a turn runs and a send would wait, "Sending
   // makes you the driver" when nobody drives, else how to send (the model that answers is the pill's, row 172).
   function hintHtml(s) {
-    const span = (inner) => '<span class="team-composer__hint" id="' + HINT_ID + '" dir="auto">' + inner + '</span>';
+    const span = (inner) => '<span class="team-composer__hint" id="' + escapeHtml((s.idPrefix || '') + HINT_ID) + '" dir="auto">' + inner + '</span>';
     if (s.connection) return span(escapeHtml(offlineHint(s.connection)));
     if (s.boardHint) return span(escapeHtml(s.boardHint));
     if (s.running && s.mayQueue) return span(escapeHtml(jt('team.conv.hintQueue', 'Jenny is answering · what you send waits for her next turn')));
@@ -147,7 +149,7 @@
     return span(escapeHtml(jt('team.conv.hintSend', 'Markdown · Enter to send')));
   }
 
-  // `s`: boxParts's state, plus `files` (item 13: the host serves files, so @ picks one), `mayQueue` (a send while a turn runs waits for the next turn) and `board` (the Board's
+  // `s`: boxParts's state, plus `idPrefix` (the conversation's, for the hint's id), `files` (item 13: the host serves files, so @ picks one), `mayQueue` (a send while a turn runs waits for the next turn) and `board` (the Board's
   // column, where the chip may scroll away). Same output as boxParts: every sentence state is boxParts's own; the field
   // state is the #team composer's bar (code, @ and attach greyed with their reasons, the hint, Send). Stop is on the
   // chip's line, except on the Board.
@@ -180,7 +182,7 @@
     return '<p class="tool-approval-who" dir="auto">' + escapeHtml(text) + '</p>';
   }
 
-  // `a`: a pending approval from the snapshot; `s`: { role, planMode, projectName, prompter (name or ''), busy, note }.
+  // `a`: a pending approval from the snapshot; `s`: { role, planMode, paused (the project's rules are paused: no always button), projectName, prompter (name or ''), busy, note }.
   function cardHtml(a, s) {
     const tool = String(a.tool_name || '');
     const card = approvalBlock.renderApprovalBlock({ mode: 'card', toolCallId: a.call_id || a.approval_id, approvalId: a.approval_id, toolName: tool,
@@ -199,7 +201,7 @@
       const admin = s.role === 'admin';
       const once = actions.querySelector('.tool-approve-btn[data-approval-scope="once"]');
       const deny = actions.querySelector('.tool-deny-btn');
-      if (ALWAYS_TOOLS.has(tool) && !s.planMode && once && deny) {
+      if (ALWAYS_TOOLS.has(tool) && !s.planMode && !s.paused && once && deny) {
         const params = { tool: column.clean(tool, 64), project: s.projectName };
         const title = admin ? jt('team.conv.alwaysAllowTitle', 'Always allow {tool} in {project}, for everyone’s turns', params)
           : jt('team.conv.askAlwaysTitle', 'Allow this once and ask the project’s admins to always allow {tool} here', params);

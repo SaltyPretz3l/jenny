@@ -127,6 +127,7 @@ test('no managed input preserves the projection with neutral engine and accelera
       libraryGguf: false,
       source: 'both',
     }],
+    teamModels: [],
   });
 });
 
@@ -527,3 +528,16 @@ test('identifies the frozen set of local engine types', () => {
   }
 });
 
+// Row 201 C1 / OD-1: a team model is never an "On this PC" card; the merge hands it over as its own list.
+test('a team model row becomes a teamModels entry and never a card', () => {
+  const merged = mergeLibrary({ installed: [
+    { id: 'qwen3:8b', engine_type: 'ollama', size: 5e9 },
+    { id: 'team/team_alpha1/qwen3:70b', engine_type: 'openai-compatible', team_id: 'team_alpha1', team_name: 'Alpha crew', context_length: 32768 },
+  ] });
+  assert.equal(merged.cards.some((card) => /^team\//.test(card.key) || /^team\//.test(card.tag)), false);
+  assert.ok(merged.cards.some((card) => card.tag === 'qwen3:8b' && card.installed === true));
+  assert.deepEqual(merged.teamModels, [{
+    id: 'team/team_alpha1/qwen3:70b', modelId: 'qwen3:70b', teamId: 'team_alpha1', teamName: 'Alpha crew', contextLength: 32768,
+  }]);
+  assert.deepEqual(mergeLibrary({}).teamModels, []);
+});

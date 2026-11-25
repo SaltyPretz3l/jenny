@@ -77,7 +77,7 @@ test('titlebar CSS: bounded tracks, a guaranteed drag gutter, a nav row below 12
     /\.titlebar\s*\{[^}]*grid-template-columns:\s*auto\s+minmax\(0,\s*max-content\)\s+minmax\(var\(--titlebar-drag-gutter\),\s*1fr\)\s+auto\s+auto;[^}]*grid-template-areas:\s*"brand nav gutter status controls";/,
     'brand, nav (the track that yields), gutter, cluster and window controls'
   );
-  assert.match(foundationCss, /--toprail-height:\s*0px;/, 'the rail row is retired');
+  assert.doesNotMatch(foundationCss, /--toprail-height/, 'the rail row is retired and its token is gone');
   assert.match(foundationCss, /--titlebar-row-height:\s*52px;/);
   assert.match(
     shellChromeCss,

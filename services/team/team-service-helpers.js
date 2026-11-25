@@ -32,6 +32,11 @@ function shareCall(teamSharing, method, value) {
   if (method === 'shareStatus') return { ok: true, sharing: teamSharing.snapshot() };
   if (method === 'shareSet') return teamSharing.set(value.team_id, value.on, { confirmed: value.confirmed === true });
   if (method === 'sharePause') return teamSharing.pause(value.team_id, value.on, value.stop_running === true);
+  // Row 201 (OD-4): no `names` reads the saved share set; a list sets it and null returns to the default.
+  if (method === 'shareOllamaModels') {
+    return Object.hasOwn(value, 'names') ? teamSharing.setOllamaModels(value.team_id, value.names)
+      : { ok: true, ollama_models: teamSharing.ollamaModels(value.team_id) };
+  }
   return teamSharing.stopNow(value.team_id);
 }
 

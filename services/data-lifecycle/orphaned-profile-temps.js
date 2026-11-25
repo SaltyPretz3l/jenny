@@ -27,7 +27,8 @@ const PID_TEMP = /^(.+)\.\d{1,9}\.[0-9a-f]{12}\.tmp$/;
 // temp may belong to. Each directory is owned by the listed store.
 const TARGETS = Object.freeze([
   { dir: '', form: STAMPED_TEMP, isLiveName: (name) => name === 'shell-config.json' || name === 'home-ai-journal.json' },
-  { dir: '', form: PID_TEMP, isLiveName: (name) => name === 'mcp-servers.json' },
+  // The MCP store and the Live tab's two stores (run-view/run-command-store.js, run-view/run-gpu-memory.js).
+  { dir: '', form: PID_TEMP, isLiveName: (name) => name === 'mcp-servers.json' || name === 'run-commands.json' || name === 'run-gpu-memory.json' },
   { dir: 'background-memory', form: STAMPED_TEMP, isLiveName: (name) => name === 'scheduled_tasks.json' },
   { dir: 'project-notes', form: STAMPED_TEMP, isLiveName: (name) => name.endsWith('.json') },
   { dir: 'boards', form: STAMPED_TEMP, isLiveName: isBoardFileName },

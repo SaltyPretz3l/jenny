@@ -54,18 +54,25 @@ test('after Remove, focus moves to the next rule, then to the list once it is em
   });
   await coreRenderers.renderApprovalRules({ container, api, actionButton });
   const settle = async () => { for (let i = 0; i < 4; i += 1) await flush(); };
-  const remove = (key) => {
-    const button = container.querySelector(`[data-rule-key="${key}"]`);
+  const click = (button) => button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  // Remove opens a confirm strip under the row; the rule goes only when the strip's Remove is clicked.
+  const remove = async (key) => {
+    const button = container.querySelector(`[data-action="tools-approval-rule-remove"][data-rule-key="${key}"]`);
     button.focus();
-    button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    click(button);
+    await settle();
+    const cancel = container.querySelector('[data-action="tools-approval-rule-cancel"]');
+    assert.equal(dom.window.document.activeElement, cancel, 'the strip opens with focus on Cancel');
+    assert.ok(container.querySelector(`[data-rule-key="${key}"]`), 'nothing is removed before the strip is confirmed');
+    click(container.querySelector('[data-action="tools-approval-rule-confirm"]'));
   };
-  remove('run_command');
+  await remove('run_command');
   await settle();
   assert.equal(dom.window.document.activeElement.dataset.ruleKey, 'delete_file', 'the next row takes focus');
-  remove('always-allow:write_file:abc123def456');
+  await remove('always-allow:write_file:abc123def456');
   await settle();
   assert.equal(dom.window.document.activeElement.dataset.ruleKey, 'delete_file', 'the last row takes the place of the removed one');
-  remove('delete_file');
+  await remove('delete_file');
   await settle();
   assert.equal(container.querySelectorAll('.tools-approval-rule').length, 0);
   assert.equal(dom.window.document.activeElement, container, 'an empty list keeps focus');

@@ -58,6 +58,24 @@ test('a rejecting dispose is survived the same way', async () => {
   assert.ok(probe.calls.includes('llama'));
 });
 
+test('row 197: the Live tab run_view stage ends its program after the browser and before llama-server', async () => {
+  let release;
+  const probe = createProbe({ backend: { runView: { shutdown: () => new Promise((resolve) => { release = resolve; }) } } });
+  const pending = probe.controller.stopRuntimeBeforeQuit({});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(probe.calls.includes('browser_use'));
+  assert.ok(!probe.calls.includes('llama'), 'llama-server waited for the run_view stage');
+  release();
+  await pending;
+  assert.ok(probe.calls.includes('llama'));
+  assert.equal(stageLog(probe.logs, 'run_view')?.fields.status, 'ok');
+
+  const failing = createProbe({ backend: { runView: { shutdown: () => Promise.reject(new Error('helper gone')) } } });
+  await failing.controller.stopRuntimeBeforeQuit({});
+  assert.equal(stageLog(failing.logs, 'run_view')?.fields.status, 'failed');
+  assert.ok(failing.calls.includes('backend'));
+});
+
 test('a backend with no browser service is simply skipped', async () => {
   const calls = [];
   const controller = createRuntimeShutdownController({

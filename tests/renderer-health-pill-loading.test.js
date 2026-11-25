@@ -124,12 +124,12 @@ test('the elapsed counter ticks in place each second while visible and stops whe
   await h.controller.refresh({ silent: true });
   const button = h.slot.querySelector('button');
   const label = () => h.slot.querySelector('.workbench-health-pill-label').textContent;
-  assert.equal(label(), 'Loading qwen3:8b · 0:02');
+  assert.equal(label(), 'Loading qwen3:8b 0:02');
   assert.equal(button.getAttribute('aria-label'), 'Loading qwen3:8b', 'the still status label, not the clock');
 
   h.advance(1000);
   h.fireElapsedTick();
-  assert.equal(label(), 'Loading qwen3:8b · 0:03');
+  assert.equal(label(), 'Loading qwen3:8b 0:03');
   assert.equal(h.slot.querySelector('button'), button, 'the tick never rebuilds the button');
   assert.equal(button.getAttribute('aria-label'), 'Loading qwen3:8b', 'the still status label, not the clock');
 
@@ -159,4 +159,30 @@ test('the popover says what the same model took last time, only while it loads',
     {}
   );
   assert.doesNotMatch(ready, /last-load/, 'once loaded the expectation has no reader');
+});
+
+test('the control names the model in each state, and the dot keeps its tone', async (t) => {
+  const model = (runtime = {}, lifecycle = {}) => ({ runtime: { engine: 'ollama', model: 'qwen3:14b', model_loaded: true, ...runtime, lifecycle: { available: true, state: 'ready', model_state: 'ready', ...lifecycle } } });
+  let current = model();
+  const h = setup(t, async () => current);
+  const read = async (snapshot) => {
+    current = snapshot;
+    await h.controller.refresh({ silent: true });
+    const button = h.slot.querySelector('#workbenchHealthPillButton');
+    return { tone: button.dataset.healthTone, words: h.slot.querySelector('.workbench-health-pill-label')?.textContent, named: button.classList.contains('workbench-health-pill--named') };
+  };
+  assert.deepEqual(await read(model()), { tone: 'success', words: 'qwen3:14b', named: true }, 'a local model');
+  assert.deepEqual(
+    await read(model({ engine: 'chatgpt', model: 'gpt-x', model_loaded: false, local_runtime: { model: { residency: 'remote', configured: true, loaded: null } } })),
+    { tone: 'success', words: 'ChatGPT · gpt-x', named: true },
+    'a cloud model names its provider',
+  );
+  assert.deepEqual(
+    await read(model({ model_loaded: false }, { model_state: 'model_loading', model_acquisition: { requested_model: 'gemma3:27b', stage: 'model_loading', started_at: new Date(T0 - 14_000).toISOString() } })),
+    { tone: 'pending', words: 'Loading gemma3:27b 0:14', named: true },
+    'a load carries its clock',
+  );
+  assert.deepEqual(await read(model({ model: '', model_loaded: false })), { tone: 'muted', words: 'No model loaded', named: true });
+  assert.deepEqual(await read(model({ model_loaded: false }, { model_state: 'model_unavailable' })), { tone: 'danger', words: 'Model failed', named: true });
+  assert.equal(h.slot.querySelector('button').title, 'Model failed. Click for the engine and graphics memory.');
 });

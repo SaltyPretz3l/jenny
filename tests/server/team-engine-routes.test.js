@@ -301,6 +301,13 @@ test('the models route answers the union of online models in the OpenAI list sha
   assert.equal((await send(fx.port, { method: 'GET', path: CHAT_PATH, headers: headersFor('member') })).status, 404);
 });
 
+test('row 201: the models route names vision and thinking for a model a serving node has them on, and nothing otherwise', async (t) => {
+  const fx = await setupEngine(t, { nodes: [{ models: [model('alpha', { vision: true }), model('beta', { thinking: true }), model('gamma')] }] });
+  const answer = await send(fx.port, { method: 'GET', path: MODELS_PATH, headers: headersFor('member') });
+  assert.deepEqual(JSON.parse(answer.text).data.map(({ id, vision, thinking }) => [id, vision, thinking]),
+    [['alpha', true, undefined], ['beta', undefined, true], ['gamma', undefined, undefined]]);
+});
+
 // ---------------------------------------------------------------------------
 // 9. The usage store.
 
@@ -517,11 +524,16 @@ test('a valid engine key sent on a served stream reaches no lease, event, log li
   }
 });
 
-test('R16-F01: the node gets one model key, the leased one: case variants and a duplicate never pass', async (t) => {
+test('R16-F01: the node gets one model key, the leased one: a duplicate never passes, a case variant is refused', async (t) => {
   const fx = await setupEngine(t);
   const node = createNode(fx.scheduler, fx.nodeIds[0]);
-  const raw = '{"model":"x:cloud","Model":"gpt-oss:120b-cloud","MODEL":"another:cloud","\\u004dodel":"y:cloud",'
-    + '"stream":true,"messages":[{"role":"user","content":"hello"}],"model":"alpha"}';
+  for (const variant of ['"Model":"gpt-oss:120b-cloud"', '"MODEL":"another:cloud"', '"\\u004dodel":"y:cloud"']) {
+    const refused = await send(fx.port, { headers: headersFor('member'),
+      body: `{"model":"alpha",${variant},"stream":true,"messages":[{"role":"user","content":"hello"}]}` });
+    assert.equal(refused.status, 400, variant);
+    assert.equal(engineError(refused.text), 'team_request_field_invalid', variant);
+  }
+  const raw = '{"model":"x:cloud","stream":true,"messages":[{"role":"user","content":"hello"}],"model":"alpha"}';
   const answer = send(fx.port, { headers: headersFor('member'), body: raw });
   const claimed = await node.claimNext();
   const text = fx.scheduler.jobRequest(claimed.job.job_id, fx.nodeIds[0]).request.toString('utf8');
@@ -561,20 +573,21 @@ test('R16-F03: node usage is clamped to what the request and the reply could hol
 test('R16-F03: node counts under the row bound are stored clamped to the request, the reply and the context length', async (t) => {
   const served = async (contextLength) => {
     const fx = await setupEngine(t, { nodes: [{ models: [model('alpha', { contextLength })] }] });
-    const reply = [delta('hi'), usageChunk(5_000_000, 6_000_000), DONE];
-    const stream = openStream(fx.port, { headers: headersFor('member'), body: chatBody() });
+    const reply = [delta('h'.repeat(3000)), usageChunk(5_000_000, 6_000_000), DONE];
+    const body = chatBody({ messages: [{ role: 'user', content: 'q'.repeat(3000) }] });
+    const stream = openStream(fx.port, { headers: headersFor('member'), body });
     const claimed = await createNode(fx.scheduler, fx.nodeIds[0]).claimNext();
     for (const [i, chunk] of reply.entries()) claimed.send(chunk, i === reply.length - 1);
     await stream.until((state) => state.ended, 'the answer');
     await waitFor(() => fx.usageRows().length === 1, 'usage row');
     const [row] = fx.usageRows();
-    return { row, requestBytes: Buffer.byteLength(JSON.stringify(chatBody())), replyBytes: Buffer.byteLength(reply.join('')) };
+    return { row, requestBytes: Buffer.byteLength(JSON.stringify(body)), replyBytes: Buffer.byteLength(reply.join('')) };
   };
   const wide = await served(32768);
   assert.deepEqual([wide.row.prompt_tokens, wide.row.completion_tokens], [wide.requestBytes, wide.replyBytes]);
-  const narrow = await served(10);
-  assert.ok(narrow.requestBytes > 10 && narrow.replyBytes > 10);
-  assert.deepEqual([narrow.row.prompt_tokens, narrow.row.completion_tokens], [10, 10], 'the context length is the ceiling');
+  const narrow = await served(2048); // the smallest context length a node may advertise
+  assert.ok(narrow.requestBytes > 2048 && narrow.replyBytes > 2048);
+  assert.deepEqual([narrow.row.prompt_tokens, narrow.row.completion_tokens], [2048, 2048], 'the context length is the ceiling');
 });
 
 test('with no pool every route answers team_pool_unavailable', async (t) => {

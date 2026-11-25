@@ -17,6 +17,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // The slash menu's open request (renderer-slash-autocomplete.js SLASH_MENU_EVENT).
   const SLASH_MENU_EVENT = 'jenny:open-slash-menu';
+  const LIVE_CAPTURE_WAIT_MS = 2500; // the longest the composer's capture waits for the Live picture's window request
   function createAttachmentEventBindings(deps) {
     const { state, sessionContext = null } = deps;
     const documentLevel = !sessionContext || (sessionContext.paneId ?? 0) === 0;
@@ -148,6 +149,13 @@
       }
       let stream = null;
       try {
+        // The Live picture holds main's one-use capture slot while it asks for its window: wait for it, but never long.
+        const liveIdle = window.__jennyLiveCaptureIdle;
+        if (liveIdle && typeof liveIdle.then === 'function') {
+          let timer = null;
+          await Promise.race([liveIdle, new Promise((resolve) => { timer = setTimeout(resolve, LIVE_CAPTURE_WAIT_MS); })]);
+          clearTimeout(timer);
+        }
         stream = await getDisplayMedia.call(navigator.mediaDevices, {
           video: true,
           audio: false,

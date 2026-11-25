@@ -247,6 +247,7 @@
   /* The per-field Revert: empty unless the value differs from its default. It
    * shows only the ↺ glyph; its tooltip and accessible name say the default. */
   function revertDefault(descriptor, opts) {
+    if (descriptor.kind === 'boolean') return descriptor.default ? jt('common.on', 'On') : jt('common.off', 'Off');
     return descriptors.describeSettingDefaultValue(descriptor, opts && opts.liveDefault) || '';
   }
 
@@ -266,7 +267,7 @@
 
   function buildSettingMetaHtml(descriptor, value, opts) {
     if (!descriptors.describeSettingDefaultValue(descriptor, opts && opts.liveDefault)) return '';
-    const modified = descriptors.isSettingModified(descriptor, value, opts && opts.liveDefault);
+    const modified = descriptors.isSettingModified(descriptor, value, opts && opts.liveDefault) && !(opts && opts.tagged);
     return '<span class="settings-field-meta"><span class="settings-field-meta-modified"' + (modified ? '' : ' hidden') + '>'
       + escapeHtml(jt('settings.field.modified', 'Modified')) + '</span></span>';
   }
@@ -344,18 +345,61 @@
     }
   }
 
+  const restartList = () => (globalThis.rendererSettingsFoundation || require('./renderer-settings-foundation.js')).restartList;
+  // Row 193: why a row cannot be changed, who manages it, whether a restart is owed (opts win over the descriptor).
+  function declaresReason(descriptor, o) {
+    return Boolean(descriptor.disabledReason || descriptor.managedBy || descriptor.restartRequired || (o && (o.disabledReason !== undefined || o.managedBy !== undefined)));
+  }
+  function rowReasons(descriptor, o) {
+    const pick = (name) => (o[name] === undefined ? descriptor[name] : o[name]);
+    const given = pick('disabledReason');
+    const unavailable = String(typeof given === 'function' ? given(o) : given || '').trim();
+    const managed = String(pick('managedBy') || '').trim();
+    const waiting = pick('restartRequired') === true && restartList().has(descriptor.id);
+    return { reason: managed || unavailable, disabled: Boolean(managed || unavailable), unavailable: Boolean(unavailable) && !managed, managed: Boolean(managed),
+      tag: managed ? { text: jt('settings.field.tagManaged', 'Managed'), tone: 'managed' } : (waiting ? { text: jt('settings.field.tagRestart', 'Restart to apply'), tone: 'restart' } : null) };
+  }
+
+  /* D2 A: a master switch off. The reason is written once, as a second line under the master row; each
+   * child keeps data-setting-parent-off and carries the single-row sentence as tooltip and description. */
+  function applyGroupOffReason(master, children, opts) {
+    if (!master || typeof master.querySelector !== 'function') return;
+    const off = Boolean(opts && opts.off);
+    let line = master.querySelector('[data-setting-group-reason]');
+    if (line && !off) line.remove();
+    if (off) {
+      if (!line) {
+        line = master.ownerDocument.createElement('p');
+        line.className = 'settings-field-reason';
+        line.setAttribute('data-setting-group-reason', '');
+        master.querySelector('.settings-field-text').appendChild(line);
+      }
+      line.textContent = jt('settings.field.groupOff', 'Off. The settings below keep their values and can be changed again when this is on.');
+    }
+    const setting = (opts && opts.label) || master.querySelector('.settings-field-title').textContent;
+    const tip = jt('settings.field.childOff', 'Turn on "{setting}" to change this.', { setting });
+    children.forEach((child) => {
+      if (off) child.setAttribute('data-setting-parent-off', 'true'); else child.removeAttribute('data-setting-parent-off');
+      child.querySelectorAll('.inv-toggle, button[role="switch"], select, input, textarea, [role="radiogroup"], [data-setting-off-reason]').forEach((el) => {
+        if (off) { el.setAttribute('title', tip); el.setAttribute('aria-description', tip); el.setAttribute('data-setting-off-reason', ''); }
+        else if (el.hasAttribute('data-setting-off-reason')) { el.removeAttribute('title'); el.removeAttribute('aria-description'); el.removeAttribute('data-setting-off-reason'); }
+      });
+    });
+  }
+
   function renderToggleRow(opts) {
     const o = opts || {};
     const settingsField = inventoryFn('settingsField', o.inventory);
-    const control = bareSwitchHtml(o.inventory, o.controlId, { toggleId: o.toggleId, describedBy: o.help ? o.controlId + 'Description' : '',
+    const control = bareSwitchHtml(o.inventory, o.controlId, { toggleId: o.toggleId, describedBy: o.help || o.reason ? o.controlId + 'Description' : '',
       checked: o.checked === true, disabled: o.disabled === true || o.parentOff === true });
     if (!settingsField || !control) return '';
     // `controlPrefixHtml` sits before the switch (the sandbox row's Retry); `error` fills the row's alert line.
     return settingsField({ id: o.id, label: o.label, help: o.help, labelFor: o.controlId + 'Switch', titleId: o.controlId + 'Title', helpId: o.controlId + 'Description',
       detail: o.detail, detailLabel: jt('settings.field.detailAria', 'More about {label}', { label: o.label }), variant: 'row', error: o.error,
-      className: [o.rowClassName, o.sub === true ? 'settings-field--sub' : ''].filter(Boolean).join(' '),
+      reason: o.reason, tag: o.tag, revertSlot: o.revertHtml !== undefined, revertHtml: o.revertHtml,
+      className: [o.rowClassName, o.sub === true ? 'settings-field--sub' : '', o.unavailable ? 'settings-field--unavailable' : ''].filter(Boolean).join(' '),
       controlHtml: (o.controlPrefixHtml || '') + control,
-      dataset: Object.assign({ 'setting-id': o.id }, o.parentOff === true ? { 'setting-parent-off': 'true' } : {}) });
+      dataset: Object.assign({ 'setting-id': o.id, 'setting-kind': 'toggle' }, o.parentOff === true ? { 'setting-parent-off': 'true' } : {}, o.managed ? { 'setting-managed': 'true' } : {}) });
   }
 
   function renderSettingRow(descriptor, value, opts) {
@@ -363,17 +407,23 @@
     const copy = resolveSettingCopy(descriptor);
     const help = o.help === undefined ? (o.description === undefined ? copy.description : o.description) : o.help;
     const detail = o.detail === undefined ? copy.detail : o.detail;
-    if (descriptor.control === 'toggle') return renderToggleRow(Object.assign({}, o, { id: descriptor.id, controlId: descriptor.controlId, label: copy.label, help, detail, checked: value === true }));
-    const control = renderSettingControl(descriptor, value, Object.assign({}, o, { help }));
+    const why = rowReasons(descriptor, o);
+    const disabled = o.disabled === true || why.disabled;
+    if (descriptor.control === 'toggle') {
+      return renderToggleRow(Object.assign({}, o, { id: descriptor.id, controlId: descriptor.controlId, label: copy.label, help, detail, checked: value === true, disabled,
+        reason: why.reason, tag: why.tag, unavailable: why.unavailable, managed: why.managed,
+        revertHtml: buildSettingRevertHtml(descriptor, value, Object.assign({}, o, { disabled: disabled || o.parentOff === true })) }));
+    }
+    const control = renderSettingControl(descriptor, value, Object.assign({}, o, { help: help || why.reason, disabled }));
     const settingsField = inventoryFn('settingsField', o.inventory);
     if (!settingsField) return control;
     // The title labels a single control; a segmented group has no one element to point at.
     return settingsField({ id: descriptor.id, label: copy.label, help, helpId: descriptor.controlId + 'Description', labelFor: descriptor.control === 'segmented' ? '' : descriptor.controlId,
       detail, detailLabel: jt('settings.field.detailAria', 'More about {label}', { label: copy.label }),
-      metaHtml: buildSettingMetaHtml(descriptor, value, o), variant: 'row',
-      className: [o.rowClassName, o.sub === true ? 'settings-field--sub' : ''].filter(Boolean).join(' '),
-      revertSlot: true, revertHtml: buildSettingRevertHtml(descriptor, value, Object.assign({}, o, { disabled: o.disabled === true || o.parentOff === true })),
-      controlHtml: control, dataset: Object.assign({ 'setting-id': descriptor.id }, o.parentOff === true ? { 'setting-parent-off': 'true' } : {}) });
+      metaHtml: buildSettingMetaHtml(descriptor, value, Object.assign({}, o, { tagged: Boolean(why.tag) })), variant: 'row', reason: why.reason, tag: why.tag,
+      className: [o.rowClassName, o.sub === true ? 'settings-field--sub' : '', why.unavailable ? 'settings-field--unavailable' : ''].filter(Boolean).join(' '),
+      revertSlot: true, revertHtml: buildSettingRevertHtml(descriptor, value, Object.assign({}, o, { disabled: disabled || o.parentOff === true })),
+      controlHtml: control, dataset: Object.assign({ 'setting-id': descriptor.id }, o.parentOff === true ? { 'setting-parent-off': 'true' } : {}, why.managed ? { 'setting-managed': 'true' } : {}) });
   }
 
   // ── read ─────────────────────────────────────────────────────────────────
@@ -508,6 +558,13 @@
     const row = slot ? slot.closest('.settings-field') : q('[data-settings-field="' + descriptor.id + '"]');
     if (row) {
       const setFieldModified = inventoryHelper('settingsField', 'setFieldModified', opts && opts.inventory);
+      if (declaresReason(descriptor, opts)) {
+        const why = rowReasons(descriptor, opts || {});
+        inventoryHelper('settingsField', 'setFieldTag', opts && opts.inventory)?.(row, why.tag);
+        inventoryHelper('settingsField', 'setFieldReason', opts && opts.inventory)?.(row, why.reason);
+        row.classList.toggle('settings-field--unavailable', why.unavailable);
+        if (why.managed) row.setAttribute('data-setting-managed', 'true'); else row.removeAttribute('data-setting-managed');
+      }
       if (setFieldModified) setFieldModified(row, Boolean(row.querySelector('[data-setting-revert]')));
     }
   }
@@ -519,13 +576,15 @@
     if (!mount || typeof mount.querySelector !== 'function') return;
     if (!mount.firstElementChild) mount.innerHTML = renderSettingRow(descriptor, value, opts);
     else syncSettingRow(mount, descriptor, value, Object.assign({}, opts, { patchOptions: true }));
-    if (opts && (typeof opts.disabled === 'boolean' || typeof opts.parentOff === 'boolean')) {
+    const reasoned = declaresReason(descriptor, opts);
+    if (reasoned || (opts && (typeof opts.disabled === 'boolean' || typeof opts.parentOff === 'boolean'))) {
+      const o = opts || {};
       const row = mount.querySelector('.settings-field');
-      if (row && typeof opts.parentOff === 'boolean') {
-        if (opts.parentOff) row.setAttribute('data-setting-parent-off', 'true');
+      if (row && typeof o.parentOff === 'boolean') {
+        if (o.parentOff) row.setAttribute('data-setting-parent-off', 'true');
         else row.removeAttribute('data-setting-parent-off');
       }
-      setRowDisabled(mount, descriptor, opts.disabled === true || opts.parentOff === true);
+      setRowDisabled(mount, descriptor, o.disabled === true || o.parentOff === true || (reasoned && rowReasons(descriptor, o).disabled));
     }
   }
 
@@ -721,6 +780,7 @@
       }
       clearError(d);
       const focused = focusedSelector(d);
+      const before = d.restartRequired ? registry.read(d) : undefined;
       markBusy(d, 1);
       let written;
       try { written = registry.write(d, check.value); } catch (error) { written = Promise.reject(error); }
@@ -728,6 +788,7 @@
       reapplyBusy();
       return written.then(() => {
         markBusy(d, -1);
+        if (d.restartRequired) restartList().track(d.id, resolveSettingCopy(d).label, before, check.value);
         sync(d, true);
         reapplyBusy();
         onApplied(d, check.value);
@@ -775,6 +836,7 @@
     renderToggleRow,
     buildSettingMetaHtml,
     buildSettingRevertHtml,
+    applyGroupOffReason,
     readControlValue,
     syncSettingRow,
     mountSettingRow,

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Jenny</title>
+  <script src="../shared/appearance-utils.js"></script>
+  <script src="../shared/theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="../../styles/foundation.css">
+  <link rel="stylesheet" href="../../styles/foundation-widget-tokens.css">
+  <link rel="stylesheet" href="../../styles/palette-slate.css">
+  <link rel="stylesheet" href="../../styles/components/buttons.css">
+  <link rel="stylesheet" href="pill.css">
+</head>
+<body>
+  <div class="cu-pill" id="cuPill" role="status" aria-live="polite">
+    <span class="status-dot status-dot--active" id="cuPillDot" aria-hidden="true"></span>
+    <span class="cu-pill-text" id="cuPillText"></span>
+    <span class="cu-pill-key" id="cuPillKey"></span>
+  </div>
+  <script src="../inventory/action-button.js"></script>
+  <script src="pill.js"></script>
+</body>
+</html>

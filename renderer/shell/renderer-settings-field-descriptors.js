@@ -207,8 +207,8 @@
       presentation: Object.freeze(presentation),
       offValue: spec.offValue,
       copy: typeof copy === 'string' ? copy : Object.freeze({ label: String(copy.label), description: String(copy.description || ''), detail: String(copy.detail || ''), keywords: Object.freeze(Array.isArray(copy.keywords) ? copy.keywords.slice() : []) }),
-      adapterId: String(spec.adapterId),
-      key: String(spec.key),
+      adapterId: String(spec.adapterId), key: String(spec.key),
+      disabledReason: spec.disabledReason || '', restartRequired: spec.restartRequired === true, managedBy: spec.managedBy ? String(spec.managedBy) : '', // row 193: a string or function (empty = usable); a change waits for a restart; the reason a setting is read-only
       searchOnly: spec.searchOnly === true,
       enabledWhen: spec.enabledWhen ? String(spec.enabledWhen) : '', // a condition the row's page tests: greyed out, never hidden
     });
@@ -281,20 +281,20 @@
         { value: 60, label: jt('settings.unattendedGuard.choice.oneHour', '1 hour') }, { value: 120, label: jt('settings.unattendedGuard.choice.twoHours', '2 hours') },
       ]) } });
   def({ id: 'autoApproveStreakCapInput', sectionId: 'permissions', kind: 'optionalInteger', offValue: 0, default: 250, adapterId: 'chatUi', key: 'autoApproveStreakCap', validation: { min: 1, max: 500, step: 1 }, presentation: { offLabel: jt('settings.field.noLimit', 'No limit') } });
-  // Tool toggles: the only place their copy is written. The tool-config field table in
-  // renderer-settings-support.js reads label, help and detail from these descriptors.
+  // Tool toggles: the only place their copy is written (renderer-settings-support.js reads label, help and detail here).
   const TOOL_COPY = {
     imageRead: [jt('settings.tools.imageRead.label', 'Image and PDF page reads'), jt('settings.tools.imageRead.description', 'Let the model look at images and PDF pages.')],
     fileTools: [jt('settings.tools.fileTools.label', 'File tools'), jt('settings.tools.fileTools.description', 'Read, write, edit and search files in the workspace.')],
     richFiles: [jt('settings.tools.richFiles.label', 'Rich file reading'), jt('settings.tools.richFiles.description', 'Open PDFs, spreadsheets, documents, slides and notebooks as structured content.')],
     web: [jt('settings.tools.web.label', 'Web tools'), jt('settings.tools.web.description', 'Search the web and fetch pages.')],
-    pythonRuntime: [jt('settings.tools.pythonRuntime.label', 'Python execution'), jt('settings.tools.pythonRuntime.description', 'Run Python with the same file access as Jenny. Every run asks first.'), jt('settings.tools.pythonRuntime.detail', 'Resource-bounded, but not a filesystem or network sandbox.')],
+    pythonRuntime: [jt('settings.tools.pythonRuntime.label', 'Python execution'), jt('settings.tools.pythonRuntime.description', 'Run Python with Jenny\'s file access. Asks first, except in Auto in a project.'), jt('settings.tools.pythonRuntime.detail', 'Resource-bounded, but not a filesystem or network sandbox.')],
     worktree: [jt('settings.tools.worktree.label', 'Worktree tools'), jt('settings.tools.worktree.description', 'Create and switch isolated Git worktrees.')],
-    subagents: [jt('settings.tools.subagents.label', 'Delegated research'), jt('settings.tools.subagents.description', 'Hand read-only repository research to helper tasks. Adds model cost and time.')],
+    subagents: [jt('settings.tools.subagents.label', 'Delegated research'), jt('settings.tools.subagents.description', 'Hand repository research to helper tasks; on Auto with a cloud model, a helper can also make a change in its own worktree. Adds model cost and time.')],
     bash: [jt('settings.tools.bash.label', 'Terminal commands'), jt('settings.tools.bash.description', 'Run shell commands in the workspace.')],
+    computer: [jt('settings.tools.computer.label', 'Let chats use the computer'), jt('settings.tools.computer.description', 'Each chat still turns Computer on itself, and you answer every program it asks for.')],
     lsp: [jt('settings.tools.lsp.label', 'Code intelligence'), jt('settings.tools.lsp.description', 'Read-only diagnostics, symbols and definitions from language servers.')],
   };
-  [['imageRead', false], ['fileTools', true], ['richFiles', true], ['web', false], ['pythonRuntime', false], ['worktree', false], ['subagents', true], ['bash', true], ['lsp', false]].forEach(([key, dflt]) => {
+  [['imageRead', true], ['fileTools', true], ['richFiles', true], ['web', false], ['pythonRuntime', false], ['worktree', false], ['subagents', true], ['bash', true], ['computer', true], ['lsp', false]].forEach(([key, dflt]) => {
     bool('settings-tool-config-' + key, 'tools', 'features', 'toolConfig.' + key, dflt, { lockWhileSaving: false, copy: { label: TOOL_COPY[key][0], description: TOOL_COPY[key][1], detail: TOOL_COPY[key][2] } });
   });
   def({ id: 'webSearchProviderSelect', sectionId: 'tools', kind: 'enum', default: 'duckduckgo', adapterId: 'features', key: 'webSearch.provider', options: 'source:webSearchProviders',
@@ -351,9 +351,9 @@
     keywords: [jt('settings.changePictures.keywords.beforeAfter', 'before and after'), jt('settings.changePictures.keywords.pictures', 'pictures'), jt('settings.changePictures.keywords.screenshot', 'screenshot'), jt('settings.changePictures.keywords.compare', 'compare')],
   } });
   def({ id: 'appearanceAppZoomSelect', sectionId: 'appearance', kind: 'enum', default: 110, adapterId: 'windowUi', key: 'appZoomPercent', options: 'source:appZoomPresets' });
-  def({ id: 'appearanceTeamDensitySelect', sectionId: 'appearance', kind: 'enum', default: 'comfortable', adapterId: 'appearance', key: 'teamDensityId',
+  def({ id: 'appearanceTeamDensitySelect', sectionId: 'team', kind: 'enum', default: 'comfortable', adapterId: 'appearance', key: 'teamDensityId',
     options: [{ value: 'comfortable', label: jt('appearance.teamDensity.comfortable', 'Comfortable') }, { value: 'compact', label: jt('appearance.teamDensity.compact', 'Compact') }] });
-  def({ id: 'uiLanguageSelect', sectionId: 'general', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages' });
+  def({ id: 'uiLanguageSelect', sectionId: 'general', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages', restartRequired: true });
   def({ id: 'use24HourTime', sectionId: 'general', kind: 'boolean', default: false, controlId: 'use24HourTimeToggle', adapterId: 'chatUi', key: 'use24HourTime', copy: 'field-copy:use24HourTimeToggle' });
   def({ id: 'transcriptViewDefaultSelect', sectionId: 'chat', kind: 'enum', default: 'thinking', adapterId: 'chatUi', key: 'transcriptViewDefault',
     options: [{ value: 'answers', label: jt('settings.transcriptView.answers', 'Answers') }, { value: 'thinking', label: jt('settings.transcriptView.thinking', 'Thinking') }, { value: 'everything', label: jt('settings.transcriptView.everything', 'Everything') }] });

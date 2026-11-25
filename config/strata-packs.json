@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "strata_release": "v0.2.21",
+  "strata_commit": "d46f5f268f8ed797e83a5c63a69bffbd7a581cf6",
+  "terminal_version": "0.1.67",
+  "engine_version": "0.1.67",
+  "families": [
+    {
+      "id": "inkling-2-mini",
+      "model_name": "inkling-2-mini-sq-20",
+      "aliases": ["inkling-2-mini"],
+      "params_b": 26.4,
+      "engine_component": "strata-inkling",
+      "engine_shape": "inkling2",
+      "setup_config": "strata-inkling-2-mini-sq-20.json",
+      "hf_repo": "strata-engine/Inkling-2-Mini-Strata",
+      "hf_revision": "04996a1e2c45009b6a04f2af126cb6bdb2ba3587",
+      "packs": {
+        "native": { "file": "Inkling-2-Mini-SQ-20.strata", "size_bytes": 19346685952, "sha256": "0bbfd52344f0dd4779a7807b5f73554a812f24c035e6877b63cd0d499f7e1b97" },
+        "vision": { "file": "Inkling-2-Mini-Vision.strata", "size_bytes": 636526592, "sha256": "6589eff47f9c20bc3a032faa3d449f10bf4f04a84cc6b2ee8a44d51d2b6fc677" }
+      },
+      "fit_table": [
+        { "gpu_match": "RTX 5090", "min_vram_mb": 32000, "windows": { "1:auto": 228352, "2:auto": 118016, "4:auto": 57856, "1:k8v8": 405504, "2:k8v8": 221952, "4:k8v8": 114432, "4:k8v4": 150016 } }
+      ]
+    }
+  ]
+}

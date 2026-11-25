@@ -1,8 +1,6 @@
-/* renderer/chat/renderer-session-rail-performance.js - the rail's Performance section and the
-   Session toggle's compact readout (UMD).
+/* renderer/chat/renderer-session-rail-performance.js - the rail's Performance section (UMD).
 
-   Row 59 checkpoint 6 (chat workspace parity spec, "Performance section" and "Counter
-   when undocked"). One controller per pane rail. Data: window.jennyShell.performance.getSnapshot
+   Row 59 checkpoint 6 (chat workspace parity spec, "Performance section"). One controller per pane rail. Data: window.jennyShell.performance.getSnapshot
    (frozen W4 shape {ok, settings, inference, gpu}) fetched on mount, on a session change and on
    performance.onChanged for this session (or a host-wide event), coalesced to one request in flight.
    An absent bridge means nothing renders.
@@ -13,9 +11,6 @@
      "stale" (a number past its freshness window is never painted as live, even if no refetch has
      arrived: the renderer ages it locally and a safety refetch is scheduled), a finished turn shows the
      terminal averages labelled as averages, unavailable names the engine, not_applicable is a dash.
-   - The toggle readout ("Session · 182 tok/s") exists only undocked, with the counter on and a live
-     decode rate in the "available" state. The value is part of the toggle's accessible name, not a
-     live region.
    Pure builders (buildPerformanceView, bodyHtml) take the snapshot and a clock; the controller owns the
    bridge, the timers and the DOM. Every dynamic string goes through escapeHtml. */
 (function (root, factory) {
@@ -31,9 +26,8 @@
   const SCHEMA_VERSION = 1;
   const LOCAL_STALE_MS = 3000; // a live reading older than this (renderer clock) is aged to stale
   const SAFETY_REFETCH_MS = 2600; // the service marks a rate stale 2.5 s after its last measurement
-  const NARROW_PANE_PX = 520; // below this the toggle readout keeps icon + rate and drops the word
   const TERMINAL_PHASES = Object.freeze(['finished', 'failed', 'cancelled']);
-  const ENGINE_NAMES = Object.freeze({ ninfer: 'NInfer', 'llama-server': 'llama-server', ollama: 'Ollama' });
+  const ENGINE_NAMES = Object.freeze({ ninfer: 'NInfer', 'llama-server': 'llama-server', strata: 'Strata', ollama: 'Ollama' });
   const GB = 1024 ** 3;
 
   function fallbackJt(key, fallback, params) {
@@ -153,15 +147,12 @@
       ? writing.text
       : (writing.state === 'stale' ? writing.meta : '');
     const decode = inference ? live.live_decode : null;
-    const readoutRate = enabled && !terminal && isObject(decode) && decode.state === 'available' && finite(decode.value) && ageMs <= LOCAL_STALE_MS
-      ? formatRate(decode.value, jt) : '';
     return {
       enabled,
       title: jt('chat.sessionRail.performance.title', 'Performance'),
       header,
       rows,
       scope: describeScope(isObject(snapshot) ? snapshot.gpu : null, jt),
-      readout: readoutRate,
       live: enabled && !terminal && isObject(decode) && (decode.state === 'available' || decode.state === 'warming'),
     };
   }
@@ -193,9 +184,9 @@
     const idPrefix = `${o.idPrefix || 'session-rail'}-performance`;
     const getSessionId = typeof o.getSessionId === 'function' ? o.getSessionId : () => '';
     const now = typeof o.now === 'function' ? o.now : () => Date.now();
-    const onChange = typeof o.onChange === 'function' ? o.onChange : () => {};
 
     let disposed = false;
+    let shown = o.shown !== false; // row 195: a section nobody can see fetches nothing and runs no timer
     let sessionId = String(getSessionId() || '').trim();
     let snapshot = null;
     let fetchedAt = 0;
@@ -206,12 +197,7 @@
     let built = false;
     let lastBody = '';
     let lastValue = '';
-    let lastReadout = '';
-    let paneNarrow = false;
     let tray = null;
-    let toggle = null;
-    let lastMode = '';
-    let lastLabel = '';
     let unsubscribe = null;
     let view = buildPerformanceView({ jt });
 
@@ -246,22 +232,18 @@
         if (bodyNode && lastBody !== body) { bodyNode.innerHTML = body; lastBody = body; }
         host.setAttribute('data-state', view.rows[0].state);
       }
-      if (lastReadout !== view.readout) {
-        lastReadout = view.readout;
-        onChange();
-      }
     }
 
     function scheduleSafetyRefetch() {
       if (timer) win.clearTimeout(timer);
       timer = 0;
-      if (disposed || !view.live) return;
+      if (disposed || !shown || !view.live) return;
       timer = win.setTimeout(() => { timer = 0; void fetchSnapshot(); }, SAFETY_REFETCH_MS);
     }
 
     async function fetchSnapshot() {
       const sid = sessionId;
-      if (disposed || !bridgeOk || !sid) return;
+      if (disposed || !bridgeOk || !sid || !shown) return;
       if (fetching) { queued = true; return; }
       fetching = true;
       const response = await Promise.resolve()
@@ -302,6 +284,15 @@
       void fetchSnapshot();
     }
 
+    // Shown or not: hiding stops the timer; showing again reads once (the rail's own view of what changed while it was away).
+    function setVisible(next) {
+      const value = next === true;
+      if (disposed || value === shown) return;
+      shown = value;
+      if (!shown) { if (timer) win.clearTimeout(timer); timer = 0; return; }
+      void fetchSnapshot();
+    }
+
     // The host joins the tray (as its last section) only while the counter is on: off, it is not in the DOM.
     function placeHost() {
       if (!tray) return;
@@ -313,31 +304,6 @@
       if (disposed || !target) return;
       tray = target;
       placeHost();
-    }
-
-    /* The Session toggle's readout. Only undocked, only with a live "available" decode rate. */
-    function syncReadout(button, mode, label) {
-      toggle = button || toggle;
-      lastMode = mode;
-      lastLabel = label;
-      if (!toggle || disposed) return;
-      const slot = toggle.querySelector('[data-session-rail-readout]');
-      const shown = mode === 'undocked' && view.readout !== '';
-      if (slot) {
-        slot.hidden = !shown;
-        const value = slot.querySelector('[data-session-rail-readout-value]');
-        if (value) value.textContent = shown ? view.readout : '';
-      }
-      toggle.toggleAttribute('data-readout-compact', shown && paneNarrow);
-      if (shown) toggle.setAttribute('aria-label', jt('chat.sessionRail.performance.toggleName', '{label} · {rate}', { label, rate: view.readout }));
-      else toggle.removeAttribute('aria-label');
-    }
-
-    function setPaneWidth(width) {
-      const narrow = finite(width) && width > 0 && width < NARROW_PANE_PX;
-      if (narrow === paneNarrow) return;
-      paneNarrow = narrow;
-      if (toggle) syncReadout(toggle, lastMode, lastLabel);
     }
 
     host.addEventListener('click', (event) => {
@@ -366,13 +332,12 @@
       try { if (unsubscribe) unsubscribe(); } catch (_error) { /* best-effort teardown */ }
       unsubscribe = null;
       host.remove();
-      if (toggle) toggle.removeAttribute('aria-label');
     }
 
-    if (bridgeOk && sessionId) void fetchSnapshot();
+    if (bridgeOk && sessionId && shown) void fetchSnapshot();
 
     return {
-      attach, syncReadout, setPaneWidth, setSession, dispose,
+      attach, setSession, setVisible, dispose,
       refresh: () => { void fetchSnapshot(); },
       getView: () => view,
       isAvailable: () => bridgeOk,
@@ -381,7 +346,7 @@
   }
 
   return {
-    LOCAL_STALE_MS, SAFETY_REFETCH_MS, NARROW_PANE_PX,
+    LOCAL_STALE_MS, SAFETY_REFETCH_MS,
     formatRate, formatDuration, formatPercent, formatGigabytes,
     describeMetric, describeFirstToken, describeScope, buildPerformanceView, bodyHtml, createRailPerformance,
   };

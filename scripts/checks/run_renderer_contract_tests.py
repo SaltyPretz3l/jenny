@@ -26,7 +26,6 @@ RENDERER_CONTRACT_TESTS = [
     "tests/ipc-contract.test.js",
     "tests/ipc-handler-registration.test.js",
     "tests/preload-harness.test.js",
-    "tests/renderer-view-panel-registry.test.js",
     "tests/chat-stream-bridge.test.js",
     "tests/canonical-turn-event-contract.test.js",
     "tests/shell-config-state.test.js",

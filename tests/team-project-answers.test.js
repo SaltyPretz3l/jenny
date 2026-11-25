@@ -352,3 +352,12 @@ test('row 175 item 7: a preference log state keeps an optional plan flag; an old
   assert.deepEqual(read([older, planned]).snapshot.session.preference_log, [older, planned]);
   assert.ok(invalid(read([{ ...planned, to: { ...state, plan: 'on' } }])));
 });
+
+// Row 201 (slice I): the host's redo answer carries the lease generation; the client drops it (its `take` after the redo
+// re-acquires the same seat), so a lease generation never reaches the renderer.
+test('a regenerate or edit and resend answer drops the lease generation the host sends', () => {
+  for (const operation of ['team.project.regenerate', 'team.project.edit_resend']) {
+    const body = { session_id: S, stream_id: 'stream_1', revision: 'boot:2' };
+    assert.deepEqual(projectAnswer(operation, { ok: true, ...body, control_generation: 7 }), { ok: true, ...body }, operation);
+  }
+});

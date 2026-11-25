@@ -1,4 +1,5 @@
-/* Ordered Workspace IDE scripts, loaded together on first use. */
+/* Ordered Workspace IDE scripts, loaded together on first use. `chatWorkbench`: the Chat room's workbench (row 190),
+ * loaded at boot by renderer-app-lifecycle-composition.js; the loader skips a file the other list already ran. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -7,7 +8,23 @@
   root.rendererIdeScriptManifest = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-  return Object.freeze([
+  const chatWorkbench = Object.freeze([
+    ['renderer/shared/workbench-layout-model.js', 'jennyWorkbenchLayoutModel'],
+    ['renderer/shared/workbench-layout-solve.js', 'jennyWorkbenchLayoutSolve'],
+    ['renderer/shared/workbench-layout-ops.js', 'jennyWorkbenchLayoutOps'],
+    ['renderer/features/renderer-ide-workbench-chrome.js', 'rendererIdeWorkbenchChrome'],
+    ['renderer/features/renderer-ide-workbench-sash.js', 'rendererIdeWorkbenchSash'],
+    ['renderer/features/renderer-ide-workbench-tree.js', 'rendererIdeWorkbenchTree'],
+    ['renderer/features/renderer-ide-workbench-focus.js', 'rendererIdeWorkbenchFocus'],
+    ['renderer/features/renderer-ide-workbench-dnd.js', 'rendererIdeWorkbenchDnd'],
+    ['renderer/features/renderer-ide-workbench.js', 'rendererIdeWorkbench'],
+    ['renderer/chat/renderer-chat-layout-store.js', 'rendererChatLayoutStore'],
+    ['renderer/chat/renderer-chat-right-stack.js', 'rendererChatRightStack'],
+    ['renderer/chat/renderer-chat-workbench.js', 'rendererChatWorkbench'],
+    ['renderer/chat/renderer-chat-pane-rows.js', 'rendererChatPaneRows'],
+    ['renderer/app/renderer-app-chat-workbench-composition.js', 'rendererAppChatWorkbenchComposition'],
+  ].map((entry) => Object.freeze(entry)));
+  return Object.freeze(Object.assign([
     // Workbench layout tree (row 40 W3): pure model, legacy-key bridge and ops, in dependency order.
     Object.freeze(['renderer/shared/workbench-layout-model.js', 'jennyWorkbenchLayoutModel']),
     Object.freeze(['renderer/shared/workbench-layout-solve.js', 'jennyWorkbenchLayoutSolve']),
@@ -131,7 +148,6 @@
     Object.freeze(['renderer/features/renderer-ide-chat-dock-changes.js', 'rendererIdeChatDockChanges']),
     Object.freeze(['renderer/features/renderer-ide-chat-dock-anchors.js', 'rendererIdeChatDockAnchors']),
     Object.freeze(['renderer/features/renderer-ide-chat-dock.js', 'rendererIdeChatDock']),
-    Object.freeze(['renderer/features/renderer-ide-workspace-chats.js', 'rendererIdeWorkspaceChats']),
     Object.freeze(['renderer/features/renderer-ide-gutter-decorations.js', 'rendererIdeGutterDecorations']),
     Object.freeze(['renderer/features/renderer-ide-hunk-peek.js', 'rendererIdeHunkPeek']),
     Object.freeze(['renderer/features/renderer-ide-inline-blame.js', 'rendererIdeInlineBlame']),
@@ -199,5 +215,5 @@
     Object.freeze(['renderer/features/renderer-ide-controller-wiring.js', 'rendererIdeControllerWiring']),
     Object.freeze(['renderer/features/renderer-ide-view-lifecycle.js', 'rendererIdeViewLifecycle']),
     Object.freeze(['renderer/features/renderer-ide-controller.js', 'rendererIdeController']),
-  ]);
+  ], { chatWorkbench }));
 });

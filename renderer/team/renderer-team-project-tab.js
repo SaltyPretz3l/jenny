@@ -69,10 +69,11 @@
       const channels = team ? channelsModule() : null;
       if (!channels) return;
       const sessionId = page.startsWith(CONVERSATION) ? column.idOf(page) : '';
-      if (!sessionId || kept.get(team.team_id) === sessionId) return; // already kept: no walk over the list
+      // Left for a channel or a project page (row 201 H22.4): the channel is what is kept again.
+      if (!sessionId) { if (kept.delete(team.team_id)) channels.forgetConversation(team.team_id); return; }
+      if (kept.get(team.team_id) === sessionId) return; // already kept: no walk over the list
       const projectId = (listedConversation(team.team_id, sessionId) || {}).project_id || born.get(sessionId);
       if (projectId) { kept.set(team.team_id, sessionId); channels.rememberConversation(team.team_id, projectId, sessionId); }
-      else if (!sessionId && kept.delete(team.team_id)) channels.forgetConversation(team.team_id);
     }
 
     function listing(team, base) {

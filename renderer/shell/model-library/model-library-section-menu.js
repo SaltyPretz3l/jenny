@@ -15,7 +15,7 @@
   // deps: { windowRef, documentRef, state, contextMenu, isLibraryTag(tag),
   //   focusQuietly(element), card(), host(), toolbarHost(), folders(),
   //   isDisposed(), setStatusMessage(text), ninferLibraryInput(),
-  //   getSourceData(), requestRemove(tag), share() (slice 6-7: the share section or null) }
+  //   getSourceData(), requestRemove(tag), setDefault(tag), share() (slice 6-7: the share section or null) }
   function createModelLibrarySectionMenu(deps) {
     var d = deps || {};
     var windowRef = d.windowRef;
@@ -125,7 +125,14 @@
         anchorEl: anchor,
         restoreFocusTo: anchor,
         onHide: function () { menuOpen = false; },
-        items: shareItems(model, anchor).concat([
+        items: [{
+          label: jt('settings.models.running.setDefault', 'Set as default'),
+          description: model.preferredLocal === true
+            ? jt('settings.modelLibrary.alreadyDefault', 'Already the default for new chats')
+            : jt('settings.modelLibrary.setDefaultHint', 'New chats will use {model}', { model: String(model.displayName || model.tag || tag) }),
+          disabled: model.preferredLocal === true,
+          action: function () { return d.setDefault(tag); },
+        }, { separator: true }].concat(shareItems(model, anchor)).concat([
           libraryTag ? {
             // A library GGUF only leaves the library: its file stays on
             // disk, and a model in use keeps its entry.
@@ -178,9 +185,11 @@
       return {
         displayName: tuned?.displayName || '',
         engines: tuneEngines(tuned),
-        engineTypeHint: tuned?.libraryGguf || tuned?.selectedEngine === 'ninfer' ? 'openai-compatible' : '',
+        engineTypeHint: tuned?.libraryGguf || tuned?.selectedEngine === 'ninfer' || tuned?.selectedEngine === 'strata' ? 'openai-compatible' : '',
         // An NInfer row: the drawer shows the NInfer section (context + MTP) instead of the Engine one.
         ninfer: tuned?.selectedEngine === 'ninfer' ? { artifactId: tuned.ninferArtifactId, modelId: tuned.tag, contextWindows: ninferPinWindows(tuned, 'context_windows'), fp8KvWindows: ninferPinWindows(tuned, 'fp8_kv_windows'), supportsMtp: tuned.mtp?.eligible === true } : null,
+        // A Strata row: the drawer shows the Strata section (slots, memory format, context) instead of the Engine one.
+        ...(tuned?.selectedEngine === 'strata' ? { strata: { modelId: tuned.tag } } : {}),
       };
     }
 

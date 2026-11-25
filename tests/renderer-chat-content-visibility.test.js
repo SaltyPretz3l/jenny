@@ -1,6 +1,6 @@
 // Ht-D: chat transcript content-visibility paint-skip.
 //
-// Pins the flag mirror (documentElement.dataset.chatContentVisibility),
+// Pins the root mirror (documentElement.dataset.chatContentVisibility),
 // the data-cv-exempt exemption contract (pending/streaming turn, unresolved
 // approval-gap turn, bottom-2 belt-and-braces is pure CSS and out of scope
 // here), the settle-clears-the-attribute re-evaluation, the trickiest
@@ -115,7 +115,7 @@ test('buildMessageShellArticle never emits data-cv-exempt when no document globa
   assert.equal(markup.includes('data-cv-exempt'), false);
 });
 
-test('buildMessageShellArticle emits data-cv-exempt="true" only when cvExempt:true AND the flag mirror reads "on"', () => {
+test('buildMessageShellArticle emits data-cv-exempt="true" only when cvExempt:true AND the root mirror reads "on"', () => {
   const previousDocument = global.document;
   assert.equal(previousDocument, undefined, 'precondition: no leaked document from a sibling test');
   global.document = { documentElement: { dataset: { chatContentVisibility: 'on' } } };
@@ -147,7 +147,7 @@ test('buildMessageShellArticle emits data-cv-exempt="true" only when cvExempt:tr
   }
 });
 
-test('buildMessageShellArticle withholds data-cv-exempt when cvExempt:true but the flag mirror is NOT "on"', () => {
+test('buildMessageShellArticle withholds data-cv-exempt when cvExempt:true but the root mirror is NOT "on"', () => {
   const previousDocument = global.document;
   assert.equal(previousDocument, undefined, 'precondition: no leaked document from a sibling test');
   global.document = { documentElement: { dataset: {} } };
@@ -184,7 +184,7 @@ function buildSyncFixture({ pending, hasApprovalGapRow, flagOn }) {
   return { dom, article: dom.window.document.querySelector('article.chat-entry') };
 }
 
-test('syncChatEntryCvExemptAttribute (unit): pending=true sets data-cv-exempt="true" (flag on)', () => {
+test('syncChatEntryCvExemptAttribute (unit): pending=true sets data-cv-exempt="true"', () => {
   const { dom, article } = buildSyncFixture({ pending: true, hasApprovalGapRow: false, flagOn: true });
   const previousDocument = global.document;
   global.document = dom.window.document;
@@ -196,7 +196,7 @@ test('syncChatEntryCvExemptAttribute (unit): pending=true sets data-cv-exempt="t
   }
 });
 
-test('syncChatEntryCvExemptAttribute (unit): pending=false + no approval_gap row clears the attribute (flag on)', () => {
+test('syncChatEntryCvExemptAttribute (unit): pending=false + no approval_gap row clears the attribute', () => {
   const { dom, article } = buildSyncFixture({ pending: false, hasApprovalGapRow: false, flagOn: true });
   article.setAttribute('data-cv-exempt', 'true'); // simulate stale exempt state
   const previousDocument = global.document;
@@ -237,7 +237,7 @@ test('syncChatEntryCvExemptAttribute (unit) TRICKY INVARIANT: pending flips to f
   }
 });
 
-test('syncChatEntryCvExemptAttribute (unit): flag OFF always removes the attribute regardless of pending/approval-gap state', () => {
+test('syncChatEntryCvExemptAttribute (unit): without the root mirror the attribute is always removed regardless of pending/approval-gap state', () => {
   const { dom, article } = buildSyncFixture({ pending: true, hasApprovalGapRow: true, flagOn: false });
   article.setAttribute('data-cv-exempt', 'true');
   const previousDocument = global.document;
@@ -252,95 +252,32 @@ test('syncChatEntryCvExemptAttribute (unit): flag OFF always removes the attribu
 
 /* ── C. Full-harness integration tests ── */
 
-test('flag ON (explicit true): document.documentElement.dataset.chatContentVisibility === "on"', async (t) => {
+test('with no flag in state the root carries chatContentVisibility "on" and a small timeline uses the content-visibility strategy', async (t) => {
   const app = await loadRendererTestApp(t);
   const { window } = app;
-  window.__rendererState.features.featureFlags.chat_render_content_visibility = true;
 
   const input = window.document.getElementById('chatInput');
   input.value = 'trigger a render';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.getElementById('sendButton').click();
+  const timeline = window.document.getElementById('chatTimeline');
   await waitForUiState(
     window,
-    () => window.document.documentElement.dataset.chatContentVisibility === 'on',
-    { message: 'Timed out waiting for the chatContentVisibility flag mirror to flip to "on".' }
+    () => window.document.documentElement.dataset.chatContentVisibility === 'on'
+      && timeline.getAttribute('data-timeline-render-strategy') === 'content-visibility',
+    { message: 'Timed out waiting for the "on" mirror and the content-visibility timeline strategy.' }
   );
 
   assert.equal(window.document.documentElement.dataset.chatContentVisibility, 'on');
+  assert.equal(timeline.getAttribute('data-timeline-render-strategy'), 'content-visibility');
 });
 
-test('flag OFF: dataset attribute is absent (undefined), not "false" -- and no .chat-entry anywhere carries data-cv-exempt across a streaming turn + an approval-gap turn (byte-identical markup contract)', async (t) => {
-  const sessionId = 'session-cv-off';
-  const streamId = 'stream-cv-off';
-  const { window, shell } = await loadRendererTestApp(t, {
-    shell: makeStartStreamShell(sessionId, streamId),
-  });
-  window.__rendererState.features.featureFlags.chat_render_content_visibility = false;
-
-  const input = window.document.getElementById('chatInput');
-  const sendButton = window.document.getElementById('sendButton');
-  input.value = 'off scenario';
-  input.dispatchEvent(new window.Event('input', { bubbles: true }));
-  sendButton.click();
-  await waitForUserEntry(window);
-
-  await shell.__emitChat({ type: 'started', sessionId, streamId });
-  await shell.__emitChat({
-    type: 'delta',
-    sessionId,
-    streamId,
-    content: '',
-    aggregate: '',
-    reasoning: { source: 'provider', entriesDelta: [{ id: 'reason-1', text: 'thinking' }] },
-  });
-  await shell.__emitChat({ type: 'delta', sessionId, streamId, content: 'Working. ', aggregate: 'Working. ' });
-  await shell.__emitChat({
-    type: 'tool_use',
-    sessionId,
-    streamId,
-    callId: 'call-cv-off',
-    toolName: 'write_file',
-    summary: 'Write x',
-    input: { path: 'x.md' },
-    status: 'pending_approval',
-  });
-  await shell.__emitChat({
-    type: 'tool_approval_needed',
-    sessionId,
-    streamId,
-    callId: 'call-cv-off',
-    approvalId: 'approval-cv-off-1',
-    toolName: 'write_file',
-    input: { path: 'x.md' },
-  });
-  await waitForUiState(
-    window,
-    () => Boolean(window.document.querySelector('[data-row-kind="approval_gap"]')),
-    { message: 'Timed out waiting for the approval_gap row to render (flag-off scenario).' }
-  );
-
-  assert.equal(window.document.documentElement.dataset.chatContentVisibility, undefined);
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(window.document.documentElement.dataset, 'chatContentVisibility'),
-    false,
-    'attribute must be ABSENT, not present with a false-y value'
-  );
-
-  const timeline = window.document.getElementById('chatTimeline') || window.document.body;
-  assert.equal(timeline.innerHTML.includes('data-cv-exempt'), false, 'flag off must never emit data-cv-exempt anywhere');
-  // Sanity: the approval gate DID render (so this is a real negative, not a no-op scenario).
-  assert.ok(timeline.querySelector('[data-row-kind="approval_gap"]'), 'sanity: approval gap row rendered under flag-off too');
-});
-
-test('pending/streaming turn-article gets data-cv-exempt="true" while streaming (flag on)', async (t) => {
+test('pending/streaming turn-article gets data-cv-exempt="true" while streaming', async (t) => {
   const sessionId = 'session-cv-pending';
   const streamId = 'stream-cv-pending';
   const { window, shell } = await loadRendererTestApp(t, {
     shell: makeStartStreamShell(sessionId, streamId),
   });
-  window.__rendererState.features.featureFlags.chat_render_content_visibility = true;
-
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
   input.value = 'streaming scenario';
@@ -376,14 +313,12 @@ test('pending/streaming turn-article gets data-cv-exempt="true" while streaming 
   assert.equal(assistantArticle.getAttribute('data-cv-exempt'), 'true');
 });
 
-test('a settled (non-streaming, no approval gate) historical turn-article does NOT carry data-cv-exempt (flag on) -- the common case', async (t) => {
+test('a settled (non-streaming, no approval gate) historical turn-article does NOT carry data-cv-exempt -- the common case', async (t) => {
   // Default shell session id (mirrors tests/renderer-turn-shell.test.js:108-174):
   // sendButton.click() with no custom startStream binds to 'session-1'.
   const sessionId = 'session-1';
   const streamId = 'stream-cv-hist';
   const { window, shell } = await loadRendererTestApp(t);
-  window.__rendererState.features.featureFlags.chat_render_content_visibility = true;
-
   const input = window.document.getElementById('chatInput');
   input.value = 'seed history';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -431,14 +366,12 @@ test('a settled (non-streaming, no approval gate) historical turn-article does N
   assert.equal(assistantArticle.getAttribute('data-cv-exempt'), null);
 });
 
-test('a turn-article with an unresolved approval gate gets data-cv-exempt="true" even when NOT .pending (flag on)', async (t) => {
+test('a turn-article with an unresolved approval gate gets data-cv-exempt="true" even when NOT .pending', async (t) => {
   const sessionId = 'session-cv-gap';
   const streamId = 'stream-cv-gap';
   const { window, shell } = await loadRendererTestApp(t, {
     shell: makeStartStreamShell(sessionId, streamId),
   });
-  window.__rendererState.features.featureFlags.chat_render_content_visibility = true;
-
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
   input.value = 'approval gap scenario';
@@ -497,14 +430,12 @@ test('a turn-article with an unresolved approval gate gets data-cv-exempt="true"
   assert.equal(toolArticle.getAttribute('data-cv-exempt'), 'true');
 });
 
-test('re-evaluation on settle: a turn that starts pending/exempt and finishes streaming (no approval gate) loses data-cv-exempt after the settle-render (flag on)', async (t) => {
+test('re-evaluation on settle: a turn that starts pending/exempt and finishes streaming (no approval gate) loses data-cv-exempt after the settle-render', async (t) => {
   const sessionId = 'session-cv-settle';
   const streamId = 'stream-cv-settle';
   const { window, shell } = await loadRendererTestApp(t, {
     shell: makeStartStreamShell(sessionId, streamId),
   });
-  window.__rendererState.features.featureFlags.chat_render_content_visibility = true;
-
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
   input.value = 'settle scenario';
@@ -568,7 +499,7 @@ test('styles/chat-thread.css pins the content-visibility rule + the exemption ov
   const cssPath = path.resolve(__dirname, '..', 'styles', 'chat-thread.css');
   const css = fs.readFileSync(cssPath, 'utf8');
 
-  // The paint-skip rule itself, scoped to the flag-mirror attribute selector.
+  // The paint-skip rule itself, scoped to the root-mirror attribute selector.
   assert.match(
     css,
     /:root\[data-chat-content-visibility="on"\]\s*\.chat-timeline\[data-timeline-render-strategy="content-visibility"\]\s*\.chat-entry\s*\{[^}]*content-visibility:\s*auto;/,

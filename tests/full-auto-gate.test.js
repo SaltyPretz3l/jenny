@@ -116,6 +116,12 @@ test('a plan is never self-approved', () => {
   assert.equal(fullAutoApproves(service, { ...call, toolName: 'exit_plan_mode' }), false);
 });
 
+test('a person answers every computer ask (row 196, D9)', () => {
+  const { service } = harness();
+  const call = { sessionId: 'session-jenny', executionAuthority: AUTO_TURN };
+  assert.equal(fullAutoApproves(service, { ...call, toolName: 'computer' }), false);
+});
+
 test('a throwing armed-state read asks a person', async () => {
   const { service, emitted } = harness({ primaryFullAuto: { isArmed() { throw new Error('boom'); } } });
   await assertAsksAPerson(ask(service), service, emitted);

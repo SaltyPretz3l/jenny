@@ -61,6 +61,8 @@ CMP_TOOL_PAUSED_UNATTENDED = "CMP-TOOL-0046"
 CMP_TOOL_PDF_ADDON_MISSING = "CMP-TOOL-0047"
 # report_findings got no list of findings with at least one usable title.
 CMP_TOOL_REVIEW_FINDINGS_INVALID = "CMP-TOOL-0048"
+# Row 196: a second changing `computer` call in one model message, settled before dispatch.
+CMP_TOOL_COMPUTER_LOOK_FIRST = "CMP-TOOL-0049"
 CMP_MEMORY_FAILED = "CMP-MEM-0001"
 CMP_MEMORY_FINGERPRINT_CONFLICT = "CMP-MEM-0002"
 CMP_MEMORY_INVALID_KIND = "CMP-MEM-0003"

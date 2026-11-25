@@ -1,4 +1,4 @@
-/** Download, maximize, and overflow actions for Artifact Panel V3. */
+/** Download and overflow actions for Artifact Panel V3. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('../inventory/context-menu'), require('../shared/log-contract-utils'), require('./renderer-artifacts-projection'));
@@ -118,15 +118,13 @@
     }
 
     // More lists only what applies to this artifact (no permanently disabled
-    // rows): Copy (only while the narrow header folds it), an image's Save as,
-    // Show in folder and Open externally, Download, Maximize (not while
-    // maximized or in the overlay), Reveal, Open externally, Jump to chat, Delete.
+    // rows): an image's Save as, Show in folder and Open externally, Download,
+    // Reveal, Open externally, Jump to chat, Delete.
     function overflowItems(artifact) {
       var generated = artifact.artifactType === 'generated_file';
       // Images have no source text, so this is null for them.
       var textSource = options.getArtifactSource?.() != null;
       var image = imageActionTarget(artifact, panelEl);
-      var overlay = panelEl?.classList?.contains('artifact-review-overlay') === true;
       function act(selector) {
         return function () { if (options.isCurrentArtifact?.(artifact) !== false) hiddenClick(selector); };
       }
@@ -134,18 +132,12 @@
         return function () { if (!disposed && options.isCurrentArtifact?.(artifact) !== false) return globalThis.rendererImageViewerController?.run?.(action, image); };
       }
       var items = [];
-      if ((textSource || image) && options.isNarrow?.() === true) {
-        items.push({ label: image ? jt('artifacts.actions.copyImage', 'Copy image') : jt('common.copy', 'Copy'), action: act('[data-artifact-panel-v2-copy]') });
-      }
       if (image) {
         items.push({ label: jt('artifacts.actions.saveImageAs', 'Save as…'), action: run('save-as') });
         items.push({ label: jt('artifacts.actions.showInFolder', 'Show in folder'), action: run('reveal') });
         items.push({ label: jt('artifacts.actions.openExternally', 'Open externally'), action: run('open') });
       }
       if (textSource) items.push({ label: jt('artifacts.actions.download', 'Download'), action: function () { return download(artifact); } });
-      if (!overlay && options.isMaximized?.() !== true && typeof options.toggleMaximize === 'function') {
-        items.push({ label: jt('artifacts.actions.maximizePanel', 'Maximize panel'), action: function () { toggleMaximize(); } });
-      }
       if (generated) {
         items.push({ label: jt('artifacts.actions.revealInFolder', 'Reveal in folder'), action: act('#artifactReviewRevealButton') });
         items.push({ label: jt('artifacts.actions.openExternally', 'Open externally'), action: act('#artifactReviewOpenExternalButton') });
@@ -180,11 +172,6 @@
       return true;
     }
 
-    function toggleMaximize() {
-      if (disposed || panelEl?.classList?.contains('artifact-review-overlay')) return false;
-      return typeof options.toggleMaximize === 'function' ? options.toggleMaximize() : false;
-    }
-
     function closeOverflow() {
       if (overflowOpen) contextMenu?.hide?.({ restoreFocus: false });
       overflowOpen = false;
@@ -198,7 +185,7 @@
 
     function hasOverflowItems(artifact) { return Boolean(artifact) && overflowItems(artifact).length > 0; }
 
-    return { dispose: dispose, closeOverflow: closeOverflow, download: download, hasOverflowItems: hasOverflowItems, showOverflow: showOverflow, toggleMaximize: toggleMaximize };
+    return { dispose: dispose, closeOverflow: closeOverflow, download: download, hasOverflowItems: hasOverflowItems, showOverflow: showOverflow };
   }
 
   return { buildDownloadPayload: buildDownloadPayload, createArtifactPanelActions: createArtifactPanelActions, imageActionTarget: imageActionTarget };

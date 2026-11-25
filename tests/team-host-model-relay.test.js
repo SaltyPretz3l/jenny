@@ -18,6 +18,7 @@ const { createModelRelayLink } = require('../server/team/model-relay-link');
 const { HOST_METHODS, HOST_OPERATIONS, validatePayload } = require('../services/team/ipc-methods');
 const { loadHostConfig } = require('../server/config');
 const { prepareHostLayout, readSavedHostConfig } = require('../services/team/host/host-layout');
+const { DEFAULT_FLOWING, createHostModelRelay } = require('../services/team/host/host-model-relay');
 
 const DEPLOY = Object.freeze({ name: 'Studio', display_name: 'Olive Owner', label: 'Desk' });
 const TEAM_ID = deriveTeamId(keyPairFromSeed(Buffer.from(HOST_SEED)).publicKey);
@@ -226,4 +227,20 @@ test('the relay link: the setting goes to setFlowingLimit, a report on change on
   assert.equal(cleared, 1);
   link.set(3);
   assert.equal(limit, 0, 'a disposed link changes nothing');
+});
+
+test("a team restored or deployed after another one is not sent the last team's relay setting", () => {
+  let saved = { team: { name: 'Old', model_relay_flowing: 4 } };
+  const listeners = [];
+  const sent = [];
+  createHostModelRelay({ userDataPath: '/profile', writeConfig: () => {}, hostState: () => ({}), readSaved: () => saved,
+    supervisor: { onState: (listener) => listeners.push(listener), setModelRelay: (flowing) => { sent.push(flowing); return true; } } });
+  const tell = (state, since) => listeners[0]({ state, since, relay: null });
+  tell('running', 1);
+  assert.deepEqual(sent, [4], 'the old team runs on its own saved setting');
+  tell('stopped', 2);
+  saved = { team: { name: 'New' } }; // a restore or a new deploy wrote another config while the host was down
+  tell('starting', 3);
+  tell('running', 4);
+  assert.deepEqual(sent, [4, DEFAULT_FLOWING], "the new team is sent its own (default) setting, not the previous team's");
 });

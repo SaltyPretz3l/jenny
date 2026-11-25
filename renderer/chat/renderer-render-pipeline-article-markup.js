@@ -16,12 +16,44 @@
   const { isPrimarySessionId = () => false } = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)) || {};
   const resolveArticleLegacyUtils = () => globalThis.rendererRenderPipelineArticleLegacy
     || (typeof require === 'function' ? require('./renderer-render-pipeline-article-legacy') : null);
+  const jt = globalThis.jennyI18n?.t || globalThis.jennyI18nFallback || ((k, d, p) => (p ? String(d).replace(/\{(\w+)\}/g, (m, n) => (n in p ? String(p[n]) : m)) : d));
+  const jtn = globalThis.jennyI18n?.tn || ((k, count, p, one, other) => jt.call(null, k, count === 1 ? one : other, { count }));
+
+  // Row 192 C8, the outcomes line. Files: this turn's change ledger (what the Changes tab lists), cached per
+  // view model. Pictures: only what the lazily loaded pictures cache already holds; nothing is requested here.
+  const fileCounts = new WeakMap();
+  function countChangedFiles(viewModel) {
+    if (!viewModel || typeof viewModel !== 'object') return 0;
+    if (!fileCounts.has(viewModel)) {
+      const ledger = globalThis.rendererJennyChangeLedger || (typeof require === 'function' ? require('./renderer-jenny-change-ledger') : null);
+      fileCounts.set(viewModel, new Set((ledger?.buildJennyChangeLedgerFromTurnViewModels?.([viewModel]).changes || []).map((change) => change.fileKey)).size);
+    }
+    return fileCounts.get(viewModel);
+  }
+  const PICTURE_STATES = ['ready', 'same', 'after_failed', 'new', 'deleted'];
+  function countChangePictures(sessionId, turnId) {
+    try {
+      const cache = globalThis.rendererChangePictures?.getShared?.().cache;
+      return sessionId && cache && !cache.isDisabled() ? globalThis.rendererChangePicturesModel.pagesOf(cache.peek(sessionId, turnId, 'desktop').record)
+        .filter((page) => PICTURE_STATES.includes(page.state)).length : 0;
+    } catch (_error) { return 0; }
+  }
+  function buildTurnOutcomesMarkup(turnId, viewModel, sessionId, picturesOn, escapeHtml) {
+    const files = turnId ? countChangedFiles(viewModel) : 0;
+    if (!files) return '';
+    const pictures = picturesOn ? countChangePictures(sessionId, turnId) : 0;
+    const button = globalThis.inventoryActionButton || (typeof require === 'function' ? require('../inventory/action-button') : null);
+    const link = (outcome, label, title) => button({ plain: true, className: 'turn-outcome-link', label, title, dataset: { 'turn-outcome': outcome, scope: 'turn', 'turn-id': turnId } });
+    const links = [link('changes', jtn('chat.turnOutcomes.filesChanged', files, null, '{count} file changed', '{count} files changed'), jt('chat.turnOutcomes.filesChangedTitle', 'Open the Changes tab'))];
+    if (pictures) links.push(link('pictures', jtn('chat.turnOutcomes.pictures', pictures, null, '{count} picture of the changed page', '{count} pictures of the changed page'), jt('chat.turnOutcomes.picturesTitle', 'Open the Changes tab at the pictures')));
+    return `<div class="turn-outcomes" role="group" aria-label="${escapeHtml(jt('chat.turnOutcomes.groupLabel', 'What this turn left behind'))}">${links.join('<span class="turn-outcome-sep" aria-hidden="true">·</span>')}</div>`;
+  }
+
   function createArticleMarkupPipeline(deps) {
     const {
       state = {},
       constants = {},
       dom = {},
-      controllers = {},
       callbacks = {},
     } = deps || {};
     const { MESSAGE_STATUS = {} } = constants;
@@ -32,9 +64,7 @@
     let primaryFlagId = '';
     let primaryFlag = false;
     const {
-      // Upstream pipeline methods (projection-cache C1, hydration C2,
-      // projection-context C3, thread-state B1, thinking B3); the legacy-only ones
-      // (tool entry, recap model, row shells) are read by the legacy module:
+      // Upstream pipeline methods (C1-C3, B1, B3); the legacy-only ones are read by the legacy module:
       resolveResumeTailAssistantMessageId = () => '',
       resolveArticlePredictionCacheKey = () => '',
       getMessageFromCollection = () => null,
@@ -46,11 +76,7 @@
       buildMessageShellArticle = () => '',
       buildTurnRowListMarkup = () => '',
       // streaming-reveal helper:
-      buildStreamingBubbleMarkup = (message) => ({
-        bubbleInnerHtml: '',
-        streamUnits: null,
-        streamChangedStart: -1,
-      }),
+      buildStreamingBubbleMarkup = () => ({ bubbleInnerHtml: '', streamUnits: null, streamChangedStart: -1 }),
       // Injected renderer callbacks:
       escapeHtml = (value) => String(value || ''),
       buildAssistantMetaLabel = () => '',
@@ -121,13 +147,8 @@
       schedulePredictedHeightCleanup,
       syncPatchedArticlePrediction,
     } = resolveArticlePredictionUtils().createArticlePrediction({
-      state,
-      chatTimeline,
-      chatThreadColumn,
-      resolveArticlePredictionCacheKey,
-      resolveVisibleTurnArticleTarget,
-      buildTurnRowListMarkup,
-      isFollowingLatest,
+      state, chatTimeline, chatThreadColumn, resolveArticlePredictionCacheKey, resolveVisibleTurnArticleTarget,
+      buildTurnRowListMarkup, isFollowingLatest,
     });
 
     // The per-message path: message bubbles, application-turn notes and the
@@ -137,29 +158,11 @@
       buildMessageArticleInnerHtml,
       buildMessageArticleMarkupLegacy,
     } = resolveArticleLegacyUtils().createLegacyArticleMarkup({
-      state,
-      MESSAGE_STATUS,
-      chatTimeline,
-      callbacks,
-      escapeHtml,
-      buildMessageShellArticle,
-      renderMessageHoverRow,
-      buildAssistantMetaLabel,
-      buildMessageTokenMeta,
-      formatMessageTokenMeta,
-      combineMessageMetaLabels,
-      buildShortAssistantMetaLabel,
-      formatMessageTokenMetaShort,
-      formatMessageTerminalTimestamp,
-      formatMessageClockTime,
-      buildStreamingBubbleMarkup,
-      recordTurnArticleRolloutSignal,
-      getPaneSessionId,
-      paneSessionIsPrimary,
-      getPaneTranscriptView,
-      resolveSelectionState,
-      maybePredictArticleHeight,
-      buildThreadCompatAnchor,
+      state, MESSAGE_STATUS, chatTimeline, callbacks, escapeHtml, buildMessageShellArticle, renderMessageHoverRow,
+      buildAssistantMetaLabel, buildMessageTokenMeta, formatMessageTokenMeta, combineMessageMetaLabels,
+      buildShortAssistantMetaLabel, formatMessageTokenMetaShort, formatMessageTerminalTimestamp, formatMessageClockTime,
+      buildStreamingBubbleMarkup, recordTurnArticleRolloutSignal, getPaneSessionId, paneSessionIsPrimary,
+      getPaneTranscriptView, resolveSelectionState, maybePredictArticleHeight, buildThreadCompatAnchor,
       isBlankAssistantSegmentMessage,
     });
 
@@ -172,15 +175,11 @@
       'approval_gap',
       'system_notice',
       'agent_progress',
-      // B7a: interactive batch/recap rows are now first-class. Routing them
-      // through the Tier-1 registry (buildBatchRowMarkup / buildRecapRowMarkup)
-      // renders the interactive panel inline instead of the legacy per-message
-      // Tier-3 path (a plain bubble for batch).
+      // B7a: batch/recap rows render inline through the Tier-1 registry, not the legacy per-message path;
+      // plan proposal, object and document rows ride the same first-class row path.
       'batch',
       'recap',
-      // Historical plan-proposal summaries ride the same first-class row path.
       'plan_proposal',
-      // Plan proposal, plan object, and plan document rows use the first-class coalesced-turn row path.
       'plan_object',
       'plan_document',
     ]);
@@ -188,33 +187,17 @@
     // Turn-activity envelope (coalesced turn articles): the coalesce helpers
     // load as their own script; resolve lazily so script order stays free.
     function resolveTurnArticleCoalesceUtils() {
-      const utils = typeof globalThis !== 'undefined'
-        ? globalThis.rendererTurnArticleCoalesceUtils
-        : null;
-      return utils
-        && typeof utils.collectTurnRenderRows === 'function'
-        && typeof utils.deriveTurnArticleAnchorMessageId === 'function'
-        ? utils
-        : null;
+      const utils = globalThis.rendererTurnArticleCoalesceUtils;
+      return typeof utils?.collectTurnRenderRows === 'function' && typeof utils.deriveTurnArticleAnchorMessageId === 'function' ? utils : null;
     }
 
-    // A blank plain assistant segment carries nothing a reader could lose —
-    // no kind, no content, no attachments, no reasoning entries. Rollout
-    // signals skip these so the Ht-F canaries only fire for shapes where
-    // content could actually be missing. (Mirrors the claim predicate in
-    // renderer-turn-tree-projector-persistence.js — keep the two in sync.)
+    // A blank plain assistant segment (no kind, content, attachments or reasoning entries) carries nothing a
+    // reader could lose, so the Ht-F rollout canaries skip it. Mirrors the claim predicate in
+    // renderer-turn-tree-projector-persistence.js: keep the two in sync.
     function isBlankAssistantSegmentMessage(message) {
-      if (String(message?.kind || '').trim()) {
-        return false;
-      }
-      if (String(message?.content || '').trim()) {
-        return false;
-      }
-      if (Array.isArray(message?.attachments) && message.attachments.length > 0) {
-        return false;
-      }
-      const reasoningEntries = message?.reasoning?.entries;
-      return !(Array.isArray(reasoningEntries) && reasoningEntries.length > 0);
+      return !String(message?.kind || '').trim() && !String(message?.content || '').trim()
+        && !(Array.isArray(message?.attachments) && message.attachments.length > 0)
+        && !(Array.isArray(message?.reasoning?.entries) && message.reasoning.entries.length > 0);
     }
 
     const isSteerBubbleRow = (row, messages, ctx) => String(row?.kind || '').trim() === 'user_bubble' // row 180: sent mid-turn
@@ -263,16 +246,10 @@
           : '',
         branchUnavailable: paneSessionIsPrimary(),
       };
-      // Footer label: a terminal assistant_error notice on the turn outranks
-      // the contentful action target (which stays the copy/regenerate target),
-      // so a failed turn reads "Failed", never "Completed".
-      const errorDedupeApi = (typeof globalThis !== 'undefined' && globalThis.rendererTurnRowErrorDedupeUtils) || null;
-      const terminalErrorMessage = errorDedupeApi && typeof errorDedupeApi.findTerminalAssistantErrorMessage === 'function'
-        ? errorDedupeApi.findTerminalAssistantErrorMessage(
-            sourceRows,
-            (messageId) => getMessageFromCollection(messageId, messages, projectionContext)
-          )
-        : null;
+      // Footer label: a terminal assistant_error notice outranks the contentful action target (which stays the
+      // copy/regenerate target), so a failed turn reads "Failed", never "Completed".
+      const terminalErrorMessage = globalThis.rendererTurnRowErrorDedupeUtils?.findTerminalAssistantErrorMessage?.(
+        sourceRows, (messageId) => getMessageFromCollection(messageId, messages, projectionContext)) || null;
       const turnMessageIds = [...new Set(Array.isArray(turn?.source_message_ids) ? turn.source_message_ids : [actionTargetMessageId])];
       const turnMessages = turnMessageIds.map((id) => getMessageFromCollection(id, messages, projectionContext)).filter((item) => item?.role === 'assistant');
       const tokenMeta = buildMessageTokenMeta(turnMessages, turnMessageIds).get(actionTargetMessageId);
@@ -281,10 +258,8 @@
         buildAssistantMetaLabel(footerMessage, formatMessageTerminalTimestamp, turnMessages, turn),
         formatMessageTokenMeta(tokenMeta)
       );
-      const shortMetaLabel = combineMessageMetaLabels(
-        buildShortAssistantMetaLabel(footerMessage, formatMessageClockTime, turnMessages, turn),
-        formatMessageTokenMetaShort(tokenMeta)
-      );
+      const shortMetaLabel = buildShortAssistantMetaLabel(footerMessage, formatMessageClockTime, turnMessages, turn,
+        formatMessageTokenMetaShort(tokenMeta));
       const hasActiveStreamingMessage = String(projectionContext?.activeStreamingMessageId || '').trim() !== '';
       const isStreaming = hasActiveStreamingMessage && (
         renderOptions.isStreaming === true || turnMessageIds.some(function hasStreamingMessage(messageId) {
@@ -300,16 +275,15 @@
       const streamingRevealModel = streamingMessage && String(streamingMessage.content || '').trim()
         ? buildStreamingBubbleMarkup(streamingMessage)
         : null;
-      const turnPhaseApi = (typeof globalThis !== 'undefined' && globalThis.rendererTurnPhase) || null;
+      const turnPhaseApi = globalThis.rendererTurnPhase;
       const turnViewModelForPhase = projectionContext?.viewModelByTurnId instanceof Map
         ? projectionContext.viewModelByTurnId.get(String(turn?.turn_id || '').trim()) || null
         : null;
-      let turnPhaseForMarkup = turnPhaseApi && typeof turnPhaseApi.deriveTurnPhase === 'function' && turnViewModelForPhase
+      let turnPhaseForMarkup = typeof turnPhaseApi?.deriveTurnPhase === 'function' && turnViewModelForPhase
         ? turnPhaseApi.deriveTurnPhase(turnViewModelForPhase)
         : '';
-      // review_artifact is consumer-supplied: when the split review panel is
-      // visible, surface it on the latest settled turn so the turn row tracks
-      // the review context without a second lifecycle authority.
+      // review_artifact is consumer-supplied: with the split review panel visible, the latest settled turn
+      // tracks the review context without a second lifecycle authority.
       const latestAssistantMessageId = renderOptions.latestReplyAssistantMessageId != null
         ? String(renderOptions.latestReplyAssistantMessageId || '').trim()
         : '';
@@ -334,15 +308,14 @@
       const rowListHtml = buildTurnRowListMarkup(sourceRows, messages, {
         ...renderOptions, renderSteerHoverRow, transcriptView,
         isStreaming,
-         projectionContext,
-         messageById: projectionContext?.messageById,
-         turnIdByMessageId: projectionContext?.turnIdByMessageId,
-         // Resume stamps sessionId for its activation-time revalidation (empty
-         // = inert button); callers omit it, so read this pane's session (W1-4a).
-         sessionId: renderOptions.sessionId || getPaneSessionId(),
-         retryMessageId: isLatestTurn ? latestAssistantMessageId : '',
-         resumeTailMessageId: renderOptions.resumeTailMessageId || '',
-         resumeSendBusy: Boolean(renderOptions.followUpDisabledReason),
+        projectionContext,
+        messageById: projectionContext?.messageById,
+        turnIdByMessageId: projectionContext?.turnIdByMessageId,
+        // Resume revalidates sessionId on activation (empty = inert button); callers omit it: this pane's (W1-4a).
+        sessionId: renderOptions.sessionId || getPaneSessionId(),
+        retryMessageId: isLatestTurn ? latestAssistantMessageId : '',
+        resumeTailMessageId: renderOptions.resumeTailMessageId || '',
+        resumeSendBusy: Boolean(renderOptions.followUpDisabledReason),
         timelineDividerByMessageId: projectionContext?.timelineDividerByMessageId || null,
         dividerHostMessageId: articleMessageId,
         streamingRowId: renderOptions.streamingRowId || '',
@@ -354,22 +327,26 @@
         // turn id (the single-row patch path falls back to the row's own turn_id).
         turnId: String(turn?.turn_id || ''),
       });
+      // Row 192 C9: a failed or stopped turn's card is a system_notice row of subkind assistant_error, so a turn
+      // that ended before any answer text gets its details line too. None while the turn runs, tool gaps included.
       const hasActionableAssistantRow = sourceRows.some(function hasAssistantRow(row) {
         const rowKind = String(row?.kind || '').trim();
-        return rowKind === 'assistant_text' || rowKind === 'assistant_error';
+        return rowKind === 'assistant_text' || rowKind === 'assistant_error'
+          || (rowKind === 'system_notice' && row.payload?.subkind === 'assistant_error');
       });
-      const hoverRowHtml = hasActionableAssistantRow
+      const turnSettled = !isStreaming && !turnLive;
+      const hoverRowHtml = hasActionableAssistantRow && turnSettled
         ? renderMessageHoverRow(actionTargetMessage, actionOptions, metaLabel, shortMetaLabel)
         : '';
+      const outcomesHtml = turnSettled
+        ? buildTurnOutcomesMarkup(String(turn?.turn_id || '').trim(), turnViewModelForPhase, getPaneSessionId(),
+          state.features?.featureFlags?.change_pictures !== false, escapeHtml)
+        : '';
       const finalizedAt = String(actionTargetMessage?.finalizedAt || primaryMessage?.finalizedAt || '').trim();
-      // skipHeightPrediction: the stream-reveal row-list builder keeps only the
-      // row list, so a prediction is waste there (timeline-perf 2026-09-30).
-      // A settled article predicts from the rowListHtml above (one build, one
-      // sink feed); a streaming one keeps a separate build because its row
-      // list carries streaming-bubble markup the prediction never measured, and
-      // that build must not feed the caller's segment sink a second time.
-      // No reservation for the live turn under a reader following it (row 131, D5: an overshoot is
-      // blank room the follow scrolls into, and the reply jumps back when the room goes).
+      // skipHeightPrediction: the stream-reveal builder keeps only the row list (timeline-perf 2026-09-30).
+      // A settled article predicts from rowListHtml (one build, one sink feed); a streaming one keeps its own
+      // build (its row list carries streaming-bubble markup) that never feeds the caller's sink. No reservation
+      // for the live turn under a following reader (row 131, D5: the overshoot is blank room the reply jumps back from).
       const predictedHeight = renderOptions.skipHeightPrediction === true || (turnLive && isFollowingLatest() === true)
         ? null
         : maybePredictTurnHeight(turn, sourceRows, messages, {
@@ -384,10 +361,8 @@
       }
       // F4/F5/F6: surface selection state on the article (data-selected + handle).
       const selectionStateProjected = resolveSelectionState(articleMessageId);
-      // Ht-D: exempt the active/pending turn and any turn holding an
-      // unresolved approval gate from content-visibility paint-skip. An
-      // approval_gap row that is not a `resolved` receipt is the
-      // unresolved-gate signal (renderer-turn-reducer-approval-gap.js).
+      // Ht-D: the active turn and any turn with an unresolved approval gate (an approval_gap row that is not a
+      // `resolved` receipt, renderer-turn-reducer-approval-gap.js) are exempt from content-visibility paint-skip.
       const hasUnresolvedApprovalGap = sourceRows.some(function hasApprovalGapRow(row) {
         return String(row?.kind || '').trim() === 'approval_gap' && row?.payload?.state !== 'resolved';
       });
@@ -405,19 +380,16 @@
         innerHtml: `
           <div class="chat-message-content">
             ${rowListHtml}
+            ${outcomesHtml}
             ${hoverRowHtml}
           </div>
         `,
       });
     }
 
-    // @legacy-fallback (compat scaffolding, NOT dead code; see
-    // docs/archive/RENDER_PIPELINE_SPLIT_PLAN.md §4): the projected dispatch
-    // renders a non-primary sibling inside a coalesced turn-article here as an
-    // empty anchor row, so message-id lookups still resolve. Envelope siblings
-    // (options.envelopeSibling) carry data-thread-compat-enveloped so the
-    // thread-DOM layer can drop the matching collapse toggle for compat-only
-    // subtrees.
+    // @legacy-fallback (compat scaffolding, NOT dead code; docs/archive/RENDER_PIPELINE_SPLIT_PLAN.md §4): a
+    // non-primary sibling inside a coalesced turn article renders as an empty anchor row so message-id lookups
+    // resolve. Envelope siblings carry data-thread-compat-enveloped so the thread DOM drops their collapse toggle.
     function buildThreadCompatAnchor(message, options) {
       const messageId = String(message?.id || '').trim();
       const envelopeSibling = !!(options && options.envelopeSibling);
@@ -426,17 +398,10 @@
       return `<div class="chat-row chat-row-thread-compat" data-row-kind="thread_compat"${envelopeAttr} data-source-message-id="${escapeHtml(messageId)}" data-source-message-ids="${escapeHtml(messageId)}">${anchorSpan}</div>`;
     }
 
-    // True when this turn renders as ONE coalesced envelope article (the
-    // turn-activity envelope path will derive an anchor): sibling compat
-    // anchors must then render dotless — the article's own rows carry the
-    // rail landmarks. Mirrors the anchor derivation the assistant dispatch
-    // performs so tool_result anchors agree with their turn's shape.
+    // True when this turn renders as ONE coalesced envelope article: sibling compat anchors then render dotless
+    // (the article's rows carry the rail landmarks). Mirrors the assistant dispatch's anchor derivation.
     function isEnvelopeCoalescedTurn(turnId, rows, projectionContext) {
-      const coalesceUtils = resolveTurnArticleCoalesceUtils();
-      if (!coalesceUtils) {
-        return false;
-      }
-      return !!coalesceUtils.deriveTurnArticleAnchorMessageId(turnId, rows, projectionContext);
+      return !!resolveTurnArticleCoalesceUtils()?.deriveTurnArticleAnchorMessageId(turnId, rows, projectionContext);
     }
 
     // `renderOptions` (optional, eighth): { skipHeightPrediction,
@@ -478,111 +443,56 @@
         const primaryAssistantMessageId = String(turn?.primary_assistant_message_id || '').trim();
         const isActiveTurn = activeTurnId && activeTurnId === turnId;
         const canRenderTurnArticle = canRenderProjectedTurnArticle(turn, rows);
-        // Resume tail: NOT latestAssistantMessageId, which an appended recap /
-        // proactive suggestion / question batch would steal, and NOT
-        // latestReplyAssistantMessageId, which is complete-only and would let an
-        // older budget stop outlive a newer error or cancelled terminal.
+        // Resume tail: not latestAssistantMessageId (an appended recap, suggestion or question batch steals it), nor
+        // latestReplyAssistantMessageId (complete-only: an older budget stop would outlive a newer error or stop).
         const resumeTailMessageId = resolveResumeTailAssistantMessageId(messages);
         if (!canRenderTurnArticle && turn && rows.length > 0 && !primaryAssistantMessageId) {
           recordTurnArticleRolloutSignal('turn_article_missing_primary', {
-            turnId,
-            messageId,
-            rowCount: rows.length,
+            turnId, messageId, rowCount: rows.length,
             sourceMessageCount: Array.isArray(turn?.source_message_ids) ? turn.source_message_ids.length : 0,
           });
         }
         if (canRenderTurnArticle) {
-          // Turn-activity envelope: render the WHOLE turn at one deterministic
-          // anchor message (all other turn messages become compat anchors), so
-          // a multi-iteration turn is one article/avatar and the step grouping
-          // sees the full iteration run. Anchor derivation is a pure function
-          // of the projection context, so full renders and single-message
-          // re-renders agree. No safe anchor -> fall through to the
-          // per-bucket dispatch unchanged.
+          const turnArticleOptions = () => ({
+            projectionContext, skipHeightPrediction, rowListSegmentSink, renderMessageId: messageId,
+            latestReplyAssistantMessageId, resumeTailMessageId, followUpDisabledReason, regenerateRequest,
+            streamingRowId: isActiveTurn ? resolveProjectionStreamingRowId(projectionContext) : '',
+            isStreaming: isActiveTurn,
+            streamingMessageId: isActiveTurn ? String(latestAssistantMessageId || messageId || '').trim() : '',
+            // Full-turn rows for cross-bucket decisions (the answer-vs-tool-card mermaid dedup).
+            turnRows: rows,
+            // The stream handler's live ids: activeStreamingMessageId stays empty on this path, so settle gating reads these.
+            pendingStreamMessageIds: typeof state?.pendingStreams?.values === 'function' ? [...state.pendingStreams.values()].map(String) : [],
+          });
+          // Turn-activity envelope: the WHOLE turn renders at one deterministic anchor message (the others become
+          // compat anchors), so a multi-iteration turn is one article and step grouping sees every iteration. The
+          // anchor is a pure function of the projection context; no safe anchor falls through to per-bucket dispatch.
           const coalesceUtils = resolveTurnArticleCoalesceUtils();
           if (coalesceUtils) {
-            const anchorMessageId = coalesceUtils.deriveTurnArticleAnchorMessageId(
-              turnId,
-              rows,
-              projectionContext
-            );
+            const anchorMessageId = coalesceUtils.deriveTurnArticleAnchorMessageId(turnId, rows, projectionContext);
             if (anchorMessageId && anchorMessageId !== messageId) {
               return buildThreadCompatAnchor(message, { envelopeSibling: true });
             }
             if (anchorMessageId === messageId) {
               const coalescedRows = coalesceUtils.collectTurnRenderRows(turnId, rows, projectionContext);
               if (coalescedRows.length) {
-                return buildTurnArticleMarkup(turn, coalescedRows, messages, {
-                  projectionContext,
-                  skipHeightPrediction,
-                  rowListSegmentSink,
-                  renderMessageId: messageId,
-                  latestReplyAssistantMessageId,
-                  resumeTailMessageId,
-                  followUpDisabledReason,
-                  regenerateRequest,
-                  streamingRowId: isActiveTurn ? resolveProjectionStreamingRowId(projectionContext) : '',
-                  isStreaming: isActiveTurn,
-                  streamingMessageId: isActiveTurn
-                    ? String(latestAssistantMessageId || messageId || '').trim()
-                    : '',
-                  turnRows: rows,
-                  pendingStreamMessageIds: state && state.pendingStreams && typeof state.pendingStreams.values === 'function'
-                    ? [...state.pendingStreams.values()].map(String)
-                    : [],
-                });
+                return buildTurnArticleMarkup(turn, coalescedRows, messages, turnArticleOptions());
               }
             }
           }
           if (!visibleRenderRows.length) {
             if (!isBlankAssistantSegmentMessage(message)) {
-              recordTurnArticleRolloutSignal('turn_article_suppressed_sibling', {
-                turnId,
-                messageId,
-                primaryAssistantMessageId,
-                isActiveTurn,
-              });
+              recordTurnArticleRolloutSignal('turn_article_suppressed_sibling', { turnId, messageId, primaryAssistantMessageId, isActiveTurn });
             }
             return buildThreadCompatAnchor(message, {
               envelopeSibling: isEnvelopeCoalescedTurn(turnId, rows, projectionContext),
             });
           }
-          return buildTurnArticleMarkup(turn, visibleRenderRows, messages, {
-            projectionContext,
-            skipHeightPrediction,
-            rowListSegmentSink,
-            renderMessageId: messageId,
-            latestReplyAssistantMessageId,
-            resumeTailMessageId,
-            followUpDisabledReason,
-            regenerateRequest,
-            streamingRowId: isActiveTurn ? resolveProjectionStreamingRowId(projectionContext) : '',
-            isStreaming: isActiveTurn,
-            streamingMessageId: isActiveTurn
-              ? String(latestAssistantMessageId || messageId || '').trim()
-              : '',
-            // Full-turn rows for cross-bucket render decisions (the
-            // answer-vs-tool-card mermaid dedup): this article's
-            // visibleRenderRows hold only ONE render message's rows.
-            turnRows: rows,
-            // Live-stream message ids from the stream handler's pending map —
-            // the projection's activeStreamingMessageId stays empty on this
-            // path, so settle gating needs the stream-handler signal.
-            pendingStreamMessageIds: state && state.pendingStreams && typeof state.pendingStreams.values === 'function'
-              ? [...state.pendingStreams.values()].map(String)
-              : [],
-          });
+          return buildTurnArticleMarkup(turn, visibleRenderRows, messages, turnArticleOptions());
         }
       }
-      return buildMessageArticleMarkupLegacy(
-        message,
-        messages,
-        latestAssistantMessageId,
-        latestReplyAssistantMessageId,
-        followUpDisabledReason,
-        regenerateRequest,
-        projectionContext
-      );
+      return buildMessageArticleMarkupLegacy(message, messages, latestAssistantMessageId, latestReplyAssistantMessageId,
+        followUpDisabledReason, regenerateRequest, projectionContext);
     }
 
     return {

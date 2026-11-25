@@ -10,10 +10,18 @@ const { randomUUID } = require('node:crypto');
 
 const R = require('../services/backend/chat-proposal-records');
 const { PROPOSAL_ERROR_CODES: CODES } = require('../services/backend/error-codes');
-const { createFixture } = require('./helpers/chat-proposal-service-fixture');
+const { createFixture, gitBinding } = require('./helpers/chat-proposal-service-fixture');
 
 const envelope = (code, reason, extra = {}) => ({
   schema_version: 1, ok: false, error_code: code, reason, retryable: false, current_revision: null, ...extra,
+});
+
+test('a git card carries what the model did not check, and only when it said so', async (t) => {
+  const fx = createFixture(t);
+  const plain = await fx.publishGit(1);
+  assert.equal('not_checked' in plain.proposal.display, false);
+  const noted = await fx.publishGit(2, { notChecked: ['Start the game and look at the bar'] });
+  assert.deepEqual(noted.proposal.display.not_checked, ['Start the game and look at the bar']);
 });
 
 test('publish creates once, replays identical input and conflicts on different input', async (t) => {
@@ -37,6 +45,78 @@ test('publish creates once, replays identical input and conflicts on different i
   assert.equal(JSON.stringify(first).includes('binding'), false, 'the projection never carries the binding');
 });
 
+test('a new git card withdraws the older pending git cards of the session and nothing else', async (t) => {
+  const fx = createFixture(t);
+  const dismissed = (await fx.publishGit(1)).proposal;
+  assert.equal((await fx.decide(dismissed, 'dismiss')).ok, true);
+  const accepted = (await fx.publishGit(2)).proposal;
+  assert.equal((await fx.decide(accepted, 'commit')).ok, true);
+  const older = (await fx.publishGit(3)).proposal;
+  const command = (await fx.publishCommand(4)).proposal;
+  const otherId = fx.store.createSession({ title: 'other' }).id;
+  const otherInput = R.normalizeGitProposalInput({ summary: 's', question: 'q', paths: ['a.js'] }).value;
+  const other = await fx.service.publish({
+    kind: 'git', sessionId: otherId, sessionIncarnation: fx.store.getSession(otherId).session_incarnation,
+    turnId: 'turn_1', toolCallId: 'call_1', input: otherInput, binding: gitBinding(otherInput.paths),
+  });
+  assert.equal(other.ok, true);
+  const before = {
+    dismissed: fx.record(dismissed.proposal_id), accepted: fx.record(accepted.proposal_id), command: fx.record(command.proposal_id),
+  };
+  const railBefore = fx.rail.length;
+
+  const newer = await fx.publishGit(5);
+  assert.equal(newer.created, true);
+  assert.equal(newer.proposal.decision_state, 'pending');
+  const withdrawn = fx.record(older.proposal_id);
+  assert.deepEqual([withdrawn.decision_state, withdrawn.action_state, withdrawn.revision], ['withdrawn', 'none', older.revision + 1]);
+  assert.equal(fx.rail.length, railBefore + 1, 'one mutation, one notification');
+  for (const [name, record] of Object.entries(before)) assert.deepEqual(fx.record(record.proposal_id), record, `${name} is untouched`);
+  assert.equal(fx.proposalStore.read(otherId).records[0].decision_state, 'pending', 'another session is untouched');
+
+  const otherFiles = (await fx.publishGit(6, { paths: ['docs/notes.md'] })).proposal;
+  assert.equal(fx.record(newer.proposal.proposal_id).decision_state, 'pending', 'a card for other files leaves it pending');
+  assert.equal((await fx.publishGit(7, { paths: ['docs/notes.md', 'src/b.js'] })).created, true);
+  assert.deepEqual([otherFiles, newer.proposal].map((record) => fx.record(record.proposal_id).decision_state), ['withdrawn', 'withdrawn'],
+    'a card sharing any file replaces each earlier card it overlaps');
+
+  const refused = await fx.decide(withdrawn, 'commit');
+  assert.equal(refused.ok, false);
+  assert.equal((await fx.decide(fx.record(older.proposal_id), 'commit')).ok, false, 'a withdrawn card takes no choice at its current revision either');
+});
+
+test('a replayed or conflicting git publish withdraws nothing', async (t) => {
+  const fx = createFixture(t);
+  const first = (await fx.publishGit(1)).proposal;
+  const second = (await fx.publishGit(2)).proposal;
+  assert.equal(fx.record(first.proposal_id).decision_state, 'withdrawn');
+  const third = (await fx.publishGit(3)).proposal;
+  const stored = fx.proposalStore.read(fx.sessionId).records.map((record) => [record.proposal_id, record.revision, record.decision_state]);
+  const railBefore = fx.rail.length;
+
+  const replay = await fx.publishGit(2);
+  assert.equal(replay.created, false);
+  assert.equal(replay.proposal.proposal_id, second.proposal_id);
+  const conflict = await fx.publishGit(3, { summary: 'A different summary.' });
+  assert.equal(conflict.reason, 'idempotency_conflict');
+  assert.equal(fx.rail.length, railBefore, 'neither is a mutation');
+  assert.deepEqual(
+    fx.proposalStore.read(fx.sessionId).records.map((record) => [record.proposal_id, record.revision, record.decision_state]),
+    stored,
+  );
+  assert.equal(fx.record(third.proposal_id).decision_state, 'pending');
+});
+
+test('a replacement git card does not count the card it replaces against the unresolved cap', async (t) => {
+  const fx = createFixture(t);
+  const limit = R.PROPOSAL_LIMITS.unresolved_per_source;
+  for (let n = 1; n <= limit; n += 1) assert.equal((await fx.publishGit(n)).ok, true, `card ${n}`);
+  const unresolved = () => fx.proposalStore.read(fx.sessionId).records.filter(R.isUnresolved).length;
+  assert.equal(unresolved(), 1, 'each new card withdrew the one before');
+  assert.equal((await fx.publishGit(limit + 1)).ok, true);
+  assert.equal(unresolved(), 1);
+});
+
 test('publish refuses a bad identity, an unknown session and a bad record without writing', async (t) => {
   const fx = createFixture(t);
   const input = R.normalizeGitProposalInput({ summary: 's', question: 'q', paths: ['a.js'] }).value;
@@ -53,9 +133,9 @@ test('publish refuses a bad identity, an unknown session and a bad record withou
 test('publish caps unresolved proposals per source session and per profile without pruning', async (t) => {
   const fx = createFixture(t);
   for (let n = 1; n <= R.PROPOSAL_LIMITS.unresolved_per_source; n += 1) {
-    assert.equal((await fx.publishGit(n)).ok, true, `proposal ${n}`);
+    assert.equal((await fx.publishCommand(n)).ok, true, `proposal ${n}`);
   }
-  const over = await fx.publishGit(99);
+  const over = await fx.publishCommand(99);
   assert.deepEqual([over.ok, over.reason, over.error_code], [false, 'capacity', CODES.CAPACITY]);
   assert.equal(fx.proposalStore.read(fx.sessionId).records.length, 20, 'nothing was pruned to make room');
 
@@ -95,7 +175,7 @@ test('list pages by created_at then id with a cursor bound to session and revisi
   const fx = createFixture(t);
   const ids = [];
   for (let n = 1; n <= 3; n += 1) {
-    ids.push((await fx.publishGit(n)).proposal.proposal_id);
+    ids.push((await fx.publishCommand(n)).proposal.proposal_id);
     fx.clock.ms += 1000;
   }
   const page1 = await fx.service.list(fx.request({ limit: 2 }));
@@ -190,7 +270,7 @@ test('the D6 mode gate refuses commit, test_first and run in Plan mode and a rea
 test('a pending proposal past seven days is expired: refused, then persisted on read', async (t) => {
   const fx = createFixture(t);
   const git = (await fx.publishGit(1)).proposal;
-  const other = (await fx.publishGit(2)).proposal;
+  const other = (await fx.publishCommand(2)).proposal;
   fx.advanceDays(8);
   const refused = await fx.decide(git, 'commit');
   assert.deepEqual([refused.ok, refused.reason, refused.error_code], [false, 'expired', CODES.EXPIRED]);

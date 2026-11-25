@@ -101,7 +101,7 @@ _QWEN_CONFIG = SimpleNamespace(
 )
 
 
-def test_exact_scale_puts_the_qwen38_trigger_near_218k() -> None:
+def test_exact_scale_puts_the_qwen38_trigger_near_236k() -> None:
     _, budget, tracker = apply_budget_check(
         [],
         _QWEN_CONFIG,
@@ -120,12 +120,14 @@ def test_exact_scale_puts_the_qwen38_trigger_near_218k() -> None:
     assert tracker.count_source == "exact"
     # Per-tool reserve = ceil(4_600 * 1.25 / 29) = 199; tools = 199 * 29 = 5_771.
     # Effective = 262_144 - 20_480 (answer floor) - 5_771 = 235_893.
-    # Compact at int(235_893 * 0.9) = 212_303; meter point adds the tools back:
-    # 212_303 + 5_771 = 218_074.
+    # A provider count compacts at ~90% of the whole window, short of the floor (row 183 D1):
+    # min(int(262_144 * 0.9), 262_144 - 20_480) = 235_929 whole-prompt tokens; the message
+    # estimate compacts that far less the tools, 235_929 - 5_771 = 230_158.
     assert budget.tool_overhead(29) == 5_771
     assert budget.effective_context(29) == 235_893
-    assert budget.auto_compact_threshold(29) == 212_303
-    assert budget.meter_compact_threshold(29) == 218_074
+    assert budget.provider_trigger() == 235_929
+    assert budget.auto_compact_threshold(29) == 230_158
+    assert budget.meter_compact_threshold(29) == 235_929
 
 
 def test_the_same_inputs_on_the_estimate_path_keep_the_estimator_headroom() -> None:

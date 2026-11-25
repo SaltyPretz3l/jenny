@@ -55,7 +55,9 @@ test('every other route answers team_hello_required before hello', async (t) => 
   assert.equal((await client.request('POST', '/api/v1/team/status')).status, 200);
 });
 
-test('hello below the supported range answers team_client_too_old and the socket closes', async (t) => {
+// A version mismatch is not a revoke (review H9): the 409 is read in full, the socket ends with a FIN and the host
+// bridge is never told to drop the key, since a dropped key reaches the member as `host_refused` and so as REVOKED.
+test('hello below the supported range answers team_client_too_old and the socket ends without a key drop', async (t) => {
   const env = await createTeamHttpFixture(t);
   const { owner } = await env.seed();
   const client = env.client(owner.key);
@@ -63,10 +65,10 @@ test('hello below the supported range answers team_client_too_old and the socket
   assert.equal(response.status, 409);
   assert.equal(reasonOf(response), 'team_client_too_old');
   assert.equal(await waitUntil(() => client.socket.destroyed), true);
-  assert.deepEqual(env.dropped, [owner.key]);
+  assert.deepEqual(env.dropped, [], 'a version mismatch never drops the key (CODE_REFUSED reads as REVOKED)');
 });
 
-test('hello above the supported range answers team_server_too_old and the socket closes', async (t) => {
+test('hello above the supported range answers team_server_too_old and the socket ends without a key drop', async (t) => {
   const env = await createTeamHttpFixture(t);
   const { member } = await env.seed();
   const client = env.client(member.key);
@@ -74,7 +76,7 @@ test('hello above the supported range answers team_server_too_old and the socket
   assert.equal(response.status, 409);
   assert.equal(reasonOf(response), 'team_server_too_old');
   assert.equal(await waitUntil(() => client.socket.destroyed), true);
-  assert.deepEqual(env.dropped, [member.key]);
+  assert.deepEqual(env.dropped, [], 'a version mismatch never drops the key (CODE_REFUSED reads as REVOKED)');
   const again = env.client(member.key);
   assert.equal((await again.request('POST', '/api/v1/team/status')).status, FORBIDDEN, 'a refused hello does not count');
 });

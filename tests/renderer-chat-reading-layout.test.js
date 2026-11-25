@@ -17,9 +17,6 @@
  *
  * Matrix: 1455x900 single pane, 2327x1300 split (two panes at the app's default
  * 50/50), 700x900 single; Default and Large text; Narrow and Standard width.
- *
- * The last test (side panel column motion) is the checkpoint 1 slice C gate: it
- * stays red until the panel opens by growing a column with a locked measure.
  */
 
 const test = require('node:test');
@@ -126,154 +123,6 @@ test('reading layout: the session bar never covers the measure; the composer kee
   assert.equal(collector.failures.length, 0, `${collector.failures.length} failed:\n${collector.failures.join('\n')}`);
 });
 
-/* ── Side panel column motion (renderer-side-panel-motion.js) ───────────────
- * The driver opens and closes the artifact review panel through the real
- * motion module, with the real scroll coordinator supplying the reader anchor
- * (both injected; every other app script stays blocked). applyEnd is the end
- * state syncArtifactReviewLayout applies. The assertions read the page only
- * through document.getAnimations(): every running animation is paused and
- * seeked to 0, 25, 50, 75 and 100 % of its own duration.
- */
-const PANEL_WIDTH_PX = 420;
-const PROGRESS_STEPS = [0, 0.25, 0.5, 0.75, 1];
-
-const panelDriver = {
-  async install(page) {
-    await injectModules(page, ['renderer/chat/chat-scroll-utils.js', 'renderer/chat/renderer-chat-scroll-coordinator.js', 'renderer/features/renderer-side-panel-motion.js']);
-    await page.evaluate(() => {
-      const coordinator = window.rendererChatScrollCoordinator.createChatScrollCoordinator({
-        state: { ui: { followLatest: false } },
-        followState: { get: () => false, set: () => {} },
-        getSessionId: () => 'gate-session',
-        scrollContainer: document.getElementById('chatThreadScroll'),
-        timelineContainer: document.getElementById('chatTimeline'),
-        window,
-      });
-      window.__panelMotion = window.rendererSidePanelMotion.createSidePanelMotion({ chatView: document.getElementById('chatView'), getCoordinators: () => [coordinator] });
-    });
-  },
-  async open(page) {
-    await page.evaluate((width) => {
-      const view = document.getElementById('chatView');
-      const panel = document.getElementById('artifactReviewPanel');
-      window.__panelMotion.open({
-        panel,
-        applyEnd: () => {
-          view.style.setProperty('--artifact-review-width', `${width}px`);
-          panel.style.setProperty('width', `${width}px`);
-          panel.classList.remove('hidden');
-          document.getElementById('artifactReviewResizer').classList.remove('hidden');
-          view.classList.add('artifact-review-mode', 'artifact-review-open');
-        },
-      });
-    }, PANEL_WIDTH_PX);
-  },
-  async close(page) {
-    await page.evaluate(() => {
-      const view = document.getElementById('chatView');
-      const panel = document.getElementById('artifactReviewPanel');
-      window.__panelMotion.close({
-        panel,
-        deferEnd: true,
-        applyEnd: () => {
-          view.classList.remove('artifact-review-open', 'artifact-review-mode');
-          panel.classList.add('hidden');
-          document.getElementById('artifactReviewResizer').classList.add('hidden');
-        },
-      });
-    });
-  },
-};
-
-/* Pauses every finite animation/transition and reads the measure and the panel
-   column at each progress step. Runs after a driver call, before any frame. */
-function sampleMotion(steps) {
-  const timeline = document.getElementById('chatTimeline');
-  const panel = document.getElementById('artifactReviewPanel');
-  const read = () => ({ measure: timeline.getBoundingClientRect().width, panel: panel.getBoundingClientRect().width });
-  void document.body.offsetWidth;
-  const animations = document.getAnimations().filter((anim) => {
-    const timing = anim.effect && anim.effect.getComputedTiming();
-    return timing && Number.isFinite(timing.endTime) && timing.endTime > 0;
-  });
-  animations.forEach((anim) => anim.pause());
-  const samples = steps.map((progress) => {
-    animations.forEach((anim) => { anim.currentTime = anim.effect.getComputedTiming().endTime * progress; });
-    return { progress, ...read() };
-  });
-  return { animationCount: animations.length, samples };
-}
-
-/* The first row whose bottom edge is below the scroller top, and its offset. */
-function readAnchor() {
-  const scroll = document.getElementById('chatThreadScroll');
-  const top = scroll.getBoundingClientRect().top;
-  const rowEl = [...document.querySelectorAll('#chatTimeline .chat-row')].find((el) => el.getBoundingClientRect().bottom > top + 1);
-  return { scrollTop: scroll.scrollTop, rowId: rowEl ? rowEl.dataset.rowId : null, rowOffset: rowEl ? rowEl.getBoundingClientRect().top - top : null };
-}
-
-async function settle(page) {
-  await page.evaluate(() => { document.getAnimations().forEach((anim) => { try { anim.finish(); } catch (_e) { /* infinite animation */ } }); });
-  await frames(page, 3);
-}
-
-test('side panel motion: the column grows over a locked measure; the reader does not move (slice C gate)', { skip: SKIP, timeout: 120000 }, async () => {
-  const collector = createCollector();
-  await withBrowser(async (browser) => {
-    const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
-    await setReadingAppearance(page, { fontScale: 'default', chatWidth: 'standard' });
-    await panelDriver.install(page);
-    const measureNow = () => page.evaluate(() => document.getElementById('chatTimeline').getBoundingClientRect().width);
-    // Park the reader mid-transcript so a reflow above the viewport would move it.
-    await page.evaluate(() => {
-      const scroll = document.getElementById('chatThreadScroll');
-      scroll.scrollTop = Math.round((scroll.scrollHeight - scroll.clientHeight) * 0.4);
-    });
-    await frames(page, 2);
-    const closedMeasure = await measureNow();
-    const before = await page.evaluate(readAnchor);
-    assert.ok(before.scrollTop > 0 && before.rowId, 'the reader is parked mid-transcript');
-
-    // Open.
-    await panelDriver.open(page);
-    const opening = await page.evaluate(sampleMotion, PROGRESS_STEPS);
-    await settle(page);
-    const openMeasure = await measureNow();
-    const afterOpen = await page.evaluate(readAnchor);
-    collector.ok(openMeasure < closedMeasure - 20, `opening the ${PANEL_WIDTH_PX}px panel narrows the measure (${fmt(closedMeasure)} -> ${fmt(openMeasure)})`);
-    collector.ok(opening.animationCount > 0, 'opening runs a motion (no animation or transition was found; the driver or slice C mechanism is not exercised)');
-    opening.samples.forEach((sample) => {
-      collector.ok(Math.abs(sample.measure - openMeasure) <= 0.5,
-        `open ${sample.progress * 100}%: measure ${fmt(sample.measure)}px equals the final open measure ${fmt(openMeasure)}px (reflow once, not per frame)`);
-    });
-    collector.ok(opening.samples[0].panel < opening.samples[4].panel - 1,
-      `open: the panel column grows from 0 (width ${fmt(opening.samples[0].panel)} at 0%, ${fmt(opening.samples[4].panel)} at 100%)`);
-    // scrollTop may move on open: the narrower measure makes the rows above taller, and the anchor restore compensates.
-    collector.ok(afterOpen.rowId === before.rowId && Math.abs(afterOpen.rowOffset - before.rowOffset) <= 1,
-      `open: the first visible row keeps its offset (${before.rowId} ${fmt(before.rowOffset)} -> ${afterOpen.rowId} ${fmt(afterOpen.rowOffset)})`);
-
-    // Close.
-    await panelDriver.close(page);
-    const closing = await page.evaluate(sampleMotion, PROGRESS_STEPS);
-    await settle(page);
-    const afterCloseMeasure = await measureNow();
-    const afterClose = await page.evaluate(readAnchor);
-    collector.ok(Math.abs(afterCloseMeasure - closedMeasure) <= 0.5, `close: the measure returns to ${fmt(closedMeasure)}px (${fmt(afterCloseMeasure)}px)`);
-    collector.ok(closing.animationCount > 0, 'closing runs a motion (no animation or transition was found)');
-    closing.samples.forEach((sample) => {
-      collector.ok(Math.abs(sample.measure - openMeasure) <= 0.5,
-        `close ${sample.progress * 100}%: measure ${fmt(sample.measure)}px stays at the open measure ${fmt(openMeasure)}px until the column has collapsed (reflow once, at the end)`);
-    });
-    collector.ok(closing.samples[0].panel > closing.samples[4].panel + 1,
-      `close: the panel column collapses to 0 (width ${fmt(closing.samples[0].panel)} at 0%, ${fmt(closing.samples[4].panel)} at 100%)`);
-    collector.ok(Math.abs(afterClose.scrollTop - before.scrollTop) <= 1, `close: scrollTop is unchanged (${before.scrollTop} -> ${afterClose.scrollTop})`);
-    collector.ok(afterClose.rowId === before.rowId && Math.abs(afterClose.rowOffset - before.rowOffset) <= 1,
-      `close: the first visible row keeps its offset (${before.rowId} ${fmt(before.rowOffset)} -> ${afterClose.rowId} ${fmt(afterClose.rowOffset)})`);
-    await page.close();
-  });
-  assert.equal(collector.failures.length, 0, `${collector.failures.length} failed:\n${collector.failures.join('\n')}`);
-});
-
 // A one-line tool row whose summary is a long command (labels clip at 500 chars since row 92): its
 // toggle must shrink to the measure and ellipsize in every width, including after Wide -> Standard.
 test('reading layout: a long command row stays inside the measure after Wide -> Standard -> Narrow', { skip: SKIP, timeout: 120000 }, async () => {
@@ -308,6 +157,47 @@ test('reading layout: a long command row stays inside the measure after Wide -> 
       collector.ok(m.toggle <= m.row + 1, `${chatWidth}: toggle ${fmt(m.toggle)} within row ${fmt(m.row)}`);
       collector.ok(m.overflow <= 1, `${chatWidth}: row does not overflow (${fmt(m.overflow)}px)`);
       collector.ok(m.clipped, `${chatWidth}: the long summary ellipsizes`);
+    }
+    await page.close();
+  });
+  assert.equal(collector.failures.length, 0, `${collector.failures.length} failed:\n${collector.failures.join('\n')}`);
+});
+
+// Split view: each pane's header row is the bar. With the three panel buttons hidden in split view (they move into More),
+// both panes carry the same five controls, and the button cluster must stay inside its pane.
+test('reading layout 2327x1300 split: the button cluster stays inside each pane; the first pane hides Artifacts, Tasks and Notes', { skip: SKIP, timeout: 120000 }, async () => {
+  const collector = createCollector();
+  await withBrowser(async (browser) => {
+    const page = await mountReadingLayout(browser, { viewport: { width: 2327, height: 1300 }, split: true });
+    await page.evaluate(() => {
+      const svg = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h10v10H3z"></path></svg>';
+      const button = (className, inner = svg, attrs = '') => `<button type="button" class="chat-timeline-utility-button ${className}" ${attrs}>${inner}</button>`;
+      // The worst case the bar meets: the longest branch name, three-digit counts, and the Session readout.
+      const diff = button('session-bar-diff', `${svg}<span class="chat-timeline-utility-text session-bar-diff-text"><span class="session-bar-diff-branch">feature/a-very-long-branch-name</span><span class="session-bar-diff-counts"><span>+123</span><span>−456</span></span></span>`);
+      const rail = button('session-rail-toggle session-rail-toggle--icon', `${svg}<span class="chat-timeline-utility-text">Session</span>`);
+      const common = `${diff}${button('chat-find-toggle')}${rail}${button('chat-timeline-more-button')}`;
+      document.querySelectorAll('#chatView > .chat-pane').forEach((pane) => {
+        const cluster = pane.querySelector('.chat-timeline-utility-cluster');
+        const three = pane.dataset.paneId === '0'
+          ? `${button('', svg, 'id="chatTimelineTasksToggle"')}${button('', svg, 'id="chatTimelineNotesToggle"')}` : '';
+        cluster.insertAdjacentHTML('beforeend', `${three}${common}`);
+        cluster.querySelectorAll('[data-chat-node="artifactSplitViewToggle"]').forEach((node) => { node.hidden = false; });
+      });
+    });
+    await frames(page, 3);
+    const boxes = await page.evaluate(() => [...document.querySelectorAll('#chatView > .chat-pane')].map((pane) => {
+      const rect = (el) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; };
+      const cluster = pane.querySelector('.chat-timeline-utility-cluster');
+      const three = [...cluster.querySelectorAll('[data-chat-node="artifactSplitViewToggle"], #chatTimelineTasksToggle, #chatTimelineNotesToggle')];
+      return {
+        id: pane.dataset.paneId,
+        pane: rect(pane), cluster: rect(cluster),
+        threeShown: three.filter((node) => getComputedStyle(node).display !== 'none').length,
+      };
+    }));
+    for (const box of boxes) {
+      collector.ok(box.threeShown === 0, `pane ${box.id}: Artifacts, Tasks and Notes are not on the bar in split view (${box.threeShown} shown)`);
+      collector.ok(box.cluster.left >= box.pane.left, `pane ${box.id}: the buttons stay inside the pane (${fmt(box.cluster.left)} >= ${fmt(box.pane.left)})`);
     }
     await page.close();
   });

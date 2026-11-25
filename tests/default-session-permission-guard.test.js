@@ -82,7 +82,9 @@ test('genuinely-needed permissions on the allowlist are granted', () => {
   const session = createFakeSession();
   installDefaultSessionPermissionGuard({ session });
 
-  for (const permission of DEFAULT_ALLOWED_PERMISSIONS) {
+  // The clipboard is granted wholesale; screen capture only to the main window's
+  // main frame (row 197 S1, the capture gate tests below).
+  for (const permission of ['clipboard-read', 'clipboard-sanitized-write']) {
     assert.equal(session.requestPermission(permission), true, `request "${permission}" allowed`);
     assert.equal(session.checkPermission(permission), true, `check "${permission}" allowed`);
   }
@@ -97,7 +99,7 @@ test('genuinely-needed permissions on the allowlist are granted', () => {
 test('the allowlist match is case- and whitespace-insensitive', () => {
   const session = createFakeSession();
   installDefaultSessionPermissionGuard({ session });
-  assert.equal(session.requestPermission('  Display-Capture '), true);
+  assert.equal(session.requestPermission('  Clipboard-Read '), true);
   assert.equal(session.checkPermission('CLIPBOARD-READ'), true);
   // ...but a near-miss is still denied.
   assert.equal(session.requestPermission('displaycapture'), false);
@@ -129,7 +131,7 @@ test('a denied request is logged (redacted), an allowed one is not', () => {
 
   // Granting an allowlisted permission must not emit a denial diagnostic.
   const before = deniedCount();
-  session.requestPermission('display-capture');
+  session.requestPermission('clipboard-read');
   assert.equal(deniedCount(), before, 'an allowlisted permission must never be logged as denied');
 });
 
@@ -266,4 +268,51 @@ test('dictation: listing media in a custom allowlist never grants it wholesale',
   installDefaultSessionPermissionGuard({ session, allowedPermissions: ['media'] });
   assert.equal(session.requestPermission('media'), false);
   assert.equal(session.checkPermission('media'), false);
+});
+
+// ── Capture gate (row 197 S1) ────────────────────────────────────────────────
+
+function createCaptureHarness({ url = APP_URL } = {}) {
+  const webContents = { isDestroyed: () => false, getURL: () => url };
+  const mainWindow = { isDestroyed: () => false, webContents };
+  const session = createFakeSession();
+  installDefaultSessionPermissionGuard({ session, getMainWindow: () => mainWindow });
+  const request = (details, contents = webContents) => {
+    let granted;
+    session.permissionRequestHandler(contents, 'display-capture', (value) => { granted = value; }, details);
+    return granted;
+  };
+  const check = (details, contents = webContents) => session.permissionCheckHandler(contents, 'display-capture', 'file:///', details);
+  return { mainWindow, request, check };
+}
+
+const fromAppMainFrame = (extra = {}) => ({ isMainFrame: true, requestingUrl: APP_URL, ...extra });
+
+test('capture gate: screen capture from the main window main frame on the app page is granted', () => {
+  const cap = createCaptureHarness();
+  assert.equal(cap.request(fromAppMainFrame()), true);
+  assert.equal(cap.check(fromAppMainFrame()), true);
+});
+
+test('capture gate: a sub-frame, another page or another webContents is refused capture', () => {
+  const cap = createCaptureHarness();
+  assert.equal(cap.request(fromAppMainFrame({ isMainFrame: false })), false, 'sub-frame (artifact or sketch preview)');
+  assert.equal(cap.check(fromAppMainFrame({ isMainFrame: false })), false, 'sub-frame check');
+  assert.equal(cap.request(fromAppMainFrame({ requestingUrl: 'jenny-artifact://frame/abc' })), false, 'artifact scheme');
+  assert.equal(cap.request(fromAppMainFrame({ requestingUrl: 'https://example.com/' })), false, 'remote page');
+  assert.equal(cap.request(fromAppMainFrame(), { isDestroyed: () => false, getURL: () => APP_URL }), false, 'another webContents');
+  assert.equal(cap.request(fromAppMainFrame(), null), false, 'no webContents');
+  assert.equal(cap.request(undefined), false, 'no details');
+});
+
+test('capture gate: no main window, a gone one or one that navigated away is refused', () => {
+  const noWindow = createFakeSession();
+  installDefaultSessionPermissionGuard({ session: noWindow });
+  assert.equal(noWindow.requestPermission('display-capture'), false);
+  assert.equal(noWindow.checkPermission('display-capture'), false);
+  const navigated = createCaptureHarness({ url: 'https://example.com/' });
+  assert.equal(navigated.request(fromAppMainFrame()), false);
+  const gone = createCaptureHarness();
+  gone.mainWindow.isDestroyed = () => true;
+  assert.equal(gone.request(fromAppMainFrame()), false);
 });

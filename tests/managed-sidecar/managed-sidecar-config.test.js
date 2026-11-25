@@ -277,8 +277,8 @@ test('managed sidecar config reads the canonical nested tools settings shape', (
   assert.equal(config.tools_todo_enabled, true);
 });
 
-test('managed sidecar config forwards agent executor feature flags from Electron', () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-agent-executor-'));
+test('managed sidecar config forwards runtime feature flags from Electron', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-runtime-flags-'));
   trackDirectory(userDataPath);
 
   const service = createManagedServiceWithConfig(
@@ -290,8 +290,6 @@ test('managed sidecar config forwards agent executor feature flags from Electron
     },
     {
       featureFlags: {
-        agent_executor: true,
-        task_lifecycle: false,
         multiplexer: true,
         chat_cancel: true,
       },
@@ -300,8 +298,6 @@ test('managed sidecar config forwards agent executor feature flags from Electron
 
   const config = service._buildManagedSidecarConfig();
 
-  assert.equal(config.feature_flags.agent_executor, true);
-  assert.equal(config.feature_flags.task_lifecycle, false);
   assert.equal(config.feature_flags.multiplexer, true);
   assert.equal(config.feature_flags.chat_cancel, true);
 });
@@ -333,31 +329,6 @@ test('managed sidecar config derives sidecar feature-flag config from Electron f
   assert.equal(config.feature_flags.repo_delta_resume, true);
 });
 
-test('managed sidecar config derives task capsule flag from Electron feature flag', () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-task-capsule-'));
-  trackDirectory(userDataPath);
-
-  const service = createManagedServiceWithConfig(
-    userDataPath,
-    {
-      getState() {
-        return {};
-      },
-    },
-    {
-      featureFlags: {
-        task_capsule: true,
-      },
-    }
-  );
-
-  const config = service._buildManagedSidecarConfig();
-
-  assert.equal(config.tools_task_capsule_enabled, true);
-  assert.equal(config.feature_flags.task_capsule, true);
-});
-
-
 for (const enabled of [false, true]) test(`runtime canonical emission is a copied transport requirement (enabled=${enabled})`, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-runtime-canonical-config-'));
   trackDirectory(root);
@@ -387,4 +358,25 @@ test('ChatGPT runtime config forwards only the current catalog metadata snapshot
   assert.equal(config.chatgpt_access_token, undefined);
   service.chatgptModelCatalogService = { snapshot: () => ({ models: null }) };
   assert.deepEqual(service._buildManagedSidecarConfig().chatgpt_model_catalog, []);
+});
+
+test('managed sidecar config turns the computer tool off for every chat when the Settings switch is off (row 196)', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-managed-config-computer-'));
+  trackDirectory(userDataPath);
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    const flagged = (state, featureFlags = { tools_computer_use_enabled: true }) => createManagedServiceWithConfig(
+      userDataPath,
+      { getState: () => state },
+      { featureFlags }
+    )._buildManagedSidecarConfig().tools_computer_use_enabled;
+    assert.equal(flagged({ tools: { computer: false } }), false);
+    assert.equal(flagged({ tools: { computer: true } }), true);
+    assert.equal(flagged({ tools: {} }), true, 'a missing value means on');
+    assert.equal(flagged({}), true, 'no stored tools state means on');
+    assert.equal(flagged({ tools: { computer: true } }, { tools_computer_use_enabled: false }), false, 'the feature flag still gates it');
+  } finally {
+    Object.defineProperty(process, 'platform', platform);
+  }
 });

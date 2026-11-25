@@ -322,7 +322,7 @@
   // The editor stack id `viewId` is bound to ('' = none); a Changes view reads its chat's.
   function bindingOf(layout, viewId) {
     if (!isLayout(layout) || !isObj(layout.bind)) return '';
-    var key = viewId === 'changes' ? 'chat' : viewId === 'changes-2' ? 'chat-2' : viewId;
+    var key = viewId === 'changes' ? 'chat' : viewId;
     return model.isBindableView(key) && typeof layout.bind[key] === 'string' ? layout.bind[key] : '';
   }
 
@@ -431,11 +431,20 @@
     return finishMove(layout, rootNode);
   }
 
-  /* Removes an instance view (terminal-2..4, chat-2, changes-2). Base catalog views cannot
+  /* Removes an instance view (terminal-2..4). Base catalog views cannot
    * be removed: the model re-homes them. The stack's active view moves to the neighbour; an
    * emptied stack is dropped. */
+  // Closable: an instance view (terminal-2..4), or a Chat room optional view
+  // (row 190: file preview, Browser, Terminal, ...), or a side panel view in the Workspace or the Board
+  // (Wave 4: Artifacts, Tasks, Notes), each of which joined on first use and can leave.
+  function isClosable(layout, viewId) {
+    if (model.isInstanceView(viewId)) return true;
+    if (layout.profile === 'chat') return model.CHAT_OPTIONAL_VIEW_IDS.indexOf(viewId) >= 0;
+    return model.SIDE_PANEL_VIEW_IDS.indexOf(viewId) >= 0;
+  }
+
   function removeView(layout, viewId) {
-    if (!isLayout(layout) || !model.isInstanceView(viewId)) return layout;
+    if (!isLayout(layout) || !isClosable(layout, viewId)) return layout;
     var copy = model.cloneLayout(layout);
     var ctx = { root: copy.root };
     var hit = findPath(ctx.root, function (n) { return isViewStack(n) && n.views.indexOf(viewId) >= 0; });

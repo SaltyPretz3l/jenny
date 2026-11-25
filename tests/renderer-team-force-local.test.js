@@ -85,7 +85,7 @@ test('9. the Team tab with no team row while the host is held says the state lin
 // Every control a hold greys, listed here apart from the constant so a dropped entry is caught.
 const HELD = ['deploy', 'start', 'join', 'recover', 'confirm-recover', 'restore-open', 'restore-pick', 'restore-go', 'new-open',
   'new-go', 'net-save', 'net-on', 'net-code', 'share-start', 'leave', 'confirm-leave', 'cancel-request', 'enter-code', 'reconnect',
-  'device-invite', 'leave-export'];
+  'device-invite', 'leave-export', 'net-clear-token'];
 
 test('9/13. every held action is greyed with the state line; none is greyed while Force local is off', () => {
   const view = require('../renderer/shell/renderer-settings-team-view');

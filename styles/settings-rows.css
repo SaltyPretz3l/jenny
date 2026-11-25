@@ -106,6 +106,10 @@
   max-width: 56ch;
 }
 
+/* Why a row cannot be changed: it takes the help line's place, or sits under a master switch. */
+.settings-field-reason { margin: 0; font-size: var(--font-size-footnote); line-height: 1.45; }
+.settings-field--row .settings-field-reason { color: var(--text-secondary); }
+
 .settings-field--row > .settings-field-control {
   position: relative;
   justify-content: flex-end;
@@ -132,8 +136,9 @@
   padding-inline-start: 22px;
 }
 
-.settings-field[data-setting-parent-off="true"] > .settings-field-text,
-.settings-field[data-setting-parent-off="true"] > .settings-field-control {
+/* The reason stays readable while the rest of the row is dimmed. */
+.settings-field[data-setting-parent-off="true"] > .settings-field-control,
+.settings-field[data-setting-parent-off="true"] > .settings-field-text > :not(.settings-field-reason) {
   opacity: 0.55;
 }
 
@@ -251,6 +256,11 @@
   display: inline-flex;
   flex: none;
 }
+
+/* "Restart to apply" and "Managed" stand in the place of "Modified" (the wrapper sets the size). */
+.settings-field-tag { font-weight: 600; white-space: nowrap; }
+.settings-field-tag[data-tone="restart"] { color: var(--status-fg-warning); }
+.settings-field-tag[data-tone="managed"] { color: var(--text-muted); }
 
 .settings-field-revert-slot:empty {
   display: none;

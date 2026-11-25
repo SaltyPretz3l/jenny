@@ -14,7 +14,7 @@ def _system(capsule: str = "capsule v1") -> StructuredSystemPrompt:
     return StructuredSystemPrompt(
         sections=(
             CacheSection(name="runtime_prompt", content="You are Jenny."),
-            CacheSection(name="task_capsule", content=capsule, cacheable=False),
+            CacheSection(name="workspace_manifest", content=capsule, cacheable=False),
         )
     )
 
@@ -80,8 +80,8 @@ def test_changed_system_section_breaks_ahead_of_history() -> None:
     observation = _observe(meter, system_prompt=_system("capsule v2"), messages=_history(3))
 
     assert observation.divergence == ps.DIVERGENCE_BREAK
-    assert observation.first_changed == "system:task_capsule"
-    assert observation.changed_system_sections == ("task_capsule",)
+    assert observation.first_changed == "system:workspace_manifest"
+    assert observation.changed_system_sections == ("workspace_manifest",)
     # Tools and the static runtime prompt still match; the whole history does not count.
     assert observation.common_segments == 2
 

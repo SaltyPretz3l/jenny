@@ -9,7 +9,7 @@
  * (prefs.dismissedForSession, D1). There is no global dismissal. Only an
  * artifact produced during this run presents (owner decision 2026-09-29): a
  * chat reopened after a restart keeps its older artifacts closed until one
- * arrives; the strip toggle still opens them on demand.
+ * arrives; the Artifacts tab still opens them on demand.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {

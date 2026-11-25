@@ -370,20 +370,3 @@ test('R2: a resolved approval receipt does not pin its entry (HB-038 H2)', (t) =
   fireLeave(env, receiptEntry);
   assert.equal(receiptEntry.getAttribute('data-virtualized'), 'true');
 });
-
-test('R2 rollback: bounds disabled degrades to a fully mounted timeline', (t) => {
-  const env = buildTimeline(THRESHOLD + 200);
-  let rebuildCalls = 0;
-  const v = createVirtualizer(env, {
-    boundsEnabled: false,
-    requestEntryMarkup() { rebuildCalls += 1; return '<div>unexpected</div>'; },
-  });
-  t.after(() => v.dispose());
-  v.rebuild();
-  const entries = Array.from(env.doc.querySelectorAll('.chat-entry'));
-  assert.equal(env.observers.length, 0);
-  assert.equal(v._internals.getStrategy(), 'none');
-  assert.equal(v._internals.getRetentionMode(entries[0]), null);
-  assert.equal(rebuildCalls, 0);
-  assert.match(entries[0].textContent, /payload-0/);
-});

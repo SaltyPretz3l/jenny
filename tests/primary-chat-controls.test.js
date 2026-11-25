@@ -427,6 +427,19 @@ test('setModels: a Jenny model pin writes config and the primary session; the ch
   assert.equal(calls.length, 2);
 });
 
+test('row 201 OD-1: setModels refuses a team model for either pin while Team is on; with Team off it is ordinary', async () => {
+  const calls = [];
+  const { controls, config, state } = harness({ setSessionPreferences: async (id, prefs) => { calls.push([id, prefs]); return { id }; } });
+  state.flags = { team: true };
+  for (const input of [{ model: 'team/team_a/m1' }, { check_model: 'team/team_a/m1' }, { model: 'm1', check_model: 'team/team_a/m1' }]) {
+    assert.deepEqual(await controls.setModels(input), { ok: false, reason: 'team_model_not_local' }, JSON.stringify(input));
+  }
+  assert.equal(calls.length, 0);
+  assert.notEqual(config.block?.model, 'm1', 'a refused pair writes neither pin');
+  state.flags = {};
+  assert.equal((await controls.setModels({ model: 'team/team_a/m1' })).ok, true, 'E71: reserved only while Team is on');
+});
+
 test('setModels: clearing the pin writes config only; the same value twice is unchanged but repairs the session', async () => {
   const calls = [];
   const { controls, config } = harness({ setSessionPreferences: async (id, prefs) => { calls.push([id, prefs]); } });

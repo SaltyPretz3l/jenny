@@ -577,3 +577,18 @@ test('E50 no team data: a join that times out with no answer still wakes the sto
   await flush();
   assert.equal(reads(h).length, 4, 'entered again, the page reads as usual');
 });
+
+// ------------------------------------------------------- row 193 C14
+
+test('Team chat density is a row on the Team page, showing the applied density and with no heading of its own', async (t) => {
+  const h = harness({ teams: [memberTeam()] });
+  t.after(h.restore);
+  h.window.document.documentElement.dataset.teamDensity = 'compact';
+  await flush();
+  const row = h.q('[data-settings-field="appearanceTeamDensitySelect"]');
+  assert.ok(row, 'the density row is on the Team page');
+  assert.equal(row.querySelector('.settings-field-title').textContent, 'Team chat density');
+  assert.deepEqual([...row.querySelectorAll('[data-value]')].map((o) => o.dataset.value), ['comfortable', 'compact']);
+  assert.equal(row.querySelector('[aria-checked="true"]').dataset.value, 'compact', 'it reads the density applied to the page');
+  assert.equal(h.headings().includes('Team chat density'), false, 'a row, not a new group heading');
+});

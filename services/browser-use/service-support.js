@@ -7,7 +7,7 @@
 
 const { fail } = require('./result-format');
 
-const KNOWN_ACTIONS = Object.freeze(['navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'close', 'ad_block']);
+const KNOWN_ACTIONS = Object.freeze(['navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'wait', 'close', 'ad_block']);
 const MAX_TARGET_CHARS = 80;
 const noop = () => {};
 

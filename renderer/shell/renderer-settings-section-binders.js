@@ -26,7 +26,6 @@
       clearWorkspaceRoot,
       renderSessions,
       getProjectSwitcher,
-      setSidebarCollapsed,
     } = callbacks;
 
     // One adapter per persisted object; both are after-ack because the owning
@@ -168,7 +167,6 @@
           clearWorkspaceRoot,
           renderSessions,
           getProjectSwitcher,
-          setSidebarCollapsed,
         })
         || null;
       sessionRuntimeController?.bind?.();

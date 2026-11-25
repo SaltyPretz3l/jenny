@@ -43,6 +43,7 @@ const FEATURE_STATE_CHANGE_REASONS = new Set([
   'tools_web_enabled_updated',
   'tools_image_read_enabled_updated',
   'tools_python_runtime_enabled_updated',
+  'tools_computer_use_enabled_updated',
   'tools_todo_enabled_updated',
   'tools_worktree_enabled_updated',
   'web_search_settings_updated',

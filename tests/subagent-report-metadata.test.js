@@ -439,3 +439,22 @@ test('batch tasks keep prompt and answer_truncated through the shared report nor
   assert.equal(batch.tasks[0].prompt, 'Find the test command.');
   assert.equal(batch.tasks[0].answer_truncated, true);
 });
+
+test('a write task keeps its worktree block bounded; a malformed one is dropped', () => {
+  const kept = normalizeSubagentReport(report({ worktree: {
+    branch: 'jenny-helper/fix-1a2b3c4d', path: 'C:/wt/fix', kept: true,
+    files_changed: 2, insertions: 5, deletions: 1, commits: 0, extra: 'dropped',
+  } }));
+  assert.deepEqual(kept.worktree, {
+    branch: 'jenny-helper/fix-1a2b3c4d', path: 'C:/wt/fix', kept: true,
+    files_changed: 2, insertions: 5, deletions: 1, commits: 0,
+  });
+  const uncounted = normalizeSubagentReport(report({ worktree: {
+    branch: 'b', path: 'p', kept: true, files_changed: null, insertions: -1,
+  } }));
+  assert.equal(uncounted.worktree.files_changed, null);
+  assert.equal(uncounted.worktree.insertions, null);
+  for (const worktree of [null, 'x', { branch: 'b', path: 'p' }, { branch: '', path: 'p', kept: false }]) {
+    assert.equal(Object.hasOwn(normalizeSubagentReport(report({ worktree })), 'worktree'), false);
+  }
+});

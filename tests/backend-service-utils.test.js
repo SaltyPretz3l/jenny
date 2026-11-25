@@ -259,24 +259,25 @@ test('normalizeManagedToolPreferences ignores absent or invalid payloads', () =>
   assert.equal(normalizeManagedToolPreferences(null), undefined);
   assert.equal(normalizeManagedToolPreferences('invalid'), undefined);
   assert.equal(normalizeManagedToolPreferences([]), undefined);
-  // Row 114: an object with no known toggle still resolves, and the default-off browser is denied.
-  assert.deepEqual(normalizeManagedToolPreferences({}), { disabled_tools: ['browser'] });
+  // Row 114: an object with no known toggle still resolves, and the default-off browser is denied
+  // (row 196: the default-off computer tool with it).
+  assert.deepEqual(normalizeManagedToolPreferences({}), { disabled_tools: ['browser', 'computer'] });
 });
 
 test('normalizeManagedToolPreferences maps known false toggle to a deny-list', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ web_search: false }), {
-    disabled_tools: ['browser', 'fetch_url', 'web_search'],
+    disabled_tools: ['browser', 'computer', 'fetch_url', 'web_search'],
   });
 });
 
 test('normalizeManagedToolPreferences leaves all tools available for true legacy toggles', () => {
-  assert.deepEqual(normalizeManagedToolPreferences({ web_search: true }), { disabled_tools: ['browser'] });
-  assert.deepEqual(normalizeManagedToolPreferences({ file_tools: true }), { disabled_tools: ['browser'] });
+  assert.deepEqual(normalizeManagedToolPreferences({ web_search: true }), { disabled_tools: ['browser', 'computer'] });
+  assert.deepEqual(normalizeManagedToolPreferences({ file_tools: true }), { disabled_tools: ['browser', 'computer'] });
 });
 
 test('normalizeManagedToolPreferences maps Bash false to all six shell tools', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ Bash: false }), {
-    disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'monitor',
+    disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'computer', 'monitor',
       'run_command', 'run_temp_script', 'stop_background_job'],
   });
 });
@@ -299,7 +300,7 @@ test('normalizeManagedToolPreferences resolves raw families and catalog connecti
   };
   assert.deepEqual(normalizeManagedToolPreferences({ families: { web: false },
     connections: { 'mcp:github': false, 'plugin:render': false } }, { catalog }), {
-    disabled_tools: ['browser', 'fetch_url', 'mcp__github__search', 'plugin_render', 'web_search'],
+    disabled_tools: ['browser', 'computer', 'fetch_url', 'mcp__github__search', 'plugin_render', 'web_search'],
   });
 });
 
@@ -325,7 +326,7 @@ test('normalizeManagedToolPreferences ignores unknown keys and non-boolean value
       web_search: 'false',
       Bash: 1,
     }),
-    { disabled_tools: ['browser'] }
+    { disabled_tools: ['browser', 'computer'] }
   );
 });
 
@@ -432,4 +433,19 @@ test('request-shaped tool preferences never disable an always-on tool', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ disabled_tools: ['ask_user', 'read_file', 'todo_write'] }),
     { disabled_tools: ['read_file'] });
   assert.equal(normalizeManagedToolPreferences({ disabled_tools: ['ask_user'] }), undefined);
+});
+
+// Row 201 C1 / OD-1: a team model (team/<teamId>/<modelId>) is a third source class, never a default on this PC.
+test('assertLocalDefaultModel refuses a team model id with a team reason word, and still accepts a local id', () => {
+  const { assertLocalDefaultModel } = require('../services/backend/backend-service-utils');
+  for (const key of ['preferredLocalModel', 'preferred_local_model']) {
+    assert.throws(() => assertLocalDefaultModel({ [key]: 'team/team_alpha1/qwen3:8b' }), (error) => {
+      assert.equal(error.code, 'CMP-CONFIG-0001');
+      assert.equal(error.reason, 'team_model_not_local');
+      return true;
+    });
+  }
+  assert.throws(() => assertLocalDefaultModel({ preferredLocalModel: 'gpt-5.1' }), { code: 'CMP-CONFIG-0001' }, 'a cloud id is still refused');
+  assert.doesNotThrow(() => assertLocalDefaultModel({ preferredLocalModel: 'qwen3:8b' }));
+  assert.doesNotThrow(() => assertLocalDefaultModel({ mode: 'auto' }));
 });

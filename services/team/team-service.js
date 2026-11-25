@@ -78,6 +78,7 @@ const { isCleanText } = require('../../server/team/member-schema');
 const { failureAnswer, failureOf, invalidRequest, teamFailure } = require('./team-errors');
 const { createHeldTeams, forceLocalFailure } = require('./force-local-hold');
 const { createServiceHold } = require('./team-service-hold');
+const { createRepairRemoval } = require('./team-service-repair');
 
 function createTeamService({
   userDataPath, getSecureStore, sendState = () => {}, spawnChild, appVersion, protocolVersion, log = () => {},
@@ -481,30 +482,9 @@ function createTeamService({
     if (manager?.retryNow?.() === true) say('INFO', 'team.connection.retry_now', { team_id: teamId, reason }); };
 
   // A needs_repair row: its file is read once more. One that loads now starts its manager and the removal is
-  // refused (the caller refreshes and sees the team); otherwise its key and directory are removed. A row with a
-  // sticky reason (STICKY_REPAIRS) is removed as it is.
-  function removeRepair(teamId) {
-    const loaded = STICKY_REPAIRS.has(repairs.get(teamId)) || deleted.has(teamId) || heldTeams.has(teamId) ? null
-      : loadClientFile(userDataPath, teamId);
-    if (loaded && loaded.ok) {
-      addManager(loaded.record);
-      push();
-      return invalidRequest('team_join_in_progress');
-    }
-    try {
-      deviceKeys.remove(teamId);
-    } catch (error) {
-      return failureOf(error);
-    }
-    if (!removeMembership({ userDataPath, deviceKeys, teamId, key: false, log: say }).file) {
-      return teamFailure('CONNECTION_FAILED', 'team_client_write_failed');
-    }
-    repairs.delete(teamId);
-    deleted.forget(teamId);
-    heldTeams.forget(teamId);
-    push();
-    return { ok: true };
-  }
+  // refused (the caller refreshes and sees the team); otherwise its directory and then its key are removed. A row with
+  // a sticky reason (STICKY_REPAIRS) is removed as it is (team-service-repair.js).
+  const removeRepair = createRepairRemoval({ userDataPath, deviceKeys, repairs, deleted, heldTeams, chats, drafts, addManager, push, say });
 
   // A deleted row is dialled again (team-deleted.js): a delete that failed after its notice clears itself.
   function recheckDeleted() {
@@ -583,7 +563,10 @@ function createTeamService({
     pools.stopAll();
     const all = [...managers.values()];
     managers.clear();
-    await Promise.all([joining, drafts.flush(), chats.stopAll(), teamEngine?.stopAll(), projects.stopAll(), models.stopAll(), boards.stopAll(), ...all.map((manager) => manager.stop())]);
+    // Every stop runs to its end whatever another one does; the first failure is then told (never an early return that leaves the rest running).
+    const settled = await Promise.allSettled([joining, drafts.flush(), chats.stopAll(), teamEngine?.stopAll(), projects.stopAll(), models.stopAll(), boards.stopAll(), ...all.map((manager) => manager.stop())]);
+    const failed = settled.find((entry) => entry.status === 'rejected');
+    if (failed) throw failed.reason;
   }
 
   return {

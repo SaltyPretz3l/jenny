@@ -15,6 +15,7 @@ const http = require('node:http');
 const { MAX_STREAM_REQUEST_BYTES: MAX_REQUEST_BYTES } = require('../http-client'); // the host's limits.maxRequestBytes
 const { JOB_ID } = require('./node-link');
 const { isCloudModelName } = require('../../cli-host/local-only-providers');
+const { isCanonicalBody } = require('../../../server/team/engine-request-fields');
 
 const MAX_CHUNK_BYTES = 64 * 1024; // the host's limits.maxChunkBytes
 // One chunk POST starts at most every 125 ms: 8 a second, 480 a minute for a job, so a
@@ -109,6 +110,10 @@ function readBounded(stream, max) {
 }
 
 const positiveInt = (value) => (Number.isSafeInteger(value) && value > 0 ? value : null);
+// Where an engine's `/v1/models` row says its context length (the OpenAI-style field, llama-server's `meta`,
+// vLLM's `max_model_len`, and the usual spellings), first match wins.
+const CONTEXT_FIELDS = Object.freeze([(row) => row.context_length, (row) => row.meta?.n_ctx, (row) => row.max_model_len,
+  (row) => row.context_window, (row) => row.max_context_length]);
 
 // The engine's models as the host's register takes them: printable names of at most 128
 // characters, no duplicate, at most 64; the context length when the engine says it. An Ollama
@@ -138,7 +143,7 @@ async function readModels({ engine, target, timers, signal = null, timeoutMs = M
       const name = entry && typeof entry.id === 'string' ? entry.id : '';
       if (!MODEL_NAME.test(name) || isCloudModelName(name) || seen.has(name) || models.length >= MAX_MODELS) continue;
       seen.add(name);
-      const contextLength = positiveInt(entry.context_length) ?? positiveInt(entry.meta?.n_ctx);
+      const contextLength = CONTEXT_FIELDS.map((read) => positiveInt(read(entry))).find((value) => value !== null) ?? null;
       models.push({ name, context_length: contextLength, vision: false, thinking: false });
     }
     return { ok: true, models };
@@ -199,6 +204,14 @@ function namesOnlyModel(request, model) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
   const named = topLevelKeys(text).filter((key) => key.toLowerCase() === 'model');
   return named.length === 1 && named[0] === 'model' && parsed.model === model;
+}
+
+// C5, the node's own check: the host forwards only the canonical body (server/team/engine-request-fields.js), so a
+// request with a key the host would have dropped, or a case variant anywhere it checks, is not run on this PC.
+function canonicalOnly(request) {
+  let parsed;
+  try { parsed = JSON.parse(STRICT_UTF8.decode(request)); } catch (_error) { return false; }
+  return isCanonicalBody(parsed);
 }
 
 // The descriptor's bounds, or null when it is not one the agent can run.
@@ -352,6 +365,7 @@ function startJob({ descriptor, limits, link, engine, target, timers, clock, hea
     cancel('ping');
     if (bytes.length > 0) lastPostAt = clock(); // a ping never holds back the next chunk
     let answer;
+    let retried = false; // an earlier try of this chunk may have landed with its answer lost
     for (let attempt = 0, waits = 0; ;) {
       try {
         answer = await link.postChunk(jobId, { seq, final, bytes, timeoutMs: TEAM_CALL_TIMEOUT_MS, signal: teamAbort.signal });
@@ -360,6 +374,7 @@ function startJob({ descriptor, limits, link, engine, target, timers, clock, hea
         if (attempt >= TEAM_RETRIES) { failWith('engine_error', 'team_unreachable'); return; }
         await pause(RETRY_BASE_MS * 2 ** attempt);
         attempt += 1;
+        retried = true;
         if (ended) return;
         continue;
       }
@@ -373,7 +388,9 @@ function startJob({ descriptor, limits, link, engine, target, timers, clock, hea
       break;
     }
     sending = false;
-    if (answer?.ok !== true) { refused(answer); return; }
+    // A retried chunk the host already holds is answered node_chunk_seq_invalid with the number after it (C7): taken.
+    const held = retried && reasonWord(answer, '') === 'node_chunk_seq_invalid' && answer.next_seq === seq + 1;
+    if (answer?.ok !== true && !held) { refused(answer); return; }
     bytesOut += bytes.length;
     seq = Number.isSafeInteger(answer.next_seq) && answer.next_seq > seq ? answer.next_seq : seq + 1;
     if (answer.cancel === true) { finish('cancelled', 'cancelled'); return; }
@@ -401,6 +418,7 @@ function startJob({ descriptor, limits, link, engine, target, timers, clock, hea
     const request = await readRequest();
     if (!request || ended) return;
     if (!namesOnlyModel(request, descriptor.model)) { failWith('model_not_loaded', 'model_not_local'); return; }
+    if (!canonicalOnly(request)) { failWith('engine_error', 'team_request_field_invalid'); return; }
     state = nextJobState(state, 'forwarding');
     slots.first = later(() => failWith('engine_timeout', 'first_byte_timeout'), limits.firstByteMs);
     let answer;
@@ -436,6 +454,6 @@ function startJob({ descriptor, limits, link, engine, target, timers, clock, hea
 }
 
 module.exports = {
-  FINAL_REASONS, JOB_TRANSITIONS, checkEngineUrl, createEngineClient, isModelName, jobLimits, nextJobState, readModels, reasonWord,
-  startJob,
+  FINAL_REASONS, JOB_TRANSITIONS, checkEngineUrl, createEngineClient, isModelName, jobLimits, nextJobState, readBounded, readModels,
+  reasonWord, startJob,
 };

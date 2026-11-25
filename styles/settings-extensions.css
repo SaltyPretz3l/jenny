@@ -49,14 +49,6 @@
   color: var(--text-danger-soft);
 }
 
-/* The shared row primitive styles descriptions but not <small>, so MCP row
-   metadata needs secondary typography. */
-.mcp-servers-row .settings-field-row-text small {
-  color: var(--text-muted);
-  font-size: var(--font-size-footnote);
-  line-height: 1.5;
-}
-
 #mcpServersHost:empty {
   display: none;
 }

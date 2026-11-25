@@ -10,7 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ME, message, msgId, openChat, type, flush, key, menu, memberTeam } = require('./helpers/team-settings-harness');
+const { ME, message, msgId, openChat, type, flush, key, menu, memberTeam, chatChannel, overview, searchField, searchMatch } = require('./helpers/team-settings-harness');
 const { listAnswer, openProjects } = require('./helpers/team-project-renderer-host');
 
 const css = (name) => fs.readFileSync(path.join(__dirname, '..', 'styles', name), 'utf8');
@@ -188,4 +188,74 @@ test('the hover toolbar ends where the capped text column ends, not at the far e
   // Row padding 18px + avatar 30px + gap 12px = 60px before the text, which stops at --chat-measure-cap.
   assert.match(acts[2], /inset-inline-end:\s*max\(18px,\s*calc\(100% - 60px - var\(--chat-measure-cap\)\)\)/);
   assert.match(text, /:root\[data-team-density="compact"\] \.team-acts \{\s*inset-inline-end:\s*18px;?\s*\}/, 'compact text is inline and not capped');
+});
+
+// ------------------------------------------------------------------ one frame per team (row 201: OD-10, C10.2, C9.3)
+
+const DESIGN = 'chan_c_aaaaaaaaaaaaaaaa';
+const designRow = () => chatChannel({ channel_id: DESIGN, kind: 'channel', name: 'design', topic: '', created_by: ME, archived: false, archived_by: null, changes: [], rev: 2 });
+const withDesign = (answers = {}) => ({ answers: { chatOverview: overview({ channels: [chatChannel(), designRow()] }), ...answers } });
+const searchWait = () => new Promise((resolve) => { setTimeout(resolve, 330); }).then(flush); // the search's own 300 ms
+
+test('C10.2: a search hit in another channel shows that channel and keeps the query, the results and the column', async (t) => {
+  const { h } = await openChat(withDesign({ chatSearch: { ok: true, matches: [searchMatch(5, { channel_id: DESIGN })], next_cursor: null } }));
+  t.after(h.restore);
+  const nav = h.view.q('nav.team-panel');
+  type(h, 'hello', searchField(h));
+  await searchWait();
+  assert.equal(h.view.qa('.team-result').length, 1);
+  h.view.q('.team-result').click();
+  await flush();
+  assert.equal(h.view.q('.team-head__name').textContent, '#design', 'the hit\'s channel is shown');
+  assert.equal(h.view.q('nav.team-panel'), nav, 'the same column');
+  assert.equal(searchField(h).value, 'hello', 'the query stays');
+  assert.equal(h.view.q('.team-results').hidden, false, 'the results stay');
+  assert.deepEqual(h.view.qa('.team-result').map((el) => el.getAttribute('aria-current')), ['true'], 'with the hit marked');
+});
+
+test('OD-10: a channel switch swaps the main pane only; the column, its search field and the focused row stay', async (t) => {
+  const { h } = await openChat(withDesign());
+  t.after(h.restore);
+  const nav = h.view.q('nav.team-panel');
+  const field = searchField(h);
+  const timeline = h.view.q('[data-team-region="timeline"]');
+  const row = () => h.view.q(`[data-team-channel="${DESIGN}"]`);
+  row().focus();
+  row().click();
+  await flush();
+  assert.equal(h.view.q('.team-head__name').textContent, '#design');
+  assert.equal(h.view.q('nav.team-panel'), nav, 'the same column');
+  assert.equal(searchField(h), field, 'the same search field');
+  assert.notEqual(h.view.q('[data-team-region="timeline"]'), timeline, 'a new channel pane');
+  assert.deepEqual([...h.view.q('.team-main').children].map((el) => el.dataset.teamRegion), ['head', 'banner', 'export', 'notice', 'timeline', 'composer'], 'the same structure');
+  assert.equal(h.window.document.activeElement, row(), 'the focus stays on the row');
+  h.view.q('[data-team-channel="chan_team"]').click();
+  await flush();
+  assert.equal(h.view.q('.team-head__name').textContent, '#team');
+  assert.equal(h.view.q('nav.team-panel'), nav);
+});
+
+test('C9.3: hiding the tab disposes the shown project conversation and leaves none of its ids behind', async (t) => {
+  const { h } = await openProjects();
+  t.after(h.restore);
+  h.view.qa('[data-team-tab-action="conv-open"]')[0].click();
+  await flush();
+  const box = () => h.window.document.querySelector('[data-project-input="prompt"]'); // its id may carry a per-conversation prefix
+  assert.ok(box() && h.teamView.contains(box()), 'the conversation is drawn');
+  h.tab.hideTeamTab();
+  assert.equal(box(), null, 'no hidden duplicate for the Board');
+  assert.equal(h.teamView.querySelector('[data-team-region="project"] *'), null, 'its region is empty');
+});
+
+test('OD-8 (row 201): a search hit in a project channel shows that channel, named by its project, and keeps the results', async (t) => {
+  const { P1 } = require('./helpers/team-project-renderer-host');
+  const { h } = await openProjects({ answers: { chatSearch: { ok: true, matches: [searchMatch(5, { channel_id: 'chan_' + P1 })], next_cursor: null } } });
+  t.after(h.restore);
+  type(h, 'hello', searchField(h));
+  await searchWait();
+  h.view.q('.team-result').click();
+  await flush();
+  assert.equal(h.view.q('.team-head__name').textContent, '#jenny-site', 'the project channel is shown by its project\'s name');
+  assert.equal(h.view.text().includes('does not show yet'), false, 'never "not shown yet"');
+  assert.equal(searchField(h).value, 'hello');
 });

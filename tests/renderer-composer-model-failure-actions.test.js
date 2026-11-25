@@ -43,6 +43,49 @@ test('delegated composer recovery routes all four actions and cleans up', async 
   assert.deepEqual(calls, []);
 });
 
+test('row 197 R3b: Stop asks the Live tab to close the program and never retries the load by itself', async (t) => {
+  const dom = new JSDOM('<!doctype html><body><button data-composer-failure-action="stopLiveRun">Stop</button></body>');
+  t.after(() => dom.window.close());
+  const documentRef = dom.window.document;
+  const state = { backend: backend() };
+  state.backend.model_lifecycle.failure.live_run = { project_id: 'proj-1', program: 'game.exe' };
+  const calls = [];
+  let stopResult = { ok: true };
+  bindComposerModelFailureActions({ documentRef, windowRef: dom.window, state, reader,
+    loadModel: (model) => calls.push(['load', model]),
+    stopLiveRun: async (request) => { calls.push(['stop', request]); if (stopResult instanceof Error) throw stopResult; return stopResult; },
+    registerCleanup: () => {} });
+  const click = async () => {
+    documentRef.querySelector('[data-composer-failure-action="stopLiveRun"]').click();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  await click();
+  assert.deepEqual(calls.splice(0), [['stop', { projectId: 'proj-1', mode: 'ask' }]]);
+  // A refusal or a throw leaves the line as it is, and the next click works.
+  stopResult = { ok: false };
+  await click();
+  stopResult = new Error('bridge gone');
+  await click();
+  assert.deepEqual(calls.splice(0).map(([name]) => name), ['stop', 'stop']);
+  // Without a live run on the failure the button does nothing.
+  state.backend = backend();
+  await click();
+  assert.deepEqual(calls, []);
+});
+
+test('row 197 R3b: the stop falls back to the shell bridge on the window', async (t) => {
+  const dom = new JSDOM('<!doctype html><body><button data-composer-failure-action="stopLiveRun">Stop</button></body>');
+  t.after(() => dom.window.close());
+  const calls = [];
+  dom.window.jennyShell = { runView: { stop: async (request) => { calls.push(request); return { ok: true }; } } };
+  const state = { backend: backend() };
+  state.backend.model_lifecycle.failure.live_run = { project_id: 'proj-2', program: 'a.exe' };
+  bindComposerModelFailureActions({ documentRef: dom.window.document, windowRef: dom.window, state, reader, registerCleanup: () => {} });
+  dom.window.document.querySelector('button').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [{ projectId: 'proj-2', mode: 'ask' }]);
+});
+
 test('in the app: failure line remains sendable and recovery uses shell APIs and navigation', async (t) => {
   const calls = [];
   const app = await loadRendererApp({ shell: {
@@ -83,4 +126,30 @@ test('in the app: failure line remains sendable and recovery uses shell APIs and
   await shell.__emitBackendStatus({ phase: 'ready' });
   await waitForUi(window);
   assert.equal(doc.getElementById('composerLoadingLine'), null);
+});
+
+test('row 197 R3b: in the app the composer line offers Stop with the program name, and Other models after it', async (t) => {
+  const stops = [];
+  const app = await loadRendererApp({ shell: {
+    status: { async get() { return { model_loaded: false }; } },
+  } });
+  t.after(() => app.dispose());
+  const { window, shell } = app;
+  shell.runView = { async stop(request) { stops.push(request); return { ok: true }; } };
+  const doc = window.document;
+  doc.getElementById('newChatButton').click();
+  await waitForUi(window);
+  window.__rendererState.messagesBySession.set(window.__rendererState.currentSessionId, [{ kind: 'user', content: 'existing' }]);
+  const live = backend();
+  live.model_lifecycle.failure.live_run = { project_id: 'proj-1', program: 'game.exe' };
+  await shell.__emitBackendStatus(live);
+  await waitForUi(window);
+  const line = doc.getElementById('composerLoadingLine');
+  assert.equal(line?.dataset.tone, 'failed');
+  assert.match(line.textContent, /game\.exe from the Live tab is using the GPU/);
+  const buttons = [...line.querySelectorAll('[data-composer-failure-action]')];
+  assert.deepEqual(buttons.map((b) => [b.dataset.composerFailureAction, b.textContent.trim()]), [['stopLiveRun', 'Stop game.exe'], ['models', 'Other models']]);
+  buttons[0].click();
+  await waitForUi(window);
+  assert.deepEqual(JSON.parse(JSON.stringify(stops)), [{ projectId: 'proj-1', mode: 'ask' }]);
 });

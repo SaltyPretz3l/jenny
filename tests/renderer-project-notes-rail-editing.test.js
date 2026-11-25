@@ -76,7 +76,7 @@ test('a keystroke that lands after the chat moved to another project is dropped 
   el.value = 'typed into the wrong note';
   el.dispatchEvent(new r.window.Event('input', { bubbles: true }));
   await flush();
-  assert.equal(r.q('.notes-rail__header b').textContent, 'project_beta');
+  assert.equal(r.q('.project-tab-name').textContent, 'project_beta');
   r.scheduler.advanceBy(1000);
   await flush();
   assert.equal(r.callsOf('save').length, 0, 'neither note was saved');

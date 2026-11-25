@@ -10,16 +10,16 @@ const test = require('node:test');
 const { TEAM, OTHER, CARD, DISC, HASH, team, transfer, outgoing, incoming, take, stateAnswer, offerRead, FILES, openShare, flush, click } = require('./helpers/model-library-share-harness');
 
 const SEND = 'Send to someone in your team…';
-const sendItem = (s) => s.menuFor(CARD).find((i) => i.label === SEND);
+const sendItem = (s, key = CARD) => s.menuFor(key).find((i) => i.label === SEND);
 const withState = (over) => ({ answers: { modelState: stateAnswer(over) } });
 
 // ------------------------------------------------------------------ 2. the ⋯ item
 
 test('the ⋯ item: enabled for a sendable GGUF row, greyed with its reason everywhere else', async (t) => {
   const ok = await openShare(t);
-  assert.deepEqual(ok.menuFor(CARD).map((i) => i.label), [SEND, 'Remove from library', 'Copy tag'], 'no Where it came from… on a model not received');
+  assert.deepEqual(ok.menuFor(CARD).map((i) => (i.separator ? '---' : i.label)), ['Set as default', '---', SEND, 'Remove from library', 'Copy tag'], 'Set as default first; no Where it came from… on a model not received');
   assert.equal(sendItem(ok).disabled, false);
-  const ollama = ok.menuFor('installed:1b')[0];
+  const ollama = sendItem(ok, 'installed:1b');
   assert.deepEqual([ollama.disabled, ollama.description], [true, 'Only GGUF files in your model folders can be sent. This one is Ollama’s copy.']);
   const cases = [
     ['read-only', { teams: [team(TEAM, { role: 'read_only' })] }, 'Read-only members cannot send or receive models. The owner can change your role.'],
@@ -49,8 +49,8 @@ test('Where it came from… only on a received model, and its drawer says who, w
   assert.equal(flag.textContent, 'From Arjun');
   assert.equal(flag.title, 'Sent to you by Arjun through Studio. Jenny checked that it arrived as sent, not that it is safe.');
   const items = s.menuFor(CARD);
-  assert.deepEqual(items.map((i) => i.label), [SEND, 'Where it came from…', 'Remove from library', 'Copy tag']);
-  await items[1].action();
+  assert.deepEqual(items.map((i) => (i.separator ? '---' : i.label)), ['Set as default', '---', SEND, 'Where it came from…', 'Remove from library', 'Copy tag']);
+  await items.find((i) => i.label === 'Where it came from…').action();
   const drawer = s.drawer('modelShareAcceptDrawer');
   const text = s.text(drawer);
   for (const part of ['Where qwen3.8-27b-ud-q6_k came from', 'From Arjun', 'through Studio.', 'Qwen3.8-27B-UD-Q6_K.gguf', '1 file', 'Checksum (SHA-256)',

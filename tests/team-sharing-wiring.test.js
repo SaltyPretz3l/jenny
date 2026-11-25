@@ -15,11 +15,13 @@ const { parseInvite } = require('../server/team/invites');
 const { loadClientFile } = require('../services/team/client-file');
 const { encodeReconnectCode } = require('../services/team/reconnect-code');
 const { createTeamClientHost } = require('./helpers/team-client-host');
+const { validatePayload } = require('../services/team/ipc-methods');
 
 const kebab = (name) => name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 
 function recordingSharing(order) {
   const calls = [];
+  let chosen = null;
   return {
     calls,
     attach() {},
@@ -28,6 +30,9 @@ function recordingSharing(order) {
     drop: (teamId) => calls.push(['drop', teamId]),
     stopAll: async () => { order.push('sharing'); calls.push(['stopAll']); },
     set: async () => ({ ok: true, sharing: null }),
+    // Row 201 OD-4: the sharer's Ollama share set (team-sharing.js setOllamaModels / ollamaModels).
+    setOllamaModels: (teamId, names) => { calls.push(['setOllamaModels', teamId, names]); chosen = names; return { ok: true, ollama_models: names }; },
+    ollamaModels: (teamId) => { calls.push(['ollamaModels', teamId]); return chosen; },
   };
 }
 
@@ -100,4 +105,27 @@ test('the registration’s own-work check is the backend’s active-stream rule'
   backend.activeStreams.set('s1', {});
   assert.equal(isBusy(), true);
   assert.equal(sharingIsBusy(null)(), false, 'no backend: nothing of the member’s runs');
+});
+
+test('OD-4: shareOllamaModels reads the saved share set, sets it, and null returns to the default; every other shape is refused in main', async (t) => {
+  const s = await joined(t);
+  const { teamId } = s;
+  assert.deepEqual(await s.call('shareOllamaModels', { team_id: teamId }), { ok: true, ollama_models: null }, 'a read: the default');
+  assert.deepEqual(await s.call('shareOllamaModels', { team_id: teamId, names: ['qwen3:8b', 'llama3.2:latest'] }),
+    { ok: true, ollama_models: ['qwen3:8b', 'llama3.2:latest'] });
+  assert.deepEqual(await s.call('shareOllamaModels', { team_id: teamId }), { ok: true, ollama_models: ['qwen3:8b', 'llama3.2:latest'] });
+  assert.deepEqual(await s.call('shareOllamaModels', { team_id: teamId, names: null }), { ok: true, ollama_models: null });
+  assert.deepEqual(s.sharing.calls.filter(([kind]) => kind.endsWith('OllamaModels') || kind === 'ollamaModels').map(([kind, id, names]) => [kind, id, names]),
+    [['ollamaModels', teamId, undefined], ['setOllamaModels', teamId, ['qwen3:8b', 'llama3.2:latest']], ['ollamaModels', teamId, undefined],
+      ['setOllamaModels', teamId, null]]);
+  const refused = s.sharing.calls.length;
+  for (const names of [[], 'qwen3:8b', [1], ['a', 'a'], [''], ['bad\u0007name'], ['x'.repeat(129)], Array.from({ length: 65 }, (_v, i) => `m${i}`), {}, undefined]) {
+    const payload = names === undefined ? { team_id: teamId, names: undefined } : { team_id: teamId, names };
+    assert.equal(validatePayload('shareOllamaModels', payload).ok, false, JSON.stringify(names));
+    assert.equal((await s.call('shareOllamaModels', payload)).ok, false, JSON.stringify(names));
+  }
+  assert.equal(validatePayload('shareOllamaModels', { team_id: teamId, names: Array.from({ length: 64 }, (_v, i) => `m${i}`) }).ok, true, "the share set's own bound");
+  assert.equal(validatePayload('shareOllamaModels', { team_id: teamId, names: ['qwen3:8b'], on: true }).ok, false, 'no other field');
+  assert.equal(validatePayload('shareOllamaModels', { names: ['qwen3:8b'] }).ok, false, 'a team is named');
+  assert.equal(s.sharing.calls.length, refused, 'a refused shape never reaches sharing');
 });

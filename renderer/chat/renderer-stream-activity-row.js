@@ -268,6 +268,14 @@
       return chatTimeline;
     }
 
+    // Row 192 C4: a live steps heading already says the turn is working, so the generic
+    // line stays away; a typed line (a wait, compaction, a tool being written) still shows.
+    function hasLiveStepsHeading(entry) {
+      const mount = findMountPoint(entry);
+      return typeof mount?.querySelector === 'function' && Boolean(mount.querySelector(
+        '.chat-row[data-row-kind="work_ledger"]:is([data-ledger-state="live"], [data-ledger-state="waiting"])'));
+    }
+
     function currentCopy(entry, timestamp) {
       const escalated = timestamp - entry.episodeStartedAt >= escalateMs;
       if (entry.afterReasoning) return escalated ? NEXT_STEP_COPY_LONG : NEXT_STEP_COPY;
@@ -404,6 +412,10 @@
           } catch (_error) {
             show = false;
           }
+        }
+        if (show && !entry.typed && !entry.sessionCompaction && waitingLine?.isWaiting(entry) !== true
+          && timestamp - (entry.episodeStartedAt || entry.lastEventAt) < escalateMs && hasLiveStepsHeading(entry)) {
+          show = false;
         }
         if (show) {
           ensureNode(streamId, entry, timestamp);

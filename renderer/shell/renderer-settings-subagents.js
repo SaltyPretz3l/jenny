@@ -5,8 +5,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback
-    || ((key, fallback) => fallback);
+    || ((key, fallback, params) => (params ? String(fallback).replace(/\{(\w+)\}/g, (m, n) => (Object.hasOwn(params, n) ? String(params[n]) : m)) : fallback));
   const controllers = new WeakMap();
+  const roles = { rolesPointerRow: (...args) => (globalThis.rendererSettingsLazyRenderers || require('./renderer-settings-lazy-renderers')).rolesPointerRow(...args) };
   const providers = ['chatgpt', 'codex-cli', 'api-provider'];
   const clone = (row) => ({ defaultModel: row?.defaultModel || '', defaultEffort: row?.defaultEffort || '',
     preferredModels: [...(row?.preferredModels || [])], allowedModels: [...(row?.allowedModels || [])],
@@ -25,8 +26,7 @@
   });
   // The accessible name of each routing select, by its field id.
   const selectLabels = () => ({
-    provider: jt('settings.subagents.provider', 'Provider'),
-    model: jt('settings.subagents.defaultModel', 'Default model'),
+    provider: jt('settings.subagents.limitsFor', 'Limits for'),
     effort: jt('settings.subagents.defaultEffort', 'Default effort'),
     maximum: jt('settings.subagents.maximumEffort', 'Maximum effort'),
     allowed: jt('settings.subagents.allowedModels', 'Allowed models'),
@@ -40,9 +40,9 @@
     const getFeatures = options.getFeatures || (() => ({}));
     const getBridge = options.getBridge || (() => windowRef.jennyShell?.features);
     let provider = 'chatgpt';
-    const drafts = {};
-    const baselines = {};
     let catalog = {};
+    let pending = null; // the row being saved: shown until the write settles
+    let rowError = null; // { rowId, text }: a failed save, said in its own row
     let busy = false;
     let loading = false;
     let disposed = false;
@@ -56,13 +56,8 @@
     let actionFocusId = '';
     let actionFocusFallback = null;
     const saved = (id = provider) => clone(getFeatures().subagentRouting?.[id]);
-    const draft = () => {
-      if (drafts[provider] && equal(drafts[provider], baselines[provider]) && !equal(baselines[provider], saved())) delete drafts[provider];
-      if (!drafts[provider]) { baselines[provider] = saved(); drafts[provider] = saved(); }
-      return drafts[provider];
-    };
+    const draft = () => pending || saved();
     const toolDisabled = () => getFeatures().tools?.subagents === false || getFeatures().availability?.tools?.subagents?.enabled === false;
-    const dirty = () => !equal(draft(), saved());
     const models = () => (Array.isArray(catalog[provider]?.models) ? catalog[provider].models : []).slice(0, 128);
     const efforts = () => {
       const row = models().find((model) => model.id === draft().defaultModel);
@@ -86,12 +81,9 @@
       if (!host) return;
       const current = draft();
       const available = models();
-      const inherit = jt('settings.subagents.inherit', 'Inherit primary');
-      const modelChoices = [{ value: '', label: inherit }, ...available.map((model) => ({ value: model.id,
-        label: model.label || model.id, disabled: model.available === false }))];
-      if (current.defaultModel && !available.some((model) => model.id === current.defaultModel)) {
-        modelChoices.push({ value: current.defaultModel, label: current.defaultModel, disabled: true });
-      }
+      const helperModel = available.find((model) => model.id === current.defaultModel);
+      const providerName = { chatgpt: jt('settings.subagents.chatgpt', 'ChatGPT'), 'codex-cli': jt('settings.subagents.codexCli', 'Codex CLI'),
+        'api-provider': jt('settings.subagents.apiProvider', 'API providers') }[provider];
       const effortChoices = [{ value: '', label: jt('settings.subagents.effortAutomatic', 'Automatic') }, ...efforts().map((effort) => ({ value: effort, label: effortLabels()[effort] }))];
       if (current.defaultEffort && !effortChoices.some((choice) => choice.value === current.defaultEffort)) {
         effortChoices.push({ value: current.defaultEffort, label: effortLabels()[current.defaultEffort] || current.defaultEffort, disabled: true });
@@ -103,11 +95,13 @@
         : !available.length ? jt('settings.subagents.catalogEmpty', 'No model catalog is available for this provider. Connect it in Models and refresh.')
           : catalog[provider]?.available === false ? jt('settings.subagents.providerUnavailable', 'This provider is unavailable. Saved preferences apply when it is ready.')
             : catalog[provider]?.stale ? jt('settings.subagents.catalogStale', 'Showing a cached model catalog. Refresh to check availability.') : '';
-      const markup = row('subagent-routing-provider', jt('settings.subagents.title', 'Subagent routing'), select('provider', provider,
+      const markup = roles.rolesPointerRow('subagentPointer', jt('settings.subagents.pointer.title', 'Helper models'),
+        jt('settings.subagents.pointer.text', '{provider} chats hand side work to {model}.', { provider: providerName,
+          model: current.defaultModel ? helperModel?.label || current.defaultModel : jt('settings.subagents.pointer.same', 'the same model as the chat') }))
+        + row('subagent-routing-provider', jt('settings.subagents.limitsFor', 'Limits for'), select('provider', provider,
         [{ value: 'chatgpt', label: jt('settings.subagents.chatgpt', 'ChatGPT') }, { value: 'codex-cli', label: jt('settings.subagents.codexCli', 'Codex CLI') },
           { value: 'api-provider', label: jt('settings.subagents.apiProvider', 'API providers') }]),
-      jt('settings.subagents.help', 'Defaults and preferred models guide delegation on the next turn. The primary agent can override them; running subagents keep their selections.'))
-        + row('subagent-routing-model', jt('settings.subagents.defaultModel', 'Default model'), select('model', current.defaultModel, modelChoices))
+      jt('settings.subagents.limitsHelp', 'These apply to helpers under this provider. Changes save as you make them.'))
         + row('subagent-routing-effort', jt('settings.subagents.defaultEffort', 'Default effort'), select('effort', current.defaultEffort, effortChoices, !efforts().length && !current.defaultEffort))
         + row('subagent-routing-preferred', jt('settings.subagents.preferredModels', 'Preferred models in order'), select('preferred', '',
           [{ value: '', label: jt('settings.subagents.addPreferred', 'Add preferred model') }, ...available
@@ -126,8 +120,7 @@
         + row('subagent-routing-maximum', jt('settings.subagents.maximumEffort', 'Maximum effort'), select('maximum', current.maxEffort,
           [{ value: '', label: jt('settings.subagents.noMaximum', 'No maximum') }, ...Object.keys(effortLabels()).filter((effort) => effort !== 'default').map((effort) => ({ value: effort, label: effortLabels()[effort] }))]),
         jt('settings.subagents.maximumHelp', 'This limit applies to explicit choices, defaults and inherited effort. The primary agent cannot override it.'))
-        + row('subagent-routing-actions', '', button('save', jt('settings.subagents.save', 'Save routing'), undefined, !dirty())
-          + button('reset', jt('settings.subagents.reset', 'Reset provider'), undefined, equal(current, empty()) && equal(saved(), empty()))
+        + row('subagent-routing-actions', '', button('reset', jt('settings.subagents.reset', 'Reset provider'), undefined, equal(current, empty()))
           + button('refresh', jt('settings.subagents.refresh', 'Refresh models'), undefined, loading));
       host.setAttribute('aria-disabled', String(toolDisabled()));
       host.classList.toggle('settings-field--disabled', toolDisabled());
@@ -141,7 +134,8 @@
       }
       statusNode.textContent = status;
       statusNode.setAttribute('data-tone', failed ? 'danger' : 'default');
-      if (host === lastHost && markup === lastMarkup) return;
+      const paintError = () => rowError && inventory.settingsField?.setFieldError?.(host.querySelector(`[data-settings-field="${rowError.rowId}"]`), rowError.text);
+      if (host === lastHost && markup === lastMarkup) { paintError(); return; }
       const activeElement = host.ownerDocument.activeElement;
       const focusedId = (restoreActionFocus && activeElement === actionFocusFallback && actionFocusId)
         || (host.contains(activeElement) ? activeElement.id : '');
@@ -150,6 +144,7 @@
       content.innerHTML = markup;
       lastHost = host;
       lastMarkup = markup;
+      paintError();
       if (focusedId) {
         const previous = host.ownerDocument.getElementById(focusedId);
         const focusTarget = previous && !previous.disabled ? previous : previous?.closest('.settings-field')?.querySelector('button:not(:disabled)')
@@ -197,32 +192,33 @@
         if (!disposed && token === generation) { loading = false; render(true); actionFocusId = ''; }
       }
     }
-    async function save(reset = false) {
+    // Each change saves as it is made; only the changed row is shown in the meantime. A refused write restores the earlier value.
+    async function save(next, rowId) {
       if (disposed || busy || toolDisabled()) return;
       captureActionFocus();
       const selectedProvider = provider;
-      const submitted = reset ? empty() : clone(draft());
       generation += 1; // Invalidate catalog reads that captured pre-save settings.
       loading = false;
       busy = true;
       failed = false;
       message = '';
+      rowError = null;
+      pending = next;
+      lastMarkup = '';
       render();
       actionFocusFallback = container?.ownerDocument?.activeElement;
       try {
-        const payload = await getBridge()?.updateSettings?.({ subagentRouting: { [selectedProvider]: submitted } });
+        const payload = await getBridge()?.updateSettings?.({ subagentRouting: { [selectedProvider]: next } });
         if (disposed) return;
-        if (!payload?.subagentRouting?.[selectedProvider] || !equal(clone(payload.subagentRouting[selectedProvider]), submitted)) throw new Error('routing_not_confirmed');
+        if (!payload?.subagentRouting?.[selectedProvider] || !equal(clone(payload.subagentRouting[selectedProvider]), next)) throw new Error('routing_not_confirmed');
         adopt(payload);
-        drafts[selectedProvider] = clone(submitted);
-        baselines[selectedProvider] = clone(submitted);
         message = jt('settings.subagents.saved', 'Routing saved for the next turn.');
       } catch (_error) {
         if (disposed) return;
         failed = true;
-        message = jt('settings.subagents.saveFailed', 'Routing could not be saved. Your draft is kept; try again.');
+        rowError = { rowId, text: jt('settings.subagents.saveFailedRow', 'Could not save this change. The earlier value is restored.') };
       } finally {
-        if (!disposed) { busy = false; render(true); actionFocusId = ''; }
+        if (!disposed) { pending = null; busy = false; render(true); actionFocusId = ''; }
       }
     }
     function change(event) {
@@ -231,34 +227,43 @@
       const target = event.target;
       const field = target?.dataset?.subagentField;
       if (!field) return;
-      if (field === 'provider' && providers.includes(target.value)) provider = target.value;
-      else if (field === 'model') {
-        draft().defaultModel = target.value;
-        if (!efforts().includes(draft().defaultEffort)) draft().defaultEffort = '';
-      } else if (field === 'effort') draft().defaultEffort = target.value;
-      else if (field === 'maximum') draft().maxEffort = target.value;
-      else if (field === 'allowed' && target.value && !draft().allowedModels.includes(target.value) && draft().allowedModels.length < 16) draft().allowedModels.push(target.value);
-      else if (field === 'preferred' && target.value && !draft().preferredModels.includes(target.value) && draft().preferredModels.length < 16) {
-        draft().preferredModels.push(target.value);
+      if (field === 'provider') {
+        if (!providers.includes(target.value)) return;
+        provider = target.value;
+        message = '';
+        failed = false;
+        rowError = null;
+        render();
+        return;
       }
-      message = '';
-      failed = false;
-      render();
+      const next = clone(draft());
+      const ids = { effort: 'subagent-routing-effort', maximum: 'subagent-routing-maximum', allowed: 'subagent-routing-allowed', preferred: 'subagent-routing-preferred' };
+      if (field === 'effort') next.defaultEffort = target.value;
+      else if (field === 'maximum') next.maxEffort = target.value;
+      else if (field === 'allowed' && target.value && !next.allowedModels.includes(target.value) && next.allowedModels.length < 16) next.allowedModels.push(target.value);
+      else if (field === 'preferred' && target.value && !next.preferredModels.includes(target.value) && next.preferredModels.length < 16) next.preferredModels.push(target.value);
+      else return;
+      void save(next, ids[field]);
     }
     function click(event) {
+      if (event.target?.closest?.('[data-open-model-roles]')) {
+        (globalThis.rendererSettingsLazyRenderers || require('./renderer-settings-lazy-renderers')).openModelRoles(container.ownerDocument);
+        return;
+      }
       const target = event.target?.closest?.('[data-subagent-action]');
       if (!target || busy || disposed || toolDisabled()) return;
       const action = target.dataset.subagentAction;
-      if (action === 'save' || action === 'reset') { void save(action === 'reset'); return; }
+      if (action === 'reset') { void save(empty(), 'subagent-routing-actions'); return; }
       if (action === 'refresh') { void refresh(); return; }
+      const next = clone(draft());
+      const allowed = target.dataset.list === 'allowed';
       const index = Number(target.dataset.index);
-      const list = target.dataset.list === 'allowed' ? draft().allowedModels : draft().preferredModels;
+      const list = allowed ? next.allowedModels : next.preferredModels;
       if (!Number.isInteger(index) || index < 0 || index >= list.length) return;
       if (action === 'remove') list.splice(index, 1);
       const other = action === 'up' ? index - 1 : action === 'down' ? index + 1 : -1;
       if (other >= 0 && other < list.length) [list[index], list[other]] = [list[other], list[index]];
-      message = '';
-      render();
+      void save(next, `subagent-${allowed ? 'allowed' : 'preferred'}-${index}`);
     }
     function bind() {
       if (bound || disposed || !container) return;
@@ -271,7 +276,6 @@
         if (disposed) return;
         generation += 1;
         loading = false;
-        for (const id of providers) if (drafts[id] && equal(drafts[id], baselines[id])) delete drafts[id];
         adopt(payload);
         render();
       });

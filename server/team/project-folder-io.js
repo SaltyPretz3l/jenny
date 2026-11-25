@@ -268,7 +268,15 @@ function createFolderTransfer({ projects, gate, rootReady, log, entryCap, fileCa
           if (gate(projectId) || entryState(top) !== 'present') return refuse(ROOT_UNAVAILABLE);
         }
         if (entry.isDirectory()) continue;
-        const stat = entry.isFile() ? fs.lstatSync(full, { bigint: true }) : null;
+        let stat = null;
+        if (entry.isFile()) {
+          try {
+            stat = fs.lstatSync(full, { bigint: true });
+          } catch (error) {
+            if (absentCode(error)) continue; // removed between the listing and its lstat: nothing there to count
+            throw error;
+          }
+        }
         if (stat?.isFile() && onFile(name, stat)) taken += 1;
         else skipped += 1;
       }
@@ -305,6 +313,19 @@ function createFolderTransfer({ projects, gate, rootReady, log, entryCap, fileCa
     return walked.ok ? { ok: true, files, skipped: walked.skipped, capped: walked.capped } : walked;
   }
 
+  // The listed file's path once the project folder and every folder on the way are directories by `lstat` (never a
+  // link), else null. Nothing is looked at under a folder that is not one, so a link is never probed through.
+  function listedPath(projectId, relative) {
+    const segments = relative.split('/');
+    let current = path.join(projects, projectId);
+    if (entryState(current) !== 'present') return null;
+    for (const segment of segments.slice(0, -1)) {
+      current = path.join(current, segment);
+      if (entryState(current) !== 'present') return null;
+    }
+    return path.join(current, segments[segments.length - 1]);
+  }
+
   /**
    * Opens a listed file to read it: every folder on the way a directory by `lstat`, then openNoFollow (POSIX: the
    * file a regular file by `lstat`, opened O_NOFOLLOW; Windows: its checks before and after, whose name check proves
@@ -315,14 +336,8 @@ function createFolderTransfer({ projects, gate, rootReady, log, entryCap, fileCa
     const refused = gate(projectId);
     if (refused) return refused;
     if (!validateRelativePath(relative).ok) return refuse(PATH_INVALID);
-    const segments = relative.split('/');
-    let current = path.join(projects, projectId);
-    if (entryState(current) !== 'present') return refuse(DOWNLOAD_CHANGED);
-    for (const segment of segments.slice(0, -1)) {
-      current = path.join(current, segment);
-      if (entryState(current) !== 'present') return refuse(DOWNLOAD_CHANGED);
-    }
-    const file = path.join(current, segments[segments.length - 1]);
+    const file = listedPath(projectId, relative);
+    if (file === null) return refuse(DOWNLOAD_CHANGED);
     let handle = null;
     try {
       if (!WINDOWS && !fs.lstatSync(file).isFile()) return refuse(DOWNLOAD_CHANGED);
@@ -349,9 +364,13 @@ function createFolderTransfer({ projects, gate, rootReady, log, entryCap, fileCa
     const refused = gate(projectId);
     if (refused) return refused;
     if (!validateRelativePath(relative).ok || sensitiveSegment(relative) !== null) return refuse(PATH_INVALID);
+    // Every folder on the way is proved before the leaf is looked at: a link is never probed, and its target never
+    // fills `expect`.
+    const file = listedPath(projectId, relative);
+    if (file === null) return refuse(DOWNLOAD_CHANGED);
     let stat;
     try {
-      stat = fs.lstatSync(path.join(projects, projectId, ...relative.split('/')), { bigint: true });
+      stat = fs.lstatSync(file, { bigint: true });
     } catch {
       return refuse(DOWNLOAD_CHANGED);
     }

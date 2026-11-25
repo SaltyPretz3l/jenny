@@ -195,7 +195,7 @@ test('an open monitor is the artifact panel\'s mode: no pane root, view or stage
   assert.equal(state.ui.subagentMonitor.sessionId, 'session-b', 'pane 1\'s open replaces the record');
   assert.match(panelMonitor(doc).textContent, /Beta subagent/);
   assert.equal(doc.querySelectorAll('.subagent-monitor-shell').length, 1, 'one monitor exists at a time');
-  panelMonitor(doc).querySelector('[data-subagent-close]').click();
+  doc.getElementById('artifactReviewCollapseButton').click(); // row 195: the helper's page has no Close of its own
   await waitForUi(window, 40);
   assert.equal(state.ui.subagentMonitor, null);
   assert.equal(doc.getElementById('artifactReviewPanel').dataset.artifactReviewMode, 'artifact', 'closing leaves the mode');
@@ -220,11 +220,11 @@ test('one pane: the monitor takes the artifact panel column and leaves the chat 
   assert.equal(panel.classList.contains('hidden'), false, 'the panel shows');
   assert.equal(panel.dataset.artifactReviewMode, 'subagents');
   assert.equal(chatView.classList.contains('artifact-review-mode'), true, 'the shared panel layout classes apply');
-  assert.equal(panel.getAttribute('aria-label'), 'Subagent monitor');
+  assert.equal(panel.getAttribute('aria-label'), 'Helper monitor');
   assert.ok(panelMonitor(doc).querySelector('.subagent-monitor-header'), 'a header');
   assert.ok(panelMonitor(doc).querySelector('.subagent-monitor-body'), 'one scrolling body');
   assert.ok(panelMonitor(doc).querySelector('.subagent-monitor-footer'), 'and a footer');
-  panelMonitor(doc).querySelector('[data-subagent-close]').click();
+  doc.getElementById('artifactReviewCollapseButton').click(); // row 195: the helper's page has no Close of its own
   await waitForUi(window, 40);
   assert.equal(panel.classList.contains('hidden'), true, 'closing restores the closed panel');
   assert.equal(panel.getAttribute('aria-label'), 'Artifact review');

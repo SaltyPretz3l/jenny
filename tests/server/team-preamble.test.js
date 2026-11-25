@@ -116,7 +116,7 @@ test('a slow preamble that passes the timeout is destroyed even if the rest arri
 });
 
 test('the seventeenth socket in the preamble phase is destroyed at once', async (t) => {
-  const { listener, sockets, connect } = await setup(t, { timeoutMs: 5000 });
+  const { listener, sockets, connect } = await setup(t, { timeoutMs: 5000, maxPending: 16 });
   const pending = Array.from({ length: 16 }, () => connect());
   await Promise.all(pending.map((client) => client.connected));
   await pause(50);
@@ -127,6 +127,20 @@ test('the seventeenth socket in the preamble phase is destroyed at once', async 
   assert.equal(pending.some((client) => client.closed), false, 'the sixteen earlier sockets are untouched');
   assert.deepEqual(listener.stats(), { pending: 16, accepted: 0, refused: 1 });
   assert.equal(sockets.length, 0);
+});
+
+// Review Part III transport. Fault: the host listener's default pending cap (16) far under the streams the host bridge
+// may open at once (maxStreamsTotal, 128), so a burst of streams loses sockets the bridge already accepted.
+test('the default pending cap covers every stream the host bridge may hold', async (t) => {
+  const { DEFAULT_LIMITS } = require('../../server/team/transport/host-bridge');
+  const { MAX_PREAMBLE_SOCKETS } = require('../../server/team/transport/preamble');
+  assert.ok(MAX_PREAMBLE_SOCKETS >= DEFAULT_LIMITS.maxStreamsTotal);
+  const { listener, connect } = await setup(t, { timeoutMs: 5000 });
+  const pending = Array.from({ length: 24 }, () => connect());
+  await Promise.all(pending.map((client) => client.connected));
+  await pause(50);
+  assert.equal(pending.some((client) => client.closed), false, 'no socket past sixteen was destroyed');
+  assert.equal(listener.stats().pending, 24);
 });
 
 test('close destroys sockets still in the preamble phase', async (t) => {

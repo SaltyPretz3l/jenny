@@ -211,22 +211,3 @@ class TestBuildStructuredSystemPrompt:
         )
         assert section.cacheable is False
         assert section.content.startswith("## Workspace Manifest")
-
-    def test_context_builder_marks_task_capsule_non_cacheable(self, tmp_path) -> None:
-        workspace = tmp_path / "workspace"
-        workspace.mkdir(parents=True)
-        (workspace / "AGENTS.md").write_text("Use narrow diffs.", encoding="utf-8")
-        (workspace / "INVENTORY.md").write_text("Sidecar runtime map.", encoding="utf-8")
-        (workspace / "WORKSPACE_MANIFEST.md").write_text("Runtime routes.", encoding="utf-8")
-
-        prompt = ContextBuilder(workspace).build_system_prompt(
-            "Base prompt",
-            cache_aware=True,
-            latest_user_content="Fix sidecar context prompt assembly.",
-            task_capsule_enabled=True,
-        )
-
-        assert isinstance(prompt, StructuredSystemPrompt)
-        section = next(item for item in prompt.sections if item.name == "task_capsule")
-        assert section.cacheable is False
-        assert section.content.startswith("## Coding Task Capsule")

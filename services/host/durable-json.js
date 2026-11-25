@@ -3,6 +3,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
+// H15: a rename onto a file a Windows scanner or indexer holds for a moment (EBUSY, EPERM, EACCES) is retried
+// briefly with a short synchronous backoff instead of failing the write.
+const { renameWithRetrySync } = require('../backend/file-read-retry');
 
 // The one form an fs error takes in a log line (review sweeps, second run, X1-F02): its code when that is a short
 // upper-case word (ENOENT, EPERM), else a fixed word; never the Error, its message, its syscall or its path. A thrown
@@ -64,7 +67,7 @@ function writeContents(filePath, content, { makeDirectory = true } = {}) {
     fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;
-    fs.renameSync(temp, filePath);
+    renameWithRetrySync(temp, filePath);
     // Directory fsync is required for Linux container crash durability. Windows
     // is a development host and cannot open directories through this Node API.
     if (process.platform !== 'win32') {
@@ -93,7 +96,7 @@ function renameDurable(fromPath, toPath) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  fs.renameSync(fromPath, toPath);
+  renameWithRetrySync(fromPath, toPath);
   if (process.platform !== 'win32') {
     const directoryFd = fs.openSync(directory, 'r');
     try { fs.fsyncSync(directoryFd); } finally { fs.closeSync(directoryFd); }

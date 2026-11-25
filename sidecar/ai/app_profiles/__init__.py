@@ -342,6 +342,7 @@ def apply_behavior(
 
 from sidecar.ai.app_profiles.bonsai2 import BONSAI2_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.gemma4 import GEMMA4_PROFILE  # noqa: E402
+from sidecar.ai.app_profiles.inkling2 import INKLING2_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.ornith15 import ORNITH15_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.qwen36 import QWEN36_PROFILE  # noqa: E402
 from sidecar.ai.app_profiles.qwen38 import QWEN38_PROFILE  # noqa: E402
@@ -351,3 +352,4 @@ register_profile(ORNITH15_PROFILE)
 register_profile(QWEN36_PROFILE)
 register_profile(QWEN38_PROFILE)
 register_profile(BONSAI2_PROFILE)
+register_profile(INKLING2_PROFILE)

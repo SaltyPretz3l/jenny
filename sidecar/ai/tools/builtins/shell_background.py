@@ -61,6 +61,17 @@ MAX_TERMINAL_STATUS_FALLBACKS = 64
 RUNNING_RECONCILIATION_GRACE_SECONDS = 5.0
 RUNNING_PID_REUSE_MAX_SECONDS = 15 * 60.0
 BACKGROUND_STOP_WAIT_SECONDS = 3.0
+SHUTDOWN_SETTLE_WAIT_SECONDS = 1.0
+SHUTDOWN_END_REASON = (
+    "stopped by Jenny: the runtime that owned this job shut down or restarted, "
+    "so the process was ended; start it again if it is still needed"
+)
+_LOST_OWNER_PREFIX = "background job ownership was lost before terminal status persisted"
+LOST_OWNER_GONE_ERROR = (
+    f"{_LOST_OWNER_PREFIX}: the Jenny runtime that started it is gone (for example after "
+    "a restart or crash) and the process is no longer running, so why it ended is unknown; "
+    "start it again if it is still needed"
+)
 JOB_RETENTION_SECONDS = 7 * 24 * 60 * 60
 FULL_OUTPUT_FILE = "output.txt"
 # Job-ID validation and the status.json read cap (WIDE-011) live in
@@ -82,6 +93,9 @@ class _ManagedBackgroundProcess:
     settled: threading.Event = field(default_factory=threading.Event)
     # Row 96: optional shell_test_progress.BackgroundProgressTap (tracker + progress.json).
     progress_tap: Any = None
+    # Set when Jenny itself ends the job outside an explicit stop (runtime shutdown), so the
+    # terminal status names the cause instead of a bare kill exit code (1 on Windows).
+    end_reason: str | None = None
 
     def observe_cleanup(
         self, verdict: _owned_process_settlement.OwnedProcessCleanupVerdict
@@ -131,7 +145,11 @@ def _cleanup_active_jobs() -> None:
         _active_jobs.clear()
         _active_job_store_keys.clear()
     for job in jobs:
+        job.end_reason = SHUTDOWN_END_REASON
         _terminate_background_process(job, timeout_seconds=0.5)
+    # Give each waiter a bounded chance to publish the named reason before exit.
+    for job in jobs:
+        job.terminalized.wait(timeout=SHUTDOWN_SETTLE_WAIT_SECONDS / len(jobs))
 
 
 atexit.register(_cleanup_active_jobs)
@@ -285,15 +303,14 @@ def _reconcile_orphaned_running_status(
     # only a record bound to its own ledger entry can claim that (legacy records cannot).
     from sidecar.runtime.owned_process_handoff import transferred_job_live
 
-    if (
-        isinstance(pid, int)
-        and not isinstance(pid, bool)
-        and (
-            (age_seconds < RUNNING_PID_REUSE_MAX_SECONDS and _process_is_alive(pid))
-            or (isinstance(ledger_entry, str) and transferred_job_live(pid, ledger_entry))
-        )
-    ):
-        return status
+    live_pid: int | None = None
+    if isinstance(pid, int) and not isinstance(pid, bool):
+        if _process_is_alive(pid):
+            live_pid = pid
+        if (age_seconds < RUNNING_PID_REUSE_MAX_SECONDS and live_pid is not None) or (
+            isinstance(ledger_entry, str) and transferred_job_live(pid, ledger_entry)
+        ):
+            return status
 
     reconciled: dict[str, object] = {
         "job_id": job_id,
@@ -301,7 +318,7 @@ def _reconcile_orphaned_running_status(
         "exit_code": -1,
         "stdout": "",
         "stderr": "",
-        "error": "background job ownership was lost before terminal status persisted",
+        "error": _lost_owner_error(live_pid),
     }
     _publish_terminal_status(store, job_ref, reconciled)
     persisted = validate_job_status_for_write(reconciled)
@@ -314,6 +331,18 @@ def _reconcile_orphaned_running_status(
         data={"age_seconds": min(int(age_seconds), int(RUNNING_PID_REUSE_MAX_SECONDS))},
     )
     return persisted if persisted is not None else reconciled
+
+
+def _lost_owner_error(alive_pid: int | None) -> str:
+    """Say why an unowned job is terminal and whether a process may still hold its PID."""
+    if alive_pid is None:
+        return LOST_OWNER_GONE_ERROR
+    return (
+        f"{_LOST_OWNER_PREFIX}: Jenny restarted since this job started and no longer "
+        f"supervises it. A process with its PID ({alive_pid}) is still running, but it can "
+        "no longer be confirmed as this job, so Jenny cannot read its output or stop it. "
+        "Check whether it still answers (for example its port) before starting it again"
+    )
 
 
 def _promote_background_start(
@@ -699,6 +728,7 @@ def _capture_background_terminal(
             exit_code,
             stdout,
             stderr,
+            error=job.end_reason if exit_code != 0 else None,
             output_truncated=bool(
                 result is not None
                 and (result.output.truncated or result.drain_incomplete)
@@ -726,7 +756,7 @@ def _capture_background_terminal(
             -1,
             "",
             "",
-            error=f"background job wait failed: {type(error).__name__}",
+            error=job.end_reason or f"background job wait failed: {type(error).__name__}",
         )
 
 

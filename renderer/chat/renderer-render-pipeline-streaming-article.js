@@ -23,7 +23,6 @@
 
   function createStreamingArticlePatcher(deps) {
     const {
-      state,
       chatTimeline,
       uiRuntime,
       streamClientMetrics,
@@ -137,12 +136,7 @@
       let rebuildOutcome = 'raw_innerhtml';
       let rebuildStats;
       if (nextArticle) {
-        const streamingArticleMorphEnabled =
-          state?.features?.featureFlags?.chat_timeline_streaming_article_morph === true;
-        if (
-          streamingArticleMorphEnabled
-          && typeof streamDomPatchUtils.setOuterHtmlPreservingCodeScroll === 'function'
-        ) {
+        if (typeof streamDomPatchUtils.setOuterHtmlPreservingCodeScroll === 'function') {
           const result = streamDomPatchUtils.setOuterHtmlPreservingCodeScroll(
             article,
             nextArticleMarkup,
@@ -167,11 +161,10 @@
             article = resolveVisibleTurnArticleTarget(streamingMessageId, projectionContext) || article;
           }
         } else {
-          // The rollback path (chat_timeline_streaming_article_morph off)
-          // shares morphNode's attribute diff (syncElementAttributes) rather
-          // than a second hand-rolled copy that fixes would skip. Optional-
-          // called: without the module setOuterHtmlPreservingCodeScroll is
-          // gone too, and an unsynced attribute is not worth throwing over.
+          // Last resort when the DOM patch module did not resolve: a raw swap
+          // that shares morphNode's attribute diff (syncElementAttributes)
+          // rather than a second hand-rolled copy that fixes would skip.
+          // Optional-called: an unsynced attribute is not worth throwing over.
           article.innerHTML = nextArticle.innerHTML;
           streamDomPatchUtils.syncElementAttributes?.(article, nextArticle);
         }

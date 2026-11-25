@@ -145,19 +145,21 @@
   /* The workbench side of a sash: which fixed cell it resizes, that cell's range
    * (its floor up to what the flexible sibling can give before reaching its own
    * floor; unbounded until a real size is known), and the commit through the
-   * layout ops. o = { model, treeOps, ops, getRendered, getFontScale, currentLayout, commit } */
+   * layout ops. o = { model, treeOps, ops, getRendered, getFontScale, getCentreMin?, currentLayout, commit }
+   * getCentreMin (row 190): the centre's width floor the owner supplies (Chat: 360 per pane). */
   function createSashTargets(o) {
+    const centreMin = function () { return typeof o.getCentreMin === 'function' ? o.getCentreMin() : undefined; };
     function range(split, at, solved) {
       const child = split.children[at];
       const sizes = (solved && solved.sizes) || {};
       const scale = o.getFontScale();
       const now = Number.isFinite(sizes[child.node.id]) ? sizes[child.node.id] : child.size;
-      const min = o.model.minExtent(child.node, split.dir, scale);
+      const min = o.model.minExtent(child.node, split.dir, scale, centreMin());
       let max = o.model.SIZE_MAX;
       const flexChild = split.children.find(function (c) { return c.size === null; });
       const rendered = o.getRendered();
       if (rendered && rendered.usable && flexChild && Number.isFinite(sizes[flexChild.node.id])) {
-        const give = sizes[flexChild.node.id] - o.model.minExtent(flexChild.node, split.dir, scale);
+        const give = sizes[flexChild.node.id] - o.model.minExtent(flexChild.node, split.dir, scale, centreMin());
         max = Math.max(min, now + Math.max(0, give));
         if (split.dir === 'col') {
           const main = split.children.reduce(function (sum, c) { return sum + sizes[c.node.id]; }, 0);
@@ -172,7 +174,7 @@
     // pointermove never re-reads the font scale (getComputedStyle).
     function clamp(node, dir, px, target) {
       const max = target && Number.isFinite(target.maxPx) ? target.maxPx : o.model.SIZE_MAX;
-      const min = target && Number.isFinite(target.minPx) ? target.minPx : o.model.minExtent(node, dir, o.getFontScale());
+      const min = target && Number.isFinite(target.minPx) ? target.minPx : o.model.minExtent(node, dir, o.getFontScale(), centreMin());
       return Math.min(max, Math.max(min, Math.round(px)));
     }
 

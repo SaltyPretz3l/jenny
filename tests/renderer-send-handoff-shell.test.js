@@ -509,6 +509,38 @@ test('New chat here for another project gets a real chat record even while anoth
   assert.equal(window.__rendererState.sessions.some((session) => session.id === created && session.local_draft === true), false);
 });
 
+test('a local draft made for a project while another session streams carries that project', async (t) => {
+  // Without it the draft lists under General and is created there on its first send.
+  const { window, dispose } = await loadRendererApp({
+    shell: {
+      chat: {
+        async startStream(payload, { state }) {
+          const sessionId = payload.sessionId || 'session-streaming';
+          if (!state.sessions.find((session) => session.id === sessionId)) {
+            state.sessions = [{ id: sessionId, title: 'Streaming Session', conversation_mode: 'chat', preferred_model: 'gpt-test',
+              reasoning_effort: 'default', interactive_round_count: 0, interactive_sequence_state: 'idle', pending_question_batch: null,
+              updated_at: new Date().toISOString() }];
+          }
+          state.messagesBySession.set(sessionId, []);
+          return { sessionId, streamId: 'stream-background' };
+        },
+      },
+    },
+  });
+  t.after(async () => { await dispose(); });
+  const input = window.document.getElementById('chatInput');
+  input.value = 'Keep streaming in the background';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  window.document.getElementById('sendButton').click();
+  await waitForUi(window, 40);
+  assert.equal(window.__rendererState.currentSessionId, 'session-streaming');
+
+  const created = await window.rendererTaskSessionActions.start({ projectId: 'project_gemer' });
+  const draft = window.__rendererState.sessions.find((session) => session.id === created);
+  assert.equal(draft && draft.local_draft, true, 'still a draft while the other chat streams');
+  assert.equal(draft.project_id, 'project_gemer');
+});
+
 test('renderer keeps the active draft stable while a hidden background stream updates badges and chrome', async (t) => {
   const { window, shell, dispose } = await loadRendererApp({
     shell: {

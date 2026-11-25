@@ -134,7 +134,6 @@
       renderAll = function noopRenderAll() {},
       renderLogs = function noopRenderLogs() {},
       renderSessions = function noopRenderSessions() {},
-      setSidebarCollapsed,
       applyAppearancePreferences,
       applyChatZoomPercent,
       appearanceUtils,
@@ -410,12 +409,27 @@
       return guardedTask;
     }
 
+    // The shared dialog answers later: the switch is vetoed now and repeated once the person agrees to leave.
+    let leaveDialog = null;
+    let leaveAsked = false;
     function confirmSettingsSectionChange(nextSectionId, previousSectionId) {
       const hasUnsavedChanges = previousSectionId === 'personality' && hasPersonalityUnsavedChanges?.() === true;
-      if (!hasUnsavedChanges || nextSectionId === previousSectionId) return true;
-      return typeof globalWindow?.confirm === 'function'
-        ? globalWindow.confirm(jt('settings.shell.unsavedContextChangesConfirm', 'You have unsaved context-file changes. Leave this section without saving?'))
-        : false;
+      if (!hasUnsavedChanges || nextSectionId === previousSectionId || leaveAsked) return true;
+      const windowRef = deps.windowRef || globalWindow || globalThis;
+      const factory = windowRef.rendererIdeConfirmDialog?.createIdeConfirmDialog;
+      const helpOverlayFactory = windowRef.inventoryHelpOverlay?.createHelpOverlay;
+      if (!leaveDialog && typeof factory === 'function' && typeof helpOverlayFactory === 'function') {
+        leaveDialog = factory({ document: windowRef.document, actionButton: windowRef.inventoryActionButton, helpOverlayFactory, hostId: 'settingsLeaveConfirmOverlay' });
+      }
+      void leaveDialog?.confirm?.({ title: jt('settings.shell.unsavedContextChangesTitle', 'Unsaved changes'),
+        message: jt('settings.shell.unsavedContextChangesConfirm', 'You have unsaved context-file changes. Leave this section without saving?'),
+        confirmLabel: jt('settings.shell.unsavedContextChangesLeave', 'Leave without saving'), cancelLabel: jt('settings.shell.unsavedContextChangesStay', 'Keep editing'), variant: 'danger' })
+        .then((leave) => {
+          if (!leave) return;
+          leaveAsked = true;
+          try { navigateSettingsSection(nextSectionId); } finally { leaveAsked = false; }
+        });
+      return false;
     }
 
     // True once shown; false, before anything moves, when the nav would show another section; false if the leave guard vetoes.
@@ -475,7 +489,6 @@
         modelCatalogEmpty: dom.modelCatalogEmpty,
         accountSummary: dom.accountSummary,
         localProfileSettingsMount: dom.localProfileSettingsMount,
-        backendSummary: dom.backendSummary,
         setupSettingsSummary: dom.setupSettingsSummary,
         setupSettingsActions: dom.setupSettingsActions,
         setupProgressContainer: dom.setupProgressContainer,
@@ -493,6 +506,7 @@
         permissionsSettingsSection: dom.permissionsSettingsSection,
         toolsFilesList: dom.toolsFilesList,
         toolsWebList: dom.toolsWebList,
+        toolsComputerList: dom.toolsComputerList,
         toolsTerminalList: dom.toolsTerminalList,
         toolsCodeList: dom.toolsCodeList,
         toolsCommandSandboxHost: dom.toolsCommandSandboxHost,
@@ -590,7 +604,6 @@
         renderComposerPopover,
         renderAll,
         renderSessions,
-        setSidebarCollapsed,
         applyAppearancePreferences,
         applyChatZoomPercent,
         appearanceUtils,
@@ -695,6 +708,7 @@
         onAfterReset: () => renderSettings(),
         log: (message) => appendClientLog('WARN', 'settings.field_reset', { message }),
         confirmLabels: { appearance: jt('settings.fieldReset.resetAppearance', 'Reset Appearance to its defaults?') },
+        confirmDetails: { appearance: jt('settings.fieldReset.appearanceLost', 'Your theme, type, font size, effects and startup animation go back to their defaults.') },
         resetActions: {
           // Row 133: the reset covers the Appearance page. Rows that share its store but sit on Chat and General keep their values.
           appearance: () => {
@@ -757,6 +771,8 @@
       settingsEventBindings?.dispose?.();
       settingsNavController?.dispose?.();
       fieldReset?.dispose?.();
+      leaveDialog?.dispose?.();
+      leaveDialog = null;
       settingsController?.dispose?.();
       usageController?.dispose?.();
       usageConfirmDialog?.dispose?.();

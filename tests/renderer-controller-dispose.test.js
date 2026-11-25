@@ -475,13 +475,8 @@ test('renderer app dispose is safe when lazy surfaces were never initialized', a
   await waitForUi(app.window, 20);
   app.window.document.getElementById('chatTopRailTab').click();
   await waitForUi(app.window, 20);
-  app.window.document.getElementById('chatsPanelCollapseToggle').click();
-  await waitForUi(app.window, 20);
-  const portaledPeek = app.window.document.getElementById('chatsStripPeek');
-  assert.ok(portaledPeek, 'the strip tooltip portal is mounted during shell setup');
 
   await app.dispose();
-  assert.equal(portaledPeek.isConnected, false, 'dispose removes the portaled tooltip node');
   await app.dispose();
 });
 

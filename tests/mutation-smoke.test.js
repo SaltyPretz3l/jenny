@@ -124,9 +124,9 @@ test('isProductionSource includes services/renderer/top-level, excludes the rest
 // --- source -> test resolution against the real tree -------------------------
 
 test('resolveTestsForSource unions stem and coarse matches for a real renderer source', () => {
-  const { tests, source } = mut.resolveTestsForSource('renderer/shell/renderer-view-panel-registry.js', { root: ROOT });
+  const { tests, source } = mut.resolveTestsForSource('renderer/shell/renderer-top-nav-shell.js', { root: ROOT });
   assert.equal(source, 'stem+coarse-map');
-  assert.ok(tests.includes('tests/renderer-view-panel-registry.test.js'), `got ${tests.join(',')}`);
+  assert.ok(tests.includes('tests/renderer-top-nav-shell.test.js'), `got ${tests.join(',')}`);
   assert.ok(tests.includes('tests/renderer-shell.test.js'), `got ${tests.join(',')}`);
 });
 

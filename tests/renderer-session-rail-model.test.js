@@ -1,17 +1,21 @@
 'use strict';
 
-/* Row 59 checkpoint 2, slice S3: the session rail's pure model (words, data states, disclosure
-   defaults, docking). No DOM. */
+/* Row 59 checkpoint 2, slice S3 and row 195: the session rail's pure model (words, data states, disclosure
+   defaults, the four sections). No DOM. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const model = require('../renderer/chat/renderer-session-rail-model.js');
+const render = require('../renderer/chat/renderer-session-rail-render.js');
 
 const SID = 'sess_one';
+const jtPlain = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
 
 function wrapper(data, state = 'available', extra = {}) {
   return { state, sampled_at: state === 'checking' ? null : '2026-10-15T10:00:00.000Z', reason: null, data, ...extra };
 }
+
+const COMPLETE = { counts: { active: 0, waiting: 0, failed: 0, completed: 0 }, coverage: 'complete', unsupported_sources: [], items: [] };
 
 function summary(overrides = {}) {
   return {
@@ -23,67 +27,158 @@ function summary(overrides = {}) {
       branch: 'main', worktree_id: null, execution_environment: 'local', run_mode: 'auto',
     }),
     context: wrapper({ turn_id: null, used_tokens: 20480, capacity_tokens: 32000, available_tokens: 11520, measurement: 'actual', scope: 'request' }),
-    outputs: wrapper({
-      items: [
-        { artifact_id: 'art_1', display_name: 'context_probe.py', kind: 'code', availability: 'available' },
-        { artifact_id: 'art_2', display_name: 'results.md', kind: 'document', availability: 'missing' },
-      ],
-      total_count: 2, next_cursor: null,
-    }),
+    outputs: wrapper({ items: [{ artifact_id: 'art_1', display_name: 'context_probe.py', kind: 'code', availability: 'available' }], total_count: 1, next_cursor: null }),
     changes: wrapper({ workspace_id: 'w1', scope: 'working_tree', file_count: 6, additions: 412, deletions: 37, ref: 'main', head: 'abc1234' }),
-    background_tasks: wrapper({
-      scope: 'session_and_direct_children',
-      counts: { active: 1, waiting: 0, failed: 0, completed: 12 },
-      coverage: 'partial', unsupported_sources: ['linked_chat_turn'],
-      items: [{ source_kind: 'workspace_test', operation_id: 'op_1', session_id: SID, state: 'running', started_at: '2026-10-15T09:59:00.000Z', finished_at: null, output_ref: null }],
-    }),
+    background_tasks: wrapper({ scope: 'session_and_direct_children', ...COMPLETE }),
     ...overrides,
   };
 }
 
+const withTasks = (data, state = 'available') => summary({ background_tasks: wrapper({ scope: 'session_and_direct_children', ...COMPLETE, ...data }, state) });
 const build = (extra = {}) => model.buildRailViewModel({ summary: summary(), sessionId: SID, workspaceView: null, ...extra });
 const byKey = (vm, key) => vm.sections.find((section) => section.key === key);
+const keysOf = (vm) => vm.sections.map((section) => section.key);
 
-test('the five sections come in the PO order', () => {
-  assert.deepEqual(build().sections.map((section) => section.key), ['environment', 'context', 'outputs', 'changes', 'background_tasks']);
-  assert.deepEqual(build().sections.map((section) => section.title), ['Environment', 'Context', 'Outputs', 'Changes', 'Background tasks']);
+const ROWS = [
+  { id: 'job:aaaaaaaaaaaa', kind: 'server', label: 'npm run dev', detail: 'localhost:5173', startedAt: 1000, canStop: true },
+  { id: 'job:bbbbbbbbbbbb', kind: 'command', label: 'npm test', detail: '', startedAt: 2000, canStop: true },
+];
+
+test('Session: This chat, Context and Running now only (no Outputs, Changes or Servers); Running now takes its rows from getRunningRows', () => {
+  const vm = build({ getRunningRows: () => ROWS });
+  assert.deepEqual(keysOf(vm), ['this_chat', 'context', 'running_now']);
+  const running = byKey(vm, 'running_now');
+  assert.equal(running.title, 'Running now');
+  assert.equal(running.valueText, '2');
+  assert.deepEqual(running.dot, { tone: 'active', pulse: true });
+  assert.equal(running.open, true);
+  assert.equal(running.rows.at(-1).text, 'All runs');
+  assert.equal(running.rows.at(-1).kind, 'action');
+  assert.equal(running.rows.at(-1).allRuns, true);
 });
 
-test('docking: 920px docks; 640px keeps a docked rail while a panel is open; a rail that was not docked stays out', () => {
-  const { resolveDocked } = model;
-  assert.equal(resolveDocked({ paneWidth: 920 }), true);
-  assert.equal(resolveDocked({ paneWidth: 919, wasDocked: true }), false, 'no panel: the 920 rule alone');
-  assert.equal(resolveDocked({ paneWidth: 713, panelActive: true, wasDocked: true }), true, '1455 single with the panel open');
-  assert.equal(resolveDocked({ paneWidth: 640, panelActive: true, wasDocked: true }), true);
-  assert.equal(resolveDocked({ paneWidth: 639, panelActive: true, wasDocked: true }), false, 'below the 360px reading floor + rail');
-  assert.equal(resolveDocked({ paneWidth: 800, panelActive: true, wasDocked: false }), false, 'a panel opening never docks an undocked rail');
-  assert.equal(resolveDocked({ paneWidth: 0, wasDocked: true }), true, 'an unmeasurable pane keeps its answer');
-  assert.equal(resolveDocked({ paneWidth: Number.NaN, wasDocked: false }), false);
+test('Running now: absent when nothing runs, for an injected empty list and for a summary with nothing running', () => {
+  assert.deepEqual(keysOf(build()), ['this_chat', 'context']);
+  assert.deepEqual(keysOf(build({ getRunningRows: () => [] })), ['this_chat', 'context']);
+  assert.deepEqual(keysOf(build({ getRunningRows: () => { throw new Error('boom'); } })), ['this_chat', 'context'], 'a reader that throws is no rows');
+  assert.deepEqual(keysOf(build({ summary: withTasks({ items: [{ source_kind: 'background_job', operation_id: 'job:a', job_id: 'aaaaaaaaaaaa', command: 'npm test', state: 'completed' }] }) })), ['this_chat', 'context']);
 });
 
-test('rail mode: rail_visible null means shown; false hides only a docked rail', () => {
-  const { resolveRailMode } = model;
-  assert.equal(resolveRailMode({ docked: true, railVisible: null }), 'docked');
-  assert.equal(resolveRailMode({ docked: true, railVisible: true }), 'docked');
-  assert.equal(resolveRailMode({ docked: true, railVisible: false }), 'hidden');
-  assert.equal(resolveRailMode({ docked: false, railVisible: false }), 'undocked', 'responsive collapse ignores the preference');
-  assert.equal(resolveRailMode({ docked: false, railVisible: null }), 'undocked');
+test('Running now: a server shows its address and Up with a clock, a command its name and a clock, a helper Running', () => {
+  const rows = byKey(build({ getRunningRows: () => [...ROWS, { id: 'chat:h1', kind: 'helper', label: 'Helper: summarise', startedAt: 3000, canStop: false }], nowMs: 62000 }), 'running_now').rows;
+  const [server, command, helper] = rows;
+  assert.deepEqual([server.kind, server.text, server.addr, server.metaPrefix, server.startedAtMs, server.runId, server.canStop], ['server', 'localhost:5173', true, 'Up', 1000, 'job:aaaaaaaaaaaa', true]);
+  assert.equal(server.title, 'npm run dev on localhost:5173');
+  assert.deepEqual([command.kind, command.text, command.meta, command.jobId, command.dot], ['job', 'npm test', '01:00', 'bbbbbbbbbbbb', { tone: 'active', pulse: true }]);
+  assert.deepEqual([helper.kind, helper.text, helper.meta, helper.runId, helper.surface], ['action', 'Helper: summarise', 'Running', 'chat:h1', 'background_tasks']);
+  assert.equal(rows.length, 4, 'three runs and the All runs link');
 });
 
-test('no summary: every section is checking, in words, never a number', () => {
-  for (const vm of [model.buildRailViewModel({ summary: null, sessionId: SID, status: 'checking' })]) {
-    for (const section of vm.sections) {
-      assert.equal(section.state, 'checking');
-      assert.equal(section.valueText, 'Checking\u2026');
-      if (section.key === 'context') {
-        // Row 63: one shared breakdown row, rendered by renderer-context-preview as dashes while unknown.
-        assert.deepEqual(section.rows.map((row) => row.kind), ['breakdown']);
-        assert.equal(section.rows[0].projection.used, null);
-        assert.equal(section.rows[0].projection.target, null);
-      } else assert.deepEqual(section.rows, []);
-      assert.doesNotMatch(section.valueText, /\d/);
-    }
+test('Running now: a Stop that does not apply is disabled with the reason, and the same id is listed once', () => {
+  const rows = byKey(build({ getRunningRows: () => [{ id: 'job:x', kind: 'command', label: 'a', canStop: false }, { id: 'job:x', kind: 'command', label: 'dup', canStop: true }, { id: 'task:t', kind: 'test', label: 'Workspace tests', canStop: true }] }), 'running_now').rows;
+  assert.equal(rows.filter((row) => row.kind !== 'action' || row.runId).length, 2);
+  assert.equal(rows[0].canStop, false);
+  assert.equal(rows[0].stopTitle, 'This run cannot be stopped from here.');
+  const html = render.bodyHtml({ rows });
+  assert.match(html, /session-rail-job-stop[^>]*disabled|disabled[^>]*session-rail-job-stop/);
+  assert.match(html, /data-rail-run="job:x"/);
+  assert.match(html, /data-rail-runs="true"/);
+});
+
+test('Running now without getRunningRows: the summary\u2019s serving jobs, commands, tests and linked chats, in the same shape', () => {
+  const summaryWith = withTasks({
+    counts: { active: 4, waiting: 0, failed: 0, completed: 1 },
+    items: [
+      { source_kind: 'background_job', operation_id: 'job:bbbbbbbbbbbb', job_id: 'bbbbbbbbbbbb', command: 'npm test', state: 'running', started_at_ms: 2000 },
+      { source_kind: 'background_job', operation_id: 'job:aaaaaaaaaaaa', job_id: 'aaaaaaaaaaaa', command: 'npm run dev', state: 'running', started_at_ms: 1000, serving_url: 'http://localhost:5173', serving_port: 5173, serving_since_ms: 1500 },
+      { source_kind: 'workspace_test', operation_id: 'op_1', state: 'running' },
+      { source_kind: 'linked_chat_turn', operation_id: 'w1', session_id: 'sess_child', state: 'running', title: 'Fix the flaky test' },
+      { source_kind: 'background_job', operation_id: 'job:cccccccccccc', job_id: 'cccccccccccc', command: 'done', state: 'completed' },
+    ],
+  });
+  const running = byKey(build({ summary: summaryWith }), 'running_now');
+  assert.equal(running.valueText, '4');
+  assert.deepEqual(running.rows.map((row) => [row.kind, row.runId, row.text]), [
+    ['server', 'job:aaaaaaaaaaaa', 'localhost:5173'], ['job', 'job:bbbbbbbbbbbb', 'npm test'],
+    ['action', 'task:op_1', 'Workspace tests'], ['action', 'chat:sess_child', 'Fix the flaky test'], ['action', undefined, 'All runs'],
+  ]);
+  assert.equal(running.rows[3].sessionRef, 'sess_child');
+});
+
+test('Running now without getRunningRows: the Live tab program is one running row named by its title', () => {
+  const live = { source_kind: 'live_run', operation_id: 'live:p1', session_id: SID, project_id: 'p1', state: 'running', run_state: 'running', title: 'game.exe' };
+  const closed = { ...live, operation_id: 'live:p2', project_id: 'p2', state: 'completed', run_state: 'closed' };
+  const unnamed = { ...live, operation_id: 'live:p3', project_id: 'p3', title: '' };
+  const running = byKey(build({ summary: withTasks({ counts: { active: 2, waiting: 0, failed: 0, completed: 1 }, items: [live, closed, unnamed] }) }), 'running_now');
+  assert.deepEqual(running.rows.slice(0, 2).map((row) => [row.kind, row.runId, row.text, row.meta]), [
+    ['action', 'live:p1', 'game.exe', 'Running'], ['action', 'live:p3', 'Live tab program', 'Running'],
+  ]);
+  assert.equal(running.rows.length, 3, 'the finished run is not a running row');
+});
+
+test('Running now without getRunningRows: a live run says its state in words (kind live), the plain running state still reads Running', () => {
+  const live = { source_kind: 'live_run', operation_id: 'live:p1', session_id: SID, project_id: 'p1', state: 'running', title: 'game.exe' };
+  const items = [['p1', 'building'], ['p2', 'starting'], ['p3', 'stopping'], ['p4', 'minimized'], ['p5', 'running']].map(([project, runState]) => ({ ...live, operation_id: `live:${project}`, project_id: project, run_state: runState }));
+  const running = byKey(build({ summary: withTasks({ counts: { active: 5, waiting: 0, failed: 0, completed: 0 }, items }) }), 'running_now');
+  assert.deepEqual(running.rows.slice(0, 5).map((row) => row.meta), ['Building', 'Starting', 'Stopping', 'Minimized', 'Running']);
+  assert.equal(model.liveStateWord('ended_early', 3, 'finished', jtPlain), 'Ended early · exit 3');
+  assert.equal(model.liveStateWord('', null, 'running', jtPlain), 'Running', 'no run state: the task phase word');
+});
+
+test('Running now from the Runs list: the Live tab program shows its state words, not a bare Running', () => {
+  const rows = [{ id: 'live:p1', kind: 'live', label: 'game.exe', detail: 'Building', startedAt: 1, canStop: false }];
+  const running = byKey(build({ getRunningRows: () => rows }), 'running_now');
+  assert.deepEqual([running.rows[0].kind, running.rows[0].text, running.rows[0].meta, running.rows[0].title], ['action', 'game.exe', 'Building', 'game.exe (Building)']);
+  assert.equal(running.rows[0].resourceRef, 'live:p1', 'correctness review 6: the row names its own run, so it opens the Live tab, not the list');
+});
+
+test('Running now: the chat\u2019s open browser page is one more row that closes itself', () => {
+  const vm = build({ browser: { open: true, url: 'https://example.com/docs', title: 'Example docs' } });
+  const running = byKey(vm, 'running_now');
+  assert.equal(running.valueText, '1');
+  const [page] = running.rows;
+  assert.deepEqual([page.kind, page.serverKind, page.text, page.meta, page.surface, page.stopLabel], ['server', 'browser', 'Example docs', 'Browser', 'browser', 'Close']);
+  assert.equal(keysOf(build({ browser: { open: true, url: '', title: 'x' } })).includes('running_now'), false);
+});
+
+test('rail markup: server and command rows carry the run, a stop control and a ticking clock; a page title is escaped', () => {
+  const rows = byKey(build({ getRunningRows: () => ROWS, browser: { open: true, url: 'https://example.com/"><b>', title: '<img src=x onerror=alert(1)>' } }), 'running_now').rows;
+  const html = render.bodyHtml({ rows });
+  assert.equal(html.includes('<img'), false);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /data-rail-server-stop="browser"/);
+  assert.match(html, /data-rail-server-stop="job:aaaaaaaaaaaa"/);
+  assert.match(html, /data-rail-job-stop="bbbbbbbbbbbb"/);
+  assert.match(html, /Up \u00b7 <span data-rail-started-at="1000">/);
+  assert.match(html, /data-rail-run="job:aaaaaaaaaaaa"/);
+  assert.equal((html.match(/session-rail-ellip--addr/g) || []).length, 1, 'only the server address is mono');
+  assert.equal(html.includes('session-rail-dot-pulse'), true);
+});
+
+test('Jenny\u2019s checklist: from getChecklist, "1 of 3 done", Done and Now second signals; absent without steps', () => {
+  const steps = [{ text: 'Load the ledger', state: 'done' }, { text: 'Compare to plan', state: 'now' }, { text: 'Chart FX', state: 'todo' }, { text: '', state: 'todo' }];
+  const vm = build({ getChecklist: () => steps });
+  assert.deepEqual(keysOf(vm), ['this_chat', 'context', 'checklist']);
+  const list = byKey(vm, 'checklist');
+  assert.equal(list.title, "Jenny's checklist");
+  assert.equal(list.valueText, '1 of 3 done');
+  assert.equal(list.open, true);
+  assert.deepEqual(list.rows.map((row) => [row.text, row.meta, Boolean(row.dot)]), [['Load the ledger', 'Done', false], ['Compare to plan', 'Now', true], ['Chart FX', '', false]]);
+  assert.deepEqual(keysOf(build({ getChecklist: () => [] })), ['this_chat', 'context']);
+  assert.deepEqual(keysOf(build()), ['this_chat', 'context'], 'no reader, no section');
+  assert.deepEqual(keysOf(build({ getRunningRows: () => ROWS, getChecklist: () => steps })), ['this_chat', 'context', 'running_now', 'checklist']);
+});
+
+test('no summary: This chat and Context are checking, in words, never a number; the injected sections need no summary', () => {
+  const vm = model.buildRailViewModel({ summary: null, sessionId: SID, status: 'checking' });
+  assert.deepEqual(keysOf(vm), ['this_chat', 'context']);
+  for (const section of vm.sections) {
+    assert.equal(section.state, 'checking');
+    assert.equal(section.valueText, 'Checking\u2026');
+    assert.deepEqual(section.rows, []);
+    assert.doesNotMatch(section.valueText, /\d/);
   }
+  assert.deepEqual(keysOf(model.buildRailViewModel({ summary: null, sessionId: SID, getRunningRows: () => ROWS })), ['this_chat', 'context', 'running_now']);
 });
 
 test('a failed fetch reads unavailable; another session\u2019s summary is never shown', () => {
@@ -91,190 +186,100 @@ test('a failed fetch reads unavailable; another session\u2019s summary is never 
   assert.ok(failed.sections.every((section) => section.valueText === 'Unavailable' && section.state === 'unavailable'));
   const other = model.buildRailViewModel({ summary: summary({ session_id: 'sess_two' }), sessionId: SID, status: 'checking' });
   assert.ok(other.sections.every((section) => section.state === 'checking'), 'a switch clears to checking');
-  const json = JSON.stringify(other);
-  assert.equal(json.includes('jenny'), false, 'none of the other session\u2019s values leak');
+  assert.equal(JSON.stringify(other).includes('jenny'), false, 'none of the other session\u2019s values leak');
   assert.equal(model.buildRailViewModel({ summary: summary(), sessionId: '', status: 'checking' }).sections[0].state, 'checking', 'no session, no facts');
 });
 
-test('Environment: execution word in the header; project, path and branch rows; open by default', () => {
-  const env = byKey(build(), 'environment');
-  assert.equal(env.valueText, 'Local');
-  assert.equal(env.open, true);
-  assert.deepEqual(env.rows.map((row) => [row.kind, row.text, row.meta]), [
-    ['action', 'jenny', 'Auto'], ['fact', 'D:\\Work\\jenny', ''], ['fact', 'main', ''],
-  ]);
-  assert.equal(env.rows[0].surface, 'environment');
-  const bare = model.buildSection('environment', wrapper({ project_name: null, display_path: null, branch: null, worktree_id: 'wt_1', execution_environment: 'sandbox', run_mode: 'plan' }), (k, d) => d);
+test('This chat: execution word in the header; project, path and branch rows; open by default', () => {
+  const chat = byKey(build(), 'this_chat');
+  assert.equal(chat.title, 'This chat');
+  assert.equal(chat.valueText, 'Local');
+  assert.equal(chat.open, true);
+  assert.deepEqual(chat.rows.map((row) => [row.kind, row.text, row.meta]), [['action', 'jenny', 'Auto'], ['fact', 'D:\\Work\\jenny', ''], ['fact', 'main', '']]);
+  assert.equal(chat.rows[0].surface, 'environment');
+  const bare = model.buildSection('this_chat', wrapper({ project_name: null, display_path: null, branch: null, worktree_id: 'wt_1', execution_environment: 'sandbox', run_mode: 'plan' }), jtPlain);
   assert.equal(bare.rows[0].text, 'No project', 'no binding is words, not a blank');
   assert.equal(bare.valueText, 'Sandbox');
   assert.deepEqual(bare.rows.map((row) => row.key), ['project']);
-  const withTree = model.buildSection('environment', wrapper({ project_name: 'p', branch: 'feat', worktree_id: 'wt_1', execution_environment: 'hosted' }), (k, d) => d);
-  assert.equal(withTree.rows.find((row) => row.key === 'branch').meta, 'worktree');
+  assert.equal(model.buildSection('this_chat', wrapper({ project_name: 'p', branch: 'feat', worktree_id: 'wt_1', execution_environment: 'hosted' }), jtPlain).rows.find((row) => row.key === 'branch').meta, 'worktree');
+  assert.equal(byKey(build({ fullAuto: true }), 'this_chat').rows[0].meta, 'Full auto', 'an armed full auto is the run mode');
+  assert.equal(byKey(build(), 'this_chat').rows[0].meta, 'Auto');
 });
 
-test('Context: percent from known counts, amber dot at 80% and over, closed by default', () => {
+test('a complete summary says nothing about coverage; a really partial one keeps one plain note', () => {
+  const notes = (vm) => byKey(vm, 'this_chat').rows.filter((row) => row.kind === 'note');
+  assert.deepEqual(notes(build()), []);
+  const partial = notes(build({ summary: withTasks({ coverage: 'partial', unsupported_sources: ['linked_chat_turn'] }) }));
+  assert.deepEqual(partial.map((row) => row.text), ["Some sources aren't connected yet."]);
+  assert.equal(notes(build({ summary: withTasks({ failed_sources: ['workspace_test'] }) })).length, 1);
+  assert.equal(notes(build({ summary: withTasks({ coverage: 'partial' }, 'checking') })).length, 0, 'a section still checking claims nothing');
+});
+
+test('Context: "64% full", closed by default, opened it is Used, one plain line and the details link', () => {
   const ctx = byKey(build(), 'context');
-  assert.equal(ctx.valueText, '64%');
+  assert.equal(ctx.valueText, '64% full');
   assert.equal(ctx.dot, null);
   assert.equal(ctx.open, false);
-  assert.ok(ctx.rows.some((row) => row.text === 'Available' && row.meta === '11.5k'));
-  assert.ok(ctx.rows.some((row) => row.surface === 'context'));
-  const hot = model.buildSection('context', wrapper({ used_tokens: 26000, capacity_tokens: 32000, available_tokens: 6000, measurement: 'actual', scope: 'request' }), (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d));
-  assert.equal(hot.valueText, '81%');
+  assert.deepEqual(ctx.rows.map((row) => [row.kind, row.text, row.meta]), [
+    ['fact', 'Used', '20.5k of 32k'], ['note', 'Jenny summarises older messages when this fills.', undefined], ['action', 'Context details', ''],
+  ]);
+  assert.equal(ctx.rows[2].surface, 'context');
+  const hot = model.buildSection('context', wrapper({ used_tokens: 26000, capacity_tokens: 32000, available_tokens: 6000, measurement: 'actual', scope: 'request' }), jtPlain);
+  assert.equal(hot.valueText, '81% full');
   assert.deepEqual(hot.dot, { tone: 'warn', pulse: false });
-  const exactly = model.buildSection('context', wrapper({ used_tokens: 80, capacity_tokens: 100, available_tokens: 20, measurement: 'actual', scope: 'request' }), (k, d) => d);
+  const exactly = model.buildSection('context', wrapper({ used_tokens: 80, capacity_tokens: 100, available_tokens: 20, measurement: 'actual', scope: 'request' }), jtPlain);
   assert.equal(exactly.dot.tone, 'warn', '80% itself is amber');
 });
 
-test('Context: unknown is never a percentage or zero', () => {
-  const jt = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
-  const noCapacity = model.buildSection('context', wrapper({ used_tokens: 18400, capacity_tokens: null, available_tokens: null, measurement: 'estimated', scope: 'request' }), jt);
+test('Context: the token ledger and the breakdown are not in the rail, for a next-send estimate too', () => {
+  const estimate = { used_tokens: 15000, capacity_tokens: 32768, compact_at_tokens: 24600, available_tokens: null, measurement: 'estimated', scope: 'next_send', breakdown: { system: 1000, messages: 14000 } };
+  const ctx = model.buildSection('context', wrapper(estimate), jtPlain);
+  assert.equal(ctx.valueText, '61% full');
+  assert.deepEqual(ctx.rows.map((row) => row.key), ['used', 'note', 'details']);
+  assert.equal(ctx.rows[0].meta, '15k of 24.6k', 'the figures agree with the percent of the compact point');
+});
+
+test('Context: unknown is never a percentage or zero; nothing used yet reads in one voice', () => {
+  const noCapacity = model.buildSection('context', wrapper({ used_tokens: 18400, capacity_tokens: null, available_tokens: null, measurement: 'estimated', scope: 'request' }), jtPlain);
   assert.equal(noCapacity.valueText, '18.4k tokens');
   assert.equal(noCapacity.dot, null);
-  assert.ok(noCapacity.rows.some((row) => /Estimated/.test(row.text)), 'an estimate says so');
-  assert.equal(noCapacity.rows.some((row) => row.text === 'Available'), false, 'available only when comparable counts are known');
-  const nothing = model.buildSection('context', wrapper({ used_tokens: null, capacity_tokens: null, available_tokens: null, measurement: 'actual', scope: 'request' }), jt);
+  assert.equal(noCapacity.rows[0].meta, '18.4k');
+  const nothing = model.buildSection('context', wrapper({ used_tokens: null, capacity_tokens: null, available_tokens: null, measurement: 'actual', scope: 'request' }), jtPlain);
   assert.equal(nothing.valueText, 'Unknown');
-  assert.doesNotMatch(nothing.valueText, /0/);
-  const zeroCapacity = model.buildSection('context', wrapper({ used_tokens: 5, capacity_tokens: 0, available_tokens: null, measurement: 'actual', scope: 'request' }), jt);
+  assert.equal(nothing.rows.some((row) => row.key === 'used'), false);
+  const zeroCapacity = model.buildSection('context', wrapper({ used_tokens: 5, capacity_tokens: 0, available_tokens: null, measurement: 'actual', scope: 'request' }), jtPlain);
   assert.doesNotMatch(zeroCapacity.valueText, /%|Infinity|NaN/);
+  const fresh = model.buildSection('context', wrapper({ used_tokens: 0, capacity_tokens: 32000, available_tokens: 32000, measurement: 'actual', scope: 'request' }), jtPlain);
+  assert.deepEqual(fresh.rows.map((row) => [row.key, row.text]), [['empty', 'Nothing used yet. This fills as you and Jenny talk.'], ['details', 'Context details']]);
 });
 
-test('Outputs: count in the header, rows open the artifact by id, open when it has items', () => {
-  const outputs = byKey(build(), 'outputs');
-  assert.equal(outputs.valueText, '2');
-  assert.equal(outputs.open, true);
-  assert.deepEqual(outputs.rows.map((row) => [row.surface, row.resourceRef, row.text]), [
-    ['outputs', 'art_1', 'context_probe.py'], ['outputs', 'art_2', 'results.md'],
-  ]);
-  assert.equal(outputs.rows[1].meta, 'Unavailable', 'a missing artifact says unavailable');
-  const none = model.buildSection('outputs', wrapper({ items: [], total_count: 0, next_cursor: null }), (k, d) => d);
-  assert.equal(none.valueText, 'None yet');
-  assert.equal(none.defaultOpen, false);
-  const more = model.buildSection('outputs', wrapper({ items: [{ artifact_id: 'a', display_name: 'a.txt', kind: 'text', availability: 'available' }], total_count: 14, next_cursor: null }), (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d));
-  assert.equal(more.rows.at(-1).text, '13 more');
-  assert.equal(more.rows.at(-1).resourceRef, '');
-});
-
-test('Outputs: an artifact id that is not a string never becomes a row', () => {
-  const section = model.buildSection('outputs', wrapper({ items: [{ artifact_id: '', display_name: 'x' }, { artifact_id: 7, display_name: 'y' }, null, 'z'], total_count: 0 }), (k, d) => d);
-  assert.deepEqual(section.rows.map((row) => row.kind), ['note']);
-});
-
-test('Changes: +added \u2212deleted with the working-tree scope named; closed by default', () => {
-  const changes = byKey(build(), 'changes');
-  assert.equal(changes.valueText, '+412 \u221237');
-  assert.deepEqual(changes.parts, [{ text: '+412', tone: 'add' }, { text: '\u221237', tone: 'del' }]);
-  assert.equal(changes.open, false);
-  assert.ok(changes.rows.some((row) => row.text === 'Working tree' && /6 files/.test(row.meta)), 'the scope is named');
-  assert.ok(changes.rows.some((row) => row.surface === 'changes'));
-});
-
-test('Changes: unmeasurable counts fall back to the file count, never to zero', () => {
-  const jt = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
-  const unmeasured = model.buildSection('changes', wrapper({ file_count: 3, additions: null, deletions: null, ref: 'main', head: null, scope: 'working_tree' }), jt);
-  assert.equal(unmeasured.valueText, '3 files');
-  assert.equal(unmeasured.parts, null);
-  const clean = model.buildSection('changes', wrapper({ file_count: 0, additions: 0, deletions: 0, ref: 'main', head: 'a', scope: 'working_tree' }), jt);
-  assert.equal(clean.valueText, 'No changes');
-  const unknown = model.buildSection('changes', wrapper({ file_count: null, additions: null, deletions: null, ref: null, head: null, scope: 'working_tree' }), jt);
-  assert.equal(unknown.valueText, 'Unknown');
-});
-
-test('Changes: a non-Git workspace says so; an unavailable section is a word', () => {
-  const nonGit = model.buildSection('changes', { state: 'not_applicable', reason: 'not_a_git_repository', sampled_at: null, data: null }, (k, d) => d);
-  assert.equal(nonGit.valueText, 'Not a Git repository');
-  assert.deepEqual(nonGit.rows, []);
-  const off = model.buildSection('changes', { state: 'unavailable', reason: 'feature_disabled', sampled_at: null, data: null }, (k, d) => d);
-  assert.equal(off.valueText, 'Unavailable');
-  const other = model.buildSection('environment', { state: 'not_applicable', reason: 'x', sampled_at: null, data: null }, (k, d) => d);
-  assert.equal(other.valueText, 'Not applicable');
-});
-
-test('Background tasks: running count with a live dot, partial-coverage line, open when anything is active', () => {
-  const tasks = byKey(build(), 'background_tasks');
-  assert.equal(tasks.valueText, '1 running');
-  assert.deepEqual(tasks.dot, { tone: 'active', pulse: true });
-  assert.equal(tasks.open, true);
-  assert.equal(tasks.rows[0].text, 'Workspace tests');
-  assert.equal(tasks.rows[0].meta, 'Running');
-  assert.ok(tasks.rows.some((row) => row.text === '12 finished' && row.surface === 'background_tasks'));
-  assert.ok(tasks.rows.some((row) => row.kind === 'note' && row.text === "Some sources aren't connected yet."));
-  assert.equal(tasks.rows.some((row) => row.text === 'View activity'), false, 'View activity is gone');
-});
-
-test('Background tasks: the section always ends on All background tasks, empty or not', () => {
-  const jt = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
-  for (const items of [[], [{ source_kind: 'workspace_test', operation_id: 'r1', state: 'running' }]]) {
-    const section = model.buildSection('background_tasks', wrapper({ counts: { active: items.length, waiting: 0, failed: 0, completed: 0 }, coverage: 'complete', unsupported_sources: [], items }), jt);
-    const last = section.rows.at(-1);
-    assert.deepEqual([last.kind, last.key, last.surface, last.resourceRef, last.text], ['action', 'all', 'background_tasks', '', 'All background tasks']);
-  }
-});
-
-test('Background tasks: empty connected sources say None yet without claiming complete counts', () => {
-  const jt = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
-  const unknown = model.buildSection('background_tasks', wrapper({ scope: 'session_and_direct_children', counts: { active: null, waiting: null, failed: null, completed: null }, coverage: 'partial', unsupported_sources: ['session_runtime', 'linked_chat_turn'], items: [] }), jt);
-  assert.equal(unknown.valueText, 'None yet');
-  assert.equal(unknown.dot, null);
-  assert.equal(unknown.defaultOpen, false);
-  const quiet = model.buildSection('background_tasks', wrapper({ counts: { active: 0, waiting: 0, failed: 0, completed: 0 }, coverage: 'complete', unsupported_sources: [], items: [] }), jt);
-  assert.equal(quiet.valueText, 'None yet');
-  assert.equal(quiet.rows.some((row) => row.kind === 'note'), false, 'complete coverage has no partial line');
-  const idle = model.buildSection('background_tasks', wrapper({ counts: { active: 0, waiting: 0, failed: 0, completed: 12 }, coverage: 'complete', unsupported_sources: [], items: [] }), jt);
-  assert.equal(idle.valueText, 'None running');
-  const failing = model.buildSection('background_tasks', wrapper({ counts: { active: 0, waiting: 0, failed: 2, completed: 0 }, coverage: 'complete', unsupported_sources: [], items: [] }), jt);
-  assert.equal(failing.valueText, '2 failed');
-  assert.equal(failing.dot.tone, 'error');
-});
-
-test('Background tasks: rows are deduplicated by operation id and capped', () => {
-  const items = [];
-  for (let n = 0; n < 9; n += 1) items.push({ source_kind: 'session_runtime', operation_id: `op_${n % 7}`, state: n % 2 ? 'queued' : 'completed' });
-  const section = model.buildSection('background_tasks', wrapper({ counts: { active: 0, waiting: 4, failed: 0, completed: 3 }, coverage: 'complete', unsupported_sources: [], items }), (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d));
-  const taskRows = section.rows.filter((row) => row.key.startsWith('task:'));
-  assert.equal(new Set(taskRows.map((row) => row.key)).size, taskRows.length, 'no operation twice');
-  assert.ok(taskRows.filter((row) => row.group !== 'finished').length <= model.MAX_BACKGROUND_ROWS);
-  assert.equal(section.valueText, '4 waiting');
+test('an unavailable or not-applicable section is a word', () => {
+  assert.equal(model.buildSection('this_chat', { state: 'unavailable', reason: 'feature_disabled', sampled_at: null, data: null }, jtPlain).valueText, 'Unavailable');
+  assert.equal(model.buildSection('this_chat', { state: 'not_applicable', reason: 'x', sampled_at: null, data: null }, jtPlain).valueText, 'Not applicable');
 });
 
 test('stale data keeps its value with the muted word and no live dot', () => {
-  const vm = build({
-    summary: summary({
-      context: wrapper({ used_tokens: 26000, capacity_tokens: 32000, available_tokens: 6000, measurement: 'actual', scope: 'request' }, 'stale'),
-    }),
-  });
+  const vm = build({ summary: summary({ context: wrapper({ used_tokens: 26000, capacity_tokens: 32000, available_tokens: 6000, measurement: 'actual', scope: 'request' }, 'stale') }) });
   const ctx = byKey(vm, 'context');
   assert.equal(ctx.state, 'stale');
-  assert.equal(ctx.valueText, '81% \u00b7 stale');
+  assert.equal(ctx.valueText, '81% full \u00b7 stale');
   assert.equal(ctx.dot, null, 'a stale reading is never an alert');
 });
 
-test('disclosures: persisted values win; defaults apply only where null; overrides win for an unconfirmed toggle', () => {
-  const defaults = build();
-  assert.deepEqual(defaults.sections.map((section) => [section.key, section.open]), [
-    ['environment', true], ['context', false], ['outputs', true], ['changes', false], ['background_tasks', true],
-  ]);
-  const persisted = build({ workspaceView: { disclosures: { environment: false, context: true, outputs: false, changes: true, background_tasks: false } } });
-  assert.deepEqual(persisted.sections.map((section) => section.open), [false, true, false, true, false]);
-  const partial = build({ workspaceView: { disclosures: { context: true } } });
-  assert.equal(byKey(partial, 'context').open, true);
-  assert.equal(byKey(partial, 'environment').open, true, 'an unset key still takes its default');
-  const override = build({ workspaceView: { disclosures: { context: false } }, overrides: { context: true, changes: true } });
+test('disclosures: persisted values win under the service keys; defaults apply only where null; overrides win for an unconfirmed toggle', () => {
+  const rows = () => ROWS;
+  const defaults = build({ getRunningRows: rows, getChecklist: () => [{ text: 'a', state: 'todo' }] });
+  assert.deepEqual(defaults.sections.map((section) => [section.key, section.open]), [['this_chat', true], ['context', false], ['running_now', true], ['checklist', true]]);
+  assert.deepEqual(model.PERSIST_KEY, { this_chat: 'environment', context: 'context', running_now: 'background_tasks' });
+  const persisted = build({ getRunningRows: rows, workspaceView: { disclosures: { environment: false, context: true, background_tasks: false } } });
+  assert.deepEqual(persisted.sections.map((section) => section.open), [false, true, false]);
+  const override = build({ workspaceView: { disclosures: { context: false } }, overrides: { context: true, this_chat: false } });
   assert.equal(byKey(override, 'context').open, true);
-  assert.equal(byKey(override, 'changes').open, true);
-  const junk = build({ workspaceView: { disclosures: { context: 'yes', outputs: 1 } } });
+  assert.equal(byKey(override, 'this_chat').open, false);
+  const junk = build({ workspaceView: { disclosures: { context: 'yes', environment: 1 } } });
   assert.equal(byKey(junk, 'context').open, false, 'non-boolean persisted values are ignored');
-  assert.equal(byKey(junk, 'outputs').open, true);
-});
-
-test('Background tasks default closed when nothing is active', () => {
-  const idle = build({
-    summary: summary({
-      background_tasks: wrapper({ scope: 'session_and_direct_children', counts: { active: 0, waiting: 0, failed: 0, completed: 12 }, coverage: 'complete', unsupported_sources: [], items: [] }),
-    }),
-  });
-  assert.equal(byKey(idle, 'background_tasks').open, false);
+  assert.equal(byKey(junk, 'this_chat').open, true);
+  assert.equal(model.isDisclosureOpen(defaults, 'running_now'), true);
 });
 
 test('formatTokens: compact, never invents a number', () => {
@@ -284,205 +289,15 @@ test('formatTokens: compact, never invents a number', () => {
   assert.equal(model.formatTokens(18400), '18.4k');
   assert.equal(model.formatTokens(131072), '131k');
   assert.equal(model.formatTokens(2500000), '2.5M');
-  assert.equal(model.formatTokens(null), '');
-  assert.equal(model.formatTokens(-5), '');
-  assert.equal(model.formatTokens(1.5), '');
-  assert.equal(model.formatTokens('12'), '');
+  for (const bad of [null, -5, 1.5, '12']) assert.equal(model.formatTokens(bad), '');
 });
 
 test('copy resolves through the supplied translator with parameters', () => {
   const seen = [];
   const jt = (key, fallback, params) => { seen.push(key); return `[${key}]${params ? JSON.stringify(params) : ''}`; };
-  const vm = model.buildRailViewModel({ summary: summary(), sessionId: SID, jt });
-  assert.ok(seen.every((key) => /^(chat\.sessionRail\.|composer\.runMode\.)/.test(key)), `only expected namespaces: ${[...new Set(seen)].filter((k) => !/^(chat\.sessionRail\.|composer\.runMode\.)/.test(k))}`);
-  assert.match(byKey(vm, 'background_tasks').valueText, /chat\.sessionRail\.tasks\.running/);
-});
-
-/* ── Row 59 checkpoint 5a-2 (R4): linked chat turns ───────────────────────────────────────────── */
-
-const render = require('../renderer/chat/renderer-session-rail-render.js');
-
-const plainJt = (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d);
-
-function linkedItem(overrides = {}) {
-  return {
-    source_kind: 'linked_chat_turn', operation_id: 'work_1', session_id: 'sess_child', state: 'running',
-    started_at: '2026-10-15T10:00:00.000Z', finished_at: null, output_ref: null, title: 'Fix the flaky test', ...overrides,
-  };
-}
-
-test('Background tasks: needs_attention is its own labelled phase, never Unknown', () => {
-  const section = model.buildSection('background_tasks', wrapper({
-    counts: { active: 0, waiting: 0, failed: 1, completed: 0 }, coverage: 'partial', unsupported_sources: ['workspace_test', 'session_runtime'],
-    items: [linkedItem({ state: 'needs_attention' }), linkedItem({ operation_id: 'work_2', state: 'weird_state' })],
-  }), plainJt);
-  const [attention, unknown] = section.rows.filter((row) => row.key.startsWith('task:'));
-  assert.equal(attention.meta, 'Needs attention');
-  assert.deepEqual(attention.dot, { tone: 'warn', pulse: false });
-  assert.equal(unknown.meta, 'Unknown');
-  assert.equal(unknown.dot, null);
-});
-
-test('Background tasks: a linked chat row shows the child title and carries the child to open', () => {
-  const section = model.buildSection('background_tasks', wrapper({
-    counts: { active: 1, waiting: null, failed: null, completed: null }, coverage: 'partial', unsupported_sources: ['workspace_test', 'session_runtime'],
-    items: [linkedItem(), linkedItem({ operation_id: 'work_3', title: null, state: 'completed' })],
-  }), plainJt);
-  const [titled, untitled] = section.rows.filter((row) => row.key.startsWith('task:'));
-  assert.equal(titled.text, 'Fix the flaky test');
-  assert.equal(titled.meta, 'Running');
-  assert.equal(titled.sessionRef, 'sess_child');
-  assert.equal(titled.surface, 'background_tasks', 'a rail without openSession still opens the task detail');
-  assert.equal(titled.title, 'Linked chat: Fix the flaky test (Running)');
-  assert.equal(untitled.text, 'Linked chat', 'a missing title falls back to the source label');
-  assert.equal(untitled.sessionRef, 'sess_child');
-  const ordinary = model.buildSection('background_tasks', wrapper({
-    counts: { active: 1, waiting: null, failed: null, completed: null }, coverage: 'partial', unsupported_sources: [],
-    items: [{ source_kind: 'workspace_test', operation_id: 'r1', state: 'running', title: 'ignored' }],
-  }), plainJt).rows[0];
-  assert.equal(ordinary.text, 'Workspace tests');
-  assert.equal('sessionRef' in ordinary, false);
-});
-
-test('rail markup: a linked row exposes data-rail-session, the title is escaped, ordinary rows have none', () => {
-  const section = model.buildSection('background_tasks', wrapper({
-    counts: { active: 2, waiting: null, failed: null, completed: null }, coverage: 'partial', unsupported_sources: [],
-    items: [linkedItem({ title: '<img src=x onerror=alert(1)>' }), { source_kind: 'workspace_test', operation_id: 'r1', state: 'running' }],
-  }), plainJt);
-  const html = render.bodyHtml(section);
-  assert.match(html, /data-rail-session="sess_child"/);
-  assert.equal(html.includes('<img'), false);
-  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.equal((html.match(/data-rail-session=/g) || []).length, 1);
-  assert.equal((html.match(/data-rail-surface="background_tasks"/g) || []).length, 3, 'every task row keeps its detail surface, and the section ends on All background tasks');
-});
-
-/* Row 176: the Servers section (the chat's browser page and run_command jobs that serve on a loopback port). */
-function servingJob(id, overrides = {}) {
-  return {
-    source_kind: 'background_job', operation_id: `job:${id}`, job_id: id, session_id: SID, state: 'running', command: 'npm run dev',
-    started_at_ms: 1000, serving_url: 'http://localhost:5173', serving_port: 5173, serving_since_ms: 2000, ...overrides,
-  };
-}
-function withJobs(items, state = 'available') {
-  const counts = { active: items.filter((item) => item.state === 'running' || item.state === 'killing').length, waiting: 0, failed: 0, completed: 0 };
-  return summary({ background_tasks: wrapper({ counts, coverage: 'complete', unsupported_sources: [], items }, state) });
-}
-const serversOf = (vm) => byKey(vm, 'servers');
-const BROWSER = { open: true, url: 'https://example.com/docs', title: 'Example docs' };
-
-test('Servers: absent with nothing serving and no earlier server; present as None up once one existed', () => {
-  assert.equal(serversOf(build()), undefined);
-  assert.equal(serversOf(build({ everHadServer: false, browser: { open: false, url: 'https://x.test', title: '' } })), undefined);
-  assert.deepEqual(model.SECTION_KEYS.slice(-2), ['background_tasks', 'servers']);
-  const none = serversOf(build({ everHadServer: true }));
-  assert.equal(none.valueText, 'None up');
-  assert.equal(none.dot, null);
-  assert.equal(none.defaultOpen, false);
-  assert.deepEqual(none.rows.map((row) => [row.kind, row.text]), [['note', 'Nothing this chat started is still serving.']]);
-  assert.deepEqual(build({ everHadServer: true }).sections.map((section) => section.key).slice(-2), ['background_tasks', 'servers']);
-});
-
-test('Servers: a serving job and an open browser read 2 up, the browser first, with a steady dot', () => {
-  const vm = build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]), browser: BROWSER });
-  const servers = serversOf(vm);
-  assert.equal(servers.valueText, '2 up');
-  assert.deepEqual(servers.dot, { tone: 'active', pulse: false });
-  assert.equal(servers.open, true, 'open by default with entries');
-  const [browser, job] = servers.rows;
-  assert.deepEqual([browser.kind, browser.serverKind, browser.text, browser.meta, browser.surface, browser.stopLabel, browser.addr],
-    ['server', 'browser', 'Example docs', 'Browser', 'browser', 'Close', undefined]);
-  assert.equal(browser.title, 'Example docs (https://example.com/docs)');
-  assert.equal(browser.stopAria, 'Close the browser: Example docs');
-  assert.deepEqual([job.kind, job.serverKind, job.jobId, job.text, job.addr, job.meta, job.surface, job.resourceRef, job.stopLabel],
-    ['server', 'job', 'aaaaaaaaaaaa', 'localhost:5173', true, 'Port 5173', 'background_tasks', 'job:aaaaaaaaaaaa', 'Stop']);
-  assert.equal(job.title, 'npm run dev on localhost:5173');
-  assert.equal(job.stopAria, 'Stop server: localhost:5173');
-  assert.equal(job.stopping, false);
-});
-
-test('Servers: the browser falls back to its address; jobs run oldest serving first; blank urls are not entries', () => {
-  const vm = build({
-    summary: withJobs([servingJob('bbbbbbbbbbbb', { serving_since_ms: 9000, serving_url: 'http://127.0.0.1:3000', serving_port: 3000 }),
-      servingJob('aaaaaaaaaaaa', { serving_since_ms: 4000 }), servingJob('cccccccccccc', { serving_url: '  ' })]),
-    browser: { open: true, url: 'https://example.com/a', title: '' },
-  });
-  assert.deepEqual(serversOf(vm).rows.map((row) => row.text), ['example.com/a', 'localhost:5173', '127.0.0.1:3000']);
-  assert.equal(serversOf(build({ browser: { open: true, url: '', title: 'x' } })), undefined);
-});
-
-test('Servers: a serving job is not a Background tasks running row and not in its count', () => {
-  const plain = servingJob('bbbbbbbbbbbb', { serving_url: null, serving_port: null, serving_since_ms: null, command: 'npm test' });
-  const tasks = byKey(build({ summary: withJobs([servingJob('aaaaaaaaaaaa'), plain]) }), 'background_tasks');
-  assert.equal(tasks.valueText, '1 running');
-  assert.deepEqual(tasks.rows.filter((row) => row.kind === 'job').map((row) => row.jobId), ['bbbbbbbbbbbb']);
-  const only = byKey(build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]) }), 'background_tasks');
-  assert.equal(only.valueText, 'None running', 'its live work is all under Servers, not Unknown');
-  assert.equal(only.dot, null);
-  assert.equal(only.open, false, 'a serving job alone does not open Background tasks');
-  assert.equal(only.rows.some((row) => row.kind === 'job'), false);
-});
-
-test('Servers: a stopped serving job leaves Servers and lands in the finished fold', () => {
-  const stopped = servingJob('aaaaaaaaaaaa', { state: 'completed', ended_at_ms: 5000, stop_requested: true });
-  const vm = build({ summary: withJobs([stopped]), everHadServer: true });
-  assert.equal(serversOf(vm).valueText, 'None up');
-  assert.ok(byKey(vm, 'background_tasks').rows.some((row) => row.kind === 'job_done' && row.jobId === 'aaaaaaaaaaaa'));
-});
-
-test('Servers: a job being killed reads Stopping and its Stop is marked busy', () => {
-  const job = serversOf(build({ summary: withJobs([servingJob('aaaaaaaaaaaa', { state: 'killing' })]) })).rows[0];
-  assert.equal(job.meta, 'Stopping');
-  assert.equal(job.stopping, true);
-});
-
-test('Servers: persisted disclosure wins over the open-with-entries default', () => {
-  const closed = build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]), workspaceView: { disclosures: { servers: false } } });
-  assert.equal(serversOf(closed).open, false);
-  assert.equal(model.DISCLOSURE_KEYS.includes('servers'), true);
-  const opened = build({ everHadServer: true, workspaceView: { disclosures: { servers: true } } });
-  assert.equal(serversOf(opened).open, true);
-  assert.equal(model.isDisclosureOpen(opened, 'servers'), true);
-});
-
-test('Servers: checking and unavailable summaries use the section state words when nothing is up, and only when it would show', () => {
-  const checking = build({ summary: null, status: 'checking', browser: BROWSER });
-  assert.equal(serversOf(checking).valueText, '1 up', 'an open browser needs no summary: it shows while the summary checks');
-  assert.equal(serversOf(checking).rows[0].serverKind, 'browser');
-  assert.equal(serversOf(build({ summary: null, status: 'unavailable', browser: BROWSER })).valueText, '1 up');
-  assert.equal(serversOf(build({ summary: null, status: 'checking', everHadServer: true })).valueText, 'Checking…');
-  assert.equal(serversOf(build({ summary: null, status: 'checking' })), undefined);
-  assert.equal(serversOf(build({ summary: null, status: 'unavailable', everHadServer: true })).valueText, 'Unavailable');
-  const stale = serversOf(build({ summary: withJobs([servingJob('aaaaaaaaaaaa')], 'stale') }));
-  assert.equal(stale.valueText, '1 up · stale');
-  assert.equal(stale.dot, null);
-});
-
-test('Servers: the view model says when it has entries so the controller can remember the chat', () => {
-  assert.equal(build({ summary: withJobs([servingJob('aaaaaaaaaaaa')]) }).hasServers, true);
-  assert.equal(build({ everHadServer: true }).hasServers, false);
-  const seen = new Map();
-  for (let i = 0; i < 70; i += 1) model.rememberServers(seen, `s${i}`, { hasServers: true });
-  model.rememberServers(seen, 'idle', { hasServers: false });
-  assert.equal(seen.size, 64);
-  assert.equal(seen.has('s0'), false);
-  assert.equal(seen.has('s69'), true);
-  assert.equal(seen.has('idle'), false);
-});
-
-test('rail markup: a server row has the stop control, a steady dot, mono only on jobs, and escapes the page title', () => {
-  const rows = serversOf(build({
-    summary: withJobs([servingJob('aaaaaaaaaaaa')]), browser: { open: true, url: 'https://example.com/"><b>', title: '<img src=x onerror=alert(1)>' },
-  })).rows;
-  const html = render.bodyHtml({ rows });
-  assert.equal(html.includes('<img'), false);
-  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(html, /data-rail-server-stop="browser"/);
-  assert.match(html, /data-rail-server-stop="job:aaaaaaaaaaaa"/);
-  assert.match(html, /<div class="session-rail-job" data-row-key="server:job:aaaaaaaaaaaa" data-job-state="running">/);
-  assert.match(html, /data-rail-surface="browser"/);
-  assert.match(html, /data-rail-resource="job:aaaaaaaaaaaa"/);
-  assert.equal(html.includes('session-rail-dot-pulse'), false);
-  assert.equal((html.match(/status-dot--active/g) || []).length, 2);
-  assert.equal((html.match(/session-rail-ellip--addr/g) || []).length, 1, 'only the job address is mono');
+  const vm = model.buildRailViewModel({ summary: summary(), sessionId: SID, jt, getRunningRows: () => ROWS, getChecklist: () => [{ text: 'a', state: 'done' }] });
+  const stray = [...new Set(seen)].filter((key) => !/^(sessionRail\.|chat\.sessionRail\.|chat\.backgroundJobs\.|composer\.runMode\.)/.test(key));
+  assert.deepEqual(stray, []);
+  assert.match(byKey(vm, 'context').valueText, /sessionRail\.contextFull/);
+  assert.match(byKey(vm, 'checklist').valueText, /sessionRail\.checklistDone/);
 });

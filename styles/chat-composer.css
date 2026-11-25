@@ -610,20 +610,17 @@
     transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.composer-send.composer-send-queue {
-  width: auto;
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-6);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  white-space: nowrap;
-  border: 1px solid var(--widget-send-border);
-  /* The queue pill is a flex item in the rail: let it shrink and clip instead
-   * of pushing the toolbar wider when the label is longer than the space. */
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Row 192: Queue keeps Send's size and place (the toolbar never refits for it);
+ * its words are its name and tooltip, and the status line under the box. */
+.composer-send.composer-send-queue.composer-send-queue--icon {
+  width: var(--composer-primary-control-size);
+  padding: 0;
+  border-radius: 50%;
+}
+
+.composer-send-queue--icon > svg {
+  width: 18px;
+  height: 18px;
 }
 
 .composer-send:hover {
@@ -753,10 +750,6 @@
   min-height: 0;
   height: 100%;
   overflow: hidden;
-}
-
-.chat-view.artifact-review-open {
-  grid-template-columns: minmax(0, 1fr) var(--artifact-review-resizer-width, 10px) auto;
 }
 
 .chat-view .hero-stage {

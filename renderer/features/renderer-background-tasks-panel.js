@@ -1,8 +1,9 @@
 /* renderer/features/renderer-background-tasks-panel.js - the Background tasks panel (row 138, UMD).
 
-   The `background_tasks` mode of the chat's right-hand panel: this chat's background commands
-   (window.jennyShell.backgroundJobs) and linked chats (the chat workspace summary), a list with a filter and a
-   finished fold, and a task opened in the panel with its live output. Loaded lazily on first open; the shell
+   The `background_tasks` mode of the chat's right-hand panel, the Runs tab (row 195): this chat's background commands
+   (window.jennyShell.backgroundJobs), helpers (read from the chat's messages through the monitor's own list), and
+   linked chats and test runs (the chat workspace summary), one list with a filter and a finished fold, and a command
+   opened in the panel with its live output. A helper opens in the subagent monitor (mode `subagents`) and comes back here. Loaded lazily on first open; the shell
    (renderer-shell-artifact-rails.js) builds one controller, lets renderSplitDetail PULL its markup through
    renderRailContent and publishes window.rendererBackgroundTasksPanel. Markup lives in -render.js.
    Output is read every 1500 ms while the open command runs and the panel and document are visible, one read at a
@@ -10,11 +11,11 @@
    status line and the foot are swapped, never the output. Nothing is persisted; dispose() releases everything. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-background-tasks-panel-render'), require('../chat/renderer-session-rail-jobs'));
+    module.exports = factory(require('./renderer-background-tasks-panel-render'), require('../chat/renderer-session-rail-jobs'), require('../chat/renderer-subagent-monitor-view'));
     return;
   }
-  root.rendererBackgroundTasksPanelOwner = factory(root.rendererBackgroundTasksPanelRender, root.rendererSessionRailJobs);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (renderModule, railJobsModule) {
+  root.rendererBackgroundTasksPanelOwner = factory(root.rendererBackgroundTasksPanelRender, root.rendererSessionRailJobs, root.rendererSubagentMonitorView);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (renderModule, railJobsModule, monitorViewModule) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const MODE = 'background_tasks';
@@ -22,7 +23,7 @@
   const TICK_MS = 1000;
   const SUMMARY_DELAY_MS = 120;
   const COPIED_MS = 1600;
-  const FOCUS_KEYS = ['data-bgt-open', 'data-bgt-stop', 'data-bgt-fold', 'data-bgt-clear', 'data-bgt-back', 'data-bgt-copy-command',
+  const FOCUS_KEYS = ['data-bgt-open', 'data-bgt-stop', 'data-bgt-fold', 'data-bgt-clear', 'data-bgt-undo', 'data-bgt-back', 'data-bgt-copy-command',
     'data-bgt-copy-output', 'data-bgt-open-address', 'data-bgt-copy-address', 'data-bgt-open-full', 'data-bgt-open-chat', 'data-bgt-jump', 'data-value'];
   function noop() {}
 
@@ -49,6 +50,7 @@
     if (!state || typeof state !== 'object') throw new Error('renderer-background-tasks-panel: state dep is required');
     const rr = renderModule || globalThis.rendererBackgroundTasksPanelRender;
     const railJobs = railJobsModule || globalThis.rendererSessionRailJobs || {};
+    const monitorView = monitorViewModule || globalThis.rendererSubagentMonitorView || {};
     const win = d.windowRef || globalThis.window || globalThis;
     const doc = win.document;
     const panelEl = d.dom?.artifactReviewPanel || null;
@@ -56,6 +58,9 @@
     const [openArtifactRail, renderArtifactReviewPanel, closePanel, claimOwner, openSession, appendClientLog] = [d.openArtifactRail,
       d.renderArtifactReviewPanel, d.toggleArtifactReview, d.claimOwner, d.openSession, d.appendClientLog].map((value) => fn(value));
     const stopSession = fn(d.stopSession, async () => false);
+    // Helpers come from the chat's messages (getMessages(sessionId)); openHelper({ sessionId, key, childKey, opener })
+    // opens one in the monitor; onSignalsChanged() tells the Session tab and the strip that the running rows changed.
+    const [getMessages, openHelper, onSignalsChanged] = [fn(d.getMessages, () => []), fn(d.openHelper, () => false), fn(d.onSignalsChanged)];
     const getPanelSessionId = fn(d.getPanelSessionId, () => state.currentSessionId);
     const setT = fn(d.setTimeoutImpl, (cb, ms) => win.setTimeout(cb, ms));
     const clearT = fn(d.clearTimeoutImpl, (id) => win.clearTimeout(id));
@@ -68,7 +73,9 @@
     let disposed = false, bound = false;
     let sessionId = null; // the session last painted; null until the first paint
     let page = 'list', openTaskId = '', returnTaskId = ''; // returnTaskId: the row Back gives focus to
-    let filter = 'all', foldOpen = true, jobs = [], chatItems = [];
+    let filter = 'all', foldOpen = true, jobs = [], chatItems = [], helpers = [], helpersFor = '';
+    let signalKey = '', runIds = new Set(); // what the last signal said; the running ids, to see a run finish
+    let undoIds = []; // the ids the last Clear dismissed: the line under the list offers to bring them back
     let out = null; // the open command's output: { jobId, text, truncated, fullOutputPath, failed, loaded }
     let following = true, wasLive = false, opener = null, lastListHtml = '', hostRef = null;
     let pollTimer = null, reading = false, rereadAfter = false, ticker = 0, summaryTimer = null, fetching = null, copiedTimer = null, copiedReset = noop;
@@ -76,7 +83,44 @@
 
     const sid = () => String(getPanelSessionId() || '').trim();
     const rootEl = () => panelEl?.querySelector?.('.background-tasks-panel') || null;
-    const tasks = () => rr.buildTasks({ jobs, items: chatItems, sessionId: sessionId || sid() });
+    function readHelpers() {
+      helpersFor = sid();
+      const messages = helpersFor ? getMessages(helpersFor) : null;
+      helpers = Array.isArray(messages) && messages.length && typeof monitorView.helperRuns === 'function' ? monitorView.helperRuns(messages) : [];
+    }
+    // The bound chat's rows. Linked chats and test runs belong to the chat last painted (they load when the panel opens).
+    const tasks = () => {
+      const bound = sid();
+      if (!bound) return [];
+      if (helpersFor !== bound) readHelpers();
+      return rr.buildTasks({ jobs, items: sessionId === bound ? chatItems : [], helpers, sessionId: bound });
+    };
+    const kindOf = (task) => (task.kind === 'chat' ? 'linked' : task.kind === 'command' && task.serving ? 'server' : task.kind);
+    const rowData = (task) => ({
+      id: task.id, kind: kindOf(task), label: task.kind === 'helper' ? jt('runs.helperRow', 'Helper: {name}', { name: task.text })
+        : task.serving ? rr.addressOf(task) : task.text,
+      detail: rr.detailOf(task), startedAt: task.serving?.sinceMs || task.startedAtMs, canStop: task.kind === 'command' && task.live && !task.stopping,
+    });
+    // The running rows in list order, for the Session tab and the strip: one source of truth with the list below.
+    const runningRows = () => tasks().filter((task) => task.live).map(rowData);
+    const runningCount = () => tasks().filter((task) => task.live).length;
+    // Tells the listener when the running rows changed; a run that finished takes the Undo line with it.
+    function signalsChanged() {
+      if (disposed) return;
+      const rows = runningRows();
+      const ids = new Set(rows.map((row) => row.id));
+      if (undoIds.length && [...runIds].some((id) => !ids.has(id))) undoIds = [];
+      runIds = ids;
+      const key = `${sid()}\n${rows.map((row) => [row.id, row.label, row.detail, row.canStop].join('|')).join('\n')}`;
+      if (key !== signalKey) { signalKey = key; onSignalsChanged(); }
+    }
+    // Called when the chat's messages change (a helper started, moved on or finished).
+    function refreshHelpers() {
+      if (disposed) return;
+      readHelpers();
+      signalsChanged();
+      refresh();
+    }
     const currentTask = () => (openTaskId ? tasks().find((task) => task.id === openTaskId) || null : null);
     const docHidden = () => doc?.visibilityState === 'hidden';
     const logWarn = (event, error) => appendClientLog('WARN', event, { message: String(error?.message || error || '').slice(0, 200) });
@@ -87,10 +131,10 @@
     }
 
     // ── Data ──
-    function applyJobs(snapshot) { if (!disposed) { jobs = Array.isArray(snapshot?.jobs) ? snapshot.jobs : []; refresh(); } }
+    function applyJobs(snapshot) { if (!disposed) { jobs = Array.isArray(snapshot?.jobs) ? snapshot.jobs : []; signalsChanged(); refresh(); } }
 
     async function loadJobs() {
-      try { const snapshot = await jobsApi()?.getState?.(); if (snapshot && !disposed) jobs = Array.isArray(snapshot.jobs) ? snapshot.jobs : []; } catch (error) { logWarn('background_tasks.jobs_read_failed', error); }
+      try { const snapshot = await jobsApi()?.getState?.(); if (snapshot && !disposed) { jobs = Array.isArray(snapshot.jobs) ? snapshot.jobs : []; signalsChanged(); } } catch (error) { logWarn('background_tasks.jobs_read_failed', error); }
     }
 
     // The linked chats come from the chat workspace summary the session rail reads; one request at a time.
@@ -105,6 +149,7 @@
         if (disposed || response?.ok !== true || response.summary?.session_id !== target) return;
         const items = response.summary.background_tasks?.data?.items;
         chatItems = Array.isArray(items) ? items : [];
+        signalsChanged();
         refresh();
       });
       return fetching;
@@ -159,7 +204,8 @@
     function paintList(host) {
       const list = rootEl()?.querySelector('.background-tasks-list');
       const html = `<div class="background-tasks-panel" data-bgt-page="list">${rr.listHtml({
-        tasks: tasks(), filter, foldOpen, clearable: typeof jobsApi()?.clearFinished === 'function' })}</div>`;
+        tasks: tasks(), filter, foldOpen, clearable: typeof jobsApi()?.clearFinished === 'function',
+        undoCount: typeof jobsApi()?.restoreFinished === 'function' ? undoIds.length : 0 })}</div>`;
       if (html === lastListHtml && rootEl()?.dataset.bgtPage === 'list') return;
       const key = focusKey(host);
       const scrollTop = list?.scrollTop || 0;
@@ -225,6 +271,8 @@
       const first = sessionId === null;
       sessionId = next;
       chatItems = [];
+      undoIds = [];
+      readHelpers();
       filter = 'all';
       if (!first) leaveDetail();
       lastListHtml = '';
@@ -236,6 +284,7 @@
       if (!host || disposed) return false;
       hostRef = host;
       syncSession();
+      readHelpers(); // every panel render sees the chat's helpers as they are now
       paint();
       syncPolling();
       return true;
@@ -309,7 +358,13 @@
 
     function openTask(taskId) {
       const task = tasks().find((entry) => entry.id === taskId);
-      if (!task) return false;
+      if (!task || task.kind === 'test') return false; // a test run's output is read in Workspace
+      if (task.kind === 'live') { win.rendererLiveRunView?.open?.(); return true; } // the Live tab is the one place to act on it
+      if (task.kind === 'helper') { // the monitor takes the tab over; its back control returns to this row
+        returnTaskId = task.id;
+        Promise.resolve(openHelper({ sessionId: sid(), key: task.delegationKey, childKey: task.childKey, opener: panelEl })).catch((error) => logWarn('background_tasks.helper_open_failed', error));
+        return true;
+      }
       [page, openTaskId, returnTaskId, out, following, wasLive] = ['detail', task.id, task.id, null, true, task.live];
       renderArtifactReviewPanel();
       panelEl?.querySelector?.('[data-bgt-back]')?.focus?.();
@@ -328,6 +383,7 @@
     async function open(options) {
       if (disposed) return false;
       const o = options || {};
+      if (!isOpen() && !o.focusTaskId) undoIds = []; // a closed panel forgets its undo; back from a helper's page does not
       const owner = String(o.sessionId || '').trim();
       if (owner) claimOwner(owner);
       opener = o.opener && typeof o.opener.focus === 'function' ? o.opener : opener;
@@ -335,15 +391,24 @@
       await Promise.all([loadJobs(), fetchSummary()]);
       if (disposed) return false;
       leaveDetail();
+      const focusId = String(o.focusTaskId || '').trim();
+      const focusTask = focusId ? tasks().find((entry) => entry.id === focusId) : null;
+      if (focusTask && !rr.matchesFilter(filter)(focusTask)) filter = 'all'; // the row must be there to take focus
       openArtifactRail(MODE);
       renderArtifactReviewPanel();
+      if (focusTask) (Array.from(panelEl?.querySelectorAll?.('[data-bgt-open]') || []).find((node) => node.getAttribute('data-bgt-open') === focusId))?.focus?.();
       const taskId = String(o.taskId || '').trim();
       if (taskId) openTask(taskId); // an unknown id stays on the list
       return isOpen();
     }
 
+    // The Session tab and the strip open the Runs tab on one run; a Live tab program opens the Live tab itself.
+    const openRun = (id, options) => (String(id).startsWith('live:') && typeof win.rendererLiveRunView?.open === 'function'
+      ? (win.rendererLiveRunView.open(), true) : open({ ...(options || {}), taskId: id }));
+
     function close() {
       if (!isOpen()) return false;
+      undoIds = [];
       leaveDetail();
       closePanel();
       syncTicker();
@@ -370,11 +435,29 @@
     async function clearFinished() {
       const api = jobsApi();
       if (typeof api?.clearFinished !== 'function') return;
-      try { await api.clearFinished(sessionId); } catch (error) { logWarn('background_tasks.clear_failed', error); }
+      const target = sessionId;
+      let result = null;
+      try { result = await api.clearFinished(target); } catch (error) { logWarn('background_tasks.clear_failed', error); }
       await loadJobs();
       if (disposed) return;
+      if (target === sessionId) undoIds = Array.isArray(result?.jobIds) ? result.jobIds.filter((id) => typeof id === 'string') : []; // a new Clear replaces the old line
       paint();
       (panelEl?.querySelector?.('[data-bgt-open]') || panelEl?.querySelector?.('.background-tasks-toolbar [aria-checked="true"]'))?.focus?.();
+    }
+
+    // Undo: bring back the rows the last Clear hid. A failed call leaves the line where it is.
+    async function undoClear() {
+      const api = jobsApi();
+      const target = sessionId;
+      if (typeof api?.restoreFinished !== 'function' || !undoIds.length) return;
+      let result = null;
+      try { result = await api.restoreFinished(target, undoIds); } catch (error) { logWarn('background_tasks.restore_failed', error); }
+      if (disposed || target !== sessionId || result?.ok !== true) return;
+      undoIds = [];
+      await loadJobs();
+      if (disposed || target !== sessionId) return;
+      paint();
+      (panelEl?.querySelector?.('[data-bgt-fold]') || panelEl?.querySelector?.('[data-bgt-open]'))?.focus?.();
     }
 
     function copy(button, text) {
@@ -427,6 +510,7 @@
       if ((node = hit('[data-action="bgt-filter"] [data-value]'))) return setFilter(node.getAttribute('data-value'));
       if (hit('[data-bgt-fold]')) { foldOpen = !foldOpen; return paint(); }
       if (hit('[data-bgt-clear]')) return void clearFinished();
+      if (hit('[data-bgt-undo]')) return void undoClear();
       if ((node = hit('[data-bgt-stop]'))) return stop(node);
       if ((node = hit('[data-bgt-open]'))) return void openTask(node.getAttribute('data-bgt-open'));
       if ((node = hit('[data-bgt-copy-command]'))) return copy(node, currentTask()?.text || '');
@@ -484,6 +568,7 @@
       const workspace = workspaceApi();
       if (typeof workspace?.onChanged === 'function') unsubscribers.push(workspace.onChanged(scheduleSummary));
       void loadJobs();
+      readHelpers();
     }
 
     function dispose() {
@@ -500,7 +585,7 @@
 
     const titleHtml = () => (page === 'detail' && currentTask() ? rr.titleHtml() : '');
 
-    return { bind, dispose, open, close, isOpen, renderRailContent, titleHtml, refresh };
+    return { bind, dispose, open, openRun, close, isOpen, renderRailContent, titleHtml, refresh, refreshHelpers, runningCount, runningRows };
   }
 
   return { createBackgroundTasksPanel, createStopSession, MODE };

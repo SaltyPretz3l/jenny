@@ -18,13 +18,19 @@ const LEASE_TERMINAL = Object.freeze(new Set(['released', 'failed', 'expired']))
 const LEASE_TRANSITIONS = Object.freeze({
   'new>queued': Object.freeze(['requested']),
   'queued>active': Object.freeze(['node_assigned']),
-  'queued>failed': Object.freeze(['queue_timeout', ...CANCEL_REASONS]),
+  // no_eligible_node: no registered node advertises the lease's model (or may serve it) any more.
+  'queued>failed': Object.freeze(['queue_timeout', 'no_eligible_node', ...CANCEL_REASONS]),
   'active>released': Object.freeze(['settled']),
   'active>failed': Object.freeze(['job_failed', 'node_stopped', ...CANCEL_REASONS]),
   'active>expired': Object.freeze(['node_contact_timeout', 'idle_timeout']),
 });
 
 const LEASE_REFUSED = Object.freeze({ ok: false, reason: 'lease_transition_refused' });
+
+// The context length a node may advertise: the owner's pool window bounds (TEAM_POOL_CONTEXT_MIN and _MAX in
+// server/config.js, copied here: that module loads far more than the scheduler may).
+const CONTEXT_LENGTH_MIN = 2048;
+const CONTEXT_LENGTH_MAX = 1_048_576;
 
 function transitionLease(record, from, to, trigger, reason, now) {
   const actual = record.state === undefined ? 'new' : record.state;
@@ -53,7 +59,9 @@ function newId(prefix, randomBytes) {
   return `${prefix}${bytes.toString('base64url')}`;
 }
 
-// Returns normalized model entries, or null when the list is not acceptable.
+// Returns normalized model entries, or null when the list is not acceptable. A context length is the node's own
+// word: one above the pool's ceiling is clamped to it, and a model under the floor (too small to hold a turn,
+// and a way to wipe the pool's reported window) is left out of the list rather than refusing the node.
 function normalizeModels(models, limits) {
   if (!Array.isArray(models) || models.length > limits.maxModelsPerNode) return null;
   const seen = new Set();
@@ -65,7 +73,9 @@ function normalizeModels(models, limits) {
     if (contextLength !== null && !(Number.isSafeInteger(contextLength) && contextLength > 0)) return null;
     if (typeof vision !== 'boolean' || typeof thinking !== 'boolean') return null;
     seen.add(id);
-    out.push(Object.freeze({ id, context_length: contextLength, vision, thinking }));
+    if (contextLength !== null && contextLength < CONTEXT_LENGTH_MIN) continue;
+    out.push(Object.freeze({ id, context_length: contextLength === null ? null : Math.min(contextLength, CONTEXT_LENGTH_MAX),
+      vision, thinking }));
   }
   return Object.freeze(out);
 }
@@ -161,7 +171,9 @@ function createNodeTable({ limits }) {
 
   function applyRegister(plan, { deviceId, memberId, slots }, now) {
     if (plan.existing) {
-      setNodeFields(plan.existing, { slots, models: plan.models, online: true, offline_at: null, last_contact_at: now });
+      // A registration is a fresh start: a pause the node held when it quit must not outlive its agent (review C6).
+      setNodeFields(plan.existing, { slots, models: plan.models, online: true, offline_at: null, last_contact_at: now,
+        paused: false, owner_busy: false, owner_went_ahead: false });
       return plan.existing;
     }
     const node = {
@@ -220,7 +232,7 @@ function createLeaseTable({ limits, randomBytes }) {
       lease_id: newId('lease_', randomBytes), conversation_key: conversationKey, member_id: memberId, model,
       wants_vision: wantsVision, allowed_nodes: allowedNodes, state: undefined, reason: null, node_id: null, model_info: null, seq: seq++,
       created_at: now, queued_at: null, active_at: null, terminal_at: null, last_job_at: null, job_count: 0,
-      live_job_id: null, token_hex: null, token_plain: null,
+      live_job_id: null, token_hex: null, token_plain: null, stranded_at: null,
     };
     const result = transitionLease(record, 'new', 'queued', 'requested', null, now);
     leases.set(record.lease_id, record);

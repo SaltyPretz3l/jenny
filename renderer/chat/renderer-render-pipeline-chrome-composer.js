@@ -78,6 +78,7 @@
       isActivityBusy = () => false,
       applyActivityAttributes = () => {},
       renderComposerInteractivePanel = () => {},
+      renderAttachmentTray = () => {},
       closeComposerPopover = () => {},
       syncComposerInputHeight = () => {},
       updateComposerSafeOffset = () => {},
@@ -107,11 +108,35 @@
     }
 
 
+    // Row 192: the running step of this pane's live turn, read from its rendered rows (cached list, per-frame safe).
+    let liveTurnList = null;
+    function readPaneLiveStep(sessionId) {
+      if (!chatTimeline || !isSessionStreaming(sessionId)) return null;
+      liveTurnList = composerV2Render.findLiveTurnList(chatTimeline, liveTurnList);
+      return liveTurnList ? composerV2Render.readLiveStep(liveTurnList) : null;
+    }
+
+    // Row 192 C13: the circle became a pill with the arrow and a label (built here, so the second pane's has one too).
+    function syncJumpLabel(button, text) {
+      if (!button.classList.contains('chat-jump-latest--labeled')) button.classList.add('chat-jump-latest--labeled');
+      let label = button.querySelector(':scope > .chat-jump-latest-label');
+      if (!label) {
+        label = button.ownerDocument.createElement('span');
+        label.className = 'chat-jump-latest-label';
+        button.appendChild(label);
+      }
+      if (label.textContent !== text) label.textContent = text;
+    }
+
     function syncJumpPill(button, model) {
       if (!model) return;
       const kind = model.state;
       const isLatest = kind === 'latest';
-      const name = isLatest ? jt('chat.wayfinder.returnToLatest', 'Return to latest') : String(model.label || '');
+      const step = isLatest ? readPaneLiveStep(getPaneSessionId()) : null;
+      const text = !isLatest ? String(model.label || '')
+        : step ? jt('chat.jump.latestStepRunning', 'Latest · step {step} running', { step: step.step }) : jt('chat.jump.latest', 'Latest');
+      syncJumpLabel(button, text);
+      const name = isLatest && !step ? jt('chat.wayfinder.returnToLatest', 'Return to latest') : text;
       if (button.dataset.jumpState !== kind) button.dataset.jumpState = kind;
       if (button.getAttribute('aria-label') !== name) button.setAttribute('aria-label', name);
       // data-tooltip, not title: the tooltip system deletes title on hover, and each render would restore it.
@@ -269,7 +294,8 @@
       const runModeProjection = composerState.projectRunMode(runtimePreferences.runMode, {
         planModeFallback: runtimePreferences.planMode === true,
       });
-      const runModeLabel = runModeProjection.runMode[0].toUpperCase() + runModeProjection.runMode.slice(1);
+      const runModeLabel = composerV2Render.RUN_MODE_COPY?.[runModeProjection.runMode]?.label
+        || runModeProjection.runMode[0].toUpperCase() + runModeProjection.runMode.slice(1);
       const interactiveBatchActive = Boolean(getPendingQuestionBatch() && !hasStalePendingQuestionBatch());
       const ownsActiveStream = isSessionStreaming(currentSessionId);
       const activeApprovalPending = hasPendingToolApprovalForSession(currentSessionId);
@@ -307,7 +333,9 @@
       const copy = heroModelState.heroCopy(view);
       // The hero shows in a pane whose conversation is empty; a split pane may hold a
       // populated chat while pane 0's is empty, so each pane decides for itself.
-      const setupBlocksHero = state.setup?.loaded === true && state.setup.setupComplete === false;
+      // Mirrors renderHero: a failed or missing model outranks the setup hero.
+      const setupBlocksHero = state.setup?.loaded === true && state.setup.setupComplete === false
+        && view.kind !== 'failed' && view.kind !== 'noModel';
       const heroShowingFor = (sessionId) => {
         const id = String(sessionId || '');
         const session = (state.sessions || []).find((entry) => entry.id === id);
@@ -337,7 +365,8 @@
         || !state.auth.authenticated
         // While the engine starts, Send queues into the outbox (renderer-send-utils.js).
         || !(backendComposerUsable || (backendComposerPreparing && Boolean(currentSessionId)))
-        || (!modelLoadingLine && (view.kind === 'noModel' || view.kind === 'downloading'))
+        // model_unavailable keeps Send live even with no model named: sending is the retry.
+        || (!modelLoadingLine && ((view.kind === 'noModel' && state.backend?.phase !== 'model_unavailable') || view.kind === 'downloading'))
         || (sendBusy && !queueEligible)
         || !hasComposerDraft;
       // Status loader F6: the load is told under the input; Send's tooltip
@@ -355,18 +384,28 @@
         reasonNode: documentRef?.getElementById?.('composerSendDisabledReason'),
         syncDisabledReason, setComposerStatusNotice, clearComposerStatusNotice,
       }) || null;
-      if (queueEligible && !questionsWaiting) { // a typed send answers the card, it does not queue
+      // Row 192 C11: Queue keeps Send's round shape and size and shows an icon; its words are its name and tooltip.
+      const queueState = queueEligible && !questionsWaiting; // a typed send answers the card, it does not queue
+      const queueTitle = queueState ? jt('chat.pipelineChrome.queueTitle', 'Queue this message. It runs in {runMode} when this turn ends.', { runMode: runModeLabel }) : '';
+      if (queueState) {
         const queued = !hasComposerDraft && (currentQueuedSend || durablePending.length > 0);
-        sendButton.textContent = queued ? jt('chat.pipelineChrome.queuedRunsIn', 'Queued — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueRunsIn', 'Queue — runs in {runMode}', { runMode: runModeLabel });
+        if (!sendButton.querySelector(':scope > svg')) sendButton.innerHTML = composerV2Render.QUEUE_ICON;
         sendButton.setAttribute(
           'aria-label',
           queued ? jt('chat.pipelineChrome.queuedFollowUpRunsIn', 'Queued follow-up — runs in {runMode}', { runMode: runModeLabel }) : jt('chat.pipelineChrome.queueFollowUpRunsIn', 'Queue follow-up prompt — runs in {runMode}', { runMode: runModeLabel })
         );
       } else {
-        sendButton.textContent = '\u2191';
+        if (sendButton.textContent !== '\u2191' || sendButton.firstElementChild) sendButton.textContent = '\u2191';
         sendButton.setAttribute('aria-label', jt('chat.pipelineChrome.send', 'Send'));
       }
-      sendButton.classList.toggle('composer-send-queue', queueEligible && !questionsWaiting);
+      // The blocked-send tooltip renderer shows this title while Send is enabled (it watches the attribute).
+      if ((sendButton.dataset.queueTitle || '') !== queueTitle) {
+        if (queueTitle) sendButton.dataset.queueTitle = queueTitle;
+        else delete sendButton.dataset.queueTitle;
+      }
+      if (queueTitle && !sendButton.disabled && sendButton.getAttribute('title') !== queueTitle) sendButton.setAttribute('title', queueTitle);
+      sendButton.classList.toggle('composer-send-queue', queueState);
+      sendButton.classList.toggle('composer-send-queue--icon', queueState);
       sendButton.classList.toggle('composer-stop', false);
       chatInput.classList.toggle('hidden', interactiveBatchActive);
       sendButton.classList.toggle('hidden', interactiveBatchActive && !sendBusy);
@@ -451,6 +490,14 @@
       globalRef.rendererComposerModelPicker?.instance?.renderIfOpen?.();
       composerV2Render.syncRunModeChip(runModeProjection.runMode, documentRef);
       syncComposerTurnTimer();
+      // Row 192 C11: one status line under the box while a reply runs (not for a send held behind another chat).
+      composerV2Render.syncComposerStatusLine(documentRef, composerV2Render.describeComposerStatus({
+        running: showStopButton && !pluginSessionReadOnly && state.streamWaits?.isWaitingStream?.(state.activeStreamId) !== true,
+        waiting: activeApprovalPending || questionsWaiting,
+        liveStep: readPaneLiveStep(currentSessionId),
+        queueHint: queueState && hasComposerDraft,
+        runModeLabel,
+      }));
       const runModeChip = documentRef?.getElementById?.('composerRunModeChip');
       if (runModeChip) {
         runModeChip.disabled = pluginSessionReadOnly;
@@ -497,6 +544,10 @@
       if ((pluginSessionReadOnly || !state.auth.authenticated) && state.ui.composerPopoverOpen) {
         closeComposerPopover();
       }
+      // Send consumes the queue in state only (sendReceipts.begin, queueBusySend, draft restores): repaint the tray
+      // here so it empties or refills with the input, before the height and safe offset are measured.
+      // The tray is signature-gated, so an unchanged frame writes nothing.
+      renderAttachmentTray();
       syncComposerInputHeight();
       syncComposerVisualState();
       updateComposerSafeOffset();

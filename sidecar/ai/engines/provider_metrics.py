@@ -20,9 +20,10 @@ from sidecar.ai.engines.engine_events import ENGINE_EVENT_INFERENCE_PERFORMANCE,
 _TOKEN_LIMIT = 1_048_576
 _DURATION_LIMIT = 86_400_000
 _RATE_LIMIT = 10_000_000
-PROVIDER_KINDS = frozenset({"ninfer", "llama-server", "ollama", "other"})
+PROVIDER_KINDS = frozenset({"ninfer", "llama-server", "strata", "ollama", "other"})
 # Providers that stream cumulative per-token timings when asked (NInfer v0.9.1,
-# Jenny's own llama-server); Electron decides which request is live.
+# Jenny's own llama-server); Electron decides which request is live. Strata
+# sends `timings` on the finish chunk only and no prompt_progress (row 200 F10).
 LIVE_PROVIDER_KINDS = frozenset({"ninfer", "llama-server"})
 TERMINAL_PHASES = frozenset({"finished", "failed", "cancelled"})
 _NONSTREAM_METRICS: ContextVar[Any] = ContextVar("sidecar_nonstream_metrics", default=None)

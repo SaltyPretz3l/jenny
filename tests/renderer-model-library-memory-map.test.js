@@ -85,7 +85,7 @@ test('Unload and Tune lock while a runtime action runs, and Tune is local-only',
   });
   assert.equal(hosted.querySelector('[data-model-card-action="tune"]'), null);
   assert.ok(hosted.querySelector('[data-model-card-action="unload"]'));
-  assert.equal(text(hosted.querySelector('.mm-meta')), "OpenRouter · runs on the provider's servers");
+  assert.equal(text(hosted.querySelector('.mm-meta')), "Cloud · OpenRouter · runs on the provider's servers");
   assert.equal(hosted.querySelector('.mm-bar'), null, 'a hosted model has no GPU bar');
 });
 

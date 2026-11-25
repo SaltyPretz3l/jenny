@@ -66,8 +66,6 @@ class _FakeMcpServer:
             return {"tools": [{"name": "lookup", "description": "look things up"}]}
         if method == "tools/call":
             return {"content": [{"type": "text", "text": "looked up"}]}
-        if method in ("resources/list", "resources/templates/list"):
-            return {"resources": [], "resourceTemplates": []}
         return {}
 
     def shutdown(self) -> None:
@@ -209,25 +207,3 @@ def test_unreachable_sse_server_enters_cooldown_not_throw(
         assert client.diagnostics().failures
     finally:
         client.close()
-
-
-def test_resource_tools_only_register_when_resources_enabled(server: Any) -> None:
-    client = MCPClient()
-    try:
-        client.configure(
-            (_sse_config(server.url),),
-            sse_enabled=True,
-            resources_enabled=True,
-        )
-        # resources_enabled=True + a server that answers resources/list registers
-        # the synthetic resource tools.
-        assert client.tool_descriptor("mcp__remote__list_resources") is not None
-    finally:
-        client.close()
-
-    client2 = MCPClient()
-    try:
-        client2.configure((_sse_config(server.url),), sse_enabled=True)
-        assert client2.tool_descriptor("mcp__remote__list_resources") is None
-    finally:
-        client2.close()

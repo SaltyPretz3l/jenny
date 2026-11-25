@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.mcp import transport_base
@@ -21,20 +20,6 @@ from sidecar.ai.tools.trusted_attachments import parse_wire_attachments
 # Canonical implementation lives in transport_base (a shared leaf) so the
 # transports can use it without exceeding the leaf import fan-out cap.
 raise_if_cancelled = transport_base.raise_if_cancelled
-
-
-@dataclass(frozen=True)
-class ToolCallBudget:
-    deadline: float | None
-    fallback_timeout_seconds: float | None
-    cancel_handle: Any = None
-
-    def remaining_timeout(self) -> float | None:
-        return remaining_tool_timeout(
-            self.deadline,
-            self.fallback_timeout_seconds,
-            cancel_handle=self.cancel_handle,
-        )
 
 
 def remaining_tool_timeout(
@@ -83,19 +68,6 @@ def call_transport_tool(  # noqa: PLR0913 - transport compatibility seam.
     if on_output_chunk is not None:
         kwargs["on_output_chunk"] = on_output_chunk
     return transport.call_tool(tool_name, arguments, **kwargs)
-
-
-def call_transport_resource(
-    operation: Any,
-    *args: Any,
-    timeout_seconds: float | None,
-    cancel_handle: Any,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    call_kwargs = {**kwargs, "timeout_seconds": timeout_seconds}
-    if cancel_handle is not None:
-        call_kwargs["cancel_handle"] = cancel_handle
-    return operation(*args, **call_kwargs)
 
 
 def claims_read_only(annotations: Any) -> bool:

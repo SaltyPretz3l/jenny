@@ -38,6 +38,9 @@
     const activateWorkspaceSession = typeof d.activateWorkspaceSession === 'function' ? d.activateWorkspaceSession : noop;
     const toggleArtifactReview = typeof d.toggleArtifactReview === 'function' ? d.toggleArtifactReview : noop;
     const getProjectSwitcher = typeof d.getProjectSwitcher === 'function' ? d.getProjectSwitcher : null;
+    // Choosing Notes opens the Notes side (the entry loads its modules lazily); the strip hears of count changes.
+    const openNotes = typeof d.openNotes === 'function' ? d.openNotes : () => { openArtifactRail('notes'); renderArtifactReviewPanel(); };
+    const onSignalsChanged = typeof d.onSignalsChanged === 'function' ? d.onSignalsChanged : noop;
     const inventory = d.inventory || windowRef.inventory || globalRef.inventory || {};
     const companionApi = windowRef?.jennyShell?.companion || {};
     const listenerToken = `task-rail-${Math.random().toString(36).slice(2)}`;
@@ -47,6 +50,7 @@
     let disposed = false;
     let flashTimer = null;
     let initialRefreshStarted = false;
+    let lastSignalCount = -1;
     // The shared project switcher loads lazily; hold it once it resolves so the
     // synchronous render can name projects (see requestProjectSwitcher).
     let projectSwitcher = null;
@@ -60,7 +64,7 @@
     function ensureUiState() {
       if (!state.ui || typeof state.ui !== 'object') state.ui = {};
       if (!state.ui.taskRail || typeof state.ui.taskRail !== 'object') {
-        state.ui.taskRail = { filter: 'all', draftTitle: '', busyTaskId: '', editTaskId: '', expandedTaskId: '', lastError: '', scope: 'current' };
+        state.ui.taskRail = { filter: 'all', draftTitle: '', busyTaskId: '', editTaskId: '', expandedTaskId: '', lastError: '', scope: 'current', hiddenIds: [] };
       }
       const ui = state.ui.taskRail;
       if (!['open', 'done', 'all'].includes(ui.filter)) ui.filter = 'all';
@@ -70,6 +74,7 @@
       ui.busyTaskId = String(ui.busyTaskId || '');
       ui.editTaskId = String(ui.editTaskId || '');
       ui.lastError = String(ui.lastError || '');
+      if (!Array.isArray(ui.hiddenIds)) ui.hiddenIds = [];
       return ui;
     }
 
@@ -115,28 +120,12 @@
       if (projects.length && !projectSwitcher.projectById?.(ui.scope)) ui.scope = 'current';
     }
 
-    function projectNameMap(chatId) {
-      const names = new Map();
-      for (const entry of projectSwitcher?.filterRows?.('') || []) {
-        if (entry.id) names.set(entry.id, entry.label);
-      }
-      const loaded = Boolean(projectSwitcher?.getProjects?.().length);
-      const sessions = Array.isArray(state.sessions) ? state.sessions : [];
-      const seen = [chatId, ensureUiState().scope, ...sessions.map((entry) => String(entry?.project_id || '').trim()),
-        ...buildRows().map((row) => row.projectId)];
-      for (const id of seen.filter((value) => value && value !== 'current' && value !== 'all' && !names.has(value))) {
-        names.set(id, id === GENERAL_PROJECT_ID ? jt('projects.switcher.generalName', 'General')
-          : loaded ? jt('projects.filter.project', 'Project') : id);
-      }
-      return names;
-    }
-
     function scopeHelper() {
       if (!projectSwitcher && !switcherRequested) { switcherRequested = true; void requestProjectSwitcher(); }
       reconcileScope();
       const scope = ensureUiState().scope;
       const chatId = chatProjectId();
-      const names = projectNameMap(chatId);
+      const names = render.projectNameMap(projectSwitcher, state.sessions, [chatId, scope, ...buildRows().map((row) => row.projectId)]);
       const projectId = effectiveScopeProjectId();
       return {
         mode: scope === 'all' ? 'all' : scope === 'current' ? 'current' : 'project',
@@ -146,23 +135,6 @@
         projectNames: names,
         projectOrder: Array.from(names.keys()),
       };
-    }
-
-    function scopeMenuRows(switcher, helper) {
-      const open = buildRows().filter(isOpenRow);
-      const countFor = (id) => open.filter((row) => row.projectId === id).length;
-      const selectedId = helper.mode === 'all' ? null : helper.projectId;
-      const chatId = helper.chatProjectId;
-      const rows = chatId ? [{
-        id: chatId, label: helper.projectNames.get(chatId) || chatId, kind: 'project',
-        detail: jt('tasks.rail.thisChat', 'this chat'), count: countFor(chatId), selected: selectedId === chatId,
-      }] : [];
-      rows.push({ id: '', label: jt('projects.filter.all', 'All projects'), kind: 'project', count: open.length, selected: helper.mode === 'all' });
-      for (const entry of switcher.filterRows('')) {
-        if (!entry.id || entry.id === chatId) continue;
-        rows.push({ ...entry, count: countFor(entry.id), selected: selectedId === entry.id });
-      }
-      return rows;
     }
 
     async function openScopeMenu(anchor) {
@@ -176,7 +148,7 @@
       menu.show({
         anchor,
         heading: jt('tasks.rail.scopeHeading', 'Show tasks from'),
-        rows: scopeMenuRows(switcher, helper),
+        rows: render.scopeMenuRows(switcher, helper, buildRows()),
         onPick: (row) => {
           const id = String(row.id || '');
           ensureUiState().scope = !id ? 'all' : id === helper.chatProjectId ? 'current' : id;
@@ -209,27 +181,18 @@
       toggleEl.classList.toggle('active', active);
     }
 
-    function syncCount() {
-      // The badge follows the active chat's project, whatever scope the rail shows.
-      const chatId = chatProjectId();
-      const followUpCount = chatId
-        ? buildRows().filter((row) => isOpenRow(row) && row.projectId === chatId).length : 0;
-      const checklistCount = currentChecklist().items
-        .filter((item) => item.status !== 'completed').length;
-      const count = followUpCount + checklistCount;
-      const badgeEl = toggleEl?.querySelector?.('[data-task-count]');
-      if (badgeEl) {
-        badgeEl.textContent = String(count);
-        badgeEl.dataset.taskCount = String(count);
-        badgeEl.hidden = count === 0;
-      }
-      // The badge is visual only: the name and tooltip carry the count too.
-      if (toggleEl) {
-        const name = count > 0 ? jt('tasks.rail.toggleNameOpen', 'Tasks, {count} open', { count }) : jt('artifactPanelV2Render.tasks', 'Tasks');
-        toggleEl.setAttribute('aria-label', name);
-        toggleEl.setAttribute('title', name);
-      }
+    const storage = () => { try { return windowRef.localStorage || null; } catch (_error) { return null; } };
+
+    // Open follow-ups of the active chat's project, whatever scope the rail shows.
+    function openTaskCount() {
+      return typeof render.openTaskCount === 'function' ? render.openTaskCount(buildRows(), chatProjectId()) : 0;
+    }
+
+    // The tab strip reads openTaskCount(); this tells it when the number moved.
+    function syncSignals() {
       syncToggle();
+      const count = openTaskCount();
+      if (count !== lastSignalCount) { lastSignalCount = count; onSignalsChanged(); }
       return count;
     }
 
@@ -245,34 +208,20 @@
       return applyCompanionPayload(payload);
     }
 
-    function prepareSurface(surface) {
-      if (!surface) return null;
-      surface.detailEmpty?.classList?.add('hidden');
-      surface.detailPanel?.classList?.remove('hidden');
-      surface.metaPane?.classList?.add('hidden');
-      for (const button of [surface.saveButton, surface.revertButton, surface.revealButton,
-        surface.openExternalButton, surface.deleteButton]) button?.classList?.add('hidden');
-      surface.editorShell?.classList?.add('hidden');
-      surface.dirtyBadge?.classList?.add('hidden');
-      for (const field of [surface.detailKicker, surface.detailTitle, surface.detailPath,
-        surface.detailStatus, surface.detailNote]) if (field) field.textContent = '';
-      if (surface.detailMeta) surface.detailMeta.innerHTML = '';
-      if (surface.provenanceTimeline) surface.provenanceTimeline.innerHTML = '';
-      const host = surface.previewContent || surface;
-      host?.classList?.remove?.('hidden');
-      return host;
-    }
-
     function renderRailContent(surface) {
-      const host = prepareSurface(surface);
+      const host = render.prepareSurface?.(surface);
       if (!host) return false;
+      // A chat in another project ends the Undo line: the deletion is made for good.
+      const pending = ensureUiState().pendingDelete;
+      if (pending && chatProjectId() && pending.projectId !== chatProjectId()) void commitPendingDelete();
       // The list re-renders wholesale (opening a row, folds, refreshes); keep its scroll.
       const scrollTop = host.querySelector?.('.task-rail-list')?.scrollTop || 0;
       host.innerHTML = typeof render.renderTaskRailSurface === 'function'
-        ? render.renderTaskRailSurface(buildRows(), ensureUiState(), { escapeHtml, checklist: currentChecklist(), checklistFoldOpen: ensureUiState().checklistFoldOpen === String(state.currentSessionId || ''), scope: scopeHelper() }) : '';
+        ? render.renderTaskRailSurface(buildRows(), ensureUiState(), { escapeHtml, scope: scopeHelper() }) : '';
       const list = host.querySelector?.('.task-rail-list');
       if (list && scrollTop) list.scrollTop = scrollTop;
-      syncCount();
+      render.rememberSide?.(chatProjectId(), 'tasks', storage());
+      syncSignals();
       return true;
     }
 
@@ -281,23 +230,21 @@
       syncToggle();
     }
 
+    // Re-paints the rail after the chat or its project changed (the scope follows the chat). It never
+    // throws away a follow-up being edited or a draft being typed; the signals sync either way.
     function refreshChecklist(options) {
       if (disposed) return;
       const sessionId = String(options?.sessionId || '').trim();
       if (sessionId && sessionId !== String(state.currentSessionId || '').trim()) return;
-      // A re-render replaces the rail's markup wholesale; never throw away a
-      // follow-up the user is editing or a draft they are typing. The count
-      // still syncs, and the next ordinary render picks the checklist up.
       const activeEl = panelEl?.ownerDocument?.activeElement;
       const typing = Boolean(ensureUiState().editTaskId)
-        || Boolean(activeEl && panelEl?.contains?.(activeEl)
-          && activeEl.closest?.('.task-rail-add, .task-rail-editor'));
+        || Boolean(activeEl && panelEl?.contains?.(activeEl) && activeEl.closest?.('.task-rail-add, .task-rail-editor'));
       if (!typing && isTasksMode() && isRailVisible()) {
         const currentSurface = panelEl?.querySelector?.('.task-rail-surface');
         if (currentSurface?.parentElement) renderRailContent(currentSurface.parentElement);
         else rerender();
       }
-      syncCount();
+      syncSignals();
     }
 
     const findInPanel = (selector, attr, id) => Array.from(panelEl?.querySelectorAll?.(selector) || []).find((el) => el.getAttribute(attr) === id) || null;
@@ -317,7 +264,7 @@
         applyCompanionPayload(payload);
         ui.busyTaskId = '';
         rerender();
-        syncCount();
+        syncSignals();
         return true;
       } catch (error) {
         if (disposed) return false;
@@ -334,7 +281,6 @@
       if (!isEnabled() || disposed) return false;
       openArtifactRail('tasks');
       renderArtifactReviewPanel();
-      syncToggle();
       const id = String(taskId || '').trim();
       if (!id) return true;
       const row = findInPanel('[data-task-id]', 'data-task-id', id);
@@ -354,7 +300,7 @@
         await refreshCompanion();
         if (disposed) return;
         if (isTasksMode() && isRailVisible()) rerender();
-        syncCount();
+        syncSignals();
       } catch (error) {
         appendClientLog('WARN', 'task_rail.refresh_failed', { message: String(error?.message || error || '').slice(0, 200) });
       }
@@ -424,6 +370,51 @@
       }
     }
 
+    // Delete is permanent in the store, so the row is held back and the real deletion
+    // runs when the Undo line goes (another delete, the side or project changes, the tab closes).
+    function deleteTask(row) {
+      const ui = ensureUiState();
+      void commitPendingDelete();
+      ui.hiddenIds.push(row.followUpId);
+      ui.pendingDelete = { id: row.followUpId, projectId: chatProjectId() };
+      rerender();
+      syncSignals();
+    }
+
+    async function commitPendingDelete() {
+      const ui = ensureUiState();
+      const pending = ui.pendingDelete;
+      if (!pending) return;
+      ui.pendingDelete = null;
+      try {
+        const payload = await companionApi.deleteFollowUp(pending.id);
+        if (!disposed) applyCompanionPayload(payload);
+      } catch (error) {
+        appendClientLog('WARN', 'task_rail.delete_failed', { name: String(error?.name || 'Error').slice(0, 80) });
+        showToastMessage(jt('tasks.rail.updateFailed', 'Task update failed.'));
+      }
+      ui.hiddenIds = ui.hiddenIds.filter((id) => id !== pending.id);
+      if (!disposed) { rerender(); syncSignals(); }
+    }
+
+    function undoDelete() {
+      const ui = ensureUiState();
+      const pending = ui.pendingDelete;
+      if (!pending) return;
+      ui.pendingDelete = null;
+      ui.hiddenIds = ui.hiddenIds.filter((id) => id !== pending.id);
+      rerender();
+      syncSignals();
+      findInPanel('[data-action="task-rail-toggle"]', 'data-task-id', pending.id)?.focus?.();
+    }
+
+    async function switchToNotes() {
+      void commitPendingDelete();
+      render.rememberSide?.(chatProjectId(), 'notes', storage());
+      await Promise.resolve(openNotes());
+      if (!disposed) render.focusSide?.(panelEl, 'notes');
+    }
+
     function showOverflow(anchor, row) {
       const contextMenu = inventory.contextMenu || windowRef.inventoryContextMenu;
       if (!contextMenu?.show || !row) return;
@@ -448,7 +439,7 @@
       }
       items.push({ separator: true }, {
         label: jt('common.delete', 'Delete'), danger: true,
-        action: () => runMutation(row.followUpId, () => companionApi.deleteFollowUp(row.followUpId)),
+        action: () => deleteTask(row),
       });
       anchor.setAttribute('aria-expanded', 'true'); // Keeps the hover-only button visible while its menu is open.
       contextMenu.show({ anchorEl: anchor, rootEl: panelEl, restoreFocusTo: anchor, items, onHide: () => anchor.setAttribute('aria-expanded', 'false') });
@@ -470,12 +461,12 @@
       if (action === 'task-rail-scope') return openScopeMenu(button);
       if (action === 'task-rail-add') return addTask();
       if (action === 'task-rail-send-list') return sendListToChat();
+      if (action === 'task-rail-undo-delete') return undoDelete();
       if (action === 'task-rail-start' && row) return openOrStartSession(row);
       if (action === 'task-rail-open-session' && row?.linkedSessionId) return activateWorkspaceSession(row.linkedSessionId);
       if (action === 'task-rail-overflow') return showOverflow(button, row);
       // A keyboard toggle (click detail 0) keeps focus on the re-rendered control; the checklist fold is per chat.
       if (action === 'task-rail-toggle') { ui.expandedTaskId = ui.expandedTaskId === taskId ? '' : taskId; rerender(); return event.detail === 0 ? findInPanel('[data-action="task-rail-toggle"]', 'data-task-id', taskId)?.focus?.() : undefined; }
-      if (action === 'task-rail-checklist-fold') { const sid = String(state.currentSessionId || ''); ui.checklistFoldOpen = ui.checklistFoldOpen === sid ? null : sid; rerender(); return event.detail === 0 ? panelEl?.querySelector?.('[data-action="task-rail-checklist-fold"]')?.focus?.() : undefined; }
       if (action === 'task-rail-edit' && row) { ui.editTaskId = taskId; return rerender(); }
       if (action === 'task-rail-edit-save') return saveEditor(taskId);
       if (action === 'task-rail-edit-cancel') { ui.editTaskId = ''; return rerender(); }
@@ -498,8 +489,10 @@
     }
 
     function handleSegmentedChange(event) {
-      if (disposed || !isTasksMode() || event.detail?.id !== 'task-rail-filter') return;
-      setFilter(event.detail.value);
+      if (disposed || !isTasksMode()) return;
+      const { id, value } = event.detail || {};
+      if (id === 'task-rail-filter') setFilter(value);
+      else if (id === 'project-tab-side' && value === 'notes') void switchToNotes();
     }
 
     function handlePanelKeydown(event) {
@@ -533,7 +526,7 @@
         id: 'chatTimelineTasksToggle', domId: 'chatTimelineTasksToggle', plain: true,
         className: 'chat-timeline-utility-button chat-timeline-tasks-toggle',
         ariaLabel: jt('artifactPanelV2Render.tasks', 'Tasks'), title: jt('artifactPanelV2Render.tasks', 'Tasks'), ariaPressed: false,
-        trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 4h7M6.25 8h7M6.25 12h7"/><path d="m2.5 4 .75.75L4.75 3.25M2.5 8l.75.75L4.75 7.25M2.5 12l.75.75 1.5-1.5"/></svg><span class="chat-timeline-utility-count" data-task-count="0" hidden>0</span>',
+        trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 4h7M6.25 8h7M6.25 12h7"/><path d="m2.5 4 .75.75L4.75 3.25M2.5 8l.75.75L4.75 7.25M2.5 12l.75.75 1.5-1.5"/></svg>',
       });
       toggleEl = mount.firstElementChild;
       const splitToggle = utilityCluster.querySelector?.('#artifactSplitViewToggle');
@@ -566,7 +559,7 @@
       }
       windowRef.rendererTaskBoard = boardActions;
       windowRef.rendererTaskRailActions = railActions;
-      syncCount();
+      syncSignals();
       if (!initialRefreshStarted) {
         initialRefreshStarted = true;
         void notifyMutation();
@@ -575,6 +568,7 @@
 
     function dispose() {
       if (disposed) return;
+      void commitPendingDelete();
       disposed = true;
       if (flashTimer) windowRef.clearTimeout(flashTimer);
       inventory.contextMenu?.hide?.({ restoreFocus: false });
@@ -592,9 +586,15 @@
     }
 
     const boardActions = { notifyMutation };
-    const railActions = { open, refreshChecklist };
-    return { bind, dispose, renderRailContent, notifyMutation, open, refreshChecklist, isEnabled };
+    const railActions = { open, refreshChecklist, openTaskCount };
+    return {
+      bind, dispose, renderRailContent, notifyMutation, open, refreshChecklist, isEnabled, openTaskCount, currentChecklist,
+      settlePendingDelete: commitPendingDelete,
+    };
   }
 
-  return { createTaskRail };
+  // The side the owner last chose for a project ('tasks', 'notes' or ''): the tab strip reopens on it.
+  const preferredSide = (projectId, storage) => (typeof render.preferredSide === 'function' ? render.preferredSide(projectId, storage) : '');
+
+  return { createTaskRail, preferredSide };
 });

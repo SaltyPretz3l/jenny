@@ -1,0 +1,58 @@
+: keep-alive
+
+: keep-alive
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": "The"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " user"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " wants"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " me"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " to"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " read"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " notes"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": "."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": "txt"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " and"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " tell"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " them"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " its"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " first"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " line"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": "."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " Let"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " me"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " read"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " the"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " file"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": "."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_9f40bde3a02048febabf6f6c", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\": \"notes.txt\"}"}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}], "timings": {"cache_n": 0, "prompt_n": 112, "prompt_ms": 54.4, "prompt_per_token_ms": 0.486, "prompt_per_second": 2058.8, "predicted_n": 59, "predicted_ms": 430.5, "predicted_per_token_ms": 7.297, "predicted_per_second": 137.0, "draft_n": 0, "draft_n_accepted": 0}}
+
+data: {"id": "chatcmpl-6305d35c03d142269d44a658", "object": "chat.completion.chunk", "created": 1795542983, "model": "inkling-2-mini-sq-20", "choices": [], "usage": {"prompt_tokens": 112, "completion_tokens": 59, "total_tokens": 171, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 24}}}
+
+data: [DONE]
+

@@ -168,14 +168,12 @@ describe('chrome-render — one 36px header row (area 3, owner pick A + Copy vis
               : b.id === 'artifactReviewCollapseButton' ? 'close' : b.className));
   }
 
-  test('the header row holds Copy, Wrap, More and Close; Download and Maximize live in More', () => {
+  test('the header row holds Copy, Wrap, More and Close; Download lives in More', () => {
     const doc = mount();
     const cluster = doc.querySelector('.artifact-panel-header .artifact-panel-header-actions');
     assert.ok(cluster.querySelector('[data-artifact-panel-wrap]'), 'Wrap moves into the header');
     assert.equal(doc.querySelector('.artifact-panel-controls [data-artifact-panel-wrap]'), null, 'no second Wrap');
     assert.equal(doc.querySelector('[data-artifact-panel-download]'), null, 'Download is a More item, not a header icon');
-    const restore = cluster.querySelector('[data-artifact-panel-maximize]');
-    assert.ok(restore && restore.classList.contains('hidden'), 'the Restore slot exists but shows only while maximized');
     // Wrap starts hidden (text bodies only), so the resting order is Copy, More, Close.
     assert.deepEqual(actionOrder(doc), ['copy', 'more', 'close']);
     cluster.querySelector('[data-artifact-panel-wrap]').classList.remove('hidden');
@@ -242,10 +240,6 @@ describe('chrome-render — one 36px header row (area 3, owner pick A + Copy vis
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-panel-wrap\[aria-pressed="true"\][^{]*\{[^}]*background: var\(--widget-action-bg\);/, 'pressed Wrap is visible');
   });
 
-  test('Copy folds into More below 360px so the title wins', () => {
-    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-review-panel\[data-panel-narrow="true"\] \.artifact-panel-copy \{ display: none; \}/);
-  });
-
   test('no side accent bars on diff or cited rows', () => {
     assert.doesNotMatch(ARTIFACT_PANEL_CSS, /box-shadow: inset 2px 0 0/, 'diff rows keep only the row tint');
     const cited = ARTIFACT_PANEL_CSS.match(/\.artifact-file-preview-row\.is-cited \{[^}]*\}/);
@@ -283,11 +277,9 @@ describe('chrome-render — one 36px header row (area 3, owner pick A + Copy vis
 describe('panel wiring — Wrap, More and non-artifact modes', () => {
   const { createArtifactPanelV2 } = require('../renderer/features/renderer-artifact-panel-v2-render');
 
-  function makePanel(t, { narrow = false, maximized: startMaximized = false } = {}) {
-    let maximized = startMaximized;
+  function makePanel(t) {
     const dom = new JSDOM('<!doctype html><body><aside id="artifactReviewPanel"></aside></body>', { url: 'https://jenny.test/' });
     const panelEl = dom.window.document.getElementById('artifactReviewPanel');
-    if (narrow) panelEl.dataset.panelNarrow = 'true';
     const state = { ui: { artifactReview: { mode: 'artifact' } }, features: { featureFlags: {} }, artifacts: { loadedArtifactId: '', loadedArtifactContent: '', dirtyContent: '', viewModeByKind: {}, savePending: false } };
     const controller = createArtifactPanelV2({ panelEl, state, windowRef: dom.window, appendClientLog: () => {}, showToastMessage: () => {} });
     controller.installed();
@@ -299,14 +291,7 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
       toggle: (kind) => { wrapCalls.push(['toggle', kind]); wrapState[kind] = !wrapState[kind]; return wrapState[kind]; },
     });
     let artifacts = [];
-    let lastArtifact = null;
-    controller.connect({
-      getArtifacts: () => artifacts, getSelectedArtifactSource: () => 'source', isMaximized: () => maximized,
-      // The manager's toggle re-renders the chrome (toggleArtifactReviewMaximized -> afterRender).
-      toggleMaximize: () => { maximized = !maximized; controller.afterRender(lastArtifact); return maximized; },
-    });
-    const afterRender = controller.afterRender;
-    controller.afterRender = (artifact) => { lastArtifact = artifact; return afterRender(artifact); };
+    controller.connect({ getArtifacts: () => artifacts, getSelectedArtifactSource: () => 'source' });
     t.after(() => controller.dispose());
     return { dom, panelEl, state, controller, wrapCalls, wrapState, setArtifacts: (next) => { artifacts = next; } };
   }
@@ -355,55 +340,16 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
     showToolOutput(h, toolOutput);
     h.panelEl.querySelector('[data-artifact-panel-overflow]').click();
     const labels = menuLabels(h);
-    assert.deepEqual(labels, ['Download', 'Maximize panel', 'Jump to chat']);
+    assert.deepEqual(labels, ['Download', 'Jump to chat']);
     assert.equal(h.dom.window.document.querySelector('.inv-context-menu-item:disabled'), null, 'no permanently disabled items');
   });
 
-  test('a generated file lists Reveal, Open externally and Delete; Copy joins More only when narrow', (t) => {
-    const h = makePanel(t, { narrow: true });
+  test('a generated file lists Reveal, Open externally and Delete', (t) => {
+    const h = makePanel(t);
     const generated = { id: 'g1', sessionId: 's1', artifactType: 'generated_file', title: 'a.md', sourceMessageId: 'm1', generatedFile: { artifactId: 'g1', fileName: 'a.md', language: 'markdown' } };
     h.controller.afterRender(generated);
     h.panelEl.querySelector('[data-artifact-panel-overflow]').click();
-    assert.deepEqual(menuLabels(h), ['Copy', 'Download', 'Maximize panel', 'Reveal in folder', 'Open externally', 'Jump to chat', 'Delete artifact']);
-  });
-
-  test('while maximized the header shows a pressed Restore and More drops Maximize', (t) => {
-    const h = makePanel(t, { maximized: true });
-    showToolOutput(h, toolOutput);
-    const restore = h.panelEl.querySelector('[data-artifact-panel-maximize]');
-    assert.equal(restore.classList.contains('hidden'), false);
-    assert.equal(restore.getAttribute('aria-label'), 'Restore panel size');
-    assert.equal(restore.getAttribute('aria-pressed'), 'true');
-    h.panelEl.querySelector('[data-artifact-panel-overflow]').click();
-    assert.equal(menuLabels(h).includes('Maximize panel'), false);
-  });
-
-  test('Restore keeps keyboard focus inside the panel when it hides itself', (t) => {
-    const h = makePanel(t, { maximized: true });
-    showToolOutput(h, toolOutput);
-    const restore = h.panelEl.querySelector('[data-artifact-panel-maximize]');
-    restore.focus();
-    restore.click();
-    assert.equal(restore.classList.contains('hidden'), true, 'Restore leaves once the panel is back to size');
-    const active = h.dom.window.document.activeElement;
-    assert.notEqual(active, restore, 'focus left the hidden Restore');
-    assert.ok(h.panelEl.contains(active) && active !== h.panelEl, 'focus stays on a control inside the panel');
-    assert.equal(active.classList.contains('hidden'), false);
-  });
-
-  test('a maximized rail in file preview or code review still shows Restore', (t) => {
-    for (const mode of ['file_preview', 'code_review']) {
-      const h = makePanel(t, { maximized: true });
-      h.state.ui.artifactReview.mode = mode;
-      h.controller.afterRender(null);
-      const restore = h.panelEl.querySelector('[data-artifact-panel-maximize]');
-      assert.equal(restore.classList.contains('hidden'), false, mode + ': Restore is the way back');
-      restore.focus();
-      restore.click();
-      assert.equal(restore.classList.contains('hidden'), true, mode + ': restored');
-      const active = h.dom.window.document.activeElement;
-      assert.ok(h.panelEl.contains(active) && active !== restore, mode + ': focus stays in the panel');
-    }
+    assert.deepEqual(menuLabels(h), ['Download', 'Reveal in folder', 'Open externally', 'Jump to chat', 'Delete artifact']);
   });
 
   test('non-artifact modes keep the shared header with Close but hide the artifact actions', (t) => {
@@ -413,7 +359,7 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
     for (const mode of ['tasks', 'code_review', 'file_preview', 'subagents', 'notes', 'background_tasks']) {
       h.state.ui.artifactReview.mode = mode;
       h.controller.afterRender(toolOutput);
-      for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-wrap]', '[data-artifact-panel-overflow]', '[data-artifact-panel-maximize]']) {
+      for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-wrap]', '[data-artifact-panel-overflow]']) {
         const visible = (shown[mode] || []).includes(selector);
         assert.equal(h.panelEl.querySelector(selector).classList.contains('hidden'), !visible, mode + ':' + selector);
       }

@@ -68,7 +68,7 @@ test('the reveal handler is threaded through every composition hop', () => {
   assert.match(registry, /openIdeFileAtLineSafe, openIdeTestOutputSafe[^\n]*revealIdePathSafe/);
   assert.match(read('renderer/app/renderer-app-lifecycle-composition.js'), /openIdeFileAtLineSafe, revealIdePathSafe/);
   assert.match(read('renderer/app.js'), /openIdeFileAtLineSafe, revealIdePathSafe/);
-  assert.match(read('renderer/app/renderer-app-controller-composition.js'), /revealIdePath: \(\.\.\.a\) => revealIdePathSafe\(\.\.\.a\)/);
+  assert.match(read('renderer/app/renderer-app-controller-composition.js'), /revealIdePath: \(\.\.\.a\) => ctx\.revealIdePathSafe\(\.\.\.a\)/);
   assert.match(read('renderer/features/renderer-ide-controller.js'), /revealInExplorer: \(path, options\)/);
 });
 

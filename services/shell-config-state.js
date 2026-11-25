@@ -34,6 +34,7 @@ const {
   normalizeValidWorkspaceSessionIds,
   normalizeWorkspaceRoot,
   normalizeWorkspaceState,
+  copyTabPanes,
 } = require('./shell-config-normalizers');
 const { DEFAULT_ASSISTANT_IDENTITY, DEFAULT_SETUP, DEFAULT_SETUP_STEPS, normalizeAssistantIdentity, normalizeSetupState, normalizeSetupStepStatus, normalizeSetupSteps } = require('./shell-config-setup-state');
 const { WEB_SEARCH_PROVIDER_IDS, normalizeWebSearchSettings } = require('./shell-config-web-search');
@@ -310,6 +311,7 @@ function cloneState(state) {
       panes: state.workspace.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId })),
       focusedPaneId: state.workspace.focusedPaneId,
       splitRatio: state.workspace.splitRatio,
+      ...copyTabPanes(state.workspace),
     },
     workspaceIde: normalizeWorkspaceIdeStore(state.workspaceIde),
   };
@@ -381,6 +383,7 @@ function serializeState(state) {
       panes: state.workspace.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId })),
       focusedPaneId: state.workspace.focusedPaneId,
       splitRatio: state.workspace.splitRatio,
+      ...copyTabPanes(state.workspace),
     },
     workspaceIde: normalizeWorkspaceIdeStore(state.workspaceIde || state.workspace_ide),
   };

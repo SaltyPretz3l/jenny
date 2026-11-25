@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from sidecar.ai.tools.build_turn_tools import BUILD_TURN_FLOOR, build_turn_floor_names
+from sidecar.ai.tools.build_turn_tools import (
+    BUILD_TURN_FLOOR,
+    build_turn_floor_names,
+    looks_like_coding_task,
+)
 from sidecar.runtime.chat_models import ChatRequestContext
 
 _PLAN = {"title": "Reconcile the bank export", "steps": ["Edit matching.py"]}
@@ -23,6 +27,12 @@ def _request(**overrides: Any) -> ChatRequestContext:
     }
     fields.update(overrides)
     return ChatRequestContext(**fields)
+
+
+def test_looks_like_coding_task_detects_repo_work_without_generic_chat() -> None:
+    assert looks_like_coding_task("Find the renderer files that own chat streaming.")
+    assert looks_like_coding_task("Please fix the failing sidecar runtime test.")
+    assert not looks_like_coding_task("What should I make for dinner?")
 
 
 def test_floor_is_the_typed_file_tools_plus_run_command() -> None:

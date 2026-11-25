@@ -36,7 +36,8 @@
   function engineName(card) { return viewHelpers().libraryEngineName(card); }
 
   function runningButton(action, tag, name, variant, disabled) {
-    var label = action === 'unload' ? jt('settings.models.running.unload', 'Unload') : jt('settings.models.running.tune', 'Tune');
+    var label = action === 'unload' ? jt('settings.models.running.unload', 'Unload')
+      : action === 'setDefault' ? jt('settings.models.running.setDefault', 'Set as default') : jt('settings.models.running.tune', 'Tune');
     return lazy('inventoryActionButton', function () { return require('../../inventory/action-button'); })({
       id: action, label: label, variant: variant, size: 'sm', disabled: disabled, ariaLabel: label + ' ' + name,
       className: 'model-card-action model-card-action--' + action,
@@ -52,7 +53,7 @@
   }
 
   function runningMeta(card) {
-    if (isHosted(card)) return jt('settings.models.running.hosted', '{provider} · runs on the provider\'s servers', { provider: String(card.engineType) });
+    if (isHosted(card)) return jt('settings.models.running.hosted', 'Cloud · {provider} · runs on the provider\'s servers', { provider: String(card.engineType) });
     var parts = [engineName(card)];
     if (contextLabel(card.contextLength)) parts.push(jt('settings.models.running.context', '{n} context', { n: contextLabel(card.contextLength) }));
     if (card.mtp && card.mtp.enabled === true) parts.push(jt('settings.models.running.mtp', 'MTP'));
@@ -72,6 +73,35 @@
       ? (measured ? jt('settings.models.running.previewOverMeasured', 'would use {n} · {m} more than this card has', params) : jt('settings.models.running.previewOver', 'would use about {n} · {m} more than this card has', params))
       : (measured ? jt('settings.models.running.previewFitsMeasured', 'would use {n} · {m} left free', params) : jt('settings.models.running.previewFits', 'would use about {n} · {m} left free', params));
     return '<span class="mm-preview' + (over ? ' mm-preview--over' : '') + '"><b>' + escapeHtml(name) + '</b> ' + escapeHtml(words) + '</span>';
+  }
+
+  // The bar and its legend: o = { bar, loading, idle, shown, need, vramMb, preview }; shared with the title-bar popover.
+  function buildMemoryMeter(o) {
+    var bar = o.bar; var loading = o.loading; var idle = o.idle; var shown = o.shown; var need = o.need; var vramMb = o.vramMb; var preview = o.preview;
+    var fill = loading || shown ? percent(need, vramMb) : 0;
+    var barHtml = '';
+    if (bar) {
+      var aria = loading ? jt('settings.models.running.ariaReserving', 'GPU memory: reserving about {n} of {total}', { n: gb(need), total: gb(vramMb) })
+        : need > 0 && shown ? jt('settings.models.running.ariaInUse', 'GPU memory: {n} in use of {total}', { n: gb(need), total: gb(vramMb) })
+          : jt('settings.models.running.ariaFree', 'GPU memory: {total} free', { total: gb(vramMb) });
+      barHtml = '<div class="mm-bar" role="img" aria-label="' + escapeHtml(aria) + '"><i class="mm-fill" style="width:' + fill + '%"></i>'
+        + (preview ? '<i class="mm-ghost' + (preview.vramRequiredMb > vramMb ? ' mm-ghost--over' : '') + '" style="width:' + percent(preview.vramRequiredMb, vramMb) + '%"></i>' : '')
+        + [8, 16, 24].filter(function (t) { return t * 1024 < vramMb; }).map(function (t) {
+          return '<i class="mm-tick" style="inset-inline-start:' + percent(t * 1024, vramMb) + '%"><span>' + t + '</span></i>';
+        }).join('') + '</div>';
+    }
+    var legend = '';
+    if (bar && loading) {
+      legend = '<span>' + escapeHtml(jt('settings.models.running.reserving', 'Reserving about {n}', { n: gb(need) })) + '</span><span class="mm-free">'
+        + escapeHtml(jt('settings.models.running.willStayFree', '{n} will stay free', { n: gb(Math.max(0, vramMb - need)) })) + '</span>';
+    } else if (bar && shown && need > 0) {
+      legend = (preview ? previewLegend(preview, vramMb) : '<span><b>' + escapeHtml(gb(need)) + '</b> '
+        + escapeHtml(shown.fitSource === 'observed' ? jt('settings.models.running.inUseMeasured', 'in use · measured') : jt('settings.models.running.inUseEstimated', 'in use · estimated')) + '</span>')
+        + '<span class="mm-free">' + escapeHtml(jt('settings.models.running.free', '{n} free', { n: gb(Math.max(0, vramMb - need)) })) + '</span>';
+    } else if (bar && idle) {
+      legend = (preview ? previewLegend(preview, vramMb) : '') + '<span class="mm-free">' + escapeHtml(jt('settings.models.running.free', '{n} free', { n: gb(vramMb) })) + '</span>';
+    }
+    return { barHtml: barHtml, legend: legend };
   }
 
   // input: { merged: { cards, hardware }, activation, activeModelId, preferredModel, hardwarePending, preview }
@@ -109,35 +139,19 @@
           ? jt('settings.models.running.idleHint', 'Pick a model below, or Jenny loads {model} with your next message.', { model: o.preferredModel })
           : jt('settings.models.running.idleHintPlain', 'Pick a model below.')) + '</span><span class="mm-actions"></span>';
     } else {
-      head = '<span class="mm-name" title="' + escapeHtml(tag) + '">' + escapeHtml(name) + '</span><span class="mm-meta">' + escapeHtml(shown ? runningMeta(shown) : '') + '</span>'
+      var local = Boolean(shown) && lazy('modelLibraryMerge', function () { return require('./model-library-merge'); }).isLocalOrUnknownEngine(shown);
+      var isDefault = Boolean(shown) && shown.preferredLocal === true;
+      head = '<span class="mm-name" title="' + escapeHtml(tag) + '">' + escapeHtml(name) + '</span>'
+        + (isDefault ? '<span class="mrow-flag mm-default-flag" title="' + escapeHtml(jt('settings.models.library.flag.defaultTip', 'New chats set to Default use this model')) + '">' + escapeHtml(jt('settings.models.library.flag.default', 'Default')) + '</span>' : '')
+        + '<span class="mm-meta">' + escapeHtml(shown ? runningMeta(shown) : '') + '</span>'
         + '<span class="mm-actions">' + runningButton('unload', tag, name, 'secondary', disabled)
-        + (shown && lazy('modelLibraryMerge', function () { return require('./model-library-merge'); }).isLocalOrUnknownEngine(shown)
-          ? runningButton('tune', tag, name, 'ghost', disabled) : '') + '</span>';
+        + (local ? runningButton('tune', tag, name, 'ghost', disabled) : '')
+        + (local && !isDefault ? runningButton('setDefault', tag, name, 'ghost', disabled) : '') + '</span>';
     }
     var preview = bar && !loading && o.preview && Number(o.preview.vramRequiredMb) > 0 ? o.preview : null;
-    var fill = loading || shown ? percent(need, vramMb) : 0;
-    var barHtml = '';
-    if (bar) {
-      var aria = loading ? jt('settings.models.running.ariaReserving', 'GPU memory: reserving about {n} of {total}', { n: gb(need), total: gb(vramMb) })
-        : need > 0 && shown ? jt('settings.models.running.ariaInUse', 'GPU memory: {n} in use of {total}', { n: gb(need), total: gb(vramMb) })
-          : jt('settings.models.running.ariaFree', 'GPU memory: {total} free', { total: gb(vramMb) });
-      barHtml = '<div class="mm-bar" role="img" aria-label="' + escapeHtml(aria) + '"><i class="mm-fill" style="width:' + fill + '%"></i>'
-        + (preview ? '<i class="mm-ghost' + (preview.vramRequiredMb > vramMb ? ' mm-ghost--over' : '') + '" style="width:' + percent(preview.vramRequiredMb, vramMb) + '%"></i>' : '')
-        + [8, 16, 24].filter(function (t) { return t * 1024 < vramMb; }).map(function (t) {
-          return '<i class="mm-tick" style="inset-inline-start:' + percent(t * 1024, vramMb) + '%"><span>' + t + '</span></i>';
-        }).join('') + '</div>';
-    }
-    var legend = '';
-    if (bar && loading) {
-      legend = '<span>' + escapeHtml(jt('settings.models.running.reserving', 'Reserving about {n}', { n: gb(need) })) + '</span><span class="mm-free">'
-        + escapeHtml(jt('settings.models.running.willStayFree', '{n} will stay free', { n: gb(Math.max(0, vramMb - need)) })) + '</span>';
-    } else if (bar && shown && need > 0) {
-      legend = (preview ? previewLegend(preview, vramMb) : '<span><b>' + escapeHtml(gb(need)) + '</b> '
-        + escapeHtml(shown.fitSource === 'observed' ? jt('settings.models.running.inUseMeasured', 'in use · measured') : jt('settings.models.running.inUseEstimated', 'in use · estimated')) + '</span>')
-        + '<span class="mm-free">' + escapeHtml(jt('settings.models.running.free', '{n} free', { n: gb(Math.max(0, vramMb - need)) })) + '</span>';
-    } else if (bar && idle) {
-      legend = (preview ? previewLegend(preview, vramMb) : '') + '<span class="mm-free">' + escapeHtml(jt('settings.models.running.free', '{n} free', { n: gb(vramMb) })) + '</span>';
-    }
+    var meter = buildMemoryMeter({ bar: bar, loading: loading, idle: idle, shown: shown, need: need, vramMb: vramMb, preview: preview });
+    var barHtml = meter.barHtml;
+    var legend = meter.legend;
     return '<div class="mm' + (loading ? ' mm--loading' : idle ? ' mm--idle' : '') + '"><div class="mm-head">' + head + '</div>' + barHtml
       + (hosted ? '' : '<div class="mm-legend">' + legend + cardLine(hardware, o.hardwarePending) + '</div>') + '</div>';
   }
@@ -561,6 +575,6 @@
 
   return {
     createModelLibrarySectionRender: createModelLibrarySectionRender, focusQuietly: focusQuietly,
-    buildRunningNow: buildRunningNow, createRunningNow: createRunningNow,
+    buildRunningNow: buildRunningNow, createRunningNow: createRunningNow, buildMemoryMeter: buildMemoryMeter,
   };
 });

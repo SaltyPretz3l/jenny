@@ -12,7 +12,7 @@ const CLIENT = Object.freeze([
   'team_disposed', 'team_force_local', 'team_connection_stopped', 'team_conversation_limit', 'team_conversation_not_open',
   'team_conversation_open', 'team_transfer_busy', 'team_transfer_failed', 'team_upload_empty', 'team_upload_changed',
   'team_upload_unreadable', 'team_download_changed', 'team_download_folder_invalid', 'team_download_folder_not_empty',
-  'team_download_write_failed',
+  'team_download_write_failed', 'team_download_file_too_large',
   // Row 175 (F6): the box text kept on this PC cannot be written (the team's folder is gone or newer).
   'team_project_drafts_unavailable',
 ]);

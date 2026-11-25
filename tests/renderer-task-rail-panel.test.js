@@ -2,13 +2,15 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 const {
   loadRendererApp, waitForUi, row, companionState, bootOptions, stubWorkspaceLayout,
   checklistMessage, setSessionChecklist, menuItem,
   boot, openTasks,
 } = require('./helpers/task-rail-panel-fixture');
+const { createTaskRail, preferredSide } = require('../renderer/features/renderer-task-rail');
 
-test('toggle opens tasks mode with rail layout and narrow overlay behavior', async (t) => {
+test('toggle opens tasks mode in the panel the workbench stack hosts', async (t) => {
   const app = await boot({ active: [row('open-1', 'Open one')] });
   t.after(() => app.dispose());
   const panel = await openTasks(app);
@@ -16,16 +18,7 @@ test('toggle opens tasks mode with rail layout and narrow overlay behavior', asy
   assert.equal(panel.classList.contains('hidden'), false);
   assert.equal(panel.dataset.artifactReviewMode, 'tasks');
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
-  assert.match(app.window.document.getElementById('workspace').style.getPropertyValue('--artifact-review-width'), /^\d+px$/);
-
-  const medium = await boot({ active: [row('medium', 'Medium')] }, { workspaceWidth: 900 });
-  t.after(() => medium.dispose());
-  assert.equal((await openTasks(medium)).classList.contains('artifact-review-overlay'), false);
-
-  const narrow = await boot({ active: [row('narrow', 'Narrow')] }, { workspaceWidth: 760 });
-  t.after(() => narrow.dispose());
-  const narrowPanel = await openTasks(narrow);
-  assert.equal(narrowPanel.classList.contains('artifact-review-overlay'), true);
+  assert.equal(panel.style.width, '', 'the stack owns the panel size');
 });
 
 test('flag off omits the tasks toggle', async (t) => {
@@ -113,7 +106,7 @@ test('filters partition active, resolved, and archived rows', async (t) => {
   // All leads the filter and is the default.
   const options = Array.from(panel.querySelectorAll('.task-rail-filters .inv-segmented-option'));
   assert.deepEqual(options.map((option) => option.dataset.value), ['all', 'open', 'done']);
-  assert.equal(panel.querySelector('.inv-segmented-option[aria-checked="true"]').dataset.value, 'all');
+  assert.equal(panel.querySelector('.task-rail-filters .inv-segmented-option[aria-checked="true"]').dataset.value, 'all');
   assert.match(panel.textContent, /Open task[\s\S]*Done task/);
   assert.match(panel.textContent, /Archived task/);
   panel.querySelector('.inv-segmented-option[data-value="open"]').click();
@@ -257,7 +250,7 @@ test('send list composes open tasks only', async (t) => {
   assert.doesNotMatch(value, /Already done/);
 });
 
-test('overflow exposes task actions and delete invokes companion IPC', async (t) => {
+test('overflow exposes task actions; Delete hides the row at once and the Undo line brings it back', async (t) => {
   const app = await boot({ recentResolved: [row('menu-task', 'Menu task', { status: 'resolved' })] });
   t.after(() => app.dispose());
   const panel = await openTasks(app);
@@ -274,7 +267,14 @@ test('overflow exposes task actions and delete invokes companion IPC', async (t)
     .find((button) => button.textContent.includes('Delete'));
   deleteButton.click();
   await waitForUi(app.window, 30);
-  assert.deepEqual(app.shell.__state.companionCalls.deleteFollowUp, ['menu-task']);
+  assert.equal(panel.querySelector('[data-task-id="menu-task"]'), null, 'the row is gone at once');
+  assert.match(panel.querySelector('.project-tab-undo[role="status"]').textContent, /Task deleted\./);
+  assert.deepEqual(app.shell.__state.companionCalls.deleteFollowUp, [], 'nothing is deleted while Undo is on offer');
+  panel.querySelector('[data-action="task-rail-undo-delete"]').click();
+  await waitForUi(app.window, 10);
+  assert.ok(panel.querySelector('[data-task-id="menu-task"]'), 'Undo puts the task back');
+  assert.equal(panel.querySelector('.project-tab-undo'), null);
+  assert.deepEqual(app.shell.__state.companionCalls.deleteFollowUp, []);
 });
 
 test('overflow offers Reopen instead of defer on a done task and keeps defer on an open one', async (t) => {
@@ -300,7 +300,7 @@ test('overflow offers Reopen instead of defer on a done task and keeps defer on 
   assert.deepEqual(app.shell.__state.companionCalls.deferFollowUp || [], []);
 });
 
-test('checklist refresh is exposed, rerenders visible content, and contributes open items to the count', async (t) => {
+test('the Tasks list has no checklist section; the checklist stays readable from the rail', async (t) => {
   const app = await boot({ active: [row('follow-up', 'Follow-up')] });
   t.after(() => app.dispose());
   const panel = await openTasks(app);
@@ -308,105 +308,226 @@ test('checklist refresh is exposed, rerenders visible content, and contributes o
   setSessionChecklist(app, sessionId, [
     { content: 'Model pending', status: 'pending' },
     { content: 'Model active', status: 'in_progress' },
-    { content: 'Model done', status: 'completed' },
   ]);
-
   assert.equal(typeof app.window.rendererTaskRailActions.refreshChecklist, 'function');
   app.window.rendererTaskRailActions.refreshChecklist();
-  assert.match(panel.textContent, /Model pending[\s\S]*Model active[\s\S]*Model done/, 'All shows finished steps too');
-  panel.querySelector('.inv-segmented-option[data-value="open"]').click();
-  await waitForUi(app.window, 10);
-  assert.match(panel.textContent, /Model pending/);
-  assert.match(panel.textContent, /Model active/);
-  assert.doesNotMatch(panel.textContent, /Model done/, 'finished steps fold in Open');
-  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '3');
-  panel.querySelector('[data-action="task-rail-checklist-fold"]').click();
-  await waitForUi(app.window, 10);
-  const unfolded = app.window.document.getElementById('artifactReviewPanel');
-  assert.match(unfolded.textContent, /Model done/);
-  const fold = unfolded.querySelector('[data-action="task-rail-checklist-fold"]');
-  assert.equal(fold.getAttribute('aria-expanded'), 'true');
-  // The fold belongs to this chat: another chat starts folded, and this one folds back.
-  setSessionChecklist(app, 'other-chat', [{ content: 'Other pending', status: 'pending' }, { content: 'Other done', status: 'completed' }]);
-  app.window.__rendererState.currentSessionId = 'other-chat';
-  app.window.rendererTaskRailActions.refreshChecklist();
-  const other = app.window.document.getElementById('artifactReviewPanel');
-  assert.equal(other.querySelector('[data-action="task-rail-checklist-fold"]').getAttribute('aria-expanded'), 'false');
-  assert.doesNotMatch(other.textContent, /Other done/);
-  app.window.__rendererState.currentSessionId = sessionId;
-  app.window.rendererTaskRailActions.refreshChecklist();
-  app.window.document.getElementById('artifactReviewPanel').querySelector('[data-action="task-rail-checklist-fold"]').click();
-  await waitForUi(app.window, 10);
-  assert.doesNotMatch(app.window.document.getElementById('artifactReviewPanel').textContent, /Model done/);
+  assert.match(panel.textContent, /Follow-up/);
+  assert.doesNotMatch(panel.textContent, /Model pending|Model active|Jenny.s checklist/);
+  assert.equal(panel.querySelector('.task-rail-check'), null);
+  assert.equal(app.window.rendererTaskRailActions.openTaskCount(), 1, 'steps are not follow-ups');
 });
 
-test('checklist refresh skips other sessions and never discards an open editor or draft', async (t) => {
+test('a refresh never discards an open editor or draft', async (t) => {
   const app = await boot({ active: [row('edit-me', 'Stored title')] });
   t.after(() => app.dispose());
   const panel = await openTasks(app);
   const sessionId = app.window.__rendererState.currentSessionId;
-  setSessionChecklist(app, sessionId, [{ content: 'Model pending', status: 'pending' }]);
-
-  app.window.rendererTaskRailActions.refreshChecklist({ sessionId: 'someone-else' });
-  assert.doesNotMatch(panel.textContent, /Model pending/, 'another session\'s todo_write does not repaint this rail');
-
   panel.querySelector('[data-action="task-rail-overflow"]').click();
   menuItem(app, 'Edit').click();
   await waitForUi(app.window, 10);
   const title = panel.querySelector('#taskRailEditTitle-edit-me');
   title.value = 'Unsaved title';
   app.window.rendererTaskRailActions.refreshChecklist({ sessionId });
-  assert.equal(panel.querySelector('#taskRailEditTitle-edit-me').value, 'Unsaved title', 'the editor survives a checklist refresh');
-  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '2', 'the count still syncs');
+  assert.equal(panel.querySelector('#taskRailEditTitle-edit-me').value, 'Unsaved title', 'the editor survives a refresh');
 });
 
-test('rerender derives the checklist from the current session after a session switch', async (t) => {
+test('a mutation refreshes the rows and the count; nothing is painted onto the toolbar button', async (t) => {
   const app = await boot({});
   t.after(() => app.dispose());
   const panel = await openTasks(app);
-  const firstSessionId = app.window.__rendererState.currentSessionId;
-  setSessionChecklist(app, firstSessionId, [{ content: 'First session item', status: 'pending' }]);
-  app.window.rendererTaskRailActions.refreshChecklist();
-  assert.match(panel.textContent, /First session item/);
-
-  const secondSessionId = 'session-second';
-  setSessionChecklist(app, secondSessionId, [{ content: 'Second session item', status: 'pending' }]);
-  app.window.__rendererState.currentSessionId = secondSessionId;
-  app.window.rendererTaskRailActions.refreshChecklist();
-  await waitForUi(app.window, 10);
-  assert.match(panel.textContent, /Second session item/);
-  assert.doesNotMatch(panel.textContent, /First session item/);
-});
-
-test('mutation refreshes rows and the count badge hides at zero', async (t) => {
-  const app = await boot({});
-  t.after(() => app.dispose());
-  const panel = await openTasks(app);
-  const count = app.window.document.querySelector('[data-task-count]');
-  assert.equal(count.hidden, true);
+  const toggle = app.window.document.getElementById('chatTimelineTasksToggle');
+  assert.equal(app.window.rendererTaskRailActions.openTaskCount(), 0);
   app.shell.__state.companionState = companionState({ active: [row('fresh', 'Fresh task')] });
   await app.window.rendererTaskBoard.notifyMutation();
   assert.match(panel.textContent, /Fresh task/);
-  assert.equal(count.textContent, '1');
-  assert.equal(count.hidden, false);
+  assert.equal(app.window.rendererTaskRailActions.openTaskCount(), 1);
+  assert.equal(app.window.document.querySelector('[data-task-count]'), null, 'no count element is painted anywhere');
+  assert.equal(toggle.getAttribute('aria-label'), 'Tasks');
+  assert.equal(toggle.getAttribute('title'), 'Tasks');
+  assert.match(panel.querySelector('.project-tab-head').textContent, /Tasks 1/, 'the count lives on the head row switch');
 });
 
-// Area 3 strip: the Tasks toggle names its count, closing Tasks never touches
-// the artifact dismissal, and Tasks shares the panel header and its Close.
-test('the Tasks toggle reads "Tasks, N open" in its name and tooltip, plain "Tasks" at zero', async (t) => {
-  const app = await boot({ active: [row('a', 'A'), row('b', 'B'), row('c', 'C')] });
-  t.after(() => app.dispose());
-  await openTasks(app);
-  const toggle = app.window.document.getElementById('chatTimelineTasksToggle');
-  assert.equal(toggle.getAttribute('aria-label'), 'Tasks, 3 open');
-  assert.equal(toggle.getAttribute('title'), 'Tasks, 3 open');
+// The rail on its own (a bare jsdom panel and stubbed deps): the Project tab's head row, the
+// delete-with-Undo line and the signals, without the whole app.
+function directRail(options = {}) {
+  const dom = new JSDOM('<body><div id="artifactReviewPanel"><div id="host"></div></div></body>', { pretendToBeVisual: true });
+  const { window } = dom;
+  const stored = {};
+  Object.defineProperty(window, 'localStorage', { value: { getItem: (key) => (key in stored ? stored[key] : null), setItem: (key, value) => { stored[key] = value; } } });
+  const calls = { open: [], deletes: [], notes: 0, signals: 0 };
+  const entries = (options.ids || ['t1', 't2', 't3']).map((id) => ({
+    followUpId: id, title: `Task ${id}`, status: 'active', sourceKind: 'agent_task', projectId: 'project_a',
+  }));
+  const state = {
+    features: { featureFlags: { tools_task_board_enabled: true } },
+    sessions: [{ id: 's1', project_id: 'project_a' }, { id: 's2', project_id: 'project_b' }],
+    currentSessionId: 's1',
+    companion: { openLoopsBoard: { active: entries, deferred: [], recentResolved: [], archived: [] } },
+    messagesBySession: new Map(),
+    ui: { artifactReview: { mode: 'tasks', enabled: true, collapsed: false } },
+  };
+  window.jennyShell = {
+    companion: {
+      async deleteFollowUp(id) {
+        calls.deletes.push(id);
+        state.companion = { openLoopsBoard: { ...state.companion.openLoopsBoard, active: state.companion.openLoopsBoard.active.filter((entry) => entry.followUpId !== id) } };
+        return state.companion;
+      },
+    },
+  };
+  const panel = window.document.getElementById('artifactReviewPanel');
+  const host = window.document.getElementById('host');
+  let menuItems = [];
+  let controller = null;
+  controller = createTaskRail({
+    state,
+    windowRef: window,
+    dom: { artifactReviewPanel: panel },
+    inventory: { contextMenu: { show: (config) => { menuItems = config.items; }, hide() {} } },
+    openArtifactRail: (mode) => { calls.open.push(mode); state.ui.artifactReview.mode = mode; },
+    renderArtifactReviewPanel: () => { if (state.ui.artifactReview.mode === 'tasks') controller.renderRailContent({ previewContent: host }); },
+    ...(options.openNotes ? { openNotes: () => { calls.notes += 1; } } : {}),
+    onSignalsChanged: () => { calls.signals += 1; },
+  });
+  controller.bind();
+  controller.renderRailContent({ previewContent: host });
+  const q = (selector) => host.querySelector(selector);
+  const deleteTask = (id) => {
+    q(`[data-task-id="${id}"] [data-action="task-rail-overflow"]`).click();
+    menuItems.find((item) => item.label === 'Delete').action();
+  };
+  const ids = () => Array.from(host.querySelectorAll('[data-task-id]')).map((el) => el.dataset.taskId).filter((id, index, all) => all.indexOf(id) === index);
+  return { controller, window, state, host, q, calls, deleteTask, ids, stored };
+}
 
-  const empty = await boot({});
-  t.after(() => empty.dispose());
-  await openTasks(empty);
-  const emptyToggle = empty.window.document.getElementById('chatTimelineTasksToggle');
-  assert.equal(emptyToggle.getAttribute('aria-label'), 'Tasks');
-  assert.equal(emptyToggle.getAttribute('title'), 'Tasks');
+test('Delete takes the row away at once and shows one Undo line under the list', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  assert.deepEqual(r.ids(), ['t1', 't2', 't3']);
+  r.deleteTask('t2');
+  assert.deepEqual(r.ids(), ['t1', 't3']);
+  const line = r.q('.task-rail-list + .project-tab-undo');
+  assert.ok(line, 'the line sits directly under the list');
+  assert.equal(line.getAttribute('role'), 'status');
+  assert.equal(line.querySelector('span').textContent, 'Task deleted.');
+  assert.equal(line.querySelector('button').textContent, 'Undo');
+  assert.deepEqual(r.calls.deletes, [], 'the store is not touched while Undo is on offer');
+  assert.equal(r.controller.openTaskCount(), 2, 'the count already drops');
+});
+
+test('Undo puts the task back in its place, as it was, and returns focus to it', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  r.deleteTask('t2');
+  r.q('[data-action="task-rail-undo-delete"]').click();
+  assert.deepEqual(r.ids(), ['t1', 't2', 't3'], 'same order');
+  assert.equal(r.q('[data-task-id="t2"] .task-rail-title').textContent, 'Task t2');
+  assert.equal(r.q('.project-tab-undo'), null);
+  assert.equal(r.window.document.activeElement, r.q('[data-task-id="t2"] [data-action="task-rail-toggle"]'));
+  assert.deepEqual(r.calls.deletes, []);
+  assert.equal(r.controller.openTaskCount(), 3);
+});
+
+test('Deleting another task replaces the line and makes the first deletion for good', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  r.deleteTask('t1');
+  r.deleteTask('t3');
+  await waitForUi(r.window, 10);
+  assert.deepEqual(r.calls.deletes, ['t1']);
+  assert.equal(r.host.querySelectorAll('.project-tab-undo').length, 1, 'one line, for the latest task');
+  assert.deepEqual(r.ids(), ['t2']);
+  r.q('[data-action="task-rail-undo-delete"]').click();
+  assert.deepEqual(r.ids(), ['t2', 't3'], 'Undo restores the latest, not the one already gone');
+});
+
+test('Closing the tab, switching side or changing project ends the Undo line with the deletion made', async (t) => {
+  const closing = directRail();
+  t.after(() => closing.controller.dispose());
+  closing.deleteTask('t1');
+  await closing.controller.settlePendingDelete();
+  assert.deepEqual(closing.calls.deletes, ['t1']);
+  assert.equal(closing.q('.project-tab-undo'), null);
+
+  const side = directRail({ openNotes: true });
+  t.after(() => side.controller.dispose());
+  side.deleteTask('t2');
+  side.q('[data-inv-segmented="project-tab-side"]').dispatchEvent(new side.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'project-tab-side', value: 'notes' } }));
+  await waitForUi(side.window, 10);
+  assert.deepEqual(side.calls.deletes, ['t2']);
+
+  const moved = directRail();
+  t.after(() => moved.controller.dispose());
+  moved.deleteTask('t3');
+  moved.state.currentSessionId = 's2';
+  moved.controller.renderRailContent({ previewContent: moved.host });
+  await waitForUi(moved.window, 10);
+  assert.deepEqual(moved.calls.deletes, ['t3']);
+  assert.equal(moved.q('.project-tab-undo'), null);
+});
+
+test('A failed deletion brings the row back and says so', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  r.window.jennyShell.companion.deleteFollowUp = async () => { throw new Error('boom'); };
+  r.deleteTask('t1');
+  await r.controller.settlePendingDelete();
+  assert.deepEqual(r.ids(), ['t1', 't2', 't3']);
+});
+
+test('Choosing Notes on the switch opens the notes mode, remembers the side and tells the strip nothing else', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  assert.equal(preferredSide('project_a', r.window.localStorage), 'tasks', 'the side shown is the side remembered');
+  const group = r.q('[data-inv-segmented="project-tab-side"]');
+  group.dispatchEvent(new r.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'project-tab-side', value: 'notes' } }));
+  assert.deepEqual(r.calls.open, ['notes'], 'the open function gets the notes mode');
+  assert.equal(preferredSide('project_a', r.window.localStorage), 'notes');
+  // The Tasks segment is the side already shown.
+  group.dispatchEvent(new r.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'project-tab-side', value: 'tasks' } }));
+  assert.deepEqual(r.calls.open, ['notes']);
+});
+
+test('The Notes choice goes through the openNotes dependency when the shell supplies one', async (t) => {
+  const r = directRail({ openNotes: true });
+  t.after(() => r.controller.dispose());
+  r.q('[data-inv-segmented="project-tab-side"]').dispatchEvent(new r.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'project-tab-side', value: 'notes' } }));
+  await waitForUi(r.window, 5);
+  assert.equal(r.calls.notes, 1);
+  assert.deepEqual(r.calls.open, []);
+});
+
+test('Showing the Tasks side is remembered per project, bounded to the 50 most recent', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  assert.equal(preferredSide('project_a', r.window.localStorage), 'tasks', 'what was shown last is the side');
+  assert.equal(preferredSide('nobody', r.window.localStorage), '');
+  const render = require('../renderer/features/renderer-task-rail-render');
+  for (let index = 0; index < 60; index += 1) render.rememberSide(`p${index}`, index % 2 ? 'notes' : 'tasks', r.window.localStorage);
+  const kept = Object.keys(JSON.parse(r.stored['jenny.projectTab.side']));
+  assert.equal(kept.length, 50);
+  assert.equal(kept.at(-1), 'p59');
+  assert.equal(render.preferredSide('p0', r.window.localStorage), '');
+  assert.equal(render.preferredSide('p59', r.window.localStorage), 'notes');
+  assert.equal(render.preferredSide('p58', { getItem() { throw new Error('blocked'); } }), '', 'a blocked store is harmless');
+});
+
+test('The strip is told when the open-task count changes, and only then', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  const first = r.calls.signals;
+  assert.ok(first >= 1);
+  r.controller.refreshChecklist();
+  assert.equal(r.calls.signals, first, 'an unchanged count says nothing');
+  r.deleteTask('t1');
+  assert.equal(r.calls.signals, first + 1);
+});
+
+test('currentChecklist() reads the chat\'s todo_write steps for the Session tab', async (t) => {
+  const r = directRail();
+  t.after(() => r.controller.dispose());
+  r.state.messagesBySession.set('s1', [checklistMessage([{ content: 'Step one', status: 'in_progress' }])]);
+  assert.deepEqual(r.controller.currentChecklist().items, [{ content: 'Step one', status: 'in_progress' }]);
 });
 
 test('closing Tasks, from the strip or the header Close, leaves the artifact prefs untouched', async (t) => {

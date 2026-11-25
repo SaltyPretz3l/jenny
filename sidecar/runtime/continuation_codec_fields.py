@@ -10,7 +10,9 @@ SESSION_RUNTIME_CONTINUATION_KIND = "before_tool_dispatch"
 SESSION_RUNTIME_DEPENDENCY_KIND = "before_dependency_wait"
 SESSION_RUNTIME_DECISION_KIND = "before_decision_wait"
 MAX_CONTINUATION_BODY_BYTES = 1024 * 1024
-MAX_CONTINUATION_TOOL_CALLS = 256
+MAX_CONTINUATION_TOOL_CALLS = 256  # calls in one batch
+# A turn's budget: the largest tools-per-turn setting (500) plus the browser's 30 steps.
+MAX_CONTINUATION_TOOL_CALL_LIMIT = 530
 MAX_CONTINUATION_ITERATIONS = 10_000
 MAX_ACTIVE_BUDGET_MS = 7 * 24 * 60 * 60 * 1000
 MAX_SAFE_INTEGER = (2**53) - 1
@@ -223,7 +225,7 @@ def _normalize_position(
         position["tool_call_limit"],
         "tool_call_limit",
         minimum=1,
-        maximum=MAX_CONTINUATION_TOOL_CALLS,
+        maximum=MAX_CONTINUATION_TOOL_CALL_LIMIT,
     )
     consumed = _integer(
         position["tool_calls_consumed"],

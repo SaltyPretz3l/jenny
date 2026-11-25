@@ -11,14 +11,12 @@
   gap: var(--space-5);
 }
 
-.settings-control-tower-summary {
-  margin: 0;
+.settings-readiness-fold > summary {
+  color: var(--text-secondary);
 }
 
-.settings-control-tower-capabilities {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
+.settings-readiness-fold .settings-control-tower-list {
+  margin-top: var(--space-2);
 }
 
 .settings-control-tower-list {

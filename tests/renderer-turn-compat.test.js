@@ -86,7 +86,7 @@ test('completed segmented turns coalesce into one turn article while rowless sib
   await waitForUi(window, 80);
 
   // The turn activity envelope coalesces the whole turn into the first
-  // assistant article: pre-tool text, the tool row, then post-tool text.
+  // assistant article: steps heading, pre-tool text, the tool row, then post-tool text.
   const turnArticle = timeline.querySelector('article[data-message-id="assistant_turn_compat"]');
   assert.ok(turnArticle, 'the turn should render on the first assistant article');
   assert.equal(
@@ -97,7 +97,9 @@ test('completed segmented turns coalesce into one turn article while rowless sib
   assert.match(String(turnArticle.getAttribute('data-turn-id') || ''), /turn_compat|stream-turn-compat/);
   const rowOrder = Array.from(turnArticle.querySelectorAll('[data-row-kind]'))
     .map((row) => `${row.getAttribute('data-row-kind')}:${row.getAttribute('data-source-message-id')}`);
+  // Row 192: a turn with steps leads with one steps-heading row (no source message).
   assert.deepEqual(rowOrder, [
+    'work_ledger:null',
     'assistant_text:assistant_turn_compat',
     'tool_call:tool_use_turn_compat',
     'assistant_text:assistant_turn_compat_seg1',

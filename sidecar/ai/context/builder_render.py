@@ -32,8 +32,8 @@ class _BuilderRenderMixin:
     _workspace_root: Path | None
     _subagent_model_guidance: Any = None
 
-    # Both renderers take the request-effective root from the hub instead of
-    # reading ``_workspace_root``: an unbound request must render neither block.
+    # The renderer takes the request-effective root from the hub instead of
+    # reading ``_workspace_root``: an unbound request must render no block.
     @staticmethod
     def _render_workspace_manifest_block(*, enabled: bool, workspace_root: Path | None) -> str:
         if enabled is not True or workspace_root is None:
@@ -41,25 +41,6 @@ class _BuilderRenderMixin:
         from sidecar.ai.tools.workspace_manifest import render_workspace_manifest_block
 
         return render_workspace_manifest_block(workspace_root)
-
-    @staticmethod
-    def _render_task_capsule_block(
-        *,
-        enabled: bool,
-        workspace_root: Path | None,
-        latest_user_content: str,
-        tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None,
-    ) -> str:
-        if enabled is not True or workspace_root is None:
-            return ""
-        from sidecar.ai.context.task_capsule import build_coding_task_capsule
-
-        return build_coding_task_capsule(
-            workspace_root,
-            latest_user_content=latest_user_content,
-            enabled=enabled,
-            tool_statuses=tool_statuses,
-        )
 
     def build_memory_recall_system_message(
         self,

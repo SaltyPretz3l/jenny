@@ -50,6 +50,8 @@ SAFETY_MODE_STRICT_REASON = "strict safety mode blocks network tools"
 TOOL_NOT_EXPOSED_REASON = "model/runtime does not expose this turn"
 PLAN_MODE_ONLY_REASON = "tool is available only in plan mode"
 PROPOSE_MODE_ONLY_REASON = "tool is available only in propose mode"
+# Row 196: the computer tool works from pictures, so a model that cannot see is not offered it.
+VISION_REQUIRED_REASON = "the active model cannot see pictures"
 
 
 def current_info_remediation(reason: str | None) -> str:
@@ -110,6 +112,8 @@ class ToolAssemblyContext:
     include_deferred_tools: bool = True
     # The request's effective safety mode (owner D3); None reads the config.
     safety_mode: str | None = None
+    # Whether the active model takes pictures (row 196: the computer tool needs it).
+    engine_supports_vision: bool = True
 
 
 @dataclass(frozen=True)
@@ -362,7 +366,8 @@ def _strict_safety_mode_blocks(
     context: ToolAssemblyContext,
 ) -> bool:
     mode = _safety_mode(context.safety_mode) if context.safety_mode else _safety_mode(context.config)
-    if descriptor.tool_family == "browser_use":
+    # The browser and the real mouse and keyboard (row 196) are off in strict and paranoid modes.
+    if descriptor.tool_family in {"browser_use", "computer_use"}:
         return mode in {"strict", "paranoid"}
     return mode == "strict" and descriptor.tool_family == "web"
 
@@ -405,6 +410,8 @@ def _base_unavailable_reason(
         return SAFETY_MODE_STRICT_REASON
     if descriptor.availability.platforms and sys.platform not in descriptor.availability.platforms:
         return PLATFORM_UNSUPPORTED_REASON
+    if descriptor.tool_family == "computer_use" and not context.engine_supports_vision:
+        return VISION_REQUIRED_REASON
     if descriptor.availability.workspace_required and not _workspace_root_present(context):
         return WORKSPACE_REQUIRED_REASON
     if not descriptor.runtime_registered:

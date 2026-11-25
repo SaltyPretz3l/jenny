@@ -60,33 +60,6 @@ class _FakeTransport(MCPTransport):
             raise self.failures.pop(0)
         return {"content": [{"type": "text", "text": f"{tool_name} ok"}]}
 
-    def list_resources(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
-        del cursor, timeout_seconds
-        return {"resources": []}
-
-    def read_resource(
-        self,
-        uri: str,
-        *,
-        timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
-        del uri, timeout_seconds
-        return {"contents": []}
-
-    def list_resource_templates(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-    ) -> dict[str, Any]:
-        del cursor, timeout_seconds
-        return {"resourceTemplates": []}
-
     def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
         return []
 
@@ -928,7 +901,7 @@ def test_one_server_setup_defect_does_not_abort_the_servers_after_it(monkeypatch
     assert [(f.name, f.code) for f in failures] == [("broken", "CMP-MCP-0004")]
 
 
-def test_client_publishes_the_approved_surface_plus_resource_adapters(monkeypatch: Any) -> None:
+def test_client_publishes_the_approved_surface_only(monkeypatch: Any) -> None:
     from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
 
     tools = [{"name": "lookup", "description": " Search ", "side_effecting": False,
@@ -939,9 +912,9 @@ def test_client_publishes_the_approved_surface_plus_resource_adapters(monkeypatc
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
     client.configure((MCPServerConfig(name="docs", transport="stdio", command="python",
                                       approved_tools_digest=tools_digest(summary)),),
-                     sse_enabled=False, resources_enabled=True)
+                     sse_enabled=False)
     names = sorted(tool.server_tool_name for tool in client.available_tools)
-    assert names == ["list_resource_templates", "list_resources", "lookup", "read_resource"]
+    assert names == ["lookup"]
     descriptor = next(tool for tool in client.available_tools if tool.server_tool_name == "lookup")
     assert descriptor.description == "Search"
     assert descriptor.input_schema == {"type": "object"}

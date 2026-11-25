@@ -63,6 +63,7 @@
     // Row 54: an NInfer row's drawer (context window + MTP through jennyShell.ninfer).
     var ninferModule = root.rendererModelTuningNinfer || (typeof require === 'function' ? require('./renderer-model-tuning-ninfer') : null);
     var ninferSection = null;
+    var strataSection = null; // lazy, resolved on open
     var pickFailure = ''; // the status copy a failed pick put up
     var pickingGguf = null; // the drawer generation whose pick (dialog, then probe) is in flight
     var pickingRuntime = null;
@@ -122,21 +123,20 @@
       return Boolean(engineType) && SUPPORTED_ENGINES.has(engineType);
     }
 
-    function ninferActive() {
-      return Boolean(ninferSection && ninferSection.active());
-    }
+    // The managed engine's section (NInfer or Strata) that replaces the Engine section for this row, or null.
+    function managedSection() { return [ninferSection, strataSection].find(function (section) { return section && section.active(); }) || null; }
 
     function supportsContextTuning() {
       var engineType = resolveEngineType();
       // NInfer's context window is the runtime's own (--max-context), set in its section.
-      return Boolean(engineType) && (engineType === 'ollama' || engineType === 'openai-compatible') && !ninferActive();
+      return Boolean(engineType) && (engineType === 'ollama' || engineType === 'openai-compatible') && !managedSection();
     }
 
     function engineSectionEnabled() {
       var engineType = resolveEngineType();
       return shellState?.features?.featureFlags?.llama_server_acceleration === true
         && (engineType === 'ollama' || engineType === 'openai-compatible')
-        && Boolean(windowRef?.jennyShell?.engines) && !ninferActive();
+        && Boolean(windowRef?.jennyShell?.engines) && !managedSection();
     }
 
     function deriveEngineState() {
@@ -168,11 +168,12 @@
       if (engineType === 'ollama') return 'Ollama';
       if (engineType === 'vllm') return 'vLLM';
       if (engineType === 'openai-compatible') {
-        // NInfer serves this engine when the row says so, or the status snapshot names NInfer as the
+        // NInfer or Strata serves this engine when the row says so, or the status snapshot names it as the
         // managed server for this very model; another row keeps its llama-server identity.
         var managed = (activeState?.status || shellState?.diagnosticsSnapshot)?.runtime?.managed_server;
-        var servesThisModel = managed?.kind === 'ninfer' && String(managed.alias || '') === String(activeModelId || '');
-        return ninferActive() || servesThisModel ? 'NInfer' : 'llama-server';
+        var section = managedSection();
+        var kind = section ? (section === ninferSection ? 'ninfer' : 'strata') : (String(managed?.alias || '') === String(activeModelId || '') ? managed?.kind : '');
+        return { ninfer: 'NInfer', strata: 'Strata' }[kind] || 'llama-server';
       }
       return engineType || jt('models.tuning.engineUnknown', 'engine unknown');
     }
@@ -187,19 +188,18 @@
     }
 
     function buildEngineSection() {
-      if (ninferActive()) {
+      var segmented = inventory.segmentedControl || windowRef.inventorySegmentedControl;
+      var toggleModule = inventory.toggleSwitch || windowRef.inventoryToggleSwitch;
+      if (managedSection()) {
         var selectFieldModule = inventory.selectField || windowRef.inventorySelectField;
-        var ninferToggle = inventory.toggleSwitch || windowRef.inventoryToggleSwitch;
-        return ninferSection.html({
-          selectField: selectFieldModule, pending: pending,
-          toggleSwitch: typeof ninferToggle === 'function' ? ninferToggle : ninferToggle?.toggleSwitch,
+        return managedSection().html({
+          selectField: selectFieldModule, pending: pending, segmentedControl: typeof segmented === 'function' ? segmented : segmented?.segmentedControl,
+          toggleSwitch: typeof toggleModule === 'function' ? toggleModule : toggleModule?.toggleSwitch,
           actionButton: inventory.actionButton || windowRef.inventoryActionButton,
           rowHtml: rows.rowHtml, sectionHtml: rows.sectionHtml,
         });
       }
       if (!engineSectionEnabled() || !engineView) return '';
-      var segmented = inventory.segmentedControl || windowRef.inventorySegmentedControl;
-      var toggleModule = inventory.toggleSwitch || windowRef.inventoryToggleSwitch;
       return engineUtils.buildEngineSectionHtml({
         view: engineView,
         draft: engineDraft,
@@ -325,14 +325,14 @@
       if (engineSectionEnabled() && engineDraft) {
         dirty.push.apply(dirty, engineUtils.engineDirtyFields(engineView, engineDraft));
       }
-      if (ninferActive()) dirty.push.apply(dirty, ninferSection.dirtyRows());
+      dirty.push.apply(dirty, managedSection()?.dirtyRows() || []);
       return dirty;
     }
 
     function updateDirtyState(host) {
       var dirty = dirtyFields(host);
       var dirtySet = new Set(dirty);
-      var busy = pending || (ninferActive() && ninferSection.busy());
+      var busy = pending || Boolean(managedSection()?.busy());
       var contextInvalid = rows.contextValueInvalid(host, contextBounds());
       var saveButton = host?.querySelector?.('[data-action="save-model-tuning"]');
       if (saveButton) {
@@ -384,27 +384,24 @@
       updateDirtyState(boundActionsHost);
     }
 
-    // Back to the saved settings: every draft (fields, engine, NInfer) is rebuilt.
+    // Back to the saved settings: every draft (fields, engine, NInfer or Strata) is rebuilt.
     function discardDraft() {
-      // Never mid-apply: discarding the NInfer draft then would leave a change that undoes the apply.
-      if (pending || (ninferActive() && ninferSection.busy())) return;
+      // Never mid-apply: discarding the managed engine's draft then would leave a change that undoes the apply.
+      if (pending || managedSection()?.busy()) return;
       if (engineView) deriveEngineState();
-      if (ninferActive()) ninferSection.discard?.();
+      managedSection()?.discard?.();
       statusMessage = '';
       render();
     }
 
     function handleTuningChange(event) {
-      // The NInfer context select keeps its own draft and Apply; it is no generic tuning field.
-      if (ninferActive() && ninferSection.onChange(event)) { render(); return; }
+      // The NInfer and Strata context selects keep their own draft and Apply; they are no generic tuning field.
+      if (managedSection()?.onChange(event)) { render(); return; }
       if (event?.type === 'change' && event.target?.id === 'modelTuningContextLength') syncContextCustom(boundActionsHost, true);
       updateDirtyState(boundActionsHost);
     }
 
-    function applyNinfer() {
-      if (!ninferActive()) return;
-      void ninferSection.apply(function () { if (visible && !disposed) render(); });
-    }
+    function applyManaged() { void managedSection()?.apply(function () { if (visible && !disposed) render(); }); }
 
     function handleEngineChange(event) {
       if (event?.detail?.id !== 'modelTuningEngine' || !engineDraft) return;
@@ -418,8 +415,13 @@
       updateDirtyState(boundActionsHost);
     }
 
+    // Slots and memory format belong to the Strata section; every other segmented control is the Engine's.
+    function handleSegmentedChange(event) {
+      if (strataSection?.active() && strataSection.onSegment(event)) updateDirtyState(boundActionsHost); else handleEngineChange(event);
+    }
+
     function handleMtpChange(event) {
-      if (ninferActive() && ninferSection.onToggle(event)) { render(); return; }
+      if (managedSection()?.onToggle(event)) { render(); return; }
       if (event?.detail?.id !== 'modelTuningMtp' || !engineDraft) return;
       engineDraft.mtp = Boolean(event.detail.checked);
       updateDirtyState(boundActionsHost);
@@ -525,7 +527,7 @@
         boundActionsHost = host;
         host.addEventListener('input', handleTuningChange);
         host.addEventListener('change', handleTuningChange);
-        host.addEventListener('inv-segmented-change', handleEngineChange);
+        host.addEventListener('inv-segmented-change', handleSegmentedChange);
         host.addEventListener('inv-toggle-change', handleMtpChange);
         host.addEventListener('click', revertField);
       }
@@ -542,7 +544,7 @@
       host?.querySelector?.('[data-action="choose-model-gguf"]')?.addEventListener('click', chooseGguf);
       host?.querySelector?.('[data-action="choose-llama-server-runtime"]')?.addEventListener('click', chooseRuntime);
       host?.querySelector?.('[data-action="use-bundled-llama-server"]')?.addEventListener('click', useBundledRuntime);
-      host?.querySelector?.('[data-action="apply-ninfer-tuning"]')?.addEventListener('click', applyNinfer);
+      host?.querySelector?.('[data-action="apply-ninfer-tuning"], [data-action="apply-strata-tuning"]')?.addEventListener('click', applyManaged);
       (root.rendererModelTuningCompanions || (typeof require === 'function' ? require('./renderer-model-tuning-companions') : null))
         ?.mount?.(host, { tag: activeModelId, modelPath: engineView?.effectiveModelPath, serving: Boolean(engineView?.serving), restart: function () { return restartManagedServer('engine'); } });
       updateDirtyState(host);
@@ -818,14 +820,14 @@
     }
 
     async function save() {
-      if (pending || disposed || (ninferActive() && ninferSection.busy())) return;
+      if (pending || disposed || managedSection()?.busy()) return;
       var operationGeneration = generation, operationModelId = activeModelId;
       var stale = function () {
         return disposed || !visible || generation !== operationGeneration || activeModelId !== operationModelId;
       };
       var host = documentRef?.getElementById?.('modelTuningDrawer');
-      // NInfer rows count toward "Apply N changes": Apply commits them too, after the profile.
-      var ninferRows = ninferActive() ? ninferSection.dirtyRows() : [];
+      // NInfer and Strata rows count toward "Apply N changes": Apply commits them too, after the profile.
+      var ninferRows = managedSection()?.dirtyRows() || [];
       var dirty = dirtyFields(host).filter(function (field) { return !ninferRows.includes(field); });
       var draft = readTuningDraft(host);
       var tuningDirty = dirty.filter(function (field) { return !['engine', 'mtp', 'modelPath', 'runtimePath'].includes(field); });
@@ -842,10 +844,10 @@
         if (contextLength !== hydratedContextLength) patch.contextLength = contextLength;
       }
       var contextChanged = Object.hasOwn(patch, 'contextLength');
-      if (ninferRows.length) { // no Engine section beside NInfer: nothing else restarts
+      if (ninferRows.length) { // no Engine section beside a managed engine: nothing else restarts
         var profileApplied = dirty.length ? await applyPatch(patch, draft) : true;
         if (!dirty.length) statusMessage = '';
-        return profileApplied && !stale() ? ninferSection.apply(function () { if (visible && !disposed) render(); }) : profileApplied;
+        return profileApplied && !stale() ? managedSection().apply(function () { if (visible && !disposed) render(); }) : profileApplied;
       }
       if (tuningDirty.length === dirty.length) {
         var applied = await applyPatch(patch, draft);
@@ -934,7 +936,7 @@
     function reset() {
       var host = boundActionsHost;
       host?.querySelectorAll?.('.model-tuning-drawer-grid [data-model-tuning-field]').forEach(function (control) {
-        if (control.closest('[data-model-tuning-engine]') || control.closest('[data-model-tuning-ninfer]')) return;
+        if (control.closest('[data-model-tuning-engine], [data-model-tuning-ninfer], [data-model-tuning-strata]')) return;
         control.value = '';
       });
       syncContextCustom(host, false);
@@ -955,16 +957,14 @@
       engineHints = options?.engines || null; // the library card's merged engine facts, when opened from a card
       engineTypeHint = String(options?.engineTypeHint || '').trim().toLowerCase(); // per open(): resolveEngineType's last resort
       advancedOpen = null; activeState = null; // the fold decides from this model's loaded profile
-      if (!ninferSection && ninferModule && typeof ninferModule.createNinferTuningSection === 'function') {
-        ninferSection = ninferModule.createNinferTuningSection({
-          windowRef: windowRef, escapeHtml: escapeHtml, confirmDialog: confirmDialog,
-          getStreamingCount: function () { return streamingCount(); },
-        });
-      }
+      var sectionDeps = { windowRef: windowRef, escapeHtml: escapeHtml, confirmDialog: confirmDialog, getStreamingCount: function () { return streamingCount(); } };
+      if (!ninferSection && typeof ninferModule?.createNinferTuningSection === 'function') ninferSection = ninferModule.createNinferTuningSection(sectionDeps);
+      if (!strataSection) try { strataSection = (root.rendererModelTuningStrata || (typeof require === 'function' ? require('./renderer-model-tuning-strata') : null))?.createStrataTuningSection?.(sectionDeps) || null; } catch (_e) { /* lazy */ }
       statusMessage = jt('models.tuning.loadingProfile', 'Loading model profile…');
       render();
       var requests = [Promise.resolve().then(function () { return api()?.getState?.(); })];
       if (ninferSection) requests.push(ninferSection.open(options?.ninfer || null));
+      if (strataSection) requests.push(strataSection.open(options?.strata || null));
       if (engineSectionEnabled()) requests.push(
         Promise.resolve().then(function () { return windowRef.jennyShell.engines.getSettings(); }),
         Promise.resolve().then(function () { return windowRef.jennyShell.llamaServer?.listLocalGgufs?.(); }),
@@ -974,8 +974,8 @@
       if (disposed || requestGeneration !== generation) return false;
       activeState = results[0].status === 'fulfilled' && results[0].value && typeof results[0].value === 'object' ? results[0].value : {};
       statusMessage = results[0].status === 'rejected' ? jt('models.tuning.profileUnavailable', 'Model profile is unavailable.') : '';
-      // The NInfer section's read (when present) sits right after the profile; the engine reads follow it.
-      var engineResults = ninferSection ? results.slice(2) : results.slice(1);
+      // The managed sections' reads (when present) sit right after the profile; the engine reads follow them.
+      var engineResults = results.slice(1 + [ninferSection, strataSection].filter(Boolean).length);
       if (engineResults.length) {
         engineSettings = engineResults[0].status === 'fulfilled' ? engineResults[0].value : null;
         localGgufs = engineResults[1].status === 'fulfilled' ? engineResults[1].value : null;
@@ -989,7 +989,7 @@
       if (!visible) return;
       visible = false;
       generation += 1;
-      if (ninferSection) ninferSection.close();
+      ninferSection?.close(); strataSection?.close();
       buildRemedies?.clear(); drawer?.close?.();
     }
 
@@ -999,7 +999,7 @@
       generation += 1;
       boundActionsHost?.removeEventListener?.('input', handleTuningChange);
       boundActionsHost?.removeEventListener?.('change', handleTuningChange);
-      boundActionsHost?.removeEventListener?.('inv-segmented-change', handleEngineChange);
+      boundActionsHost?.removeEventListener?.('inv-segmented-change', handleSegmentedChange);
       boundActionsHost?.removeEventListener?.('inv-toggle-change', handleMtpChange);
       boundActionsHost?.removeEventListener?.('click', revertField);
       boundActionsHost = null;

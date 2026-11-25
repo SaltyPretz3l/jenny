@@ -106,7 +106,7 @@ function createJobTable({ limits, randomBytes }) {
       model: lease.model, stream, state: undefined, reason: null, seq: seq++, continuation: lease.job_count > 0,
       created_at: now, claimed_at: null, last_data_at: null, terminal_at: null, requeued: false,
       request: requestBytes, request_bytes: requestBytes.length, claim_seq: null, next_seq: 0, total_bytes: 0,
-      line_bytes: 0, line_head: '', saw_done: false, watchers: [],
+      line_bytes: 0, line_head: '', saw_done: false, closed_after_done: false, watchers: [],
     };
     const result = transitionJob(record, 'new', 'queued', 'accepted', null, now);
     jobs.set(record.job_id, record);

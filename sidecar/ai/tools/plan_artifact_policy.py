@@ -367,6 +367,7 @@ def prompt_schema_for_context(
         description = (
             "Create one inert, session-scoped Plan Mode document under .jenny/artifacts. "
             "Only Markdown, plain text, Mermaid, JSON, YAML, and CSV classifiers are allowed. "
+            "To show a visual mockup, write a mockup block in your reply instead. "
             "To revise a document you created, pass replaces=<its path> and edits "
             "(or full content)."
         )

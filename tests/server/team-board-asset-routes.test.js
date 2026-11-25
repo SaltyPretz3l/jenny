@@ -17,7 +17,7 @@ const { downloadDisposition } = require('../../server/download-headers');
 const { createBoardAssetRoutes } = require('../../server/team/boards/board-asset-routes');
 const { createTeamBoardAssets } = require('../../server/team/boards/board-host-assets');
 const { createTeamBoardHost } = require('../../server/team/boards/team-board-host');
-const { must, tree } = require('./helpers/team-board-kit');
+const { batch, must, tree } = require('./helpers/team-board-kit');
 const { gif, jpeg, png, sha, webp } = require('./helpers/team-board-pictures');
 const { createTeamProjectFixture } = require('./helpers/team-project-fixture');
 
@@ -349,4 +349,35 @@ test('T6 wiring: the board host serves the snapshot and the pictures on one chai
   now += 7 * 24 * 60 * 60 * 1000 + 1;
   assert.deepEqual(await host.sweeps[1][1](), { ok: true, removed: 1, kept: 0, skipped: 0 });
   assert.equal(fs.existsSync(file), false);
+});
+
+test('H4: the upload hands the store the caller\'s check, so a demotion before the write stores nothing; a late refusal spares a picture a card names', async (t) => {
+  const hold = { before: null, after: null, answer: null };
+  const s = await setup(t, { wrapAssets: (store) => ({ ...store,
+    put: async (args) => {
+      if (hold.before) await hold.before();
+      hold.answer = await store.put(args);
+      if (hold.after) await hold.after(args);
+      return hold.answer;
+    } }) });
+  const { X } = s;
+  // Demoted after the route's own checks and before the store writes: the store itself refuses, nothing reaches the disk.
+  const early = png(60, 3);
+  hold.before = () => s.setRole('carl', 'reader');
+  assert.equal(await s.refused(() => s.putPic('carl', X.id, X.live, early), 'demoted before the write'), 'team_project_read_only');
+  assert.equal(hold.answer.ok, false, 'the store refused: the picture was never written');
+  assert.equal(fs.existsSync(path.join(s.root, X.id, 'assets', `${sha(early)}.png`)), false);
+  hold.before = null;
+  await s.setRole('carl', 'writer');
+  // Another member's card names the picture before the late refusal: it is not taken away.
+  const shared = png(61, 3);
+  hold.after = async () => {
+    await must(s.h.state.boards.apply({ projectId: X.id, boardId: X.live, actor: s.id('alice'), batch: batch(
+      { op: 'card.add', card: { id: '00000000-0000-4000-8000-0000000000a1', kind: 'image', x: 0, y: 0,
+        data: { asset: sha(shared), width: 1, height: 1, alt: '' } } }) }));
+    await s.setRole('carl', 'reader');
+  };
+  assert.equal((await s.putPic('carl', X.id, X.live, shared)).json.error.reason, 'team_project_read_only');
+  assert.equal(fs.existsSync(path.join(s.root, X.id, 'assets', `${sha(shared)}.png`)), true, 'a picture a card names stays');
+  hold.after = null;
 });

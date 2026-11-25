@@ -9,9 +9,11 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const { TEAM_MAX_CONCURRENT_REQUESTS } = require('../../server/config');
+const { createAuthorizer } = require('../../server/team/authorize');
 const { HOST_PART_REQUESTS } = require('../../server/team/model-routes');
+const { createRouteGuard } = require('../../server/team/route-guard');
 const { SMALL } = require('./helpers/model-relay-fixture');
-const { PATH, makeSharing, manifest, put, reasonOf, routeCtx, settle, transfer } = require('./helpers/team-model-fixture');
+const { PATH, fakeRequest, fakeResponse, makeSharing, manifest, put, reasonOf, routeCtx, settle, transfer } = require('./helpers/team-model-fixture');
 
 const BIG = Object.freeze({ ...SMALL, partBytes: 1024 * 1024 }); // one part is 16 stream writes of 64 KiB
 const UNKNOWN = `mxfer_${'C'.repeat(22)}`;
@@ -302,4 +304,42 @@ test('R14-F03: parts a receiver is still being sent count against the 4-part win
   assert.deepEqual([fifth.response.status, alive() <= 4], [200, true]);
   for (const call of open.slice(1)) call.response.emit('finish');
   await Promise.all(open.map((call) => call.done));
+});
+
+// ---- A response that cannot be written to (H18) ------------------------------------------------------------------
+
+// A GET on a part that is ready, with the response set up by `tweak(response)` before the route sees it.
+function readyGet(env, transferId, tweak) {
+  const request = fakeRequest('GET');
+  const response = fakeResponse();
+  tweak(response);
+  const { authorize } = createAuthorizer({ directory: env.dir.directory });
+  const who = env.actors.member;
+  const actor = { member_id: who.member_id, device_id: who.device_id };
+  const ctx = { request, response, pathname: PATH(transferId, 0, 0), deviceId: who.device_id, requestId: 'req_route', actor,
+    authorized: () => true, guard: createRouteGuard({ authorize, actor }) };
+  return { response, done: env.sharing.routes(ctx) };
+}
+
+test('H18: a response that throws on writeHead frees the interval, the part\'s buffer and its flowing slot', async (t) => {
+  const env = makeSharing({ t });
+  const transferId = transfer(env);
+  await put(env, transferId, 0, Buffer.alloc(4, 3));
+  const call = readyGet(env, transferId, (response) => { response.writeHead = () => { throw new Error('headers_failed'); }; });
+  await call.done;
+  const held = env.sharing.resources();
+  assert.deepEqual([held.routes.timers, held.relay.streamParts, held.relay.streamBytes], [0, 0, 0], JSON.stringify(held));
+  assert.equal(call.response.destroyed, true, 'the broken response is cut');
+});
+
+test('H18: a response that is already gone when the part is ready is not streamed to, and nothing stays held', async (t) => {
+  const env = makeSharing({ t });
+  const transferId = transfer(env);
+  await put(env, transferId, 0, Buffer.alloc(4, 3));
+  const call = readyGet(env, transferId, (response) => { response.destroyed = true; });
+  const outcome = await Promise.race([call.done.then(() => 'done'), settle().then(() => 'still held')]);
+  assert.equal(outcome, 'done', 'the request ended without waiting for a timer tick');
+  assert.equal(call.response.status, null, 'no header was written to a gone response');
+  const held = env.sharing.resources();
+  assert.deepEqual([held.routes.timers, held.relay.streamParts], [0, 0]);
 });

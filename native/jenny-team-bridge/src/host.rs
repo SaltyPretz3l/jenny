@@ -198,6 +198,9 @@ where
         },
     };
     let loopback_only = options.loopback_only || start.loopback_only;
+    if !relay::destination_allowed(start.relay.as_ref(), loopback_only) {
+        return fail(&out, Reason::StartInvalid).await;
+    }
     // Never the real router client with loopback sockets: no router can map them, and so no
     // test can reach a real router.
     if start.map_port && options.mapper.is_none() && loopback_only {
@@ -224,6 +227,8 @@ where
         "public_key": b64(endpoint.id().as_bytes()),
         "addresses": addresses,
         "bulk": 1,
+        // Reads `known_keys` (review C3); a parent sends it only to a bridge that says so.
+        "known_keys": 1,
     }))
     .await;
     out.log("team.bridge.started", json!({})).await;
@@ -314,6 +319,9 @@ where
                     out.log("team.bridge.dropped", json!({ "connections": ended }))
                         .await;
                 }
+            }
+            Some(Input::Command(HostCommand::KnownKeys { keys })) => {
+                shared.lock().admission.set_known(keys);
             }
             Some(Input::Command(HostCommand::Stop)) => {
                 shutdown(&shared, &endpoint, tasks).await;

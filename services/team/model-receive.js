@@ -348,6 +348,11 @@ function createModelReceiver({
         if (!spaceHolds(t)) throw reasonError('model_no_space');
         await call(t, t.accepted ? 'resume' : 'accept', { offerId: t.offer.offerId, startPoints: startPoints(t) });
         t.accepted = true;
+      } else if (!t.accepted) {
+        // Every byte is already here (a restart in the middle of placement): this run has no host transfer to complete
+        // unless it takes the offer up again. Best effort: a host that no longer has the offer must not stop the set
+        // from being placed.
+        await quietCall('resume', { offerId: t.offer.offerId, startPoints: startPoints(t) });
       }
       setState(t, 'pulling');
       const files = t.offer.manifest.files;

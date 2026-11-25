@@ -290,3 +290,21 @@ test('3-4b: openAtStart sets a file refused for its content aside with the share
   assert.equal(kept.status().error.reason, 'pool_schema_unsupported');
   assert.equal(fs.readdirSync(path.dirname(newer)).length, 1, 'a newer file is never moved');
 });
+
+// OD-10: the size of each held row is kept, so an append stringifies only the new row and the header.
+test('an append on a held log of 2,000 rows does not stringify the held rows again', (t) => {
+  const entries = Array.from({ length: 2000 }, (_, i) => storedRow(i + 1));
+  let written = null;
+  const log = new UsageLog({
+    filePath: 'memory://usage', clock: createClock(),
+    readJson: () => ({ schema_version: 1, floor_seq: 1, next_seq: 2001, entries }),
+    writeJson: (_file, doc) => { written = doc; },
+  });
+  assert.deepEqual(log.append(row()), { ok: true, seq: 2001 });
+  const stringify = t.mock.method(JSON, 'stringify');
+  assert.deepEqual(log.append(row()), { ok: true, seq: 2002 });
+  const calls = stringify.mock.callCount();
+  stringify.mock.restore();
+  assert.ok(calls <= 4, `an append stringified ${calls} times`);
+  assert.equal(written.entries.length, 2002);
+});

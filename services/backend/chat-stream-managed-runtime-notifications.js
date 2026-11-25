@@ -11,7 +11,6 @@ const {
   isPairedReasoningDelta,
 } = require('./chat-stream-reasoning-delta');
 const {
-  isAgentStatusSurfaceEnabled,
   coordinateWorkLifecycle,
   normalizeAgentProgressNotification,
 } = require('./work-lifecycle-coordinator');
@@ -39,6 +38,7 @@ const {
   stageMidTurnCompactionCandidate,
 } = require('./compaction-midturn-snapshot');
 const { buildContextUsageStreamEvent, rebuildChatDoneUsage } = require('./chat-stream-usage');
+const { noteLiveContextUsage } = require('./live-context-usage');
 const { persistTerminalContextUsage } = require('./session-context-usage');
 const { normalizeCompletion, normalizeResumableStop } = require('./chat-stream-stop-detail');
 const { createCompactionDiagnostics } = require('./turn-diagnostic-compactions');
@@ -186,10 +186,10 @@ function handleNotification(ctx, notification, {
       sessionId: resolvedSessionId,
       requestId: streamId,
     });
-    if (!agentStatus || !isAgentStatusSurfaceEnabled(service, agentStatus)) {
+    if (!agentStatus
+      || !coordinateWorkLifecycle(adapter, { ...agentStatus, requestId: ctx.turnId || streamId })) {
       return;
     }
-    coordinateWorkLifecycle(service, adapter, { ...agentStatus, requestId: ctx.turnId || streamId });
     emitChatStream({
       ...ctx.eventBase,
       ...agentStatus,
@@ -283,6 +283,7 @@ function handleNotification(ctx, notification, {
     } else {
       ctx.toolResultCounts.failed += 1;
     }
+    ctx.toolResultCounts.last = { name: String(params.tool_name || ''), success: params.success === true };
     noteDiagnosticToolEvent({
       callId: String(params.tool_call_id || ''),
       toolName: String(params.tool_name || ''),
@@ -375,11 +376,10 @@ function handleNotification(ctx, notification, {
   const midTurnAck = MID_TURN_ACKS.get(notification.method); // mail / job notice acks (background-job-mid-turn.js)
   if (midTurnAck) return void midTurnAck(ctx, params);
   if (notification.method === 'context.usage') {
-    // Ephemeral mid-turn meter snapshot.
-    emitChatStream({
-      ...buildContextUsageStreamEvent(params, ctx.model),
-      ...ctx.eventBase,
-    }, { channel: 'control' });
+    // Ephemeral mid-turn meter snapshot; jenny_status budgets.context reads the latest one.
+    const event = buildContextUsageStreamEvent(params, ctx.model);
+    noteLiveContextUsage(service, resolvedSessionId, event.usage);
+    emitChatStream({ ...event, ...ctx.eventBase }, { channel: 'control' });
     return;
   }
   if (notification.method === 'chat.done') {

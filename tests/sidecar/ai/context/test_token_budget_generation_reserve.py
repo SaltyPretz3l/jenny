@@ -127,3 +127,32 @@ def test_summariser_admits_the_whole_history_at_the_threshold(
         budget, prompt_tokens=_summariser_prompt_tokens(), backend=_ExactTokenizer()
     )
     assert limit >= budget.error_threshold(num_tools)
+
+
+# -- a provider count: ~90% of the whole window, short of the reply floor (row 183 D1) ----------
+
+
+@pytest.mark.parametrize(
+    ("window", "trigger"),
+    [(350_000, 315_000), (262_144, 235_929), (200_000, 179_520), (65_536, 49_152),
+     (32_768, 24_576)],
+)
+def test_a_provider_count_triggers_at_the_plan_table(window: int, trigger: int) -> None:
+    budget = TokenBudget(
+        context_window=window, max_output_tokens=128_000, fitted_output=True, provider_units=True,
+        tool_overhead_per_tool=900,
+    )
+    assert budget.provider_trigger() == trigger
+    # The message-estimate figure sits below it by the tool schemas, which the count includes.
+    assert budget.auto_compact_threshold(44) == trigger - budget.tool_overhead(44)
+    assert budget.warning_threshold(44) < budget.auto_compact_threshold(44)
+    assert budget.auto_compact_threshold(44) < budget.error_threshold(44)
+    assert budget.provider_error_line() <= window
+
+
+def test_the_estimate_source_keeps_its_reserves() -> None:
+    padded = TokenBudget(context_window=245_000, max_output_tokens=128_000, fitted_output=True)
+    assert padded.auto_compact_threshold(0) == int(padded.effective_context(0) * 0.9)
+    assert padded.auto_compact_threshold(0) < TokenBudget(
+        context_window=245_000, max_output_tokens=128_000, fitted_output=True, provider_units=True,
+    ).auto_compact_threshold(0)

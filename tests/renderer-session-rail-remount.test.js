@@ -20,26 +20,26 @@ test('mounting a rail on a pane that already has one disposes the previous contr
   window.clearInterval = (id) => { timers.cleared.push(id); return nativeClearInterval(id); };
   const mount = () => mountSessionRail({
     pane: fixture.pane,
-    cluster: fixture.doc.getElementById('cluster'),
     chatTimeline: fixture.doc.getElementById('timeline'),
     getSessionId: () => fixture.state.sessionId,
-    getPaneWidth: () => fixture.state.width,
     bridge: fixture.bridge,
     detail: fixture.detail,
     windowRef: window,
     refreshIntervalMs: 5000,
   });
 
+  const fixtureRail = fixture.doc.querySelector('[data-session-rail-root]');
   const first = mount(); // retires the fixture's own rail
   await flush();
+  const firstRail = fixture.doc.querySelector('[data-session-rail-root]');
   const second = (fixture.state.sessionId = 'sess_new', mount());
   await flush();
   try {
     assert.notEqual(second, null);
     assert.notEqual(second, first);
     assert.equal(fixture.doc.querySelectorAll('[data-session-rail-root]').length, 1, 'one rail in the pane');
-    assert.equal(first.elements.rail.isConnected, false, 'the old rail left the document');
-    assert.equal(fixture.api.elements.rail.isConnected, false, 'the fixture rail left the document too');
+    assert.equal(firstRail.isConnected, false, 'the old rail left the document');
+    assert.equal(fixtureRail.isConnected, false, 'the fixture rail left the document too');
     assert.equal(timers.set.length, 2, 'each polling rail set one interval');
     assert.ok(timers.cleared.includes(timers.set[0]), 'the retired rail cleared its poll timer');
     assert.ok(!timers.cleared.includes(timers.set[1]), 'the live rail keeps its timer');

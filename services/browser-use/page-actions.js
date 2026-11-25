@@ -1,5 +1,7 @@
 'use strict';
 
+const { setTimeout: sleep } = require('node:timers/promises');
+
 /**
  * Main-process action layer for model-driven browsing. Each action validates
  * its arguments, asks the injected consent gate, drives trusted native input
@@ -14,6 +16,7 @@ const {
   MAX_TYPE_TEXT_LENGTH,
   PRESS_KEY_CODES,
   normalizePressKey,
+  pressKeyTypesChar,
 } = require('../browser-interaction-utils');
 const {
   holdFrameProduction,
@@ -37,6 +40,9 @@ const PAGE_SCRIPT_TIMEOUT_MS = 1000;
 const MAX_LISTED_OPTIONS = 20;
 const CLICK_TRIES = 2;
 const SHOT_PAINT_CAP_MS = 500;
+const WAIT_MIN_SECONDS = 0.5;
+const WAIT_MAX_SECONDS = 10;
+const WAIT_DEFAULT_SECONDS = 2;
 const SCREEN_ASLEEP_HINT = 'This can happen while the screen is asleep. Try again, or ask the user to wake the screen.';
 
 class InvalidArguments extends Error {}
@@ -105,6 +111,14 @@ function requireText(value, field) {
 function oneOf(value, allowed, fallback, field) {
   if (value === undefined) return fallback;
   if (!allowed.includes(value)) throw new InvalidArguments(`${field} must be ${allowed.join(' or ')}.`);
+  return value;
+}
+
+function waitSeconds(value) {
+  if (value === undefined) return WAIT_DEFAULT_SECONDS;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < WAIT_MIN_SECONDS || value > WAIT_MAX_SECONDS) {
+    throw new InvalidArguments(`seconds must be a number from ${WAIT_MIN_SECONDS} to ${WAIT_MAX_SECONDS}.`);
+  }
   return value;
 }
 
@@ -483,7 +497,7 @@ function createPageActions({ webContents, reader, gate, settler, logger, onTarge
         return fail('element_changed', 'The focus moved, so the key was not pressed. Read the page again.');
       }
       throwIfAborted(signal);
-      if (await sendKeyPress(frameService, session, signal, PRESS_KEY_CODES[key], { withChar: key === 'Enter' || key === 'Space' }) === false) {
+      if (await sendKeyPress(frameService, session, signal, PRESS_KEY_CODES[key], { withChar: pressKeyTypesChar(key) }) === false) {
         return fail('input_not_delivered', `${key} did not reach the page. ${SCREEN_ASLEEP_HINT}`);
       }
       return finishAction(signal, 'pressed', `Pressed ${key}.`, 'action');
@@ -530,7 +544,30 @@ function createPageActions({ webContents, reader, gate, settler, logger, onTarge
     });
   }
 
-  return { navigate, read, find, click, type, select, scroll, press, screenshot };
+  // Watching an animation or a loading page: the page keeps rendering in real time for the wait (the
+  // step itself lifts background throttling, see setStepActive in page-host.js, and the frame hold keeps
+  // a parked view painting), then one screenshot comes back, all in one step instead of a run of screenshots.
+  async function wait(args, { signal } = {}) {
+    let seconds = WAIT_DEFAULT_SECONDS;
+    const stopped = await execute(signal, async () => {
+      seconds = waitSeconds(args?.seconds);
+      await waitForAbortable(Promise.resolve(armView?.({ paints })), signal);
+      const release = holdFrameProduction(session);
+      try {
+        // The signal also clears the timer, so a cancelled wait leaves nothing behind.
+        await waitForAbortable(sleep(seconds * 1000, undefined, { signal }), signal);
+      } finally {
+        release();
+      }
+      return null;
+    });
+    if (stopped) return stopped;
+    const shot = await screenshot(args, { signal });
+    if (!shot?.ok) return shot;
+    return { ...shot, status: 'waited', message: `Waited ${seconds} s. ${shot.message}` };
+  }
+
+  return { navigate, read, find, click, type, select, scroll, press, screenshot, wait };
 }
 
 module.exports = { createPageActions, createReaderBridge };

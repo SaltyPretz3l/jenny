@@ -44,11 +44,11 @@ const INVOKE_METHODS = ['join', 'status', 'leave', 'removeTeam', 'members', 'inv
   // Slice 5-3: the reconnect code.
   'teamReconnectCode', 'hostReconnectCode',
   // Slice 5-5b: the host's internet joining setting; slice 6-7: the host's model relay setting.
-  'hostInternet', 'hostModelRelay', 'hostFileTools',
+  'hostInternet', 'hostModelRelay', 'hostFileTools', 'hostPoolContext',
   // Slice 4e: this PC's GPU sharing, the team's GPUs, GPU use and the team model.
-  'shareStatus', 'shareSet', 'sharePause', 'shareStop', 'gpuList', 'gpuUse', 'teamModelSet', ...LIFECYCLE, ...PROJECT_METHODS, 'projectFiles', 'projectFileRead', 'projectRegenerate', 'projectEditResend', 'projectBranch', 'projectAskTeammate', 'projectHandDriver', 'projectDraftGet', 'projectDraftSet', ...MODEL_METHODS, ...BOARD_METHODS];
+  'shareStatus', 'shareSet', 'sharePause', 'shareStop', 'shareOllamaModels', 'gpuList', 'gpuUse', 'teamModelSet', ...LIFECYCLE, ...PROJECT_METHODS, 'projectFiles', 'projectFileRead', 'projectRegenerate', 'projectEditResend', 'projectBranch', 'projectAskTeammate', 'projectHandDriver', 'projectDraftGet', 'projectDraftSet', ...MODEL_METHODS, ...BOARD_METHODS];
 // Slice 1f-2: the team host this Jenny runs, handled in main by services/team/host/.
-const HOST_INVOKE_METHODS = ['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode', 'hostInternet', 'hostModelRelay', 'hostFileTools', ...LIFECYCLE];
+const HOST_INVOKE_METHODS = ['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode', 'hostInternet', 'hostModelRelay', 'hostFileTools', 'hostPoolContext', ...LIFECYCLE];
 
 function kebab(name) {
   return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);

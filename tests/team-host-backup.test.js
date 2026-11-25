@@ -157,3 +157,92 @@ test('a write that fails part way leaves no file and no temporary file', async (
     'team_backup_write_failed');
   assert.deepEqual(fs.readdirSync(dir), []);
 });
+
+// ------------------------------------------------------------------ H8: short reads and writes, a source that moves
+
+// Every `fs.promises.open` with one of `flags` hands back `change(real, file)` instead of the real handle.
+function wrapHandles(t, flags, change) {
+  const realOpen = fs.promises.open;
+  t.mock.method(fs.promises, 'open', async function open(file, mode, ...rest) {
+    const real = await realOpen.call(this, file, mode, ...rest);
+    return [].concat(flags).includes(mode) ? change(real, file) : real;
+  });
+}
+
+const BYTES_AT_A_TIME = 7;
+
+test('H8: a write that takes only part of a buffer is continued until the whole is written', async (t) => {
+  const dir = tempDir(t);
+  const entries = seedFiles(dir);
+  const target = path.join(dir, 'team.jennyteam');
+  wrapHandles(t, 'wx', (real) => new Proxy(real, { get(handle, key) {
+    if (key !== 'write') return typeof handle[key] === 'function' ? handle[key].bind(handle) : handle[key];
+    return (buffer, offset = 0, length = buffer.length - offset, position) => handle.write(buffer, offset, Math.min(length, BYTES_AT_A_TIME), position);
+  } }));
+  await writeBackup({ target, password: PASSWORD, manifest: { schema: 1, key: 'k' }, entries });
+  t.mock.restoreAll();
+  const back = await readAll(target, PASSWORD);
+  for (const entry of entries.filter((e) => !e.dir)) assert.ok(back.files[entry.rel].equals(fs.readFileSync(entry.abs)), entry.rel);
+});
+
+test('H8: a read that returns less than asked (SMB, NAS) is continued, not taken for a wrong password', async (t) => {
+  const dir = tempDir(t);
+  const entries = seedFiles(dir);
+  const target = path.join(dir, 'team.jennyteam');
+  await writeBackup({ target, password: PASSWORD, manifest: { schema: 1, key: 'k' }, entries });
+  wrapHandles(t, 'r', (real) => new Proxy(real, { get(handle, key) {
+    if (key !== 'read') return typeof handle[key] === 'function' ? handle[key].bind(handle) : handle[key];
+    return (buffer, offset, length, position) => handle.read(buffer, offset, Math.min(length, 1000), position);
+  } }));
+  const back = await readAll(target, PASSWORD);
+  for (const entry of entries.filter((e) => !e.dir)) assert.ok(back.files[entry.rel].equals(fs.readFileSync(entry.abs)), entry.rel);
+  const peeked = await peekBackup(target);
+  assert.equal(peeked.size, fs.statSync(target).size);
+});
+
+// A source whose first read runs `during()` (the file changes under the export).
+function changingSource(t, during) {
+  let done = false;
+  wrapHandles(t, ['r', fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)], (real) => new Proxy(real, { get(handle, key) {
+    if (key !== 'read') return typeof handle[key] === 'function' ? handle[key].bind(handle) : handle[key];
+    return async (...args) => {
+      const answer = await handle.read(...args);
+      if (!done) { done = true; during(); }
+      return answer;
+    };
+  } }));
+}
+
+test('H8: a source file that grows during the export fails it; none is truncated into the backup', async (t) => {
+  const dir = tempDir(t);
+  const entries = seedFiles(dir);
+  const target = path.join(dir, 'team.jennyteam');
+  changingSource(t, () => fs.appendFileSync(entries[1].abs, 'more'));
+  await rejectsWith(writeBackup({ target, password: PASSWORD, manifest: { schema: 1 }, entries }), 'team_backup_source_changed');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['src'], 'no file and no temporary file');
+});
+
+test('H8: a source file that shrinks during the export fails it', async (t) => {
+  const dir = tempDir(t);
+  const entries = seedFiles(dir);
+  const target = path.join(dir, 'team.jennyteam');
+  changingSource(t, () => fs.truncateSync(entries[1].abs, 2));
+  await rejectsWith(writeBackup({ target, password: PASSWORD, manifest: { schema: 1 }, entries }), 'team_backup_source_changed');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['src']);
+});
+
+test('H8: a source that is a link is refused, never followed', async (t) => {
+  const dir = tempDir(t);
+  const entries = seedFiles(dir);
+  const outside = path.join(dir, 'outside.txt');
+  fs.writeFileSync(outside, 'not part of the team');
+  const link = path.join(dir, 'src', 'link.txt');
+  try { fs.symlinkSync(outside, link, 'file'); } catch (error) {
+    if (error?.code === 'EPERM') { t.skip('file links need a privilege here'); return; }
+    throw error;
+  }
+  const target = path.join(dir, 'team.jennyteam');
+  await rejectsWith(writeBackup({ target, password: PASSWORD, manifest: { schema: 1 }, entries: [...entries, { rel: 'link.txt', abs: link }] }),
+    'team_backup_source_changed');
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['outside.txt', 'src']);
+});

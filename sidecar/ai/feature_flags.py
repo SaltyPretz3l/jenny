@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-FEATURE_AGENT_EXECUTOR = "agent_executor"
 FEATURE_SKILLS_SYSTEM = "skills_system"
 FEATURE_TOKEN_BUDGET = "token_budget"
 FEATURE_CONTEXT_COMPACTION = "context_compaction"
@@ -14,7 +13,6 @@ FEATURE_TOOL_SEARCH = "tool_search"
 FEATURE_SHELL_SECURITY = "shell_security"
 FEATURE_STRICT_AUTO_RUN = "strict_auto_run"
 FEATURE_GIT_TRACKING = "git_tracking"
-FEATURE_TASK_LIFECYCLE = "task_lifecycle"
 FEATURE_MULTIPLEXER = "multiplexer"
 FEATURE_CHAT_CANCEL = "chat_cancel"
 FEATURE_PHASE_EVENTS = "phase_events"

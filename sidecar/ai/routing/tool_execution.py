@@ -9,6 +9,7 @@ are plain module-level functions.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.error_codes import (
@@ -343,11 +344,26 @@ def approval_if_needed(
                     retryable=False,
                 )
         auto_run = approval_mode == "auto_run" and not paranoid_mode
+        strict_auto = auto_run and is_feature_flag_enabled(
+            kernel._config.feature_flags or {}, _shell_security.FEATURE_STRICT_AUTO_RUN,
+        )
+        # Row 184 W4 (D2): on Auto, Python inside the project folder and a delete of a file this
+        # turn wrote skip their mandatory card; strict auto and paranoid keep it.
+        auto_scoped = (
+            auto_run and not strict_auto
+            and _admission.auto_runs_without_card(
+                descriptor.name, call.arguments, execution_context,
+            )
+        )
         plan_mode_only = _tools_assembly.mode_only_tool(descriptor)
         # Python is resource-contained but deliberately not a filesystem or
-        # network sandbox. Every initial Python execution remains approval-
-        # gated, even for a one-send auto-run grant or an AUTO policy rule.
-        if _admission.runs_python(descriptor.name, call.arguments) and not approvals_pre_granted:
+        # network sandbox. Outside Auto's project-folder scope every initial
+        # Python execution remains approval-gated, even for an AUTO policy rule.
+        if (
+            _admission.runs_python(descriptor.name, call.arguments)
+            and not approvals_pre_granted
+            and not auto_scoped
+        ):
             return _route_policy_runtime.build_approval_request(
                 ApprovalRequest_, call, descriptor,
                 mode=mode,
@@ -359,6 +375,7 @@ def approval_if_needed(
         if (
             descriptor.name in _admission.ALWAYS_ASK_DESTRUCTIVE_TOOLS
             and not approvals_pre_granted
+            and not auto_scoped
         ):
             return _route_policy_runtime.build_approval_request(
                 ApprovalRequest_, call, descriptor,
@@ -420,11 +437,7 @@ def approval_if_needed(
                 policy_decision=policy_decision,
             )
         if (
-            auto_run
-            and is_feature_flag_enabled(
-                kernel._config.feature_flags or {},
-                _shell_security.FEATURE_STRICT_AUTO_RUN,
-            )
+            strict_auto
             and shell_classification is not None
             and shell_classification.verdict is CommandVerdict.NEEDS_APPROVAL
             and not approvals_pre_granted
@@ -661,6 +674,10 @@ def execute_tool(
     _route_policy_runtime.require_desktop_tool_dispatch(
         descriptor if descriptor is not None else call.tool_id, getattr(kernel, "_config", None)
     )
+    _route_policy_runtime.require_helper_write_dispatch(
+        request_context, descriptor, call.tool_id, frozen_inputs.effective_tool_arguments,
+        synthetic=call.tool_id in _handlers.SYNTHETIC_TOOL_HANDLERS,
+    )
     # Delegate validation normalizes aliases and isolates malformed array items.
     is_delegate = call.tool_id == "delegate"
     validate = (
@@ -769,11 +786,21 @@ def execute_tool(
     if delivery:
         metadata["model_delivery_status"] = delivery
         sanitized_output += "\n" + notice
-    return _outcomes.finalize_tool_outcome(
+    outcome = _outcomes.finalize_tool_outcome(
         call=call, result=result, descriptor=descriptor, runtime=runtime,
         metadata=metadata, sanitized_output=sanitized_output,
         router_output_truncated=router_output_truncated,
         max_response_chars=MAX_RESPONSE_CHARS,
         visible_tool_arguments=visible_tool_arguments,
         outcome_type=ToolExecutionOutcome_,
+    )
+    # Row 184 W2: an image read_file or python_execute made is shown to a vision model.
+    delivery, notice = _preview_vision.admit_tool_images(
+        runtime, getattr(kernel, "_engine", None), call, outcome, descriptor,
+    )
+    if not delivery:
+        return outcome
+    return replace(
+        outcome, output=f"{outcome.output}\n{notice}",
+        metadata={**outcome.metadata, "model_delivery_status": delivery},
     )

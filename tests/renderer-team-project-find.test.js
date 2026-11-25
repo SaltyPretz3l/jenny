@@ -51,7 +51,7 @@ function withHighlights(m) {
   return m.window.CSS.highlights;
 }
 const painted = (registry, name) => (registry.get(name) ? registry.get(name).ranges.map((r) => r.toString()) : []);
-const popRows = (m) => [...m.root.querySelectorAll('#teamTurnPop .reasoning-row-block, #teamTurnPop .tool-call-row')];
+const popRows = (m) => [...m.root.querySelectorAll('[id$="teamTurnPop"] .reasoning-row-block, [id$="teamTurnPop"] .tool-call-row')];
 const openRows = (m) => popRows(m).filter((el) => el.classList.contains('expanded') || el.getAttribute('data-expanded') === 'true').map((el) => (el.classList.contains('tool-call-row') ? 'tool' : 'reason'));
 
 test('the count covers channel rows and Jenny\'s work in reading order; Enter walks them, a match in her work opens the popover with only that row open and the field keeps the focus', async (t) => {
@@ -61,12 +61,12 @@ test('the count covers channel rows and Jenny\'s work in reading order; Enter wa
   key(m, field(m), 'f', { ctrlKey: true });
   typeFind(m, 'hero');
   assert.equal(count(m), '1 of 6', 'u1, the reasoning, the tool output, the answer, u2, the second answer');
-  assert.equal(m.q('#teamTurnPop'), null, 'the first match is a message: no popover');
+  assert.equal(m.q('[id$="teamTurnPop"]'), null, 'the first match is a message: no popover');
   assert.deepEqual(painted(registry, 'chat-search-current'), ['hero'], 'the current match is painted');
   assert.equal(painted(registry, 'chat-search-match').length, 4, 'the four matches in the rows shown are painted (the work\'s are not drawn yet)');
   key(m, input(m), 'Enter');
   assert.equal(count(m), '2 of 6');
-  assert.equal(m.q('#teamTurnPop').dataset.turnId, 'turn_1', 'her work opens on that turn');
+  assert.equal(m.q('[id$="teamTurnPop"]').dataset.turnId, 'turn_1', 'her work opens on that turn');
   assert.deepEqual(openRows(m), ['reason'], 'only the matching row is open');
   assert.equal(m.window.document.activeElement, input(m), 'the focus stays in the field');
   assert.deepEqual(painted(registry, 'chat-search-current'), ['hero'], 'the current match is inside the popover now');
@@ -76,7 +76,7 @@ test('the count covers channel rows and Jenny\'s work in reading order; Enter wa
   assert.equal(m.window.document.activeElement, input(m));
   key(m, input(m), 'Enter');
   assert.equal(count(m), '4 of 6', 'her answer in the channel');
-  assert.ok(m.q('#teamTurnPop'), 'stepping to a message leaves the popover open');
+  assert.ok(m.q('[id$="teamTurnPop"]'), 'stepping to a message leaves the popover open');
   key(m, input(m), 'Enter', { shiftKey: true });
   assert.equal(count(m), '3 of 6', 'Shift+Enter goes back');
   key(m, input(m), 'F3');
@@ -108,11 +108,11 @@ test('Esc closes find and keeps the query and an open popover; opening again sho
   assert.ok(bar(m), 'the magnifier opens it');
   typeFind(m, 'hero');
   key(m, input(m), 'Enter');
-  assert.ok(m.q('#teamTurnPop'));
+  assert.ok(m.q('[id$="teamTurnPop"]'));
   key(m, input(m), 'Escape');
   assert.equal(bar(m), null, 'closed');
   assert.equal(m.q('.team-head').hasAttribute('data-find-open'), false);
-  assert.ok(m.q('#teamTurnPop'), 'the popover stays open');
+  assert.ok(m.q('[id$="teamTurnPop"]'), 'the popover stays open');
   assert.equal(registry.get('chat-search-match'), undefined, 'nothing is painted any more');
   assert.equal(m.window.document.activeElement, m.q('[data-project-action="find"]'), 'the focus goes back to the magnifier');
   key(m, field(m), 'f', { ctrlKey: true });
@@ -163,13 +163,13 @@ test('rows the reader opened by hand shut when find opens one; a row that is not
   withHighlights(m);
   await flush();
   click(m, m.q('.team-turn-chip[data-turn-id="turn_1"]'));
-  for (const toggle of m.root.querySelectorAll('#teamTurnPop [data-tool-row-toggle]')) click(m, toggle);
+  for (const toggle of m.root.querySelectorAll('[id$="teamTurnPop"] [data-tool-row-toggle]')) click(m, toggle);
   assert.deepEqual(openRows(m), ['tool'], 'opened by hand');
   key(m, field(m), 'f', { ctrlKey: true });
   typeFind(m, 'hero');
   key(m, input(m), 'Enter');
   assert.deepEqual(openRows(m), ['reason'], 'only the matching row is open');
-  assert.equal(m.q('#teamTurnPop').dataset.turnId, 'turn_1');
+  assert.equal(m.q('[id$="teamTurnPop"]').dataset.turnId, 'turn_1');
 });
 
 test("the Team tab sends Ctrl+F to the open conversation's find and to its own search everywhere else", () => {

@@ -81,6 +81,13 @@ function createDefaultRegistry(options = {}) {
   }
   // Row 114: the model-driven browser; the caller passes the tools_browser_use_enabled flag.
   if (options.toolsBrowserUseEnabled === true) registry.registerTool(withManifestSchema(browserTool));
+  // Row 197: the Live tab's two tools; the caller passes tools_run_view_enabled (and live_run_view).
+  if (options.toolsRunViewEnabled === true) {
+    registry.registerTool(withManifestSchema(require('./builtin/run-view-look-tool')));
+    registry.registerTool(withManifestSchema(require('./builtin/run-view-restart-tool')));
+  }
+  // Row 196: the real mouse and keyboard; the caller passes tools_computer_use_enabled (Windows only).
+  if (options.toolsComputerUseEnabled === true) registry.registerTool(withManifestSchema(require('./builtin/computer-tool')));
   if (options.toolsImageGenerateEnabled === true) {
     registry.registerTool(withManifestSchema(require('./builtin/image-generate-tool')));
   }

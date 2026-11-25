@@ -68,7 +68,7 @@ function groupHeadings(panel) {
   return Array.from(panel.querySelectorAll('.task-rail-group')).map((group) => group.querySelector('b').textContent);
 }
 
-test('the rail follows the chat project: scope button, rows, badge and filter count', async (t) => {
+test('the rail follows the chat project: scope button, rows, head row count and filter count', async (t) => {
   const app = await bootScoped();
   t.after(() => app.dispose());
   const panel = await openTasks(app);
@@ -81,11 +81,14 @@ test('the rail follows the chat project: scope button, rows, badge and filter co
   assert.doesNotMatch(panel.textContent, /Beta one|Orphan one/);
   assert.equal(panel.querySelector('.inv-segmented-option[data-value="open"]').textContent, 'Open 2');
   assert.equal(panel.querySelector('[data-task-draft-title]').getAttribute('placeholder'), 'Add a task to Alpha');
-  // The badge counts the chat's project only, whatever the rail shows.
-  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '2');
+  // The head row names the chat's project and counts its open follow-ups, whatever the rail shows.
+  assert.equal(panel.querySelector('.project-tab-name').textContent, 'Alpha');
+  assert.equal(panel.querySelector('.project-tab-head [data-value="tasks"]').textContent, 'Tasks 2');
+  assert.equal(app.window.rendererTaskRailActions.openTaskCount(), 2);
   app.window.__rendererState.ui.taskRail.scope = 'all';
   app.window.rendererTaskRailActions.refreshChecklist();
-  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '2', 'the badge ignores the rail scope');
+  assert.equal(app.window.rendererTaskRailActions.openTaskCount(), 2, 'the count ignores the rail scope');
+  assert.equal(panel.querySelector('.project-tab-head [data-value="tasks"]').textContent, 'Tasks 2');
 });
 
 test('the scope menu lists the chat project first, All projects second, with open-task counts', async (t) => {
@@ -175,7 +178,8 @@ test('the rail re-scopes when the active chat changes project and keeps an away 
   assert.equal(scopeButton(app).querySelector('.task-rail-scope-name').textContent, 'Beta');
   assert.match(panel.textContent, /Beta one/);
   assert.doesNotMatch(panel.textContent, /Alpha one/);
-  assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '1');
+  assert.equal(app.window.rendererTaskRailActions.openTaskCount(), 1);
+  assert.equal(panel.querySelector('.project-tab-name').textContent, 'Beta');
 });
 
 test('a picked project that disappears falls back to following the chat', async (t) => {

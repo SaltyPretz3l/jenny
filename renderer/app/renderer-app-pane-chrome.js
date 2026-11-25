@@ -37,6 +37,10 @@
   // An unchanged render writes nothing (a same-value attribute or text write still mutates the DOM).
   function setProp(node, key, value) { if (node && node[key] !== value) node[key] = value; }
   function setData(node, key, value) { if (node && node.dataset[key] !== value) node.dataset[key] = value; }
+  function setAttr(node, name, value) { if (node.getAttribute(name) !== value) node.setAttribute(name, value); }
+  function composerV2Render() {
+    return globalThis.rendererComposerV2Render || (typeof require === 'function' ? require('../chat/renderer-composer-v2-render') : null);
+  }
 
   function createPaneChrome(deps) {
     var options = deps.options || {};
@@ -71,10 +75,22 @@
       var queued = Number(call('countQueuedSends', sessionId)) || 0;
       var lifecycle = normalizeId(call('getSendLifecycle', sessionId)) || 'idle';
       setProp(pane.dom.chatInput, 'disabled', offline || !authenticated || approvalPending);
+      var v2 = composerV2Render();
       if (pane.sendButton) {
         setProp(pane.sendButton, 'disabled', !authenticated || !usable || !(hasDraft || hasFiles) || approvalPending);
-        setProp(pane.sendButton, 'textContent', streaming ? jt('chat.panes.queue', 'Queue') : '↑');
-        pane.sendButton.classList.toggle('composer-send-queue', streaming);
+        syncPaneSendButton(pane.sendButton, streaming, v2);
+      }
+      // Row 192 C11: the status line in the pane's own mode-chips row (the loading line keeps priority).
+      if (v2) {
+        pane.liveTurnList = streaming ? v2.findLiveTurnList(pane.dom.chatTimeline, pane.liveTurnList) : null;
+        var modeLabel = pane.root && pane.root.querySelector('[data-inv-chip="composer-run-mode"] .inv-chip-label');
+        v2.syncComposerStatusLine(pane.root, v2.describeComposerStatus({
+          running: streaming,
+          waiting: approvalPending,
+          liveStep: pane.liveTurnList ? v2.readLiveStep(pane.liveTurnList) : null,
+          queueHint: streaming && (hasDraft || hasFiles),
+          runModeLabel: (modeLabel && String(modeLabel.textContent || '').trim()) || jt('composer.runMode.ask', 'Ask'),
+        }));
       }
       if (pane.stopButton) {
         pane.stopButton.classList.toggle('hidden', !streaming);
@@ -89,6 +105,19 @@
       if (pane.rail) pane.rail.sync({ offline: offline, authenticated: authenticated }); // W2-2a: model, effort, run mode
       syncPaneAttachments(pane);
       if (pane.notices.status) call('renderComposerStatusNotice', { node: pane.notices.status, sessionId: sessionId }); // W3-1
+    }
+
+    // Row 192 C11: the pane's shorter Queue is Send's fixed-size round button with the queue icon.
+    function syncPaneSendButton(button, streaming, v2) {
+      if (streaming && v2 && v2.QUEUE_ICON) {
+        if (!button.querySelector(':scope > svg')) button.innerHTML = v2.QUEUE_ICON;
+      } else {
+        setProp(button, 'textContent', streaming ? jt('chat.panes.queue', 'Queue') : '↑');
+      }
+      setAttr(button, 'aria-label', streaming ? jt('chat.panes.queue', 'Queue') : jt('composer.send', 'Send'));
+      setAttr(button, 'title', streaming ? jt('chat.panes.queueTitle', 'Queue this message. It runs when this turn ends.') : jt('composer.sendTitle', 'Send message (Enter)'));
+      button.classList.toggle('composer-send-queue', streaming);
+      button.classList.toggle('composer-send-queue--icon', streaming);
     }
 
     /* ── W2-2b: the pane's tray renders from its session's queue (the
@@ -214,7 +243,6 @@
         composerAttachShortcut: pane.attachButton || null,
         jumpToTopButton: null,
         jumpToBottomButton: buildPaneJumpControl(q('.chat-thread-stage')),
-        artifactReviewResizer: null,
         artifactReviewPanel: null,
         chatContextPanel: null,
       });

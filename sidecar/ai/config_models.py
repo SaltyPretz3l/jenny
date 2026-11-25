@@ -11,6 +11,14 @@ from sidecar.ai.local_subagent_endpoint import LocalSubagentEngine
 from sidecar.ai.personality import DEFAULT_ASSISTANT_NAME, DEFAULT_PERSONALITY_BASE_PROMPT
 from sidecar.ai.tools.tool_search import DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE
 
+# Engines that run a cloud frontier model. Resource limits key off the ACTIVE
+# (post-fallback) engine, never the requested one.
+CLOUD_ENGINE_TYPES = frozenset({"chatgpt", "codex-cli", "api-provider"})
+
+
+def is_cloud_engine_type(engine_type: object) -> bool:
+    return str(engine_type or "").strip().lower() in CLOUD_ENGINE_TYPES
+
 SYSTEM_PROMPT_DEFAULT = DEFAULT_PERSONALITY_BASE_PROMPT
 MAX_SUBAGENT_PREFERRED_MODELS = 16
 _API_PROVIDER_MODEL_PREFIX = "api-provider/"
@@ -365,11 +373,12 @@ class RuntimeConfig:
     electron_tool_bridge_enabled: bool = False
     tools_worktree_enabled: bool = False
     tools_subagents_enabled: bool = True
-    tools_mcp_resources_enabled: bool = False
     tools_automations_enabled: bool = False
     tools_workspace_present_enabled: bool = False
     tools_preview_test_enabled: bool = False
     tools_browser_use_enabled: bool = False
+    tools_run_view_enabled: bool = False
+    tools_computer_use_enabled: bool = False
     tools_verify_enabled: bool = False
     tools_image_generate_enabled: bool = False
     tools_home_enabled: bool = False
@@ -409,7 +418,6 @@ class RuntimeConfig:
     session_environment_overlay_enabled: bool = True
     tool_result_envelope_enabled: bool = True
     interrupted_turn_receipts_overlay_enabled: bool = True
-    tools_task_capsule_enabled: bool = False
     tools_python_runtime_enabled: bool = False
     tools_python_runtime_timeout_seconds: int = 30
     tools_python_runtime_max_memory_mb: int = 512

@@ -16,7 +16,6 @@
  *   F4  translated run-mode segments never break inside a word.
  *   N2  the body-level .composer-popover has a real surface; a sub-menu over
  *       the list is opaque.
- *   N3  the pane kicker's project tag stays one line.
  */
 
 const test = require('node:test');
@@ -86,14 +85,23 @@ test('F3: the split minimum is a pane the streaming composer can lay out (pixel 
   assert.ok(minimum >= MIN_PANE_WIDTH_PX - 10, `the divider stops at ${minimum}px, within the divider's share of the floor`);
 });
 
-test('F3: a reply starting in an expanded composer collapses it; the streaming row stays clean', { skip: SKIP }, async () => {
+// Row 192 C11: Queue keeps Send's size, so a reply starting adds only Stop and Pause; the row stays one clean
+// line whether or not the fit folds it (it used to fold here because Send grew into a text pill).
+test('F3: a reply starting in an expanded composer keeps the streaming row clean', { skip: SKIP }, async () => {
+  const frames = (page) => page.evaluate(() => new Promise((resolve) => globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))));
   await withBrowser(async (browser) => {
     const page = await mountComposer(browser, { paneWidth: 900, waitCompact: false });
-    await page.evaluate(() => new Promise((resolve) => globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))));
+    await frames(page);
     assert.equal(await page.evaluate(isCompact), false, 'idle, the 900px toolbar fits expanded');
+    const sendWidth = () => page.evaluate(() => document.getElementById('sendButton').getBoundingClientRect().width);
+    const idleSend = await sendWidth();
     await page.evaluate(() => window.__startStreaming());
-    await page.waitForFunction(isCompact, null, { timeout: 5000 });
-    assertOneCleanLine(await measureToolbar(page), 'streaming started at 900px');
+    await frames(page);
+    await frames(page);
+    assert.equal(await sendWidth(), idleSend, 'entering the queue state does not change Send\'s width');
+    // Expanded, the settings sit in their group (not measured) and the summary pill is hidden.
+    const controls = await page.evaluate(isCompact) ? undefined : ['Add files, commands and skills', 'Tools', 'Dictate', 'Pause', 'Stop', 'Queue'];
+    assertOneCleanLine(await measureToolbar(page), 'streaming started at 900px', controls);
     await page.close();
   });
 });
@@ -154,21 +162,6 @@ test('N2: sub-menus have a real surface; over the list it is opaque (Day and Dar
       assert.equal(surfaces.tools, 1, `${palette}: an in-list sub-menu is opaque`);
       await page.close();
     }
-  });
-});
-
-test('N3: the pane kicker project tag is one ellipsized line', { skip: SKIP }, async () => {
-  await withBrowser(async (browser) => {
-    const page = await mountComposer(browser, { paneWidth: 200, projectTag: 'ui-test-b' });
-    const tag = await page.evaluate(() => {
-      const node = document.querySelector('#chatPane0 .chat-pane-kicker-project');
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      return { lines: new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size, overflow: getComputedStyle(node).textOverflow };
-    });
-    assert.equal(tag.lines, 1, 'one line, not one word per line');
-    assert.equal(tag.overflow, 'ellipsis');
-    await page.close();
   });
 });
 

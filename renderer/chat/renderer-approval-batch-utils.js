@@ -10,7 +10,8 @@
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TURN_NODE_SELECTOR = '.chat-thread-node[data-thread-message-id]';
   // Plan-variant gap rows are deliberately actionless (the plan card owns the
-  // decision), so they never join the batch Allow all once / Always allow all / Deny all count.
+  // decision), so they never join the batch Allow all once / Deny all count. A standing grant is
+  // only ever given on its own card (row 192 C7): the bar never says "always".
   // Plan cards and exact-content message approvals (`session_message`) are never batch-decided.
   const APPROVAL_ROW_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-variant="plan"]):not([data-approval-exact])';
   const BATCH_BANNER_CLASS = 'approval-batch-banner';
@@ -68,9 +69,6 @@
       + '<button type="button" class="approval-batch-action approval-batch-action--allow-once"'
       + ' data-approval-batch-action="approve-all-once"'
       + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.allowAllOnce', 'Allow all once')) + '</button>'
-      + '<button type="button" class="approval-batch-action approval-batch-action--allow"'
-      + ' data-approval-batch-action="approve-all"'
-      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.alwaysAllowAll', 'Always allow all')) + '</button>'
       + '<button type="button" class="approval-batch-action approval-batch-action--deny"'
       + ' data-approval-batch-action="deny-all"'
       + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.denyAll', 'Deny all')) + '</button>'
@@ -377,9 +375,7 @@
       setRowBusy(row, true);
       try {
         let result;
-        if (action === 'approve-all') {
-          result = await approveOne(callId, { alwaysAllow: true });
-        } else if (action === 'approve-all-once') {
+        if (action === 'approve-all-once') {
           result = await approveOne(callId, { alwaysAllow: false });
         } else if (action === 'deny-all') {
           result = await denyOne(callId);

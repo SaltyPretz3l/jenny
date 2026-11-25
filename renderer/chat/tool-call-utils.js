@@ -61,7 +61,7 @@
 
   // Payload fields holding the app's own reading of what is being approved. A card shows these, never the model's input.
   const APPROVAL_PRESENTATION_KEYS = Object.freeze(['session_message_approval', 'session_stop_approval',
-    'settings_change_approval', 'schedule_change_approval', 'browser_approval']);
+    'settings_change_approval', 'schedule_change_approval', 'browser_approval', 'computer_approval']);
 
   function deriveApprovalVariant(toolName, hasPendingPlanDocument) {
     return hasPendingPlanDocument === true && String(toolName || '').trim() === 'exit_plan_mode'
@@ -142,6 +142,7 @@
   const {
     isToolRunFoldable, groupToolRuns, summarizeToolRun, toolRunState, toolRunVerb, formatToolRunDuration,
     buildToolRunToggleInner, buildToolRunMemberAttributes, readToolRunMemberAttributes, getToolRunRows, isToolRunLiveStatus,
+    workLedgerTail, applyWorkLedgerShow, summarizeWorkLedger, workLedgerToggleTitle, buildWorkLedgerToggleInner, buildWorkLedger,
   } = _toolRunUtils.createToolRunUtils({
     normalizeString, normalizeToolKind, normalizeToolStatus, getToolDisplayName,
     statusToneFor, formatToolDurationMs, escapeHtml: _stringUtils.escapeHtml, jt, jtn,
@@ -159,6 +160,7 @@
       case 'scroll': return jt('browserUse.row.scroll', 'Scrolled');
       case 'press': return jt('browserUse.row.press', 'Pressed a key');
       case 'screenshot': return jt('browserUse.row.screenshot', 'Looked at the page');
+      case 'wait': return jt('browserUse.row.wait', 'Watched the page');
       default: return getToolDisplayName('browser');
     }
   }
@@ -482,7 +484,7 @@
     const statusLabelClass = model.status === 'completed' && !model.isRunning
       ? 'tool-call-status-label sr-only'
       : 'tool-call-status-label';
-    return '<span class="status-dot status-dot--' + statusToneFor(model.status, model.isRunning) + '" aria-hidden="true"></span>'
+    return '<span class="status-dot status-dot--' + esc(model.tone || statusToneFor(model.status, model.isRunning)) + '" aria-hidden="true"></span>'
       + iconMarkup
       + '<span class="tool-call-main">'
       + '<span class="tool-call-name">' + esc(model.displayToolName) + '</span>'
@@ -564,6 +566,7 @@
     isSessionToolBudgetBlock, getToolStatusSeverity, shouldAutoExpandToolDetails, buildToolRowKey, toolRowKeySessionPrefix,
     isToolRunFoldable, groupToolRuns, summarizeToolRun, toolRunState, toolRunVerb, formatToolRunDuration,
     buildToolRunToggleInner, buildToolRunMemberAttributes, readToolRunMemberAttributes, getToolRunRows, isToolRunLiveStatus,
+    workLedgerTail, applyWorkLedgerShow, summarizeWorkLedger, workLedgerToggleTitle, buildWorkLedgerToggleInner, buildWorkLedger,
     buildToolRowDomToken,
     statusToneFor,
     buildToolHeaderInner,

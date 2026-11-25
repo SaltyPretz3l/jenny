@@ -143,11 +143,25 @@ function validLogDocument(doc, { schemaVersion, maxEntries, validEntry }) {
   return previous < doc.next_seq;
 }
 
+// An entry's serialized bytes plus one for its separator, computed once per entry object and kept (OD-10): no
+// owner changes a held entry in place (a change builds a new object), so an append stringifies only its new entry
+// and the header, not every held one. Weakly held: a dropped entry takes its size with it.
+const ENTRY_BYTES = new WeakMap();
+function entryBytes(entry) {
+  if (entry === null || typeof entry !== 'object') return Buffer.byteLength(JSON.stringify(entry), 'utf8') + 1;
+  let bytes = ENTRY_BYTES.get(entry);
+  if (bytes === undefined) {
+    bytes = Buffer.byteLength(JSON.stringify(entry), 'utf8') + 1;
+    ENTRY_BYTES.set(entry, bytes);
+  }
+  return bytes;
+}
+
 // Drops the oldest entries until the document fits both bounds, and records the
 // new floor. The newest entry is always kept. Returns the candidate itself when
 // it already fits.
 function boundLogDocument(candidate, { maxEntries, maxBytes }) {
-  const sizes = candidate.entries.map((entry) => Buffer.byteLength(JSON.stringify(entry), 'utf8') + 1);
+  const sizes = candidate.entries.map(entryBytes);
   let size = Buffer.byteLength(JSON.stringify({ ...candidate, entries: [] }), 'utf8')
     + sizes.reduce((sum, value) => sum + value, 0);
   let drop = 0;
@@ -355,6 +369,6 @@ class BoundedLogFile {
 }
 
 module.exports = {
-  LOG_DOCUMENT_KEYS, BoundedLogFile, boundLogDocument, emptyLogDocument, isPassingReadError, utcStamp,
+  LOG_DOCUMENT_KEYS, BoundedLogFile, boundLogDocument, emptyLogDocument, entryBytes, isPassingReadError, utcStamp,
   validLogDocument,
 };

@@ -241,6 +241,17 @@ test('revealWindowInactive disables backgroundThrottling; default leaves it unse
   );
 });
 
+test('JENNY_WINDOW_OFFSCREEN places an agent window off every display; a normal launch ignores it', () => {
+  const { deps: agentDeps, FakeBrowserWindow: agentBW } = makeDeps({ revealWindowInactive: true, env: { JENNY_WINDOW_OFFSCREEN: '1' } });
+  createMainWindowWithDeps(agentDeps);
+  assert.equal(agentBW.created[0].options.x, -20000);
+  assert.equal(agentBW.created[0].options.y, -20000);
+
+  const { deps: normalDeps, FakeBrowserWindow: normalBW } = makeDeps({ env: { JENNY_WINDOW_OFFSCREEN: '1' } });
+  createMainWindowWithDeps(normalDeps);
+  assert.notEqual(normalBW.created[0].options.x, -20000, 'only the inactive reveal of agent launches honours it');
+});
+
 test('registers the window via setMainWindow with the created instance and returns it', () => {
   const { deps, calls } = makeDeps();
   const returned = createMainWindowWithDeps(deps);

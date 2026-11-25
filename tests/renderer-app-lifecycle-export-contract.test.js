@@ -5,7 +5,7 @@
 // Bug class (hit live 2026-07-19, owner smoke): a handler defined in the
 // service registry and consumed in app.js silently arrives as `undefined`
 // when renderer-app-lifecycle-composition.js forgets to pluck + re-export
-// it — the with(ctx) composition then carries the KEY with an undefined
+// it — the composition then carries the KEY with an undefined
 // value, so nothing fails at wiring time and the first real click throws
 // "X is not a function" (openIdeFileAtLineSafe, W1-4 path chips).
 //

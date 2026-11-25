@@ -30,7 +30,7 @@
     auto: Object.freeze({
       label: jt('composer.runMode.auto', 'Auto'),
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
-      hint: jt('composer.runMode.autoHint', 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.'),
+      hint: jt('composer.runMode.autoHint', 'Tools and project Python run without asking. Blocked commands and denies prompt.'),
     }),
     plan: Object.freeze({
       label: jt('composer.runMode.plan', 'Plan'),
@@ -337,7 +337,9 @@
     const failure = utils?.readModelLoadFailure?.(backend);
     if (!failure || typeof inventoryActionButton !== 'function') return '';
     const fix = utils.recoveryActions(failure)[0];
-    const fixLabel = fix === 'loadSmaller'
+    const fixLabel = fix === 'stopLiveRun'
+      ? jt('composer.modelFailure.stopLiveRun', 'Stop {program}', { program: failure.liveRun.program })
+      : fix === 'loadSmaller'
       ? jt('composer.modelFailure.loadAt', 'Load at {context}', { context: formatContextShort(utils.retryContext(failure)) })
       : fix === 'showFits'
         ? jt('models.library.showModelsThatFit', 'Show models that fit')
@@ -358,11 +360,16 @@
   // The line sits in the row under the input, before the turn timer.
   // `scope` is the document (pane 0's id-addressed composer) or a split-view
   // pane root, whose composer nodes are addressed by data-chat-node.
-  function syncComposerLoadingLine(scope, text, actionsHtml = '') {
+  function scopeLookup(scope) {
     const paneScoped = Boolean(scope) && typeof scope.getElementById !== 'function';
     const byName = (name) => (paneScoped
       ? scope.querySelector?.(`[data-chat-node="${name}"]`) || null
       : scope?.getElementById?.(name) || null);
+    return { paneScoped, byName };
+  }
+
+  function syncComposerLoadingLine(scope, text, actionsHtml = '') {
+    const { paneScoped, byName } = scopeLookup(scope);
     const row = byName('composerModeChips');
     if (!row) return null;
     let line = byName('composerLoadingLine');
@@ -371,6 +378,7 @@
       if (line) line.remove();
       return null;
     }
+    byName('composerStatusLine')?.remove(); // the loading line keeps priority (row 192)
     if (!line) {
       line = row.ownerDocument.createElement('span');
       if (paneScoped) line.setAttribute('data-chat-node', 'composerLoadingLine');
@@ -408,6 +416,79 @@
     for (const pane of panes) syncComposerLoadingLine(pane, ...resolve(Number(pane.dataset.paneId)));
   }
 
+  /* Row 192 C11: the status line under the box while a reply runs. The running
+     step is read from the live turn's rendered rows (the steps are flat
+     `tool_call` rows in `.turn-row-list[data-turn-live]`); null when no step is
+     in flight. */
+  const QUEUE_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h7M2.5 8h5M2.5 11.5h4"/><path d="M12 13V7.5M9.6 9.7 12 7.3l2.4 2.4"/></svg>';
+  const LIVE_TURN_SELECTOR = '.turn-row-list[data-turn-live="true"]';
+  const LIVE_STEP_STATUSES = new Set(['requested', 'pending', 'queued', 'approved', 'running', 'executing']);
+  function findLiveTurnList(timeline, cached) {
+    if (cached?.isConnected && cached.getAttribute('data-turn-live') === 'true' && timeline?.contains?.(cached)) return cached;
+    const lists = timeline?.querySelectorAll?.(LIVE_TURN_SELECTOR) || [];
+    return lists[lists.length - 1] || null;
+  }
+  function readLiveStep(list) {
+    let step = 0;
+    let heading = 0; // the steps heading's own number, so the two never disagree
+    let live = null;
+    for (const row of list?.children || []) {
+      const kind = row.getAttribute('data-row-kind');
+      if (kind === 'work_ledger') heading = Number(row.getAttribute('data-ledger-step')) || 0;
+      if (kind !== 'tool_call' && kind !== 'tool_step') continue;
+      step += 1;
+      const status = String(row.querySelector('[data-tool-status]')?.getAttribute('data-tool-status') || '').toLowerCase();
+      if (LIVE_STEP_STATUSES.has(status)) live = { step, row };
+    }
+    if (!live) return null;
+    const text = (selector) => String(live.row.querySelector(selector)?.textContent || '').replace(/\s+/g, ' ').trim();
+    const name = text('.tool-call-name');
+    const summary = text('.tool-call-summary'); // may lead with the name ("Bash ping")
+    return { step: heading || live.step, doing: [`${summary} `.startsWith(`${name} `) ? '' : name, summary, text('.tool-path-chip')].filter(Boolean).join(' ') };
+  }
+
+  // { text, tone } for the line, or null when no reply runs.
+  function describeComposerStatus({ running = false, waiting = false, liveStep = null, queueHint = false, runModeLabel = '' } = {}) {
+    if (!running) return null;
+    if (waiting) return { text: jt('composer.status.waiting', 'Waiting for your answer above.'), tone: 'pending' };
+    const status = liveStep && liveStep.doing
+      ? jt('composer.status.step', 'Step {step} · {doing}', { step: liveStep.step, doing: liveStep.doing })
+      : jt('composer.status.working', 'Jenny is working');
+    return {
+      text: queueHint ? jt('composer.status.enterQueues', '{status} · Enter queues your message (runs in {runMode})', { status, runMode: runModeLabel }) : status,
+      tone: 'active',
+    };
+  }
+
+  // Built like the loading line, in the same row before the timer; the loading line wins the row.
+  // Steps change silently (aria-live off on the text); "waiting" is announced once, politely.
+  function syncComposerStatusLine(scope, status) {
+    const { paneScoped, byName } = scopeLookup(scope);
+    const row = byName('composerModeChips');
+    let line = byName('composerStatusLine');
+    if (!row || !status || !status.text || byName('composerLoadingLine')) {
+      line?.remove();
+      return null;
+    }
+    if (!line) {
+      line = row.ownerDocument.createElement('span');
+      if (paneScoped) line.setAttribute('data-chat-node', 'composerStatusLine');
+      else line.id = 'composerStatusLine';
+      line.className = 'composer-loading-line composer-status-line';
+      line.setAttribute('role', 'status');
+      line.innerHTML = '<span class="status-dot" aria-hidden="true"></span><span class="composer-status-line-text"></span>';
+      row.insertBefore(line, byName('composerTurnTimer') || null);
+    }
+    const tone = status.tone === 'pending' ? 'pending' : 'active';
+    const dot = line.firstElementChild;
+    if (dot.className !== `status-dot status-dot--${tone}`) dot.className = `status-dot status-dot--${tone}`;
+    const textEl = line.lastElementChild;
+    if (tone === 'pending') textEl.removeAttribute('aria-live');
+    else if (textEl.getAttribute('aria-live') !== 'off') textEl.setAttribute('aria-live', 'off');
+    if (textEl.textContent !== status.text) textEl.textContent = status.text;
+    return line;
+  }
+
   function createComposerBlockedSendTooltipRenderer(deps) {
     const sendButton = deps && deps.sendButton;
     const getReason = deps && deps.getReason;
@@ -440,6 +521,8 @@
         if (sendButton.getAttribute('title') !== title) {
           sendButton.setAttribute('title', title);
         }
+      } else if (sendButton.dataset.queueTitle) { // row 192: the queue state's own tooltip
+        if (sendButton.getAttribute('title') !== sendButton.dataset.queueTitle) sendButton.setAttribute('title', sendButton.dataset.queueTitle);
       } else if (sendButton.getAttribute('title') !== defaultTitle) {
         if (defaultTitle) {
           sendButton.setAttribute('title', defaultTitle);
@@ -453,7 +536,7 @@
     if (MutationObserverCtor) {
       observer = new MutationObserverCtor(update);
       // data-model-loading: a load can start while Send is already disabled.
-      observer.observe(sendButton, { attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'data-model-loading'] });
+      observer.observe(sendButton, { attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'data-model-loading', 'data-queue-title'] });
     }
 
     update();
@@ -777,6 +860,11 @@
     buildModelFailureActions,
     syncComposerLoadingLine,
     syncComposerLoadingLines,
+    findLiveTurnList,
+    readLiveStep,
+    describeComposerStatus,
+    syncComposerStatusLine,
+    QUEUE_ICON,
     mountInventoryButton,
     applyRunModeChip,
     warnFullAuto,

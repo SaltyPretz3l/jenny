@@ -11,7 +11,7 @@
  *
  * `heroCopy(view)` is pure: a view object in, `{ title, subtitle,
  * actionsHtml, hint, hintAction, composerLine }` out; the chrome builds the
- * hint's link from hintAction. No DOM here.
+ * hint's links from hintAction. No DOM here.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -46,11 +46,10 @@
   const STATES = Object.freeze(['noModel', 'downloading', 'failed', 'ready']);
   const GENERAL_PROJECT_ID = 'project_general';
 
-  // The words around one placeholder of a translated sentence; null if it is missing.
-  function splitOnPlaceholder(template, name) {
-    const token = `{${name}}`;
-    const at = String(template).indexOf(token);
-    return at < 0 ? null : { lead: template.slice(0, at), tail: template.slice(at + token.length) };
+  // A sentence cut at its {name} links, in its own order; null unless each appears once.
+  function linkParts(sentence, links) {
+    const parts = String(sentence).split(/\{(\w+)\}/).map((part, i) => (i % 2 ? links[part] || `{${part}}` : part));
+    return Object.values(links).every((link) => parts.filter((part) => part === link).length === 1) ? parts : null;
   }
 
   function formatSize(bytes) {
@@ -100,9 +99,14 @@
         ? jt('hero.noModel.fitsWithSize', '{model} fits this computer ({size} download).', { model: recommended.tag, size })
         : jt('hero.noModel.fits', '{model} fits this computer.', { model: recommended.tag }));
     }
-    const label = jt('hero.noModel.cloudSignInLink', 'sign in with ChatGPT');
-    const sentence = jt('hero.noModel.cloudSignIn', 'Or {link}.');
-    const around = splitOnPlaceholder(sentence, 'link');
+    const hasButton = typeof actionButton === 'function';
+    const link = (action, label) => ({ action, label,
+      html: hasButton ? actionButton({ plain: true, className: 'hero-hint-link', label, dataset: { 'hero-action': action } }) : '' });
+    const sentence = jt('hero.noModel.cloudOptions', 'Or {apiKey} or {chatgpt}.');
+    const parts = linkParts(sentence, {
+      apiKey: link('api-key', jt('hero.noModel.apiKeyLink', 'add an API key')),
+      chatgpt: link('cloud', jt('hero.noModel.cloudSignInLink', 'sign in with ChatGPT')),
+    });
     return {
       title: jt('hero.noModel.title', 'Pick a model to start'),
       subtitle: subtitle.join(' '),
@@ -110,11 +114,8 @@
         ? button('primary', jt('hero.noModel.download', 'Download {model}', { model: recommended.tag }), 'download', recommended.tag)
         : '')
         + button(recommended ? 'secondary' : 'primary', jt('hero.noModel.browse', 'Browse models'), 'browse', ''),
-      hint: around ? around.lead + label + around.tail : sentence,
-      hintAction: around && typeof actionButton === 'function' ? {
-        action: 'cloud', label, lead: around.lead, tail: around.tail,
-        html: actionButton({ plain: true, className: 'hero-hint-link', label, dataset: { 'hero-action': 'cloud' } }),
-      } : null,
+      hint: parts ? parts.map((part) => part.label ?? part).join('') : sentence,
+      hintAction: parts && hasButton ? { parts } : null,
       composerLine: jt('hero.noModel.composerLine', 'Send turns on once a model is ready.'),
     };
   }
@@ -155,6 +156,7 @@
       showFits: jt('models.library.showModelsThatFit', 'Show models that fit'),
       diagnostics: jt('models.library.openDiagnostics', 'Open Diagnostics'),
       copyDetails: jt('models.library.copyDetails', 'Copy details'),
+      stopLiveRun: jt('composer.modelFailure.stopLiveRun', 'Stop {program}', { program: failure.liveRun?.program || '' }),
     };
     return {
       title: jt('hero.failed.title', "{model} didn't load", { model }),
@@ -198,9 +200,18 @@
     return jt('hero.setup.footnoteReady', '{model} is ready, so you can start chatting now.', { model });
   }
 
+  // model_unavailable without a classified cause is still a failed load of the model
+  // Jenny knows: the failed hero's Retry and Copy details work on these facts.
+  function unclassifiedFailure(backend, knownModel) {
+    const model = String(backend?.model_lifecycle?.requested_model || knownModel || '').trim();
+    if (backend?.phase !== 'model_unavailable' || !model) return null;
+    return { cause: 'other', message: '', context: null, at: '', engine: String(backend.model_lifecycle?.engine || '').trim(), model };
+  }
+
   function deriveHeroView(state, deps = {}) {
     const s = state || {};
-    const failure = loadFailure.readModelLoadFailure(s.backend);
+    const failure = loadFailure.readModelLoadFailure(s.backend)
+      || unclassifiedFailure(s.backend, s.status?.model || s.modelList?.active_model || s.offline?.preferredLocalModel);
     const running = Object.values(s.modelPulls || {}).find((pull) => pull.status === 'running');
     const acquisition = s.backend?.phase === 'model_acquiring' && s.backend.model_acquisition;
     const pull = running ? {
@@ -210,12 +221,14 @@
       tag: acquisition.requested_model, percent: acquisition.percent, completedBytes: acquisition.completed_bytes,
       totalBytes: acquisition.total_bytes, startedAt: acquisition.started_at,
     } : null;
-    // Only a catalog that was read and lists no usable route is "no model"; an
-    // unread or unavailable list is unknown, and the hero stays on today's words.
+    // Outside model_unavailable, only a catalog that was read and lists no usable route
+    // is "no model"; an unread or unavailable list is unknown, and the hero stays on today's words.
     const entries = !snapshotRefresh.isModelListUnavailable(s.modelList) && Array.isArray(s.modelList?.data)
       ? s.modelList.data : null;
     const noRoute = s.backend?.phase !== 'model_loading' && Boolean(entries) && !entries.some((entry) => entry && entry.available !== false);
-    const kind = failure ? 'failed' : pull ? 'downloading' : noRoute ? 'noModel' : 'ready';
+    // model_unavailable is never "ready": with no model to name there is nothing to retry, so pick one.
+    const unavailable = s.backend?.phase === 'model_unavailable';
+    const kind = failure ? 'failed' : pull ? 'downloading' : noRoute || unavailable ? 'noModel' : 'ready';
     return {
       kind, model: failure ? failure.model : pull ? pull.tag
         : s.status?.model || s.modelList?.active_model || s.offline?.preferredLocalModel || '',
@@ -239,9 +252,9 @@
       try {
         if (action === 'download') return await d.startPull?.(tag);
         if (action === 'cancel-download') return await d.cancelPull?.(tag);
-        // cloud: the ChatGPT sign-in row is in Settings › Models.
-        if (action === 'browse' || action === 'showFits' || action === 'cloud') return d.openSettingsSection?.('models');
-        const failure = reader.readModelLoadFailure(d.state?.backend);
+        // cloud, api-key: the ChatGPT and Add provider rows are in Settings › Models.
+        if (['browse', 'showFits', 'cloud', 'api-key'].includes(action)) return d.openSettingsSection?.('models');
+        const failure = reader.readModelLoadFailure(d.state?.backend) || unclassifiedFailure(d.state?.backend, tag);
         if (!failure) return;
         switch (action) {
           case 'retry': return await d.loadModel?.(loadPayload(failure));
@@ -252,6 +265,7 @@
             return await d.loadModel?.(loadPayload(failure));
           }
           case 'diagnostics': return d.openLogs?.();
+          case 'stopLiveRun': return await loadFailure?.stopLiveRun?.(failure, d);
           case 'copyDetails': return await d.windowRef?.navigator?.clipboard?.writeText?.(reader.failureDetails(failure));
           default: return;
         }

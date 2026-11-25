@@ -21,6 +21,8 @@ test('renderStepModal exposes a focus fallback and associates its summary', () =
   assert.match(html, /tabindex="-1"/);
   assert.match(html, /aria-describedby="endpoint-summary"/);
   assert.match(html, /id="endpoint-summary"/);
+  assert.doesNotMatch(renderStepModal({ id: 'blank', title: 'Blank', status: '  ' }), /inv-step-modal-status/, 'a blank status renders no pill');
+  assert.match(renderStepModal({ id: 'paused', title: 'Paused', status: 'Paused' }), /<span class="inv-step-modal-status">Paused<\/span>/);
 });
 
 test('managed lifecycle traps ownership in the overlay manager and restores background/focus', async () => {

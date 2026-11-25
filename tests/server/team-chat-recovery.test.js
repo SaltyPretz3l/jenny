@@ -318,3 +318,48 @@ test('a read.json write that landed but failed is what the next readState return
   assert.equal(store.readState('chan_team', ALICE).last_read_seq, onDisk);
   assert.equal(fx.openStore().readState('chan_team', ALICE).last_read_seq, onDisk);
 });
+
+// ------------------------------------------------------------ H15: a transient commit failure after a segment landed
+
+// A store whose next channel.json write (any channel) throws `code` once, before the file is written.
+async function commitFailingOnce(t) {
+  const fx = createChatFixture(t);
+  const failing = { code: null };
+  const fileOps = { ...fx.fileOps, writeText(filePath, text) {
+    if (failing.code && path.basename(filePath) === 'channel.json') {
+      const code = failing.code;
+      failing.code = null;
+      throw Object.assign(new Error('locked'), { code });
+    }
+    return fx.fileOps.writeText(filePath, text);
+  } };
+  const store = fx.openStore({ fileOps });
+  await fx.createChannel(store);
+  return { fx, store, failing };
+}
+
+test('a transient channel.json failure after the segment landed does not latch: the channel reloads without the post', async (t) => {
+  const { fx, store, failing } = await commitFailingOnce(t);
+  await fx.postOk(store, { text: 'one' });
+  failing.code = 'EBUSY';
+  assertFailure(await fx.post(store, { text: 'lost' }), PERSISTENCE, 'team_chat_store_failed');
+  assert.equal(store.open().ok, true, 'the store is not latched');
+  assert.equal((await fx.postOk(store, { text: 'two' })).seq, 2, 'the uncommitted seq is reused once');
+  for (const reader of [store, fx.openStore()]) {
+    const page = reader.history('chan_team', { limit: 10 });
+    assert.deepEqual(page.messages.map((m) => [m.seq, m.text]), [[1, 'one'], [2, 'two']]);
+  }
+});
+
+test('a transient channel.json failure after an edit landed does not latch; a real one still does', async (t) => {
+  const { fx, store, failing } = await commitFailingOnce(t);
+  const first = await fx.postOk(store, { text: 'one' });
+  failing.code = 'EPERM';
+  assertFailure(await fx.edit(store, { messageId: first.message_id, expectedRev: first.rev, text: 'edited' }),
+    PERSISTENCE, 'team_chat_store_failed');
+  const next = await fx.postOk(store, { text: 'two' });
+  assert.ok(next.rev > fx.readDoc('chan_team/seg-1.json').messages[0].rev, 'no revision is reused');
+  failing.code = 'ENOSPC';
+  assertFailure(await fx.post(store, { text: 'three' }), PERSISTENCE, 'team_chat_store_failed');
+  assertFailure(store.history('chan_team', { limit: 1 }), PERSISTENCE, 'team_chat_store_failed');
+});

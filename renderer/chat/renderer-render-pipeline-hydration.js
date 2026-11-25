@@ -10,9 +10,6 @@
     || (typeof require === 'function' ? require('./renderer-render-pipeline-projection-cache') : null)
     || {};
   const LONG_THREAD_BUDGETS = longThreadBudget.BUDGETS || { projectedTurns: 192 };
-  const isLongThreadBoundsEnabled = typeof longThreadBudget.isLongThreadBoundsEnabled === 'function'
-    ? longThreadBudget.isLongThreadBoundsEnabled
-    : () => true;
   const pruneMapOldestFirst = typeof longThreadBudget.pruneMapOldestFirst === 'function'
     ? longThreadBudget.pruneMapOldestFirst
     : () => ({ evicted: [], remaining: 0 });
@@ -436,21 +433,18 @@
             turnRowCache.delete(cachedTurnId);
           }
         }
-        const boundsEnabled = isLongThreadBoundsEnabled(state?.features?.featureFlags);
-        const beforePrune = boundsEnabled && turnRowOverflow instanceof Map
+        const beforePrune = turnRowOverflow instanceof Map
           && turnRowCache.size > LONG_THREAD_BUDGETS.projectedTurns
           ? new Map(turnRowCache)
           : null;
         if (turnRowOverflow instanceof Map) turnRowOverflow.clear();
-        if (boundsEnabled) {
-          const pinnedTurnIds = collectPinnedTurnIds(turns, rowsByTurnId);
-          const pruned = pruneMapOldestFirst(turnRowCache, LONG_THREAD_BUDGETS.projectedTurns, {
-            isPinned(turnId) { return pinnedTurnIds.has(String(turnId || '').trim()); },
-          });
-          // Only turns of this projection, whose rows it already holds.
-          if (beforePrune) {
-            (pruned?.evicted || []).forEach((turnId) => turnRowOverflow.set(turnId, beforePrune.get(turnId)));
-          }
+        const pinnedTurnIds = collectPinnedTurnIds(turns, rowsByTurnId);
+        const pruned = pruneMapOldestFirst(turnRowCache, LONG_THREAD_BUDGETS.projectedTurns, {
+          isPinned(turnId) { return pinnedTurnIds.has(String(turnId || '').trim()); },
+        });
+        // Only turns of this projection, whose rows it already holds.
+        if (beforePrune) {
+          (pruned?.evicted || []).forEach((turnId) => turnRowOverflow.set(turnId, beforePrune.get(turnId)));
         }
       }
       // Single-source the rowsByRenderMessageId build through the helper so

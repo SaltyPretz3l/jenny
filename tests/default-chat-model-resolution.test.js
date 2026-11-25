@@ -35,10 +35,11 @@ test('Default falls back to the loaded model when the Settings default is unknow
   assert.equal(resolveDefaultChatModel(loaded), 'ornith15:9b-q6-256k', 'the loaded model needs no catalog hint');
 });
 
-test('a cloud engine keeps its own model; a managed NInfer default routes while Ollama runs', () => {
+test('cloud engine current, Default chat resolves to the Settings default; a managed NInfer default routes while Ollama runs', () => {
   const cloud = fakeService({ hints: { 'qwen3.8-27b-nvfp4': 'openai-compatible' } });
   cloud.currentEngineType = 'chatgpt';
-  assert.equal(resolveDefaultChatModel(cloud), '');
+  cloud.currentModel = 'gpt-5.1';
+  assert.equal(resolveDefaultChatModel(cloud), 'qwen3.8-27b-nvfp4', 'row 194: a Default chat reaches the cloud only when a cloud model was picked for it');
   const ninfer = fakeService();
   ninfer.ninferRuntime = { artifacts: { artifacts: [{ id: 'qwen3.8-27b-nvfp4', model_id: 'qwen3.8-27b-nvfp4' }] } };
   ninfer.options = { getNinferManager: () => ({}) };
@@ -218,4 +219,21 @@ test('after a startup-load-off boot a Default turn loads the default, never the 
 
   const plain = defaultTurnService({ settingsDefault: 'qwen3:8b', listing });
   assert.equal(await resolveModel(plain.service, ''), 'mock-v1', 'without the idle flag the listed active model wins');
+});
+
+// Row 201 C1 / OD-1: a saved team id in the local default slot is ignored at resolution, never returned.
+test('a saved team model default falls through as if unset, in Force Local too', () => {
+  const TEAM_ID = 'team/team_alpha1/qwen3:8b';
+  const team = (overrides = {}) => {
+    const service = fakeService({ preferredLocalModel: TEAM_ID, currentModel: TEAM_ID, hints: { [TEAM_ID]: 'openai-compatible' }, ...overrides });
+    service.featureFlags = { team: true };
+    return service;
+  };
+  assert.equal(resolveDefaultChatModel(team()), '', 'the team id is neither the hinted nor the loaded default');
+  const forceLocal = team();
+  forceLocal.offlineIntelligenceService.getMode = () => 'local_only';
+  assert.equal(resolveDefaultChatModel(forceLocal), '');
+  const off = team();
+  off.featureFlags = { team: false };
+  assert.equal(resolveDefaultChatModel(off), TEAM_ID, 'E71: with Team off the prefix is an ordinary model id');
 });

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createReservedPortReader } = require('../services/browser-use/reserved-ports');
 
-const FIXED = [11434, 8033, 8034, 8000, 8080, 9222];
+const FIXED = [11434, 8033, 8034, 8035, 8000, 8080, 9222];
 
 test('the fixed engine and debug ports are always reserved', () => {
   const ports = createReservedPortReader({ getBaseUrls: () => [], getDebugPort: () => undefined })();

@@ -24,7 +24,6 @@ function makeVirtualizer(options = {}) {
   return createTimelineVirtualizer({
     chatTimeline: makeChatTimeline(bulkEntries(45)),
     document: makeFakeDocument(),
-    contentVisibilityEnabled: true,
     ...options,
   });
 }
@@ -47,17 +46,6 @@ test('light 45-entry sessions keep content visibility', (t) => {
   t.after(() => virtualizer.dispose());
 
   virtualizer.rebuild(getTimelineEntryWeight(makeMessages(10)));
-
-  assert.equal(virtualizer._internals.getStrategy(), 'content-visibility');
-});
-
-test('entry weight is ignored when bounds are disabled', (t) => {
-  const env = buildEnvironment();
-  t.after(() => env.restore());
-  const virtualizer = makeVirtualizer({ boundsEnabled: false });
-  t.after(() => virtualizer.dispose());
-
-  virtualizer.rebuild(getTimelineEntryWeight(makeMessages(9000)));
 
   assert.equal(virtualizer._internals.getStrategy(), 'content-visibility');
 });

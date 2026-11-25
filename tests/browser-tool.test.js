@@ -10,7 +10,7 @@ const { SessionExecutionAuthority } = require('../services/backend/session-execu
 const { summarizeToolPayload } = require('../services/backend/backend-service-utils');
 const tool = require('../services/tools/builtin/browser-tool');
 
-const ACTIONS = ['navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'close', 'ad_block'];
+const ACTIONS = ['navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'wait', 'close', 'ad_block'];
 const OUTLINE = 'Page: Secret Title\nURL: https://example.com/\n\n[r1] link "Docs"';
 const PAGE = { url: 'https://example.com/', title: 'Example', text: OUTLINE };
 

@@ -47,12 +47,12 @@
 
   function inlineSummaryMarkup(viewModel, options = {}) {
     if (!viewModel || !viewModel.childCount || typeof actionButton !== 'function') return '';
-    const countLabel = `${viewModel.childCount} ${viewModel.childCount === 1 ? 'subagent' : 'subagents'}`;
+    const countLabel = jtn('chat.subagentMonitor.helperCount', viewModel.childCount, { count: viewModel.childCount }, '{count} helper', '{count} helpers');
     const stateLabel = viewModel.terminal ? viewModel.statusCopy : viewModel.parentState;
     const elapsed = modelUtils.formatElapsed?.(viewModel.elapsedMs) || '';
     const meta = [countLabel, stateLabel, elapsed].filter(Boolean).join(' · ');
     const key = String(options.key || viewModel.key || viewModel.toolCallId || '').trim();
-    const triggerLabel = jt('chat.subagentMonitor.openAriaLabel', 'Open subagent monitor: {summary}, {meta}', { summary: viewModel.summaryLabel, meta });
+    const triggerLabel = jt('chat.subagentMonitor.openAriaLabel', 'Open helper monitor: {summary}, {meta}', { summary: viewModel.summaryLabel, meta });
     const content = stateDot(viewModel.tone)
       + `<span class="subagent-summary-label">${escapeHtml(viewModel.summaryLabel)}</span>`
       + '<span class="subagent-summary-meta">'
@@ -130,13 +130,51 @@
 
   // The header's trailing action cluster: the close control.
   function headerActions() {
-    const close = iconButton('subagent-close', 'subagent-monitor-icon-button', ICON_CLOSE, jt('chat.subagentMonitor.closeAriaLabel', 'Close subagent monitor'));
+    const close = iconButton('subagent-close', 'subagent-monitor-icon-button', ICON_CLOSE, jt('chat.subagentMonitor.closeAriaLabel', 'Close helper monitor'));
     return `<div class="subagent-monitor-header-actions">${close}</div>`;
   }
 
   function backButton() {
-    const html = ICON_BACK + `<span>${escapeHtml(jt('chat.subagentMonitor.subagents', 'Subagents'))}</span>`;
-    return iconButton('subagent-back', 'subagent-monitor-back', html, jt('chat.subagentMonitor.backAriaLabel', 'Back to subagent list'));
+    const html = ICON_BACK + `<span>${escapeHtml(jt('chat.subagentMonitor.subagents', 'Helpers'))}</span>`;
+    return iconButton('subagent-back', 'subagent-monitor-back', html, jt('chat.subagentMonitor.backAriaLabel', 'Back to helper list'));
+  }
+
+  // Inside the Runs tab the monitor has no header of its own: one back control, "Runs", that carries the run it
+  // came from so the list can put focus on that helper's row. The id format is the one helperRuns() lists.
+  const helperRunId = (key, childKey) => `helper:${key}:${childKey}`;
+  function runsHeader(viewModel) {
+    const html = ICON_BACK + `<span>${escapeHtml(jt('runs.back', 'Runs'))}</span>`;
+    return '<div class="subagent-monitor-header">' + actionButton({
+      id: 'subagent-runs-back', plain: true, className: 'subagent-monitor-back', trustedHtml: html,
+      ariaLabel: jt('runs.backAria', 'Back to Runs'), title: jt('runs.backAria', 'Back to Runs'),
+      dataset: { 'subagent-runs-back': helperRunId(viewModel?.key, viewModel?.selectedKey) },
+    }) + '</div>';
+  }
+
+  // The helpers a chat's messages hold, as plain rows for the Runs list: one per child of every delegation
+  // (the same keys and model the transcript cards and the monitor open with). Running ones carry no end time.
+  function helperRuns(messages) {
+    const list = (Array.isArray(messages) ? messages : []).filter((message) => modelUtils.hasDelegationData?.(message) || message?.tool_result?.metadata?._externalized === true);
+    const keys = new Set();
+    for (const message of list) {
+      for (const step of [].concat(message.agent_status_steps || [], message.agent_progress_snapshot || [])) {
+        const key = String(step?.toolCallId || step?.tool_call_id || step?.childTaskId || step?.taskId || '').trim().slice(0, 200);
+        if (key) keys.add(key);
+      }
+      const callId = String(message.tool_result?.call_id || '').trim().slice(0, 200);
+      if (callId) keys.add(callId);
+    }
+    const rows = [];
+    for (const key of keys) {
+      for (const child of modelUtils.buildMonitorFromMessages?.(list, key, '')?.children || []) {
+        rows.push({
+          id: helperRunId(key, child.key), delegationKey: key, childKey: child.key, label: child.label, live: !child.terminal,
+          failed: child.status === 'failed', statusLabel: child.statusLabel, startedAtMs: child.startedAt || 0,
+          endedAtMs: child.terminal ? child.updatedAt || 0 : 0,
+        });
+      }
+    }
+    return rows;
   }
 
   function emptyBody() {
@@ -179,7 +217,7 @@
   function renderTreeHeader(viewModel, idSuffix) {
     return '<div class="subagent-monitor-header">'
       + ICON_TREE
-      + `<h2 class="subagent-monitor-title" id="subagentInspectorTitle${escapeHtml(idSuffix)}">${escapeHtml(jt('chat.subagentMonitor.subagents', 'Subagents'))}</h2>`
+      + `<h2 class="subagent-monitor-title" id="subagentInspectorTitle${escapeHtml(idSuffix)}">${escapeHtml(jt('chat.subagentMonitor.subagents', 'Helpers'))}</h2>`
       + `<span class="subagent-monitor-meta">${escapeHtml(treeHeaderMeta(viewModel))}</span>`
       + headerActions()
       + '</div>';
@@ -225,7 +263,7 @@
   function detailsUnavailableNote(viewModel) {
     if (!viewModel.detailsUnavailable) return '';
     return `<p class="subagent-detail-note">${stateDot('warning')}<span>${escapeHtml(jt('chat.subagentMonitor.detailsTooLarge',
-      'Subagent details were too large to show here. The answer is in the delegate tool result in the chat.'))}</span></p>`;
+      'Helper details were too large to show here. The answer is in the delegate tool result in the chat.'))}</span></p>`;
   }
 
   function renderTreeBody(viewModel) {
@@ -233,7 +271,7 @@
     const parentElapsed = elapsedSpan(viewModel.elapsedMs, viewModel.terminal ? '' : 'parent');
     return '<div class="subagent-monitor-body" data-subagent-page="tree">'
       + detailsUnavailableNote(viewModel)
-      + `<div class="subagent-tree" role="tree" aria-label="${escapeHtml(jt('chat.subagentMonitor.tasksAriaLabel', 'Subagent tasks'))}">`
+      + `<div class="subagent-tree" role="tree" aria-label="${escapeHtml(jt('chat.subagentMonitor.tasksAriaLabel', 'Helper tasks'))}">`
       + '<div class="subagent-tree-parent" role="treeitem" aria-expanded="true" tabindex="-1">'
       + stateDot(viewModel.terminal ? viewModel.tone : 'pending')
       + '<span class="subagent-tree-parent-name">Jenny</span>'
@@ -307,6 +345,25 @@
     return section(jt('chat.subagentMonitor.sectionSummary', 'Summary'), `<div class="subagent-answer">${renderAnswerHtml(child.summary)}</div>${notSaved}`);
   }
 
+  // Row 184 W3: a write task's change stays on its own branch until the parent merges it.
+  function renderWorktreeSection(child) {
+    const worktree = child.worktree;
+    if (!worktree) return '';
+    const counted = worktree.filesChanged != null;
+    const copy = !worktree.kept
+      ? jt('chat.subagentMonitor.worktreeRemoved', 'No changes; its worktree was removed.')
+      : counted
+        ? jt('chat.subagentMonitor.worktreeKept', 'Kept on branch {branch}. Files changed: {files}. Lines: +{insertions} −{deletions}. Commits: {commits}.', {
+          branch: worktree.branch, files: worktree.filesChanged, insertions: worktree.insertions ?? 0,
+          deletions: worktree.deletions ?? 0, commits: worktree.commits ?? 0,
+        })
+        : jt('chat.subagentMonitor.worktreeKeptUncounted', 'Kept on branch {branch}; its changes could not be counted.', { branch: worktree.branch });
+    const where = worktree.kept && worktree.path
+      ? `<p class="subagent-step-note">${escapeHtml(worktree.path)}</p>` : '';
+    return section(jt('chat.subagentMonitor.sectionWorktree', 'Worktree'),
+      `<p class="subagent-answer">${escapeHtml(copy)}</p>${where}`);
+  }
+
   // Copies the saved answer (the controller writes it; the status span
   // announces the result).
   function copyButton(child) {
@@ -350,7 +407,7 @@
   function viewSwitch(child, transcript) {
     return segmentedControl?.({
       id: 'subagent-view',
-      ariaLabel: jt('chat.subagentMonitor.viewAriaLabel', 'Subagent view'),
+      ariaLabel: jt('chat.subagentMonitor.viewAriaLabel', 'Helper view'),
       value: transcript ? 'transcript' : 'overview',
       className: 'subagent-view-switch',
       dataset: { 'subagent-view': child.key },
@@ -405,6 +462,7 @@
       + '</div>'
       + (showTranscript ? activity.renderTranscript(child, idSuffix, helpers) : renderTask(child, idSuffix)
         + renderAnswerSection(child)
+        + renderWorktreeSection(child)
         + section(jt('chat.subagentMonitor.sectionSteps', 'Steps'), activity.renderSteps(child, idSuffix, helpers),
           child.stepCount ? `<span class="subagent-section-meta">${escapeHtml(stepCountLabel(child.stepCount))}</span>` : '')
         + section(jt('chat.subagentMonitor.sectionEvidence', 'Evidence'), renderEvidence(child))
@@ -456,12 +514,13 @@
   // id unique.
   function renderMonitor(viewModel, options = {}) {
     if (!viewModel || !viewModel.childCount) {
-      return { header: `<div class="subagent-monitor-header">${headerActions()}</div>`, body: emptyBody(), footer: '' };
+      return { header: `<div class="subagent-monitor-header">${headerActions()}</div>`, runsHeader: runsHeader(viewModel), body: emptyBody(), footer: '' };
     }
     const idSuffix = String(options.idSuffix || '');
-    return options.page === 'detail'
+    const parts = options.page === 'detail'
       ? { header: renderDetailHeader(), body: renderDetailBody(viewModel, idSuffix, options.transcriptKeys), footer: renderDetailFooter(viewModel, idSuffix) }
       : { header: renderTreeHeader(viewModel, idSuffix), body: renderTreeBody(viewModel), footer: renderTreeFooter(viewModel) };
+    return { ...parts, runsHeader: runsHeader(viewModel) }; // the Runs tab paints runsHeader; the dock's aside paints header
   }
 
   // Keep unchanged nodes (including selected live text) through activity frames.
@@ -498,7 +557,7 @@
     const page = body?.getAttribute?.('data-subagent-page');
     const scrollTop = Number(body?.scrollTop || 0);
     const active = host?.ownerDocument?.activeElement;
-    const focusAttribute = ['data-inv-collapsible', 'data-subagent-select', 'data-subagent-back', 'data-subagent-close', 'data-subagent-copy'].find((name) => host?.contains?.(active) && active?.hasAttribute?.(name));
+    const focusAttribute = ['data-inv-collapsible', 'data-subagent-select', 'data-subagent-back', 'data-subagent-runs-back', 'data-subagent-close', 'data-subagent-copy'].find((name) => host?.contains?.(active) && active?.hasAttribute?.(name));
     const focusedId = focusAttribute ? active.getAttribute(focusAttribute) : null;
     const open = new Set([...(host?.querySelectorAll?.('[data-inv-collapsible][aria-expanded="true"]') || [])]
       .map((el) => el.getAttribute('data-inv-collapsible')));
@@ -524,6 +583,7 @@
 
   return {
     copyAnswer,
+    helperRuns,
     inlineSummaryMarkup,
     renderLiveSummary,
     renderMonitor,

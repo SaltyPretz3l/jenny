@@ -559,7 +559,6 @@ def test_parse_runtime_config_reads_search_tool_fields() -> None:
             "electron_tool_bridge_enabled": True,
             "tools_subagents_enabled": True,
             "tools_subagent_batch_enabled": True,
-            "tools_mcp_resources_enabled": True,
             "tools_automations_enabled": True,
             "tools_workspace_present_enabled": True,
             "tools_home_enabled": True,
@@ -583,14 +582,14 @@ def test_parse_runtime_config_reads_search_tool_fields() -> None:
     assert not hasattr(config, "tools_mermaid_enabled")
     assert config.electron_tool_bridge_enabled is True
     assert config.tools_subagents_enabled is True
-    assert config.tools_mcp_resources_enabled is True
     assert config.tools_automations_enabled is True
     assert config.tools_workspace_present_enabled is True
     assert config.tools_home_enabled is True
     assert config.tools_next_step_enabled is True
     assert config.tools_rich_files_enabled is True
     assert config.tools_workspace_manifest_enabled is True
-    assert config.tools_task_capsule_enabled is True
+    # The retired task-capsule flag in the payload above is ignored, not parsed.
+    assert not hasattr(config, "tools_task_capsule_enabled")
     assert config.tools_image_read_enabled is True
     assert config.tools_max_search_file_bytes == 4096
     assert config.tools_max_edit_file_bytes == 8192
@@ -607,14 +606,12 @@ def test_parse_runtime_config_defaults_search_tool_fields() -> None:
     assert config.tools_lsp_command_python is None
     assert config.electron_tool_bridge_enabled is False
     assert config.tools_subagents_enabled is True
-    assert config.tools_mcp_resources_enabled is False
     assert config.tools_automations_enabled is False
     assert config.tools_workspace_present_enabled is False
     assert config.tools_home_enabled is False
     assert config.tools_next_step_enabled is False
     assert config.tools_rich_files_enabled is True
     assert config.tools_workspace_manifest_enabled is False
-    assert config.tools_task_capsule_enabled is False
     assert config.tools_image_read_enabled is False
     assert config.tools_max_search_file_bytes == 2_097_152
     assert config.tools_max_edit_file_bytes == 2_097_152

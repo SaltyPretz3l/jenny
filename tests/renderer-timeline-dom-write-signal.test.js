@@ -44,7 +44,13 @@ test('full_render emits timeline_dom_write', (t) => {
   assertTimelineWrite(enabledWrite, 'full_render');
 });
 
-test('streaming_article emits timeline_dom_write for both rebuild sub-paths', () => {
+// The structural rebuild morphs in place whatever the flags say: neither a
+// missing flag nor a flag set false (every key reads false here) brings back
+// the raw innerHTML swap.
+for (const [label, makeFlags] of [
+  ['no flag in state', () => ({})],
+  ['every flag false', () => new Proxy({}, { get: (_target, key) => (typeof key === 'string' ? false : undefined) })],
+]) test(`streaming_article emits timeline_dom_write for both rebuild sub-paths (${label})`, () => {
   const dom = new JSDOM(`<!doctype html><html><body>
     <div id="scroll"><div id="timeline">
       <article class="chat-entry assistant" data-message-id="assistant_stream">
@@ -65,9 +71,7 @@ test('streaming_article emits timeline_dom_write for both rebuild sub-paths', ()
     ui: { chatMode: 'thread', animateNextChatActivation: false },
     auth: { authenticated: true },
     backend: { phase: 'ready' },
-    features: { featureFlags: {
-      chat_timeline_streaming_article_morph: true,
-    } },
+    features: { featureFlags: makeFlags() },
   };
   const uiRuntime = {
     recapExpansionSignature: 'recap',

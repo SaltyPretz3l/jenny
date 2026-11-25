@@ -295,6 +295,22 @@ test('installed but stopped Ollama renders distinct not-running copy', async (t)
   assert.doesNotMatch(h.rootEl.textContent, /Ollama detected/);
 });
 
+test('running Ollama without Linux daemon facts (Windows, macOS) offers Continue, which closes the gate', async (t) => {
+  let closes = 0;
+  const h = mountGate(t, {
+    closeModal: () => { closes += 1; },
+    setupService: { detectOllama: async () => ({ installed: true, running: true, version: '0.40.3', versionSupported: true }) },
+  });
+  await settle();
+
+  assert.match(h.rootEl.textContent, /Ollama detected \(v0\.40\.3\)/);
+  const next = h.rootEl.querySelector('[data-step-modal-action="continue"]');
+  assert.equal(next?.textContent, 'Continue');
+  next.click();
+  await settle();
+  assert.equal(closes, 1);
+});
+
 test('upgrade-required Ollama renders an explicit upgrade opt-in', async (t) => {
   const h = mountGate(t, {
     setupService: {
@@ -318,6 +334,8 @@ test('upgrade-required Ollama renders an explicit upgrade opt-in', async (t) => 
   assert.match(h.rootEl.textContent, /too old/i);
   assert.match(h.rootEl.textContent, /Download & upgrade Ollama/i);
   const action = h.rootEl.querySelector('[data-step-modal-action="install"]');
+  assert.equal(action.textContent, 'Upgrade Ollama', 'without Linux daemon facts the upgrade stays an in-app action');
+  assert.equal(h.rootEl.querySelector('[data-step-modal-action="continue"]'), null);
   assert.equal(action.disabled, true);
   const optIn = h.rootEl.querySelector('#setup-hw-optin');
   optIn.checked = true;

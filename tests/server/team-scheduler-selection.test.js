@@ -34,7 +34,7 @@ test('eligibility: online, not paused, a free slot, the model advertised, not ex
   assert.equal(isEligible(node('a', { busy_slots: 1 }), want, {}), false);
   assert.equal(isEligible(node('a', { busy_slots: 1 }), want, { ignoreSlots: true }), true);
   assert.equal(isEligible(node('a', { models: [model('beta')] }), want, {}), false);
-  assert.equal(isEligible(node('a'), want, { excludedNodeId: 'a' }), false);
+  assert.equal(isEligible(node('a'), want, { excludedNodeIds: ['a'] }), false);
   assert.equal(isEligible(node('a'), { model: 'alpha', wantsVision: true }, {}), false, 'vision needs a vision model');
   assert.equal(isEligible(node('a'), { model: 'seer', wantsVision: true }, {}), true);
   assert.equal(isEligible(node('a', { models: [model('alpha', { contextLength: 4096 })] }), want, {}), true,
@@ -49,7 +49,7 @@ test('choice: the affinity node when eligible and free, else the oldest last_ser
   assert.equal(chooseNode(nodes, want, {}).node_id, 'b');
   nodes[2].busy_slots = 1;
   assert.equal(chooseNode(nodes, want, { affinityNodeId: 'c' }).node_id, 'b', 'a busy affinity node is ignored');
-  assert.equal(chooseNode(nodes, want, { affinityNodeId: 'b', excludedNodeId: 'b' }).node_id, 'a');
+  assert.equal(chooseNode(nodes, want, { affinityNodeId: 'b', excludedNodeIds: ['b'] }).node_id, 'a');
   assert.equal(chooseNode([node('a', { busy_slots: 1 })], want, {}), null);
 });
 
@@ -84,14 +84,14 @@ test('the affinity map holds 1,024 entries, evicts the oldest and expires after 
 test('the exclusion lasts 10 minutes and is cleared explicitly', () => {
   const ex = createExclusions({ max: 1024, ttlMs: 10 * MINUTE });
   ex.exclude('conv:p:1', 'node_a', 0);
-  assert.equal(ex.get('conv:p:1', 10 * MINUTE - 1), 'node_a');
-  assert.equal(ex.get('conv:p:1', 10 * MINUTE), null);
+  assert.deepEqual(ex.getAll('conv:p:1', 10 * MINUTE - 1), ['node_a']);
+  assert.deepEqual(ex.getAll('conv:p:1', 10 * MINUTE), []);
   ex.exclude('conv:p:1', 'node_a', 0);
   ex.clear('conv:p:1');
-  assert.equal(ex.get('conv:p:1', 1), null);
+  assert.deepEqual(ex.getAll('conv:p:1', 1), []);
   for (let i = 0; i < 1100; i += 1) ex.exclude(`c${i}`, 'n', 1);
-  assert.equal(ex.get('c75', 2), null, 'the oldest entries were evicted');
-  for (let i = 76; i < 1100; i += 1) assert.equal(ex.get(`c${i}`, 2), 'n', `c${i} kept: 1,024 entries`);
+  assert.deepEqual(ex.getAll('c75', 2), [], 'the oldest entries were evicted');
+  for (let i = 76; i < 1100; i += 1) assert.deepEqual(ex.getAll(`c${i}`, 2), ['n'], `c${i} kept: 1,024 entries`);
 });
 
 // ---------------------------------------------------------------------------
@@ -376,6 +376,34 @@ test('the pool summary: union of online models, smallest length per model, the l
   assert.equal(summary.online_slots, 3);
 });
 
+test('H13: a paused node takes no part in the pool summary: no model, no slots, no context length', () => {
+  const { scheduler } = createScheduler();
+  const small = registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_a',
+    models: [model('alpha', { contextLength: 4096 }), model('only-paused', { contextLength: 4096 })] });
+  registerNode(scheduler, { deviceId: 'device_2', memberId: 'member_b', models: [model('alpha', { contextLength: 32768 })] });
+  assert.equal(scheduler.poolSummary().models.find((m) => m.id === 'alpha').context_length, 4096);
+  scheduler.setNodePaused(small, { on: true });
+  const summary = scheduler.poolSummary();
+  assert.deepEqual(summary.models.map((m) => m.id), ['alpha'], 'a model only a paused node has is not offered');
+  assert.equal(summary.models[0].context_length, 32768, 'the paused node no longer lowers the minimum');
+  assert.equal(summary.online_slots, 1);
+  scheduler.setNodePaused(small, { on: false });
+  assert.equal(scheduler.poolSummary().models.length, 2);
+});
+
+test('H13: a context length is held to 2,048 to 1,048,576: a larger one is clamped, a smaller one drops the model', () => {
+  const { scheduler } = createScheduler();
+  registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_a', models: [
+    model('huge', { contextLength: Number.MAX_SAFE_INTEGER }), model('tiny', { contextLength: 1 }),
+    model('edge-low', { contextLength: 2048 }), model('edge-high', { contextLength: 1_048_576 }),
+    model('unknown', { contextLength: null }), model('just-under', { contextLength: 2047 })] });
+  const lengths = Object.fromEntries(scheduler.poolSummary().models.map((m) => [m.id, m.context_length]));
+  assert.deepEqual(lengths, { huge: 1_048_576, 'edge-low': 2048, 'edge-high': 1_048_576, unknown: null });
+  assert.equal(scheduler.poolSummary().largest_context_length, 1_048_576);
+  assert.equal(scheduler.registerNode({ deviceId: 'device_2', memberId: 'member_b', slots: 1,
+    models: [{ id: 'bad', context_length: 1.5, vision: false, thinking: false }] }).ok, false, 'not an integer is still refused');
+});
+
 test('the leased model capabilities come from the serving node\'s entry', () => {
   const { scheduler } = createScheduler();
   registerNode(scheduler, { deviceId: 'device_1', memberId: 'member_a',
@@ -437,7 +465,10 @@ test('A2: a client closing after [DONE] ends the job done and keeps the lease', 
   assert.equal(fx.scheduler.cancelJob(job.job_id).ok, true);
   assert.equal(fx.scheduler.getJob(job.job_id).state, 'done');
   assert.equal(fx.scheduler.getLease(lease.lease_id).state, 'active');
-  assert.deepEqual(fx.scheduler.acceptChunk(job.job_id, nodeId, 1, Buffer.alloc(0), true), { ok: false });
+  // H14: the node's own final chunk is acknowledged (it is not a lost job); more output is told to stop.
+  assert.deepEqual(fx.scheduler.acceptChunk(job.job_id, nodeId, 1, Buffer.alloc(0), true), { ok: true, next_seq: 1, cancel: false });
+  assert.deepEqual(fx.scheduler.acceptChunk(job.job_id, nodeId, 1, Buffer.from('late'), false), { ok: true, next_seq: 1, cancel: true });
+  assert.deepEqual(fx.scheduler.acceptChunk(job.job_id, 'node_other', 1, Buffer.alloc(0), true), { ok: false }, 'another node is refused');
   assert.equal(fx.scheduler.createJob(lease.lease_id, { requestBytes: Buffer.from('{}') }).ok, true);
 });
 

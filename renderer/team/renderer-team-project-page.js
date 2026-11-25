@@ -62,7 +62,7 @@
 
   function createProjectPage({ root, teamId, projectId, store, ctx, onShow, onClose, renders = { page: 0 } }) {
     const ids = { team_id: teamId, project_id: projectId };
-    const live = { members: null, membersError: '', reading: false, again: false, rename: null, confirmDelete: false, addWho: '', addRole: 'writer',
+    const live = { members: null, membersError: '', reading: false, again: false, rename: null, confirmDelete: false, confirm: null, addWho: '', addRole: 'writer',
       notes: {}, busy: new Set(), disposed: false, rowKey: '', transferState: '' };
     const last = {};
     let rules = null;
@@ -255,15 +255,23 @@
       const capped = person && person.role === 'read_only';
       const fact = capped ? jt('team.projects.readOnlyHere', 'read-only in the team, so Reader here') : '';
       let acts = '<span class="team-set-person__fact">' + escapeHtml(roleWord(member.role)) + '</span>';
+      let sure = ''; // H21.1: Remove asks first; the confirm stands in the row where the button was
+      const asking = admin && !me && live.confirm && live.confirm.kind === 'remove' && live.confirm.memberId === member.member_id;
       if (admin && !me) {
         const roleLabel = jt('team.projects.roleFor', 'Role for {name}', { name: shown });
         acts = inv().selectField({ id: 'teamProjectRole-' + member.member_id, ariaLabel: roleLabel, tooltip: capped ? fact : roleLabel, value: member.role, disabled: capped || live.busy.has('role:' + member.member_id),
           options: ROLES.map((role) => ({ value: role, label: roleWord(role) })), dataset: { 'project-input': 'member-role', 'member-id': member.member_id } })
-          + button('member-remove', jt('team.projects.remove', 'Remove'), { variant: 'ghost', title: jt('team.projects.removeTitle', 'Remove {name} from the project', { name: shown }),
-            disabled: live.busy.has('remove:' + member.member_id), dataset: { 'member-id': member.member_id } });
+          + (asking ? '' : button('member-remove', jt('team.projects.remove', 'Remove'), { variant: 'ghost', title: jt('team.projects.removeTitle', 'Remove {name} from the project', { name: shown }),
+            disabled: live.busy.has('remove:' + member.member_id), dataset: { 'member-id': member.member_id } }));
+        if (asking) {
+          const params = { name: shown, project: name() };
+          sure = column.confirmBlock(jt('team.projects.removeGo', 'Remove {name}', params), jt('team.projects.removeConfirm', 'Remove {name} from {project}? They no longer see its conversations, its channel or its files. You can add them back.', params),
+            button('member-remove-go', jt('team.projects.removeGo', 'Remove {name}', params), { variant: 'danger', disabled: live.busy.has('remove:' + member.member_id), dataset: { 'member-id': member.member_id } })
+            + button('member-cancel', jt('team.projects.cancel', 'Cancel'), { dataset: { 'member-id': member.member_id } }));
+        }
       }
       return '<li class="team-set-person"><div class="team-set-person__who"><span class="team-set-person__name" dir="auto">' + escapeHtml(label) + '</span>'
-        + (fact ? '<span class="team-set-person__fact">' + escapeHtml(fact) + '</span>' : '') + '</div><div class="team-set-person__acts">' + acts + '</div></li>';
+        + (fact ? '<span class="team-set-person__fact">' + escapeHtml(fact) + '</span>' : '') + '</div><div class="team-set-person__acts">' + acts + '</div>' + sure + '</li>';
     }
 
     // Add someone: a person who is read-only in the team joins as a reader (the role is fixed and says why).
@@ -288,7 +296,10 @@
             + button('member-add', jt('team.projects.add', 'Add'), { title: jt('team.projects.addTitle', 'Add this person to the project'), disabled: live.busy.has('add') }) + '</div>';
         }
       }
-      const leave = '<div class="team-page__acts">' + button('leave', jt('team.projects.leave', 'Leave this project'), { title: jt('team.projects.leaveTitle', 'Stop being a member of {project}', { project: name() }), disabled: live.busy.has('leave') }) + '</div>';
+      const leave = live.confirm && live.confirm.kind === 'leave' ? column.confirmBlock(jt('team.projects.leave', 'Leave this project'),
+        jt('team.projects.leaveConfirm', 'Leave {project}? You stop seeing its conversations, its channel and its files until a project admin adds you back.', { project: name() }),
+        button('leave-go', jt('team.projects.leaveGo', 'Leave {project}', { project: name() }), { variant: 'danger', disabled: live.busy.has('leave') }) + button('leave-cancel', jt('team.projects.cancel', 'Cancel')))
+        : '<div class="team-page__acts">' + button('leave', jt('team.projects.leave', 'Leave this project'), { title: jt('team.projects.leaveTitle', 'Stop being a member of {project}', { project: name() }), disabled: live.busy.has('leave') }) + '</div>';
       return section('members', jt('team.projects.members', 'Members'), (rows ? '<ul class="team-set-list">' + rows + '</ul>' : '') + note(live.membersError) + add + leave + note(live.notes.members),
         live.members ? number(members.length) : '');
     }
@@ -377,6 +388,31 @@
 
     // ------------------------------------------------------------ actions
 
+    // H21.1: Remove and Leave ask first. The confirm's Cancel takes the focus; Cancel, Escape and the answer close it and give the focus back.
+    function focusControl(action, memberId) {
+      const el = Array.from(root.querySelectorAll('[data-project-action="' + action + '"]')).find((b) => !memberId || b.dataset.memberId === memberId);
+      if (el && !el.disabled) el.focus({ preventScroll: true });
+    }
+    function ask(kind, memberId = '') {
+      live.confirm = { kind, memberId };
+      draw();
+      const cancel = partsEl.members.querySelector('.team-set-confirm [data-project-action$="-cancel"]');
+      if (cancel) cancel.focus({ preventScroll: true });
+    }
+    function closeConfirm() {
+      const c = live.confirm;
+      live.confirm = null;
+      draw();
+      if (c) focusControl(c.kind === 'leave' ? 'leave' : 'member-remove', c.memberId);
+    }
+    async function confirmed(kind, memberId, method, payload, after) {
+      await run(kind === 'leave' ? 'leave' : 'remove:' + memberId, 'members', method, payload, after);
+      if (live.disposed) return;
+      live.confirm = null;
+      draw();
+      focusControl(kind === 'leave' ? 'leave' : 'member-remove', memberId);
+    }
+
     function browse(target) {
       const files = explorer();
       if (files) files.open({ teamId, projectId, projectName: name(), from: target });
@@ -403,9 +439,12 @@
         case 'download-cancel': void run('cancel', 'files', 'downloadCancel', {}); return;
         case 'browse-files': browse(target); return;
         case 'board-open': void openBoard(target.dataset.boardId); return;
-        case 'member-remove': void run('remove:' + memberId, 'members', 'projectRemoveMember', { member_id: memberId }, () => readMembers()); return;
+        case 'member-remove': ask('remove', memberId); return;
+        case 'member-remove-go': void confirmed('remove', memberId, 'projectRemoveMember', { member_id: memberId }, () => readMembers()); return;
+        case 'member-cancel': case 'leave-cancel': closeConfirm(); return;
         case 'member-add': void run('add', 'members', 'projectAddMember', { member_id: live.addWho, role: addRoleOf() }, () => readMembers()); return;
-        case 'leave': void run('leave', 'members', 'projectLeave', {}, () => { store.reread(teamId); onClose(); }); return;
+        case 'leave': ask('leave'); return;
+        case 'leave-go': void confirmed('leave', '', 'projectLeave', {}, () => { store.reread(teamId); onClose(); }); return;
         case 'delete': live.confirmDelete = true; draw(); return;
         case 'delete-cancel': live.confirmDelete = false; draw(); return;
         case 'delete-go': void run('delete', 'delete', 'projectDelete', {}, () => { store.reread(teamId); onClose(); }); return;
@@ -435,6 +474,11 @@
     }
 
     function onKeydown(event) {
+      if ((event.key === 'Escape' || event.key === 'Esc') && live.confirm && event.target && event.target.closest && event.target.closest('.team-set-confirm') && partsEl.members.contains(event.target)) {
+        event.preventDefault();
+        closeConfirm();
+        return;
+      }
       if (event.target && event.target.id === RENAME_ID) {
         if (event.key === 'Enter') { event.preventDefault(); onClick({ target: root.querySelector('[data-project-action="rename-save"]') }); }
         else if (event.key === 'Escape') { event.preventDefault(); live.rename = null; draw(); }

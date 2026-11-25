@@ -91,6 +91,7 @@ function setup(opts = {}) {
     mainEl,
     state,
     wb,
+    views,
     model,
     ops,
     q,

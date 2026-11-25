@@ -353,3 +353,26 @@ def test_the_backend_and_window_default_to_the_budgets_own() -> None:
 
     assert source == "exact"
     assert scale == pytest.approx(9_000 / 6_000, rel=0.01)
+
+
+# -- the band per engine (row 183 W2) -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ceiling", "band"),
+    [(None, (0.9, 1.6)), (1.2, (0.9, 1.6)), (2.5, (0.9, 2.5)), (9.0, (0.9, 2.5)),
+     ("2.5", (0.9, 1.6)), (True, (0.9, 1.6)), (float("nan"), (0.9, 1.6))],
+)
+def test_an_engine_may_widen_the_band_up_to_two_and_a_half(ceiling: Any, band: Any) -> None:
+    from sidecar.ai.context.context_count import calibration_band
+
+    assert calibration_band(SimpleNamespace(calibration_ceiling=ceiling)) == band
+
+
+def test_a_full_prompt_cloud_ratio_is_trusted_where_the_engine_declares_it() -> None:
+    from sidecar.ai.context.context_count import calibration_band
+
+    reading = ContextCalibration(175_000, 100_000, "e", "m", "x")
+    assert reading.ratio is None  # the local band drops it
+    assert reading.ratio_in(calibration_band(SimpleNamespace(calibration_ceiling=2.5))) == 1.75
+    assert ContextCalibration(260_000, 100_000, "e", "m", "x").ratio_in((0.9, 2.5)) is None

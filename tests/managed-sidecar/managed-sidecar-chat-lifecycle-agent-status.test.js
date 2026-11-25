@@ -5,9 +5,7 @@ const { startManagedSidecarChatStream } = require('../../services/backend/manage
 const { createManagedChatServiceStub } = require('../helpers/managed-sidecar-chat-lifecycle-helpers');
 
 test('managed sidecar normalizes agent.progress into agent_status events and mirrors lifecycle into active_turn', async () => {
-  const service = createManagedChatServiceStub({
-    featureFlags: { agent_executor: true },
-  });
+  const service = createManagedChatServiceStub();
   let resolveChatSend;
   let chatSendParams = null;
   let chatSendOptions = null;
@@ -20,9 +18,9 @@ test('managed sidecar normalizes agent.progress into agent_status events and mir
         params: {
           request_id: params.request_id,
           session_id: params.session_id,
-          task_id: 'local_agent_test',
-          task_type: 'local_agent',
-          source: 'local_agent',
+          task_id: 'delegate_test',
+          task_type: 'sub_agent',
+          source: 'delegate',
           status: 'running',
           stage: 'planning',
           percent: 20,
@@ -64,8 +62,8 @@ test('managed sidecar normalizes agent.progress into agent_status events and mir
   assert.ok(lifecycleEvent);
   assert.equal(lifecycleEvent.payload.streamId, stream.streamId);
   assert.equal(lifecycleEvent.payload.requestId, stream.streamId);
-  assert.equal(lifecycleEvent.payload.taskId, 'local_agent_test');
-  assert.equal(lifecycleEvent.payload.taskType, 'local_agent');
+  assert.equal(lifecycleEvent.payload.taskId, 'delegate_test');
+  assert.equal(lifecycleEvent.payload.taskType, 'sub_agent');
   assert.equal(lifecycleEvent.payload.stage, 'planning');
   assert.equal(lifecycleEvent.payload.percent, 20);
   assert.equal(lifecycleEvent.payload.summary, 'Planning multi-step execution strategy.');
@@ -84,8 +82,8 @@ test('managed sidecar normalizes agent.progress into agent_status events and mir
     started_at: activeTurn.started_at,
     last_event_at: activeTurn.last_event_at,
     status: 'streaming',
-    task_id: 'local_agent_test',
-    task_type: 'local_agent',
+    task_id: 'delegate_test',
+    task_type: 'sub_agent',
     agent_stage: 'planning',
     agent_summary: 'Planning multi-step execution strategy.',
     agent_percent: 20,
@@ -108,7 +106,7 @@ test('managed sidecar normalizes agent.progress into agent_status events and mir
   assert.match(chatSendParams.session_incarnation, /^incarnation_[A-Za-z0-9-]+$/);
 });
 
-test('managed sidecar ignores agent.progress notifications when agent executor rollout is disabled', async () => {
+test('managed sidecar ignores agent.progress notifications that are not delegate child progress', async () => {
   const service = createManagedChatServiceStub();
   let resolveChatSend;
   let chatSendOptions = null;
@@ -126,7 +124,7 @@ test('managed sidecar ignores agent.progress notifications when agent executor r
           status: 'running',
           stage: 'planning',
           percent: 20,
-          summary: 'This should stay behind the rollout flag.',
+          summary: 'This is not delegate child progress.',
           terminal: false,
           success: false,
         },

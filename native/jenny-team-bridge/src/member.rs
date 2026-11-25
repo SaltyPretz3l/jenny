@@ -156,6 +156,10 @@ where
             Err(reason) => return fail(&out, reason).await,
         },
     };
+    let loopback_only = options.loopback_only || start.loopback_only;
+    if !relay::destination_allowed(start.relay.as_ref(), loopback_only) {
+        return fail(&out, Reason::StartInvalid).await;
+    }
     out.send(json!({ "t": "state", "state": "connecting" }))
         .await;
     let (command_tx, mut commands) = mpsc::channel(8);
@@ -163,7 +167,7 @@ where
 
     let relay_url = start.relay.as_ref().map(|relay| relay.url().clone());
     let plan = BindPlan {
-        loopback_only: options.loopback_only || start.loopback_only,
+        loopback_only,
         addresses: &start.addresses,
         relay: start.relay.as_ref(),
         relay_tls: options.relay_tls.as_ref(),

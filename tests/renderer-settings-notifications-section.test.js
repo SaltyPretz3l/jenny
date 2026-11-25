@@ -365,3 +365,59 @@ test('fix item 2: with replies and Jenny off the preview switch still works whil
     }
   });
 });
+
+test('row 193 C6: Desktop notifications off writes one reason on the master row and dims every child without printing it', () => {
+  return withGlobals(() => {
+    const previousShell = globalThis.rendererTopNavShellController;
+    globalThis.rendererTopNavShellController = { isTeamTabAvailable: () => true };
+    try {
+      const { container } = harness();
+      const state = { ui: { notifications: settingsWith({ enabled: false }) }, features: { featureFlags: { team: true } } };
+      section.renderNotificationsSection({ container, state });
+      const rows = [...container.querySelectorAll('.settings-field')];
+      const master = container.querySelector('[data-settings-field="notificationsEnabledToggle"]');
+      const children = rows.filter((row) => row !== master);
+      assert.equal(children.length, 11);
+      const lines = container.querySelectorAll('.settings-field-reason');
+      assert.equal(lines.length, 1, 'the reason is written once');
+      assert.equal(master.contains(lines[0]), true);
+      assert.equal(lines[0].textContent, 'Off. The settings below keep their values and can be changed again when this is on.');
+      children.forEach((child) => {
+        assert.equal(child.getAttribute('data-setting-parent-off'), 'true', 'dimmed as a whole');
+        assert.equal(child.querySelector('.settings-field-reason'), null, 'no child prints the reason');
+        const control = child.querySelector('.inv-toggle');
+        assert.equal(control.getAttribute('aria-description'), 'Turn on "Desktop notifications" to change this.');
+        assert.equal(control.getAttribute('title'), 'Turn on "Desktop notifications" to change this.');
+        assert.equal(child.querySelector('[data-inv-toggle]').hasAttribute('disabled'), true);
+      });
+      state.ui.notifications = settingsWith({ enabled: true });
+      section.renderNotificationsSection({ container, state });
+      assert.equal(container.querySelectorAll('.settings-field-reason').length, 0, 'turning it back on clears the line');
+      assert.equal(container.querySelector('[data-setting-parent-off]'), null);
+      assert.equal(container.querySelector('[data-setting-off-reason]'), null);
+    } finally {
+      globalThis.rendererTopNavShellController = previousShell;
+    }
+  });
+});
+
+test('row 193 C6: the reply preview row names the two switches that gate it when both are off', () => {
+  return withGlobals(() => {
+    const { container } = harness();
+    const categories = { ...section.DEFAULT_NOTIFICATION_SETTINGS.categories, replies: false, jenny: false };
+    const state = { ui: { notifications: settingsWith({ categories }) } };
+    section.renderNotificationsSection({ container, state });
+    const row = container.querySelector('[data-settings-field="notificationsReplyPreviewToggle"]');
+    const reason = row.querySelector('.settings-field-reason');
+    assert.equal(reason.firstChild.textContent, 'Turn on "A reply is ready" or "Jenny finishes a check or an update" to use this.');
+    assert.equal(row.querySelector('[data-inv-toggle]').hasAttribute('disabled'), true);
+    assert.equal(container.querySelectorAll('.settings-field-reason').length, 1, 'no other row says why');
+    state.ui.notifications = settingsWith({ categories: { ...categories, replies: true } });
+    section.renderNotificationsSection({ container, state });
+    assert.equal(container.querySelector('.settings-field-reason'), null, 'one of the two on: no reason');
+    state.ui.notifications = settingsWith({ enabled: false, categories });
+    section.renderNotificationsSection({ container, state });
+    assert.equal(container.querySelectorAll('.settings-field-reason').length, 1, 'with the master off the group line is the only reason');
+    assert.equal(container.querySelector('[data-settings-field="notificationsReplyPreviewToggle"] .settings-field-reason'), null);
+  });
+});

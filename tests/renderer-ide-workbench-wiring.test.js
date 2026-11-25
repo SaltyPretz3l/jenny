@@ -72,12 +72,12 @@ function setup(t, opts = {}) {
 test('view registry covers every catalog view with a label function and a strip icon', (t) => {
   const h = setup(t);
   assert.deepEqual(Object.keys(h.wiring.views).sort(), [...ALL_VIEWS].sort());
-  const instances = [...[2, 3, 4].map((n) => model.terminalViewId(n)), 'chat-2', 'changes-2'];
-  assert.deepEqual([...ALL_VIEWS].sort(), [...Object.keys(model.VIEW_CATALOG), ...model.OPTIONAL_VIEW_IDS, ...instances].sort(), 'wiring registry matches the layout catalog plus the optional views and the terminal and chat instances');
+  const instances = [2, 3, 4].map((n) => model.terminalViewId(n));
+  assert.deepEqual([...ALL_VIEWS].sort(), [...Object.keys(model.VIEW_CATALOG), ...model.OPTIONAL_VIEW_IDS, ...instances].sort(), 'wiring registry matches the layout catalog plus the optional views and the terminal instances');
   const expected = {
     explorer: 'Files', search: 'Search', 'source-control': 'Git', outline: 'Outline', terminal: 'Terminal',
     problems: 'Problems', run: 'Run', 'test-runner': 'Tests', 'test-output': 'Test output', activity: 'Activity', chat: 'Chat', changes: 'Changes',
-    'terminal-2': 'Terminal 2', 'terminal-3': 'Terminal 3', 'terminal-4': 'Terminal 4', 'chat-2': 'Chat 2', 'changes-2': 'Changes 2',
+    'terminal-2': 'Terminal 2', 'terminal-3': 'Terminal 3', 'terminal-4': 'Terminal 4',
   };
   for (const id of ALL_VIEWS) {
     assert.equal(typeof VIEW_LABELS[id], 'function', `${id} label is a function`);

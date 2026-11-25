@@ -12,6 +12,27 @@
   gap: var(--space-8);
 }
 
+/* The restart bar is the frame's first child, above the scrolling pages, so it stays put while a page scrolls. */
+.settings-restart-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  max-width: min(var(--settings-shell-content-max), 100%);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-restart-bar .inv-status-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-restart-bar .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
 .settings-content-scroll {
   flex: 1;
   min-height: 0;

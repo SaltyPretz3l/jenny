@@ -230,6 +230,10 @@
       return true;
     }
 
+    function detach() { // the chat gave the terminal back: its element must hold one terminal; renderHost() re-attaches this one
+      if (mountedEl && term?.element?.parentNode === mountedEl) mountedEl.removeChild(term.element);
+      unbindContextMenu?.(); unbindContextMenu = null; resizeObserver?.disconnect(); mountedEl = null;
+    }
     // The panel markup was (re)built: the xterm host must be re-attached.
     function forgetMount() {
       mountedEl = null;
@@ -562,7 +566,7 @@
       applyAppearance,
       applyFit,
       applyFitAndResize,
-      attach,
+      attach, detach,
       clear,
       discardWriteQueue,
       dispose,

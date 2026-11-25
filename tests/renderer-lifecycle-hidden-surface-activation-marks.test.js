@@ -50,7 +50,7 @@ function buildController(t) {
 
   const controller = createLifecycleController({
     state,
-    constants: { SIDEBAR_STORAGE_KEY: 'k', APPEARANCE_STORAGE_KEY: 'k2', TOAST_SOURCE: {}, INTERACTIVE_SEQUENCE_IDLE: 'idle' },
+    constants: { APPEARANCE_STORAGE_KEY: 'k2', TOAST_SOURCE: {}, INTERACTIVE_SEQUENCE_IDLE: 'idle' },
     dom: {
       chatInput: el(),
       composerAttachMenu: el(),

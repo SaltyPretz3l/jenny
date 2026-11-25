@@ -47,15 +47,6 @@ class _Transport(MCPTransport):
         self.calls.append((tool_name, dict(arguments)))
         return {"content": [{"type": "text", "text": "EXECUTED"}]}
 
-    def list_resources(self, **_kwargs):
-        return {"resources": []}
-
-    def read_resource(self, uri, **_kwargs):
-        return {"contents": []}
-
-    def list_resource_templates(self, **_kwargs):
-        return {"resourceTemplates": []}
-
     def list_prompts(self, **_kwargs):
         return []
 

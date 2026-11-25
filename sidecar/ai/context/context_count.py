@@ -40,6 +40,10 @@ SOURCE_ESTIMATE = "estimate"
 # the reading is too far off the estimator to carry to the next turn. A trusted
 # ratio is floored at 1.0, so a calibration never counts below the estimate.
 _CALIBRATED_BAND = (0.9, 1.6)
+# A cloud route that counts the whole prompt with its own tokenizer may declare a higher
+# ceiling (``calibration_ceiling`` on the engine, row 183 W2): Claude's tokenizer and the tool
+# framing put the Anthropic ratio near 1.75, which the local band threw away.
+_CALIBRATION_CEILING_MAX = 2.5
 # An exact count is this request's truth, used unclamped upward (CJK text can
 # run ~4x chars/4); only a reading this far off is a broken count. Like a
 # calibration it never scales below the estimate: a count that comes in low
@@ -118,11 +122,24 @@ class ContextCalibration:
 
     @property
     def ratio(self) -> float | None:
-        """The trusted scale (floored at 1.0), or ``None`` outside the band."""
+        """The trusted scale (floored at 1.0), or ``None`` outside the local band."""
+        return self.ratio_in(_CALIBRATED_BAND)
+
+    def ratio_in(self, band: tuple[float, float]) -> float | None:
+        """The trusted scale inside ``band`` (floored at 1.0), else ``None``."""
         if self.provider_tokens <= 0 or self.estimate_tokens <= 0:
             return None
-        ratio = scale_in_band(self.provider_tokens / self.estimate_tokens, _CALIBRATED_BAND)
+        ratio = scale_in_band(self.provider_tokens / self.estimate_tokens, band)
         return None if ratio is None else max(ratio, 1.0)
+
+
+def calibration_band(engine: Any) -> tuple[float, float]:
+    """The band a calibration on ``engine`` is trusted in: the local band, or up to the
+    engine's declared ``calibration_ceiling`` (never above 2.5)."""
+    ceiling = scale_in_band(getattr(engine, "calibration_ceiling", None), (0.0, math.inf))
+    if ceiling is None or ceiling <= _CALIBRATED_BAND[1]:
+        return _CALIBRATED_BAND
+    return (_CALIBRATED_BAND[0], min(ceiling, _CALIBRATION_CEILING_MAX))
 
 
 def _positive_count(value: Any) -> int | None:
@@ -226,7 +243,7 @@ def resolve_token_scale(  # noqa: PLR0913 - keyword-only ladder inputs.
             if scale is not None:
                 source = SOURCE_EXACT
     if scale is None and calibration is not None and engine_reports_full_prompt_tokens(engine):
-        ratio = calibration.ratio
+        ratio = calibration.ratio_in(calibration_band(engine))
         if (
             ratio is not None
             and calibration.engine == str(getattr(config, "engine_type", ""))

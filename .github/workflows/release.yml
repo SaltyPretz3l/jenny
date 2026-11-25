@@ -147,6 +147,10 @@ jobs:
       - name: Build team bridge
         run: python scripts/packaging/build_team_bridge.py
 
+      # The Rust window helper ships as resources/sidecar/jenny-computer on every OS.
+      - name: Build window helper
+        run: python scripts/packaging/build_computer_helper.py
+
       # The Windows file-access library ships as resources/sidecar/jenny_file_access.dll;
       # it needs cargo (no --allow-missing-toolchain: a release without it is an error).
       - name: Build file-access library (Windows)
@@ -358,6 +362,10 @@ jobs:
       - name: Build team bridge
         run: python scripts/packaging/build_team_bridge.py
 
+      # The Rust window helper ships as resources/sidecar/jenny-computer on every OS.
+      - name: Build window helper
+        run: python scripts/packaging/build_computer_helper.py
+
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py
 
@@ -374,6 +382,7 @@ jobs:
             dist/linux-unpacked/jenny
             dist/linux-unpacked/resources/sidecar/sidecar
             dist/linux-unpacked/resources/sidecar/jenny-team-bridge
+            dist/linux-unpacked/resources/sidecar/jenny-computer
           )
           for bundled in dist/linux-unpacked/chrome-sandbox dist/linux-unpacked/chrome_crashpad_handler dist/linux-unpacked/*.so*; do
             if [ -f "$bundled" ]; then binaries+=("$bundled"); fi

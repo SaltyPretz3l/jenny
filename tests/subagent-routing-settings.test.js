@@ -124,3 +124,13 @@ test('the api-provider preferences take full namespaced ids and keep the other p
   assert.throws(() => applySubagentRoutingPatch({}, { chatgpt: { defaultModel: full } }), /invalid/);
   assert.throws(() => applySubagentRoutingPatch({}, { 'codex-cli': { defaultModel: full } }), /invalid/);
 });
+
+test('row 194: a one-field patch (the Model roles helper row, a limits row) keeps the other saved fields', () => {
+  const saved = applySubagentRoutingPatch({}, { chatgpt: { defaultEffort: 'low', preferredModels: ['luna'], allowedModels: ['luna', 'astra'], maxEffort: 'high' } });
+  const helper = applySubagentRoutingPatch(saved, { chatgpt: { defaultModel: 'astra' } });
+  assert.deepEqual(helper.chatgpt, { defaultModel: 'astra', defaultEffort: 'low', maxEffort: 'high', preferredModels: ['luna'], allowedModels: ['luna', 'astra'] });
+  const limit = applySubagentRoutingPatch(helper, { chatgpt: { maxEffort: 'low' } });
+  assert.equal(limit.chatgpt.defaultModel, 'astra');
+  assert.equal(limit.chatgpt.maxEffort, 'low');
+  assert.deepEqual(limit['codex-cli'], normalizeSubagentRouting()['codex-cli']);
+});

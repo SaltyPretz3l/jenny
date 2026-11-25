@@ -163,7 +163,6 @@
     const clearWorkspaceRoot = typeof options.clearWorkspaceRoot === 'function' ? options.clearWorkspaceRoot : null;
     const renderSessions = typeof options.renderSessions === 'function' ? options.renderSessions : function noop() {};
     const setActiveView = typeof options.setActiveView === 'function' ? options.setActiveView : null;
-    const setSidebarCollapsed = typeof options.setSidebarCollapsed === 'function' ? options.setSidebarCollapsed : null;
     const formatTime = typeof options.formatTime === 'function' ? options.formatTime : resolveFormatSessionTime();
     let projects = [];
     let storage = { read_only: false, reason: '' };
@@ -415,14 +414,15 @@
         + '<div class="settings-card-header">'
         // tabindex: the nav moves focus to the active page's heading.
         + '<h3 tabindex="-1" data-i18n="settings.sections.projects.title">' + escapeHtml(jt('settings.sections.projects.title', 'Projects')) + '</h3>'
-        + button({ id: 'projects-new-folder', label: jt('settings.projects.newFromFolderAction', 'New project from folder'), variant: 'primary',
-          ariaLabel: jt('settings.projects.newFromFolderAction', 'New project from folder'), disabled: locked || !canCreate })
         + '</div>'
         + '<p class="settings-copy">'
         + escapeHtml(jt('settings.projects.managerDescription', 'A project is a folder Jenny works in. Its chats, memories and file access stay with it.'))
         + '</p>'
         + '<div class="settings-group settings-group--wide settings-group--flush" role="group" aria-labelledby="projectsListHeading">'
-        + '<h4 class="settings-group-heading" id="projectsListHeading">' + escapeHtml(jt('settings.projects.listHeading', 'Your projects')) + '</h4>';
+        + '<div class="settings-group-bar"><h4 class="settings-group-heading" id="projectsListHeading">' + escapeHtml(jt('settings.projects.listHeading', 'Your projects')) + '</h4>'
+        + button({ id: 'projects-new-folder', label: jt('settings.projects.newFromFolderAction', 'New project from folder'), variant: 'primary', size: 'sm',
+          ariaLabel: jt('settings.projects.newFromFolderAction', 'New project from folder'), disabled: locked || !canCreate })
+        + '</div>';
       if (rows.length) {
         html += '<ul class="projects-list">' + rows.map((project) => rowMarkup(project, currentId, counts, lastUsed, locked)).join('') + '</ul>';
       } else if (!pending) {
@@ -684,7 +684,6 @@
       else state.ui.chatsProjectFilter = project.id;
       try { renderSessions(); } catch (_error) { /* the list repaints on its own cadence */ }
       setActiveView?.('chat');
-      setSidebarCollapsed?.(false);
     }
 
     // The switcher reports its own outcomes (toasts for a taken folder, a

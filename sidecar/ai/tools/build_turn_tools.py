@@ -9,6 +9,7 @@ candidates, so it never resurrects a tool the contract marks unavailable.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from sidecar.ai.mode_policy import policy_for_mode
@@ -18,6 +19,20 @@ if TYPE_CHECKING:
 
 BUILD_TURN_FLOOR = ("read_file", "edit_file", "write_file", "run_command")
 _APPROVED_PLAN_EXTRA = ("todo_write",)
+
+_CODE_TASK_RE = re.compile(
+    r"\b("
+    r"code|codebase|repo|repository|source|implementation|implement|fix|bug|"
+    r"test|tests|failing|trace|debug|refactor|module|file|files|class|"
+    r"function|runtime|renderer|electron|sidecar|ipc|protocol|tool|"
+    r"context|prompt|lsp|manifest|schema|migration"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_coding_task(value: str) -> bool:
+    return bool(_CODE_TASK_RE.search(str(value or "")))
 
 
 def build_turn_floor_names(
@@ -38,7 +53,4 @@ def build_turn_floor_names(
         return (*BUILD_TURN_FLOOR, *_APPROVED_PLAN_EXTRA)
     if not request_context.workspace_root_present:
         return ()
-    # Lazy: the task capsule pulls in workspace helpers this leaf does not need.
-    from sidecar.ai.context.task_capsule import looks_like_coding_task
-
     return BUILD_TURN_FLOOR if looks_like_coding_task(relevance_text) else ()

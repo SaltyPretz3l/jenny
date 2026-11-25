@@ -65,7 +65,7 @@
   const overflowObservers = new WeakMap(); // cluster -> dispose, so a rebind retires the previous observer
 
   function hostedElsewhere(pane) {
-    return Boolean(pane) && (pane.classList.contains('ide-chat-dock-body') || pane.hasAttribute('data-pane-hosted'));
+    return Boolean(pane) && pane.classList.contains('ide-chat-dock-body');
   }
 
   /**
@@ -107,14 +107,13 @@
    * Mount this pane's More (three dots) button into its session bar: one
    * inventory icon button that opens the inventory context menu. Menu, top to
    * bottom: Back to prompt (`promptJump`; disabled with no prompt yet), a separator,
-   * the panel group (ticked toggles: Artifacts, Tasks and Notes while the bar is
-   * compact; Background tasks; Subagents, Changes and Change pictures with `panels`;
-   * Activity), a separator, the three transcript views as radios, a separator and
+   * the panel group (ticked toggles: Runs, which holds the servers, commands and helpers; Terminal;
+   * Change pictures with `panels`), a separator, the three transcript views as radios, a separator and
    * Wide transcript (the shell's single toggle owns the width; this dispatches
    * its event). Idempotent per cluster: a rebind reuses the button and only
    * re-registers its listener. `signal` disposes the width observer with the bind.
    * `panels` ({ railMode(), closeRail(), featureEnabled(key) }) reaches the
-   * right-hand rail; without it the Subagents, Changes and Change pictures items are omitted.
+   * right-hand rail; without it the Change pictures item is omitted.
    */
   function mountTranscriptViewControl({ cluster, getSessionId, registerListener, listenerOptions, signal, promptJump = null, panels = null, jt = moduleJt } = {}) {
     const build = globalThis.inventoryActionButton;
@@ -137,11 +136,6 @@
     const room = observeBarRoom(cluster, signal);
     const controller = () => globalThis.rendererTranscriptViewController || null;
     const currentView = () => normalizeTranscriptView(controller()?.getView?.(getSessionId()));
-    const shown = (selector) => {
-      const node = cluster.querySelector(selector);
-      return node && !node.hidden ? node : null;
-    };
-
     const doc = button.ownerDocument;
     const pictures = {
       hidden: () => doc.documentElement.hasAttribute(PICTURES_HIDDEN_ATTR),
@@ -163,19 +157,9 @@
     function panelItems() {
       const items = [];
       const toggle = (label, checked, action) => items.push({ label, toggle: true, checked: checked === true, action });
-      if (cluster.hasAttribute('data-session-bar-compact')) {
-        for (const [selector, label] of [
-          ['[data-chat-node="artifactSplitViewToggle"]', jt('artifacts.review.toggleTitle', 'Artifacts')],
-          ['#chatTimelineTasksToggle', jt('artifactPanelV2Render.tasks', 'Tasks')],
-          ['#chatTimelineNotesToggle', jt('projectNotes.toggle', 'Notes')],
-        ]) {
-          const real = shown(selector);
-          if (real) toggle(label, real.getAttribute('aria-pressed') === 'true', () => real.click());
-        }
-      }
       const background = globalThis.rendererBackgroundTasksPanel;
       if (typeof background?.toggle === 'function') {
-        toggle(jt('chat.utilities.panels.backgroundTasks', 'Background tasks'), background.isOpen?.() === true,
+        toggle(jt('runs.title', 'Runs'), background.isOpen?.() === true,
           () => background.toggle({ sessionId: getSessionId(), opener: button }));
       }
       // Row 178: the Terminal panel, offered while its flag is on and the pty bridge exists.
@@ -184,26 +168,17 @@
         items.push({ label: jt('chat.utilities.panels.terminal', 'Terminal'), toggle: true, checked: terminal.isOpen?.() === true, shortcutHint: 'Ctrl+`',
           action: () => terminal.toggle({ sessionId: getSessionId(), opener: button }) });
       }
-      const pane = cluster.closest('.chat-pane');
       const railMode = panels ? String(panels.railMode?.() || '') : '';
-      const cards = pane ? pane.querySelectorAll('[data-subagent-open]') : [];
-      if (panels && cards.length) {
-        const showing = railMode === 'subagents';
-        toggle(jt('chat.utilities.panels.subagents', 'Subagents'), showing, () => {
-          if (!showing) { cards[cards.length - 1].click(); return; }
-          const close = doc.querySelector('.subagent-monitor-shell [data-subagent-close]');
-          if (close) close.click(); else panels.closeRail?.();
-        });
+      // Row 197: the Live tab (the project's program, shown live), offered while its flag is on.
+      const live = globalThis.rendererLiveRunView;
+      if (typeof live?.open === 'function' && panels?.featureEnabled?.('live_run_view') !== false) {
+        const liveOpen = railMode === 'live';
+        toggle(jt('chat.utilities.panels.live', 'Live'), liveOpen, () => (liveOpen ? panels.closeRail?.() : live.open()));
       }
       if (panels && cluster.querySelector('[data-session-bar-diff]')) {
         const detail = () => globalThis.rendererChatWorkspaceDetail;
         const openChanges = () => detail()?.open?.({ surface: 'changes', ownerSessionId: getSessionId(), opener: button });
         const changesOpen = railMode === 'code_review';
-        toggle(jt('chat.utilities.panels.changes', 'Changes'), changesOpen, () => {
-          if (!changesOpen) { openChanges(); return; }
-          detail()?.close?.();
-          if (panels.railMode?.() === 'code_review') panels.closeRail?.();
-        });
         if (panels.featureEnabled?.('change_pictures') !== false) {
           toggle(jt('chat.utilities.panels.changePictures', 'Change pictures'), changesOpen && !pictures.hidden(), () => {
             if (changesOpen) { pictures.set(!pictures.hidden()); return; }
@@ -212,8 +187,6 @@
           });
         }
       }
-      const activity = shown('[data-activity-open]');
-      if (activity) toggle(jt('activity.title', 'Activity'), activity.getAttribute('aria-pressed') === 'true', () => activity.click());
       return items;
     }
 

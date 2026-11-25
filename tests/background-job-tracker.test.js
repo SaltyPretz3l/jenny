@@ -562,3 +562,25 @@ test('readOutput reads live-output.json beside the registered status path and ma
   assert.deepEqual([finished.ok, finished.live, finished.text], [true, false, 'done']);
   assert.equal(reads.length, 2, 'a finished job never reads the live file');
 });
+
+test('Clear reports the ids it dismissed and restoreFinished brings those rows back with one change event', (t) => {
+  const { tracker, statusByPath, statusPath } = makeTracker(t);
+  const ids = ['aaaaaaaaaaaa', 'bbbbbbbbbbbb'];
+  for (const jobId of ids) {
+    tracker.registerJob({ jobId, sessionId: 's1' });
+    statusByPath.set(statusPath(jobId), { state: 'completed', exit_code: 0 });
+  }
+  tracker.pollNow();
+  const changes = [];
+  tracker.onChanged((sessionIds) => changes.push(sessionIds));
+
+  const cleared = tracker.clearFinished('s1');
+  assert.equal(cleared.cleared, 2);
+  assert.deepEqual([...cleared.jobIds].sort(), ids);
+  assert.equal(tracker.getSessionJobs('s1').length, 0);
+  changes.length = 0;
+
+  assert.deepEqual(tracker.restoreFinished('s1', cleared.jobIds), { ok: true, restored: 2 });
+  assert.deepEqual(tracker.getSessionJobs('s1').map((job) => job.jobId).sort(), ids);
+  assert.deepEqual(changes, [['s1']], 'one change event for the restore');
+});

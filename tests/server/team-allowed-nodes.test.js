@@ -212,6 +212,65 @@ test('with project files on, a conversation turn goes only to a node whose membe
   assert.throws(() => composePool(t, { nodesMustRead: true }), /read check/u);
 });
 
+// H2: the serving node's owner is asked again, at activation and by recheckLeases, not only the prompter.
+function fileToolsPool(t, lost) {
+  const reads = (memberId, sessionId) => memberId.startsWith('member_reader') && !lost.has(`${memberId}|${sessionId}`);
+  return composePool(t, { nodesMustRead: true, mayReadConversation: reads });
+}
+
+test('H2: a free node whose owner lost access to the conversation is skipped when the queued turn is dispatched', { timeout: 8000 }, async (t) => {
+  const lost = new Set();
+  const { pool } = fileToolsPool(t, lost);
+  await pool.start();
+  const a = registerNode(pool.scheduler, { deviceId: 'device_node_a', memberId: 'member_reader_a' });
+  const b = registerNode(pool.scheduler, { deviceId: 'device_node_b', memberId: 'member_reader_b' });
+  const busyA = await pool.turnRoute.acquire(poolTurn({ sessionId: 'session_a', allowedNodes: [a] }));
+  const busyB = await pool.turnRoute.acquire(poolTurn({ sessionId: 'session_b', allowedNodes: [b] }));
+  const waiting = pool.turnRoute.acquire(poolTurn({ sessionId: 'session_2' }));
+  const outcome = waiting.then((granted) => granted, (error) => error);
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(pool.scheduler.listLeases().at(-1).state, 'queued');
+  lost.add('member_reader_b|session_2'); // B's owner is removed from that project; no recheck has run yet
+  busyB.release({ ok: true });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(pool.scheduler.listLeases().at(-1).state, 'queued', 'the freed B is not given a project it may not read');
+  busyA.release({ ok: true });
+  const granted = await outcome;
+  assert.equal(pool.scheduler.listLeases().at(-1).node_id, a, 'A, whose owner still reads it, serves the turn');
+  granted.release({ ok: true });
+});
+
+test('H2: a queued turn with no node left whose owner may read it fails as no_eligible_node at the recheck', { timeout: 8000 }, async (t) => {
+  const lost = new Set();
+  const { pool } = fileToolsPool(t, lost);
+  await pool.start();
+  const a = registerNode(pool.scheduler, { deviceId: 'device_node_a', memberId: 'member_reader_a' });
+  const busy = await pool.turnRoute.acquire(poolTurn({ sessionId: 'session_a', allowedNodes: [a] }));
+  const waiting = pool.turnRoute.acquire(poolTurn({ sessionId: 'session_2' }));
+  const outcome = waiting.then(() => 'granted', (error) => error.reason);
+  await new Promise((resolve) => { setImmediate(resolve); });
+  lost.add('member_reader_a|session_2');
+  pool.recheckLeases();
+  assert.equal(await outcome, 'no_eligible_node');
+  assert.equal(pool.scheduler.listLeases().filter((lease) => lease.state === 'queued').length, 0);
+  assert.equal(pool.scheduler.listLeases()[0].state, 'active', 'the other conversation keeps its lease');
+  busy.release({ ok: true });
+});
+
+test('H2: recheckLeases ends an active lease whose serving node owner may no longer read its conversation', { timeout: 8000 }, async (t) => {
+  const lost = new Set();
+  const { pool } = fileToolsPool(t, lost);
+  await pool.start();
+  const a = registerNode(pool.scheduler, { deviceId: 'device_node_a', memberId: 'member_reader_a' });
+  const first = await pool.turnRoute.acquire(poolTurn({ sessionId: 'session_1' }));
+  assert.equal(pool.scheduler.listLeases().at(-1).node_id, a);
+  assert.equal(pool.recheckLeases(), 0, 'every owner still reads it');
+  lost.add('member_reader_a|session_1');
+  assert.equal(pool.recheckLeases(), 1);
+  assert.equal(pool.scheduler.listLeases().at(-1).state, 'failed');
+  first.release({ ok: false });
+});
+
 test('a list that names no registered node is refused at once with its own reason; a malformed one too', async (t) => {
   const { pool } = composePool(t);
   await pool.start();

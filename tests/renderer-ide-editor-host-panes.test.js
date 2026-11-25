@@ -213,3 +213,9 @@ test('the real-app path lazy-loads a format runtime once, in order, and injects 
     (error) => error.code === 'CMP-WORKSPACEFS-0015'
   );
 });
+
+test('the DOCX runtime loads no UMD bundle from node_modules: under Monaco\'s AMD loader they throw', () => {
+  // JSZip and docx-preview load through the Read view's loader, which hides define.amd for them.
+  const { DOCUMENT_RUNTIMES } = require('../renderer/features/renderer-ide-editor-host-panes');
+  assert.deepEqual(DOCUMENT_RUNTIMES.docx.scripts.filter(({ src }) => src.startsWith('node_modules/')), []);
+});

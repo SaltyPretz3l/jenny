@@ -36,6 +36,7 @@ async function reconcilePrimaryModelPin(service, sessionId) {
     const block = service.configService?.getState?.()?.primaryChat;
     const model = block && !isReadOnlyPrimaryChat(block) ? block.model : '';
     if (!sessionId || typeof model !== 'string' || !model) return;
+    if (require('./team-engine-models').isReservedTeamModelId(service, model)) return; // OD-1: never Jenny's own model
     if (service.sessionStore?.getSessionSummary?.(sessionId)?.preferred_model === model) return;
     await service.setSessionPreferences(sessionId, { preferred_model: model });
     service._emitServiceLog('INFO', 'primary_session.model_pin_reconciled', { sessionId });

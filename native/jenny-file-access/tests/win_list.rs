@@ -148,6 +148,46 @@ fn the_self_check_opens_one_child_through_the_walk() {
     fs::remove_dir(with_dir.join("sub")).expect("nothing holds the child");
 }
 
+/// An entry the user's own access list denies (the open is refused with
+/// access denied) is passed over like a vanished one: the check goes on to the
+/// next entry, and a root whose entries are all denied still passes. The
+/// check proves the library works on the root, not that every file is open.
+#[test]
+fn the_self_check_passes_over_an_entry_its_access_list_denies() {
+    let temp = TempDir::new("selfcheck-denied");
+    let root = temp.dir("root");
+    // A directory whose list right is denied: the walk's open asks for it.
+    let denied = root.join("a-denied");
+    fs::create_dir(&denied).expect("a directory");
+    fs::write(root.join("b-open.txt"), b"x").expect("a plain file");
+    let status = std::process::Command::new("icacls")
+        .arg(&denied)
+        .args(["/deny", "*S-1-1-0:(RD)"])
+        .output()
+        .expect("icacls runs");
+    assert!(status.status.success(), "icacls: {status:?}");
+    let handle = sys::open_root_directory(&common::extended(&root)).expect("the root opens");
+    let result = RealProbe.self_check(&handle);
+    // Leave the file removable whatever the result.
+    let _ = std::process::Command::new("icacls")
+        .arg(&denied)
+        .args(["/remove:d", "*S-1-1-0"])
+        .output();
+    assert_eq!(result, Ok(()), "a denied entry is skipped, not fatal");
+    // Only denied entries: nothing to open, the check passes.
+    fs::remove_file(root.join("b-open.txt")).expect("the plain file goes");
+    let _ = std::process::Command::new("icacls")
+        .arg(&denied)
+        .args(["/deny", "*S-1-1-0:(RD)"])
+        .output();
+    let result = RealProbe.self_check(&handle);
+    let _ = std::process::Command::new("icacls")
+        .arg(&denied)
+        .args(["/remove:d", "*S-1-1-0"])
+        .output();
+    assert_eq!(result, Ok(()), "a root of denied entries passes");
+}
+
 /// Another program saving through a temp file in the root (made and removed,
 /// its name sorting first) while the check runs never fails the check: an
 /// entry gone or delete-pending by the time it is opened is passed over and

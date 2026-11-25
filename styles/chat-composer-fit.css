@@ -69,23 +69,6 @@
   flex: none;
 }
 
-/* Gate F3: collapsed while a reply streams, the queue button is the send
-   arrow alone ("Queue — runs in Auto" stays its aria-label), the size of
-   Stop beside it, so the row fits the split's pixel floor
-   (renderer-chat-pane-resizer.js MIN_PANE_WIDTH_PX). */
-.composer[data-toolbar-compact] .composer-rail > .composer-send.composer-send-queue {
-  width: auto;
-  aspect-ratio: 1;
-  padding: 0;
-  border-radius: 50%;
-  font-size: 0;
-}
-
-.composer[data-toolbar-compact] .composer-rail > .composer-send.composer-send-queue::before {
-  content: "\2191" / "";
-  font-size: var(--font-size-heading);
-}
-
 /* Collapsed, the row's gaps tighten to the settings pill's own so the split
    floor still fits Chat, the pill and three primary controls. */
 .composer[data-toolbar-compact] :is(.composer-rail, .composer-toolbar-left) {

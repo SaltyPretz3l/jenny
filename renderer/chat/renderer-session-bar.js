@@ -1,12 +1,11 @@
-/* renderer/chat/renderer-session-bar.js - the session bar's title and diff control (UMD).
+/* renderer/chat/renderer-session-bar.js - the session bar's diff control (UMD).
 
    Row 115. The pane's utility cluster is the session bar (styles/chat-session-bar.css); this module owns
-   two of its children: the chat's title at the bar's start and the diff control. Other controllers mount
-   their buttons into the same cluster, and CSS `order` fixes the visual sequence, so the place among the
-   children does not matter.
+   its diff control. Other controllers mount their buttons into the same cluster, and CSS `order` fixes the
+   visual sequence, so the place among the children does not matter. The chat's title is its tab in the
+   pane's header row (row 190 Wave 3), so the bar has no title of its own.
 
-   mountSessionBar({ pane, cluster, getSessionId, getTitle, signal, windowRef, jt, chatTimeline, bridge, detail })
-     getTitle(sessionId)  the session's title ('' when it has none; the bar then shows "New session").
+   mountSessionBar({ pane, cluster, getSessionId, signal, windowRef, jt, chatTimeline, bridge, detail })
      bridge  window.jennyShell.chatWorkspace by default (listChanges, onChanged).
      detail  the Changes opener, window.rendererChatWorkspaceDetail by default (open, close, getCurrent).
    The diff control (CSS order 10) is one button: branch glyph, branch name, then the uncommitted +N -M in
@@ -15,9 +14,8 @@
    rerun, an answer for a previous session dropped), pauses while the document or the chat view is hidden, and never polls.
    It stays hidden until its own session's first answer and for a chat without a folder or a Git repo. The
    Session rail need not be showing.
-   Returns { sync, dispose }. sync() re-reads the title (written only on change) and the session. It
-   re-syncs on the events the session rail uses: `jenny:focused-chat-changed` (window) and
-   `transcript-view-rendered` (the pane's timeline). Neither fires for a rename alone, so the pane
+   Returns { sync, dispose }. sync() re-reads the session. It re-syncs on the events the session rail uses:
+   `jenny:focused-chat-changed` (window) and `transcript-view-rendered` (the pane's timeline); the pane
    composition's header sync calls syncAll(). A pane hosted in the IDE dock gets no bar and reads nothing.
    dispose() removes the nodes and every listener, and runs when the AbortSignal aborts. */
 (function (root, factory) {
@@ -29,7 +27,6 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  const TITLE_SELECTOR = '[data-session-bar-title]';
   const DIFF_SELECTOR = '[data-session-bar-diff]';
   const SCHEMA_VERSION = 1;
   const REFETCH_DELAY_MS = 120;
@@ -40,7 +37,7 @@
   const mountedByCluster = new WeakMap(); // cluster -> dispose of its live bar; a remount retires it
 
   function hostedElsewhere(pane) {
-    return pane.classList.contains('ide-chat-dock-body') || pane.hasAttribute('data-pane-hosted');
+    return pane.classList.contains('ide-chat-dock-body');
   }
 
   const fill = (template, params) => String(template).replace(/\{(\w+)\}/g, (match, name) => (params && params[name] !== undefined ? String(params[name]) : match));
@@ -62,7 +59,7 @@
     const o = options || {};
     const pane = o.pane;
     const cluster = o.cluster;
-    if (!pane || !cluster || typeof o.getSessionId !== 'function' || typeof o.getTitle !== 'function') return null;
+    if (!pane || !cluster || typeof o.getSessionId !== 'function') return null;
     if (o.signal && o.signal.aborted) return null;
     const doc = cluster.ownerDocument;
     const win = o.windowRef || (doc && doc.defaultView);
@@ -78,15 +75,9 @@
     const chatView = pane.closest ? pane.closest('.chat-view') : null;
 
     mountedByCluster.get(cluster)?.(); // retire the previous bar on this cluster (listeners, timer, nodes)
-    cluster.querySelectorAll(`${TITLE_SELECTOR}, ${DIFF_SELECTOR}`).forEach((node) => node.remove());
-    const node = doc.createElement('div');
-    node.className = 'session-bar-title';
-    node.setAttribute('data-session-bar-title', 'true');
-    node.setAttribute('dir', 'auto'); // an English title keeps LTR inside RTL chrome
-    cluster.insertBefore(node, cluster.firstChild);
+    cluster.querySelectorAll(DIFF_SELECTOR).forEach((node) => node.remove());
 
     let disposed = false;
-    let shown = null;
     const disposers = [];
 
     // ── Diff control ─────────────────────────────────────────────────────
@@ -259,16 +250,10 @@
       }
     }
 
-    // ── Title and session ────────────────────────────────────────────────
+    // ── Session ──────────────────────────────────────────────────────────
     function sync() {
       if (disposed) return;
-      const sessionId = String(o.getSessionId() || '').trim();
-      syncDiffSession(sessionId);
-      const title = (sessionId && String(o.getTitle(sessionId) || '').trim()) || jt('chat.empty.newSession', 'New session');
-      if (title === shown) return;
-      shown = title;
-      node.textContent = title;
-      node.setAttribute('title', title);
+      syncDiffSession(String(o.getSessionId() || '').trim());
     }
 
     function listen(target, type, handler) {
@@ -290,7 +275,6 @@
         const release = disposers.pop();
         try { release(); } catch (_error) { /* best-effort teardown, as the rail does */ }
       }
-      node.remove();
       if (button) button.remove();
     }
     if (o.signal && typeof o.signal.addEventListener === 'function') {
@@ -304,7 +288,7 @@
     return { sync, dispose };
   }
 
-  // A chat's title changed (the pane composition's header sync): every bar re-reads its own.
+  // The pane composition's header sync: every bar re-reads its session.
   function syncAll() {
     mounted.forEach((sync) => sync());
   }

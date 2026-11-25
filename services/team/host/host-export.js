@@ -40,6 +40,9 @@ const { clearPendingExport, notePendingExport } = require('./host-sweep');
 const SKIP_FILES = new Set(['.host.lock', 'team-ready.json']);
 const TEMP_FILE = /(?:\.tmp|\.journal\.tmp)$/u;
 const BACKUP_DIRS = ['profile', 'projects', 'trash'];
+// Top-level folders a team may not have yet (a team that never deleted a project has no trash/): an absent one is
+// recorded as an empty folder, so every backup carries all three.
+const OPTIONAL_DIRS = new Set(['projects', 'trash']);
 // Room left over on the picked drive beyond the copy and the backup.
 const SPARE_BYTES = 256 * 1024 * 1024;
 
@@ -170,7 +173,12 @@ async function backupEntriesOf(bases, limit) {
   const entries = [];
   const seen = { links: 0, unreadable: 0, truncated: false, bytes: 0 };
   for (const { top, base } of bases) {
-    try { if (!(await fs.promises.lstat(base)).isDirectory()) continue; } catch { continue; }
+    try {
+      if (!(await fs.promises.lstat(base)).isDirectory()) continue;
+    } catch (error) {
+      if (error?.code === 'ENOENT' && OPTIONAL_DIRS.has(top)) entries.push({ rel: top, dir: true });
+      continue;
+    }
     entries.push({ rel: top, dir: true });
     const walked = await walkTreeAsync(base, {
       limit,

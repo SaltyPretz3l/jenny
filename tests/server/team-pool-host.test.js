@@ -21,7 +21,7 @@ const { createFakeBridgeSpawner } = require('./helpers/fake-bridge');
 const { createTeamHostFixture, TEAM_NAME, writeSingleOwnerConfig } = require('./helpers/team-host-fixture');
 const { registerParams } = require('./helpers/team-node-fixture');
 const { command } = require('../helpers/command-router-fixture');
-const { DEPLOY_POOL_CONTEXT_LENGTH, buildHostConfig } = require('../../services/team/host/host-layout');
+const { POOL_CONTEXT_AUTO, buildHostConfig } = require('../../services/team/host/host-layout');
 
 const CONTEXT = 32768;
 
@@ -182,14 +182,14 @@ test('a host from Deploy\'s config accepts the owner\'s node and a lease finds i
   fs.writeFileSync(fx.configPath, JSON.stringify(buildHostConfig({ layout, name: TEAM_NAME, directPort: null,
     lockPython: process.execPath })));
   const loaded = loadHostConfig(fx.configPath);
-  assert.deepEqual([loaded.team.pool, loaded.pythonExecutable], [{ contextLength: DEPLOY_POOL_CONTEXT_LENGTH }, process.execPath]);
+  assert.deepEqual([loaded.team.pool, loaded.pythonExecutable], [{ contextLength: POOL_CONTEXT_AUTO }, process.execPath]);
   const { owner } = await fx.seedMembers(fx.client().deviceKey);
   const seam = poolSeam();
   const parent = fx.newParent();
   const starting = fx.start(parent, { createPool: seam.createPool });
   parent.emit({ type: 'start', host_key: fx.hostKey });
   await starting;
-  assert.equal(seam.built[0].input.contextLength, DEPLOY_POOL_CONTEXT_LENGTH);
+  assert.equal(seam.built[0].input.contextLength, POOL_CONTEXT_AUTO);
   const ctx = fx.context();
   const auth = ctx.clients.register(owner.device_id);
   const registered = await ctx.router.dispatch({ ...command(auth, 'team.node.register', registerParams()), boot_epoch: ctx.bootEpoch },
@@ -333,4 +333,34 @@ test('row 172: a pool host passes the conversation\'s effort through the alias; 
   assert.deepEqual(buildRequestReasoningEffortField(poolHost, 'default', 'team-pool', ''), {}, 'Default sends no effort');
   const singleOwner = { ...poolHost, turnRoute: null };
   assert.deepEqual(buildRequestReasoningEffortField(singleOwner, 'high', 'team-pool', ''), {}, 'no route: the clamp stands');
+});
+
+// Row 201, OD-5: no 32K clamp on the desktop host. Auto follows the serving node (the top of the host's range goes in the
+// config, the pool gateway takes the smaller of that and the node's own length); the owner's cap, when set, replaces it.
+test('OD-5: the pool context is Auto by default, the owner\'s cap when set, and Auto again when the cap is removed', (t) => {
+  const { prepareHostLayout, readPoolContextCap, writePoolContextCap } = require('../../services/team/host/host-layout');
+  const { tempProfile } = require('../helpers/team-client-host');
+  const userDataPath = tempProfile(t, 'jenny-pool-cap-');
+  assert.deepEqual(writePoolContextCap(userDataPath, 65536), { ok: false, reason: 'team_host_not_deployed' }, 'nothing is created before a deploy');
+  assert.equal(readPoolContextCap(userDataPath), null);
+  const layout = prepareHostLayout(userDataPath);
+  const built = () => buildHostConfig({ layout, name: TEAM_NAME, directPort: null });
+  assert.deepEqual(built().team.pool, { context_length: 1048576 }, 'Auto: not 32768');
+  assert.notEqual(built().team.pool.context_length, 32768);
+  assert.deepEqual(writePoolContextCap(userDataPath, 131072), { ok: true });
+  assert.equal(readPoolContextCap(userDataPath), 131072);
+  assert.deepEqual(built().team.pool, { context_length: 131072 }, 'the owner\'s cap');
+  assert.deepEqual(buildHostConfig({ layout, name: TEAM_NAME, directPort: null, contextCap: 4096 }).team.pool, { context_length: 4096 }, 'an explicit cap wins');
+  for (const bad of [0, 2047, 1048577, 3.5, '8192', NaN]) {
+    assert.deepEqual(writePoolContextCap(userDataPath, bad), { ok: false, reason: 'team_pool_context_invalid' }, String(bad));
+  }
+  assert.equal(readPoolContextCap(userDataPath), 131072, 'a refused cap changes nothing');
+  fs.writeFileSync(path.join(layout.root, 'pool-context-cap.json'), '{"context_cap":99999999}');
+  assert.equal(readPoolContextCap(userDataPath), null, 'a file out of range reads as Auto');
+  assert.deepEqual(built().team.pool, { context_length: 1048576 });
+  assert.deepEqual(writePoolContextCap(userDataPath, 2048), { ok: true });
+  assert.deepEqual(writePoolContextCap(userDataPath, null), { ok: true });
+  assert.deepEqual(built().team.pool, { context_length: 1048576 }, 'Auto again');
+  fs.writeFileSync(layout.configPath, JSON.stringify(built()));
+  assert.equal(loadHostConfig(layout.configPath).team.pool.contextLength, 1048576, 'the host loader takes the config');
 });

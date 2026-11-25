@@ -43,6 +43,8 @@ from sidecar.runtime.diagnostics import log_event
 
 # The preflight logs under the chat-decision logger it was split from.
 logger = logging.getLogger("sidecar.ai.routing.chat_decision")
+# A provider-counted turn starting at this share of its trigger compacts first (row 183 D2).
+_PREEMPT_SHARE = 0.9
 
 ContextCompactionStartedEvent = _loop_events.ContextCompactionStartedEvent
 ContextCompactedEvent = _loop_events.ContextCompactedEvent
@@ -78,6 +80,7 @@ class _CompactionInput:
     num_tools: int
     status: Any
     vision_token_surcharge: int = 0
+    force: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,7 +172,13 @@ def _prepare_context_budget(
     _emit_preflight_context_usage(
         context, budget_tracker=budget_tracker, tokens_used=status.tokens_used
     )
-    should_run_compaction = status.should_compact and is_feature_flag_enabled(
+    # Compact ahead of the edge (row 183 D2): a provider-counted turn that would start at
+    # 90% of its trigger compacts now, while the user waits anyway, so the tool loop starts
+    # with room instead of compacting (and re-sending the prompt uncached) mid-turn.
+    preempt = bool(getattr(budget, "provider_units", False)) and status.tokens_used >= int(
+        budget.auto_compact_threshold(num_tools) * _PREEMPT_SHARE
+    )
+    should_run_compaction = (status.should_compact or preempt) and is_feature_flag_enabled(
         context.feature_flags, FEATURE_CONTEXT_COMPACTION
     )
     advisory = kernel._context_builder.build_context_pressure_advisory(status)
@@ -193,6 +202,7 @@ def _prepare_context_budget(
             num_tools=num_tools,
             status=status,
             vision_token_surcharge=vision_token_surcharge,
+            force=preempt and not status.should_compact,
         ),
     )
 
@@ -246,6 +256,7 @@ def _run_context_compaction(
         base_prompt=resolve_compaction_prompt(kernel._config),
         circuit_breaker=kernel._compaction_breakers.for_key(context.session_id),
         policy=compaction_policy(getattr(kernel._config, "feature_flags", None)),
+        force=compaction.force,
         generate_fn=kernel._build_compaction_generate_fn(
             request_id=context.request_id,
             max_tokens=min(
@@ -279,6 +290,11 @@ def _run_context_compaction(
         )
     if compaction_result.error is not None:
         return _terminal_compaction_result(context, compaction, compaction_result)
+    freed = int(compaction_result.tokens_before or 0) - int(compaction_result.tokens_after or 0)
+    if compaction_result.strategy not in (None, "none") and freed > 0:
+        _compaction_diag.record_compaction_cost(
+            kernel._engine, context.request_id, "preflight", compaction_result
+        )
 
     working_messages = kernel._context_builder.insert_runtime_system_messages(
         list(compaction_result.messages),
@@ -304,7 +320,7 @@ def _run_context_compaction(
             working_messages=working_messages,
             final_status=final_status,
         )
-    if context.cache_break_detector is not None:
+    if context.cache_break_detector is not None and freed > 0:
         context.cache_break_detector.reset_baseline(
             context.cache_source_key,
             reason="compaction",

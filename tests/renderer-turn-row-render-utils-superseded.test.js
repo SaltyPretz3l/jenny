@@ -88,3 +88,22 @@ test('a superseded danger card drops retry_turn, keeps View in logs and never sy
   assert.ok(settled.includes('data-error-severity="danger"'), 'a danger card stays danger');
   assert.equal(/The reply continues below/.test(settled), false, 'the settled note is for the calm card alone');
 });
+
+/* Row 198: a calm stop card under the session's latest plan it cut off is dropped (the plan card says
+ * the reply stopped and offers Build it); a failure card stays, and so does a stop under an older plan. */
+test('a calm stop under the latest plan it cut off is not shown; a failure card is', () => {
+  let cards = 0;
+  const renderer = createTurnRowRenderUtils({ renderAssistantFailureNotice: () => { cards += 1; return '<div class="inv-error-recovery"></div>'; } });
+  const planRow = { row_id: 'row:plan', turn_id: 'turn_old', kind: 'plan_document',
+    payload: { plan_id: 'p2', title: 'Bar', steps: ['A'], transition: 'abandoned' } };
+  const planMessage = (id) => ({ id: `plan_document_${id}`, kind: 'plan_document', plan_document: { plan_id: id } });
+  const html = renderer.buildTurnRowListMarkup([planRow, errorRow('assistant_old')], [planMessage('p2'), failed], {});
+  assert.equal(cards, 0, 'the calm stop card is dropped');
+  assert.match(html, /plan-document__stopped-note/);
+  assert.match(html, /data-plan-build-accepted data-plan-id="p2"/);
+  const crash = { ...errorRow('assistant_old'), payload: { subkind: 'assistant_error', stream_error: 'Model crashed.' } };
+  renderer.buildTurnRowListMarkup([planRow, crash], [planMessage('p2'), { ...failed, recovery_class: '' }], {});
+  assert.equal(cards, 1, 'a failure card still shows');
+  renderer.buildTurnRowListMarkup([planRow, errorRow('assistant_old')], [planMessage('p2'), planMessage('p3'), failed], {});
+  assert.equal(cards, 2, 'a stop under an older plan keeps its card');
+});

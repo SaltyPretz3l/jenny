@@ -10,7 +10,7 @@
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 
-const { isCanonicalRelayUrl } = require('./relay-url');
+const { isCanonicalRelayUrl, isRelayToken } = require('./relay-url');
 
 const ALPN = 'jenny-team/1';
 const MAX_LINE_BYTES = 65536;
@@ -40,9 +40,6 @@ const MAPPING_STATES = Object.freeze(['requesting', 'mapped', 'unavailable', 'of
 const RELAY_STATES = Object.freeze(['connecting', 'connected', 'denied', 'unreachable', 'off']);
 // The member child's `path` word while online, with a relay configured.
 const PATHS = Object.freeze(['direct', 'relay']);
-// The bridge's own token rule: 1 to 256 printable ASCII characters, no space.
-const MAX_RELAY_TOKEN_CHARS = 256;
-const RELAY_TOKEN = /^[\x21-\x7e]+$/u;
 const LOG_FIELDS = new Set([
   'kind', 'reason', 'connections', 'streams', 'rate', 'cooldown', 'waiting_cap', 'handshake_cap', 'state',
 ]);
@@ -113,11 +110,9 @@ function relayField(relay) {
     throw new TypeError('relay must be null or { url, token }');
   }
   if (!isCanonicalRelayUrl(relay.url)) throw new TypeError('relay.url must be a canonical relay URL');
-  const { token } = relay;
-  const tokenOk = token === null
-    || (typeof token === 'string' && token.length <= MAX_RELAY_TOKEN_CHARS && RELAY_TOKEN.test(token));
-  if (!tokenOk) throw new TypeError('relay.token must be null or a relay token');
-  return { url: relay.url, token };
+  // The one token grammar (relay-url.js), which invites.js, the owner's setting and the bridge all take.
+  if (relay.token !== null && !isRelayToken(relay.token)) throw new TypeError('relay.token must be null or a relay token');
+  return { url: relay.url, token: relay.token };
 }
 
 /** The host child's `relay` line as its state word, or null for an unknown state. */
@@ -246,7 +241,9 @@ function attachControl(child, { onMessage, onExit }) {
       drainTimer.unref();
     }
   });
-  child.once('error', () => {
+  // For the child's whole life: a second 'error' (a failed kill, a pipe fault) with no listener would be an uncaught
+  // exception. Only the first one counts; `finish` runs once.
+  child.on('error', () => {
     finish({ code: null, signal: null, failed: true, spawnFailed: typeof child.pid !== 'number' });
   });
 

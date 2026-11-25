@@ -46,7 +46,7 @@ const KILL_ESCALATION_MS = 5_000;
 // Global ceiling across sessions; at the cap the oldest finished job is
 // evicted (a running/killing job never is).
 const MAX_TRACKED_JOBS = 128;
-const MAX_FINISHED_PER_SESSION = 20;
+const MAX_FINISHED_PER_SESSION = 20, MAX_RESTORE_IDS = 200; // restoreFinished takes at most 200 ids per call
 const MAX_COMMAND_CHARS = 400;
 const MAX_ERROR_CHARS = 400;
 const MAX_STATUS_FAILURES = 3;
@@ -539,7 +539,23 @@ function createBackgroundJobTracker({
     const cleared = finishedJobs(wanted).filter(isVisible);
     for (const job of cleared) job.dismissed = true;
     if (cleared.length) emitChanged([wanted]);
-    return { ok: true, cleared: cleared.length };
+    return { ok: true, cleared: cleared.length, jobIds: cleared.map((job) => job.jobId) };
+  }
+
+  // The Undo beside Clear: un-dismiss the given ids. Only a tracked, finished, dismissed job of this chat comes back.
+  function restoreFinished(sessionId, jobIds) {
+    const wanted = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!wanted) return { ok: false, reason: 'invalid_session' };
+    const valid = Array.isArray(jobIds) && jobIds.length <= MAX_RESTORE_IDS && jobIds.every((id) => typeof id === 'string' && JOB_ID_PATTERN.test(id));
+    if (!valid) return { ok: false, reason: 'invalid_jobs' };
+    const restored = [...new Set(jobIds)].map((id) => jobs.get(id))
+      .filter((job) => job && job.sessionId === wanted && !isLive(job) && job.dismissed === true);
+    for (const job of restored) job.dismissed = false;
+    if (restored.length) {
+      trimSessionHistory(wanted); // restored rows rejoin the visible per-chat cap
+      emitChanged([wanted]);
+    }
+    return { ok: true, restored: restored.filter((job) => jobs.has(job.jobId)).length };
   }
 
   function dispose() {
@@ -559,6 +575,7 @@ function createBackgroundJobTracker({
     getSessionJobRoots,
     readOutput,
     clearFinished,
+    restoreFinished,
     onChanged: (listener) => subscribe(changeListeners, listener),
     onJobSettled: (listener) => subscribe(settleListeners, listener),
     pollNow,

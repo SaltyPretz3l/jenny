@@ -70,7 +70,11 @@ test('client_timing keeps the row-list morph counters and their bounded reason h
       row_list_morphs: 61,
       row_list_rows_reused: 0,
       row_list_rows_rebuilt: 7259,
-      row_list_morph_reasons: { ...oversized, 'live:segment_row_state_mismatch>block_key_mismatch': 61, zero: 0 },
+      row_list_morph_reasons: {
+        ...oversized, 'live:segment_row_state_mismatch>block_key_mismatch': 61, zero: 0,
+        'article_rewrite:signature_mismatch': 4,
+      },
+      full_render_reasons: { 'active_turn_root:root_not_in_tree': 2, 'active_turn_root:made_up': 1 },
       scroll_snaps: 3,
       scroll_snap_max_px: 218,
       scroll_snap_reasons: { 'tail_cushion:reply_end': 2, virtualizer: 1 },
@@ -85,7 +89,10 @@ test('client_timing keeps the row-list morph counters and their bounded reason h
   assert.deepEqual(payload.client_timing.row_list_morph_reasons, {
     other: 40,
     'live:segment_row_state_mismatch>block_key_mismatch': 61,
+    'article_rewrite:signature_mismatch': 4,
   });
+  // The prefixed families the renderer emits keep their reason; an unknown one still folds.
+  assert.deepEqual(payload.client_timing.full_render_reasons, { 'active_turn_root:root_not_in_tree': 2, other: 1 });
   assert.equal('zero' in payload.client_timing.row_list_morph_reasons, false);
   // Row 131: the per-reply snap count survives the allowlist.
   assert.equal(payload.client_timing.scroll_snaps, 3);

@@ -6,8 +6,8 @@
 //
 // Delete, in this order (the picks file's step 14, as fixed after review): before the caller tells anyone,
 // `checkDeletable` refuses a `team-host` that is a link or resolves outside the profile and walks the whole tree
-// once, refusing a link anywhere with nothing touched. After the caller has told the members and the server has
-// stopped, `removeTeamFiles` moves the project folders, the trash, the profile (stores and audit logs), the
+// once, refusing a link anywhere with nothing touched. After the server has stopped (row 201, OD-6: nothing is broadcast while
+// a file lock could still roll the delete back; members see the team go offline), `removeTeamFiles` moves the project folders, the trash, the profile (stores and audit logs), the
 // runtime, the logs and the secrets into one staging folder inside `team-host`. A move that fails puts every
 // earlier one back: nothing is removed and the team still starts (`team_delete_file_held`). Once every move has
 // succeeded the delete is committed and `team-host` carries the delete's mark: the staging folder is removed

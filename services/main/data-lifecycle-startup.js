@@ -22,6 +22,17 @@ function readPortableAppearance(app) {
   return new PortablePreferencesStore(app.getPath('userData')).read()?.appearance || null;
 }
 
+// Row 197 (D5 A): a Live tab run command must be confirmed again after any profile restore. The store is
+// self-contained (it needs only the user data folder), so this never builds the run service.
+function invalidateRunCommands(userDataPath, log) {
+  try {
+    const result = require('../run-view/run-command-store').createRunCommandStore({ userDataPath }).invalidateAll('restore');
+    if (!result.ok) log('WARN', 'data_lifecycle.run_commands_invalidate_failed', { reason: result.reason });
+  } catch (_error) {
+    log('WARN', 'data_lifecycle.run_commands_invalidate_failed', { reason: 'threw' });
+  }
+}
+
 async function promotePendingRestore(app, nativeImage, log = () => {}) {
   const userDataPath = app.getPath('userData');
   if (!fs.existsSync(restorePointerPath(userDataPath))) return { ok: true, status: 'none' };
@@ -31,6 +42,7 @@ async function promotePendingRestore(app, nativeImage, log = () => {}) {
     nativeImage,
   });
   if (!result.ok) log('WARN', 'data_lifecycle.restore_promotion_failed', result.error);
+  if (result.ok && result.status === 'promoted') invalidateRunCommands(userDataPath, log);
   // Restored chat coordination (row 59 cp5b-3): ids and reason tokens only, never record content.
   const coordination = result.ok ? result.coordination : null;
   if (coordination && (coordination.quarantined?.length || coordination.ignored?.length || coordination.unavailable_links?.length)) {

@@ -85,6 +85,8 @@
     // folder…, Add GGUF model…) always report in the span beside them.
     var setStatus = typeof opts.setStatus === 'function' ? opts.setStatus : showOwnStatus;
     var hostId = String(opts.hostId || '');
+    // Row 194: the card's memory in MB (0 when unknown), and the Library filter "Show models that fit" applies.
+    var getCardMb = typeof opts.getCardMb === 'function' ? opts.getCardMb : function unknownCard() { return 0; };
     var actionButton = resolveActionButton();
     var escapeHtml = actionButton && actionButton.escapeHtml;
     var mergeUtils = resolveMergeUtils();
@@ -128,6 +130,13 @@
           addRefusal: addRefusal,
           addRuntimeFolder: function () { var list = runtimeList(); return list ? list.add() : null; },
           tagFor: function (filePath) { return sources.libraryTagFromPath(firstShardPath(filePath)); },
+          // main sizes the file and its need (plan.fit); the card is the Library's. An unknown card means no warning.
+          fitFor: function (filePath, plan) {
+            var cardMb = Number(getCardMb()) || 0;
+            return cardMb > 0 && plan && plan.fit && plan.fit.needMb > 0
+              ? { needMb: plan.fit.needMb, smallNeedMb: plan.fit.smallNeedMb, ctx: plan.fit.ctx, cardMb: cardMb, sizeBytes: plan.sizeBytes } : null;
+          },
+          showFits: opts.showFits,
         });
       }
       return addMove;

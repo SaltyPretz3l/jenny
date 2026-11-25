@@ -286,6 +286,28 @@ test('owner_invite goes to the callback once and never into a state or a log', a
   assert.equal(JSON.stringify(supervisor.snapshot()).includes('OWNER-INVITE'), false);
 });
 
+test('owner_invite: a 512-char v2 invite is delivered, 513 is dropped (the invite cap, not the 256 text cap)', async (t) => {
+  const { MAX_INVITE_CHARS } = require('../server/team/invites');
+  assert.equal(MAX_INVITE_CHARS, 512);
+  const fits = `jteam2_${'a'.repeat(MAX_INVITE_CHARS - 7)}`;
+  const over = `jteam2_${'b'.repeat(MAX_INVITE_CHARS - 6)}`;
+  const { logs, supervisor } = setup(t, { script: (child, message) => {
+    if (message.type === 'start') {
+      setImmediate(() => {
+        child.reply({ type: 'ready', boot_epoch: 'e', team_id: 't', public_key: 'p', addresses: [] });
+        child.reply({ type: 'owner_invite', invite: over });
+        child.reply({ type: 'owner_invite', invite: fits });
+      });
+    }
+    if (message.type === 'stop') setImmediate(() => { child.reply({ type: 'stopped' }); child.exit(0); });
+  } });
+  const seen = [];
+  await supervisor.start({ args: ARGS, hostKey: key(), teamName: 'S', onOwnerInvite: (value) => seen.push(value) });
+  await tick(20);
+  assert.deepEqual(seen.map((value) => value.length), [MAX_INVITE_CHARS], 'only the 512-char invite arrived');
+  assert.equal(logs.filter((entry) => entry.event === 'team.host.message_dropped').length, 1, 'the 513-char one was dropped');
+});
+
 test('malformed child messages are dropped and counted, never acted on', async (t) => {
   const { logs, supervisor } = setup(t, { script: (child, message) => {
     if (message.type === 'start') {

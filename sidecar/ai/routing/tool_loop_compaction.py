@@ -10,15 +10,20 @@ from typing import Any
 from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.context.compaction import (
     MICRO_FIRST_CODE,
+    MICRO_TARGET,
     compact_context,
     compaction_policy,
     trim_browser_outlines,
 )
-from sidecar.ai.context.compaction_diagnostics import compaction_window_shape
+from sidecar.ai.context.compaction_diagnostics import (
+    compaction_window_shape,
+    record_compaction_cost,
+)
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
 from sidecar.ai.context.token_budget import (
     estimate_messages_tokens,
     estimate_tool_schema_tokens,
+    provider_compact_threshold,
     resolve_tokenizer_backend,
 )
 from sidecar.ai.feature_flags import (
@@ -106,6 +111,7 @@ def note_request_measurement(loop: Any, usage: Any, tool_payload: Any = None) ->
         loop.request_measurement = None
         if tracker is not None:
             tracker.calibration_reading = None
+            tracker.provider_counted = False
         return
     estimate = _estimate_window(loop, getattr(tracker, "backend", None))
     inner = _calibration_backend(loop, tracker, tool_payload, usage)
@@ -122,6 +128,11 @@ def note_request_measurement(loop: Any, usage: Any, tool_payload: Any = None) ->
                 "engine": str(getattr(config, "engine_type", "")),
                 "model": str(getattr(config, "model", "")),
             }
+    # The meter shows the provider's count when it is at least the whole-prompt estimate
+    # (context_usage_events); only then does its threshold follow the provider trigger.
+    meter_tools = getattr(tracker, "meter_tool_tokens", None)
+    tool_tokens = int(meter_tools()) if callable(meter_tools) else 0
+    tracker.provider_counted = provider_tokens >= estimate + tool_tokens
     loop.request_measurement = RequestMeasurement(
         provider_tokens=provider_tokens,
         messages=tuple(loop.working_messages),
@@ -156,18 +167,62 @@ def _estimate_window(loop: Any, backend: Any) -> int:
     return measurement.estimate + estimate_messages_tokens(tail, backend)
 
 
-def _measured_context(loop: Any, tokens_now: int, num_tools: int) -> tuple[int, int] | None:
-    """(whole-prompt tokens now, whole-prompt compaction threshold) from the
-    provider's count, or None when it cannot be trusted for this history."""
+def _measured_context(
+    loop: Any, tokens_now: int, num_tools: int, estimate_threshold: int
+) -> tuple[int, bool, float] | None:
+    """The provider's count read in the estimate's units, or None when it cannot be
+    trusted for this history: (tokens now, over the trigger, threshold scale).
+
+    The scale is what a forced pass multiplies its estimate threshold and micro target
+    by so it aims where the provider's count puts the prompt: in one turn the estimate
+    read 108k of its 146k threshold while the provider read 242k of 238k, so a pass
+    aimed at the estimate's target freed 48k and repeated 13 calls later, each time
+    re-sending ~170k uncached tokens.
+    """
     tracker = loop.budget_tracker
-    budget = getattr(tracker, "budget", None)
-    raw_window = int(getattr(tracker, "raw_context_window", 0) or 0)
     measurement = _appended_since_measurement(loop)
-    if measurement is None or budget is None or raw_window <= 0:
+    if measurement is None or tracker is None:
         return None
     total = measurement.provider_tokens + max(0, int(tokens_now) - measurement.estimate)
-    threshold = replace(budget, context_window=raw_window).meter_compact_threshold(num_tools)
-    return (total, threshold) if threshold > 0 else None
+    threshold = provider_compact_threshold(
+        getattr(tracker, "budget", None), getattr(tracker, "raw_context_window", 0), num_tools
+    )
+    if threshold <= 0:
+        return None
+    current = int(total * estimate_threshold / threshold)
+    if total <= threshold or estimate_threshold <= 0:
+        return current, total > threshold, 1.0
+    # Only the messages shrink: the system prompt and tool schemas ride along unchanged, so
+    # they come out of the target before it is read in the estimate's units (row 183 W3).
+    # The pass then lands the provider's count at two-thirds of its trigger, not above it.
+    fixed = _fixed_prompt_tokens(loop, tracker)
+    target = threshold * MICRO_TARGET * (tokens_now + fixed) / total - fixed
+    scale = min(1.0, max(0.0, target / (estimate_threshold * MICRO_TARGET)))
+    return current, True, scale
+
+
+def _fixed_prompt_tokens(loop: Any, tracker: Any) -> int:
+    """Prompt tokens outside the message estimate that no compaction frees, in the tracker's
+    units: the tool schemas, and the system prompt when no leading system row carries it (a
+    turn's working messages start with it, so it is usually already in the estimate)."""
+    meter_tools = getattr(tracker, "meter_tool_tokens", None)
+    fixed = int(meter_tools()) if callable(meter_tools) else 0
+    rows = loop.working_messages
+    system = str(getattr(loop, "system_prompt", "") or "")
+    if system and not (rows and isinstance(rows[0], dict) and rows[0].get("role") == "system"):
+        row = {"role": "system", "content": system}
+        fixed += estimate_messages_tokens([row], getattr(tracker, "backend", None))
+    return fixed
+
+
+def _mid_turn_policy(loop: Any, budget: Any, measured: Any) -> Any:
+    """The micro-first policy, held to one micro pass on a provider-counted route (row 183
+    D3): a second stub-only pass mid-turn only defers the summary and re-sends the prompt
+    uncached again."""
+    policy = compaction_policy(getattr(loop.kernel._config, "feature_flags", None))
+    if policy is None or not (measured is not None or getattr(budget, "provider_units", False)):
+        return policy
+    return replace(policy, max_micro_passes=min(policy.max_micro_passes, 1))
 
 
 def _browser_outline_budget_chars(tracker: Any, num_tools: int) -> int:
@@ -217,15 +272,15 @@ def compact_tool_loop_context(
         FEATURE_CONTEXT_COMPACTION,
     ):
         return tokens_before
-    measured = None if force else _measured_context(loop, tokens_before, num_tools)
+    measured = None if force else _measured_context(
+        loop, tokens_before, num_tools, budget.auto_compact_threshold(num_tools)
+    )
     # The figure the loop's stop rule reads, in the estimate's units.
     current_tokens = tokens_before
+    threshold_scale = 1.0
     if measured is not None:
-        measured_total, measured_threshold = measured
-        current_tokens = int(
-            measured_total * budget.auto_compact_threshold(num_tools) / measured_threshold
-        )
-        if measured_total <= measured_threshold:
+        current_tokens, over, threshold_scale = measured
+        if not over:
             return current_tokens
     elif not force and tokens_before <= budget.auto_compact_threshold(num_tools):
         return tokens_before
@@ -268,11 +323,12 @@ def compact_tool_loop_context(
         system_context=str(loop.system_prompt),
         base_prompt=resolve_compaction_prompt(loop.kernel._config),
         circuit_breaker=loop.kernel._compaction_breakers.for_key(loop.session_id),
-        policy=compaction_policy(getattr(loop.kernel._config, "feature_flags", None)),
+        policy=_mid_turn_policy(loop, budget, measured),
         # Request-local: the router keeps no per-session state (row 60 S6).
         micro_passes_used=int(getattr(loop, "micro_first_passes", 0)),
         # The provider's count is over the line even if the padded estimate is not.
         force=force or measured is not None,
+        threshold_scale=threshold_scale,
         mode="mid_turn",
         task_content=str(getattr(loop, "latest_user_content", "") or "") or None,
         plan_approved_in_turn=bool(
@@ -348,6 +404,7 @@ def compact_tool_loop_context(
             loop.cache_source_key,
             reason="compaction" if result.error is None else "compaction_terminal",
         )
+    record_compaction_cost(loop.kernel._engine, loop.request_id, "tool_loop", result)
     loop.runtime.emit_safe(
         ContextCompactedEvent(
             strategy=result.strategy or "micro",
@@ -435,3 +492,71 @@ def recover_context_window_exhaustion(
     if compacted:
         return None
     return wind_down(loop, result, reason="context_budget")
+
+
+# A provider refused the prompt as too long for its window ("prompt is too long", or
+# "input length and `max_tokens` exceed context limit" past what lowering max_tokens can fix).
+_OVERFLOW_CLASSIFICATIONS = frozenset({"prompt_too_long", "context_overflow"})
+# A refused status arrives before any output streams, so a resend shows nothing twice. An
+# in-band overflow (ChatGPT's stream) can follow streamed text and keeps failing the turn.
+_OVERFLOW_STATUSES = frozenset({400, 413})
+MAX_OVERFLOW_RECOVERIES = 2
+
+
+def _overflow_classification(error: BaseException) -> str:
+    """The overflow class of a refused request, from the error or the provider error under it."""
+    current: BaseException | None = error
+    for _depth in range(5):
+        if current is None:
+            break
+        classification = str(getattr(current, "classification", "") or "")
+        if classification in _OVERFLOW_CLASSIFICATIONS and (
+            getattr(current, "status_code", None) in _OVERFLOW_STATUSES
+        ):
+            return classification
+        current = current.__cause__
+    return ""
+
+
+def generate_with_overflow_recovery(
+    loop: Any,
+    generate: Callable[..., Any],
+    build_messages: Callable[[list[dict[str, Any]]], Any],
+    **step_kwargs: Any,
+) -> Any:
+    """Run one generation; on a provider overflow, compact and retry it once (row 183 W1).
+
+    Claude Code does the same. Before this the turn failed. The retry replays no tool effect:
+    the refused request ran nothing, and the compaction only rewrites what is sent. An overflow
+    on the retry, past ``MAX_OVERFLOW_RECOVERIES`` in the loop, or after a compaction that frees
+    nothing raises the original failure. ``generate`` gets ``step_kwargs`` and
+    ``working_messages``, rebuilt with ``build_messages`` for each attempt.
+    """
+    try:
+        return generate(working_messages=build_messages(loop.working_messages), **step_kwargs)
+    except Exception as error:
+        classification = _overflow_classification(error)
+        used = int(getattr(loop, "overflow_recoveries", 0) or 0)
+        if not classification or used >= MAX_OVERFLOW_RECOVERIES:
+            raise
+        loop.overflow_recoveries = used + 1
+        tracker = getattr(loop, "budget_tracker", None)
+        backend = getattr(tracker, "backend", None)
+        before = estimate_messages_tokens(loop.working_messages, backend)
+        compact_tool_loop_context(
+            loop, num_tools=int(getattr(tracker, "num_tools", 0) or 0), force=True
+        )
+        if estimate_messages_tokens(loop.working_messages, backend) >= before:
+            raise
+        log_event(
+            logger,
+            logging.WARNING,
+            component="ai.router",
+            event="ai.router.overflow_compacted",
+            message="The provider refused the prompt as too long; compacted and retrying once.",
+            status="retrying",
+            data={"classification": classification, "phase": "tool_loop", "recovery": used + 1},
+            request_id=getattr(loop, "request_id", None),
+            session_id=getattr(loop, "session_id", None),
+        )
+        return generate(working_messages=build_messages(loop.working_messages), **step_kwargs)

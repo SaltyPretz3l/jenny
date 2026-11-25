@@ -336,6 +336,17 @@
   color: var(--text-primary);
 }
 
+/* Row 195: a tab past the strip's edge has something new; the More button that lists the tabs says so. */
+.wb-stack-actions .btn[data-wb-action="more"] {
+  position: relative;
+}
+
+.wb-stack-actions .btn[data-wb-action="more"] > .wb-unread {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+}
+
 /* The New Terminal split-button (row 82 T2): + and its shell-profile chevron read as one control. */
 .wb-stack-actions .btn[data-wb-action="view:new-terminal"]:has(+ [data-wb-action="view:new-terminal-profile"]) {
   border-start-end-radius: 0;

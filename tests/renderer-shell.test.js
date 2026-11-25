@@ -361,7 +361,6 @@ test('renderer boot wires the split-view pane layout live and starts at exactly 
   const divider = window.document.getElementById('chatPaneResizer');
   assert.equal(divider.classList.contains('hidden'), true);
   assert.equal(divider.getAttribute('tabindex'), '-1');
-  assert.equal(window.document.getElementById('chatPaneKicker').hidden, true);
 });
 
 test('active-file action renders as a menu item, arms the file and dismisses the attach menu', async (t) => {

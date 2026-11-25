@@ -9,9 +9,8 @@
  *         reinforcement only.
  *   .settings-field-reset — small ghost revert button, shown by the reset
  *       layer only when a field's value ≠ its adapter default.
- *   .settings-reset-confirm — inline two-step Reset… → Confirm/Cancel group
- *       (replaces dialogs for section-level resets; full dialog stays
- *       reserved for factory reset).
+ *   .settings-reset-confirm-label — the line a failed reset reports on (the
+ *       reset itself asks through the shared .projects-confirm strip).
  *
  * Calm/de-vibe rules: no glow, no pulse, token-driven color only.
  */
@@ -116,20 +115,7 @@
   display: none;
 }
 
-/* ── Inline two-step reset confirm ───────────────────────────────────── */
-
-.settings-reset-confirm {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.settings-reset-confirm[data-armed="true"] {
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--state-warning-border);
-  background: var(--state-warning-bg);
-}
+/* ── Reset failure line ──────────────────────────────────────────────── */
 
 .settings-reset-confirm-label {
   color: var(--state-warning);

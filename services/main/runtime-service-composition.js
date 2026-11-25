@@ -35,39 +35,9 @@ const { WorktreeRegistryService, defaultRegistryPath } = require('../worktree-re
 const { createDesktopNotifier, isRuntimeChildSession } = require('./desktop-notifier');
 const { createReminderNotifier } = require('./reminder-notifier');
 const { createUnattendedGuard } = require('./unattended-guard');
-
-const STATS_WATCHED_INTERVAL_MS = 2000;
-const STATS_IDLE_INTERVAL_MS = 15000;
-
-// Slow when unread (owner decision, shell-chrome review 2026-09-29): the CPU/RAM
-// tick and the GPU probe it drives run every 2 s only while something on screen
-// shows them (the title-bar read-out, the open health popover), else every 15 s.
-// Watchers register by source so one closing never silences another.
-function createStatsWatchCadence(monitor, {
-  watchedMs = STATS_WATCHED_INTERVAL_MS,
-  idleMs = STATS_IDLE_INTERVAL_MS,
-} = {}) {
-  const watchers = new Set();
-  monitor.setIntervalMs(idleMs);
-  return {
-    setWatched(source, watched) {
-      const key = String(source || '').trim();
-      if (!key) return watchers.size > 0;
-      const before = watchers.size > 0;
-      if (watched) watchers.add(key);
-      else watchers.delete(key);
-      const after = watchers.size > 0;
-      if (after !== before) {
-        monitor.setIntervalMs(after ? watchedMs : idleMs);
-        // A watcher arriving mid-idle would otherwise wait out the slow tick.
-        if (after && monitor.timer) monitor.emit('stats', monitor.sample());
-      }
-      return after;
-    },
-    isWatched: () => watchers.size > 0,
-    sources: () => [...watchers],
-  };
-}
+const {
+  STATS_IDLE_INTERVAL_MS, STATS_WATCHED_INTERVAL_MS, createLocalGenerationSync, createStatsWatchCadence,
+} = require('./stats-watch-cadence');
 
 // Pauses the stats monitor while the window is hidden or minimised and resumes
 // it with one immediate tick so the title-bar read-out catches up. start() and
@@ -123,6 +93,8 @@ function createRuntimeServicesWithDeps({
   sendBridgeEvent = () => {},
   getMainWindow = () => null,
   getLlamaServerManager = () => null,
+  getNinferManager = () => null,
+  getStrataManager = () => null,
   log = () => {},
   onCoreLoggingReady = () => {},
 } = {}) {
@@ -258,6 +230,7 @@ function createRuntimeServicesWithDeps({
     getOwnedOllamaPid,
     configService: shellConfigService,
     getLlamaServerManager,
+    getManagedServerManagers: () => [getNinferManager(), getStrataManager()],
     readinessProvider: probeSetupReadiness,
     refreshManagedConfig: async (reason) => {
       const backendService = getBackendService();
@@ -375,15 +348,16 @@ function createRuntimeServicesWithDeps({
   const browserSessionService = new BrowserSessionService({ browserWindowFactory: (options) => new (require('electron').BrowserWindow)(options), logger: log });
   // Row 114: the model-driven browser; its modules and Electron's view classes load on first use.
   const browserUse = require('./browser-use-composition').createLazyBrowserUse({ getMainWindow, sendBridgeEvent, getBackendService, logger: log, getSafetyMode: () => shellConfigService.getState()?.safetyMode });
+  // Row 196: the computer tool; its modules load on first use and it shares the Live tab's helper.
+  const computerUse = require('./computer-use-composition').createLazyComputerUse({ getRunView: () => getBackendService()?.runView, userDataPath, log });
   // NOTE: worktreeService is injected into BackendService at construction time
   // (see backend-service-wiring.js) rather than wired here -- the backend service
   // does not exist yet during this composition pass, so a post-hoc assignment guard
   // would always be falsy and silently leave worktree status unpopulated.
   const systemStats = new SystemStatsMonitor({
-    // 2s keeps CPU/RAM near real-time (cheap OS reads) while watched; the
-    // watch cadence below drops to 15s when nothing shows them. GPU telemetry
-    // has its own 15s controller cadence; when the sidecar declines
-    // mid-inference, the controller falls through to the platform probe.
+    // 2s keeps CPU/RAM near real-time (cheap OS reads) while watched; the watch
+    // cadence below drops to 15s when nothing shows them and reads the card only
+    // while a readout watches or a local model writes (2026-11-23).
     intervalMs: STATS_WATCHED_INTERVAL_MS,
     powerMonitor,
   });
@@ -394,6 +368,8 @@ function createRuntimeServicesWithDeps({
       shellConfigService?.getChatUiState?.()?.unattendedGuardMinutes
     ),
     isEnabled: () => buildEffectiveFeatureFlags().unattended_guard === true,
+    // Row 196: never starts computer use; null unless its service runs a watch.
+    getRealInputAgeMs: () => getBackendService()?.toolExecutor?.computerUse?.peek?.()?.lastRealInputAgeMs?.() ?? null,
     sendBridgeEvent,
     log,
   });
@@ -432,15 +408,19 @@ function createRuntimeServicesWithDeps({
   desktopNotifier.start();
   systemStats.desktopNotifier = desktopNotifier;
 
-  systemStats.on('stats', (stats) => {
+  let syncGeneration = () => {};
+  systemStats.on('stats', (stats, { resume = false } = {}) => {
     sendBridgeEvent('system.onStats', getCurrentSystemStatsPayload(stats));
-    void refreshGpuMemorySample().catch(() => null);
+    syncGeneration();
+    // A watcher or a generation that just arrived forces one read; later ticks take the throttled one.
+    if (systemStats.watchCadence.isWanted()) void refreshGpuMemorySample(resume ? { force: true } : undefined).catch(() => null);
   });
   // Nothing on screen, nothing sampled: main.js hands the window's visibility
   // (main-window-composition's hide/minimize/show/restore) to this pause.
   systemStats.visibilityPause = createStatsVisibilityPause(systemStats, (visible) => skillsService.setWindowVisible(visible));
   // Renderer watchers (system.setStatsWatch) pick the tick rate.
   systemStats.watchCadence = createStatsWatchCadence(systemStats);
+  syncGeneration = createLocalGenerationSync({ getBackendService, cadence: systemStats.watchCadence });
 
   const toolPathPolicy = new ToolPathPolicy({
     fs: require('fs/promises'),
@@ -473,6 +453,8 @@ function createRuntimeServicesWithDeps({
       toolsPreviewTestEnabled: flags.tools_preview_test_enabled === true,
       toolsVerifyEnabled: flags.tools_verify_enabled === true,
       toolsBrowserUseEnabled: flags.tools_browser_use_enabled === true,
+      toolsRunViewEnabled: flags.tools_run_view_enabled === true && flags.live_run_view !== false, // row 197
+      toolsComputerUseEnabled: flags.tools_computer_use_enabled === true && process.platform === 'win32', // row 196
       toolsImageGenerateEnabled: flags.tools_image_generate_enabled === true,
       toolsHomeEnabled: flags.tools_home_enabled === true,
       toolsNextStepEnabled: flags.tools_next_step_enabled === true,
@@ -523,7 +505,7 @@ function createRuntimeServicesWithDeps({
     worktreeService,
     automationService,
     workspacePresentationService,
-    browserSessionService, browserUse,
+    browserSessionService, browserUse, computerUse,
     // Home is constructed alongside the calendar service in
     // backend-service-wiring, which runs AFTER this composition pass — hence a
     // live getter, the same reason refreshManagedConfig below uses one.

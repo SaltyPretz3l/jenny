@@ -1,7 +1,6 @@
 /* renderer/app/renderer-app-notices-composition.js -- toasts, the error center and intake, the update dialog and the backend status notice */
-/* eslint no-with: "off", no-undef: "off", no-useless-assignment: "off" -- a with(ctx) section: names resolve through the scope the root hands it */
 /**
- * Extracted from renderer-app-lifecycle-composition.js (a with(ctx) section), in the order
+ * Extracted from renderer-app-lifecycle-composition.js, in the order
  * the root built them: the toast controller and its viewport listeners, the EH-W11 error
  * center store and render-time recorder, the EH-W8 error intake (flag-gated error toast
  * wrappers), the update dialog, and the shell (backend / runtime preference) status
@@ -13,18 +12,17 @@
  */
 (function (root) {
   function createNoticesComposition(ctx) {
-    with (ctx) {
   /* toastController */
-  const toastController = toastControllerUtils.createToastController?.({
-    toastStore, toastActionHandlers,
-    constants: { TOAST_SOURCE }, dom: { toastViewport },
+  const toastController = ctx.toastControllerUtils.createToastController?.({
+    toastStore: ctx.toastStore, toastActionHandlers: ctx.toastActionHandlers,
+    constants: { TOAST_SOURCE: ctx.TOAST_SOURCE }, dom: { toastViewport: ctx.toastViewport },
   }) || null;
   const {
-    dismissToast = noop, renderToastViewport = noop,
-    showToastMessage = noopStr, showShellErrorToast: rawShowShellErrorToast = noopStr,
+    dismissToast = ctx.noop, renderToastViewport = ctx.noop,
+    showToastMessage = ctx.noopStr, showShellErrorToast: rawShowShellErrorToast = ctx.noopStr,
     toErrorMessage = (e, f) => String(e?.message || e || f || ''),
-    showSessionActionError: rawShowSessionActionError = noopStr,
-    showComposerActionError: rawShowComposerActionError = noopStr,
+    showSessionActionError: rawShowSessionActionError = ctx.noopStr,
+    showComposerActionError: rawShowComposerActionError = ctx.noopStr,
     installToastViewportListeners = null,
   } = toastController || {};
   /* Hover/focus hold the auto-dismiss countdowns, and Escape inside the stack
@@ -32,7 +30,7 @@
   if (typeof installToastViewportListeners === 'function') {
     /* A failed toast action goes through the error-intake wrapper defined below
      * (read at click time, after it exists). */
-    registerRendererCleanup(installToastViewportListeners({
+    ctx.registerRendererCleanup(installToastViewportListeners({
       reportActionError: (message, options) => showShellErrorToast(message, options),
     }));
   }
@@ -45,22 +43,22 @@
    * Fully removable — with no store the pill renders as before. The render-
    * time recorder global lets timeline error cards / failed-send chips feed
    * history; it checks the flag per call so flag-off stays identical. */
-  const errorCenterStore = (window.rendererErrorCenterStore || {}).createErrorCenterStore?.() || null;
+  const errorCenterStore = (ctx.window.rendererErrorCenterStore || {}).createErrorCenterStore?.() || null;
   const recordRenderedError = (entry) => {
-    if (!errorCenterStore || state.features?.featureFlags?.error_intake_routing !== true) {
+    if (!errorCenterStore || ctx.state.features?.featureFlags?.error_intake_routing !== true) {
       return false;
     }
     return errorCenterStore.record(entry);
   };
-  window.rendererErrorCenterRecord = recordRenderedError;
-  registerRendererCleanup(() => {
-    if (window.rendererErrorCenterRecord === recordRenderedError) {
-      window.rendererErrorCenterRecord = null;
+  ctx.window.rendererErrorCenterRecord = recordRenderedError;
+  ctx.registerRendererCleanup(() => {
+    if (ctx.window.rendererErrorCenterRecord === recordRenderedError) {
+      ctx.window.rendererErrorCenterRecord = null;
     }
   });
-  const errorIntakeController = (window.rendererErrorIntakeControllerUtils || {}).createErrorIntakeController?.({
-    isEnabled: () => state.features?.featureFlags?.error_intake_routing === true,
-    constants: { TOAST_SOURCE },
+  const errorIntakeController = (ctx.window.rendererErrorIntakeControllerUtils || {}).createErrorIntakeController?.({
+    isEnabled: () => ctx.state.features?.featureFlags?.error_intake_routing === true,
+    constants: { TOAST_SOURCE: ctx.TOAST_SOURCE },
     toast: {
       showToastMessage,
       showShellErrorToast: rawShowShellErrorToast,
@@ -77,62 +75,62 @@
     showSessionActionError = rawShowSessionActionError,
     showComposerActionError = rawShowComposerActionError,
   } = errorIntakeController || {};
-  const updateDialogController = window.rendererUpdateDialogUtils?.createUpdateDialogController?.({
-    windowRef: window,
-    documentRef: document,
-    jennyShell: window.jennyShell,
-    renderMarkdown: window.markdownUtils?.renderMarkdown,
+  const updateDialogController = ctx.window.rendererUpdateDialogUtils?.createUpdateDialogController?.({
+    windowRef: ctx.window,
+    documentRef: ctx.document,
+    jennyShell: ctx.window.jennyShell,
+    renderMarkdown: ctx.window.markdownUtils?.renderMarkdown,
     showToastMessage,
     /* EH-W9: flag-gated intake route for update-action failures. */
     reportError: (...a) => reportErrorWhenActive(...a),
   }) || null;
   if (updateDialogController) {
-    registerRendererCleanup(updateDialogController.bind());
+    ctx.registerRendererCleanup(updateDialogController.bind());
   }
   /* activityPrefsController */
-  const shellStatusController = (window.rendererShellStatusControllerUtils || {}).createShellStatusController?.({
-    state,
-    constants: { ACTIVITY_SCOPE },
-    dom: surfaceDom.status,
+  const shellStatusController = (ctx.window.rendererShellStatusControllerUtils || {}).createShellStatusController?.({
+    state: ctx.state,
+    constants: { ACTIVITY_SCOPE: ctx.ACTIVITY_SCOPE },
+    dom: ctx.surfaceDom.status,
     callbacks: {
-      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
-      getActiveSession,
-      patchSessionSummary,
+      getCurrentRuntimePreferences: ctx.getCurrentRuntimePreferences, getRuntimePreferencesFromSession: ctx.getRuntimePreferencesFromSession,
+      getActiveSession: ctx.getActiveSession,
+      patchSessionSummary: ctx.patchSessionSummary,
       setSessionPreferences: (sessionId, preferences) =>
-        window.jennyShell.sessions.setPreferences(sessionId, preferences),
-      syncRuntimeDraftFromActiveSession,
-      beginActivity,
-      resolveActivity,
-      failActivity,
-      getActivitySnapshot,
-      getMostRecentActivity,
-      applyActivityAttributes,
-      setComposerStatusNotice,
-      clearComposerStatusNotice,
-      renderPersonalityEditor: (...a) => renderPersonalityEditorSafe(...a),
-      renderComposerState: (...a) => renderComposerState(...a),
-      renderSettings: (...a) => renderSettings(...a),
-      renderSessions: (...a) => renderSessions(...a), renderSessionComposer: (sessionId) => window.rendererAppPaneComposition?.getPaneComposition?.()?.renderSessionPane?.(sessionId, 'composer'),
-      getVisibleSessionMessages: (...a) => getVisibleSessionMessages(...a),
-      getRendererElapsedMs: (...a) => getRendererElapsedMs(...a),
-      appendClientLog: (...a) => appendClientLog(...a),
-      onStartupReady: () => runDeferredVisualStartup(),
-      onStartupRemoved: () => syncBackendNotice(), openLogs: () => setActiveView('logs'), openSettingsSection: (section) => openSettingsSection(section),
-      showToastMessage: (...a) => showToastMessage(...a), dismissToastsBySource: (source) => toastStore?.dismissBySource?.(source), toastSource: TOAST_SOURCE.backend,
+        ctx.window.jennyShell.sessions.setPreferences(sessionId, preferences),
+      syncRuntimeDraftFromActiveSession: ctx.syncRuntimeDraftFromActiveSession,
+      beginActivity: ctx.beginActivity,
+      resolveActivity: ctx.resolveActivity,
+      failActivity: ctx.failActivity,
+      getActivitySnapshot: ctx.getActivitySnapshot,
+      getMostRecentActivity: ctx.getMostRecentActivity,
+      applyActivityAttributes: ctx.applyActivityAttributes,
+      setComposerStatusNotice: ctx.setComposerStatusNotice,
+      clearComposerStatusNotice: ctx.clearComposerStatusNotice,
+      renderPersonalityEditor: (...a) => ctx.renderPersonalityEditorSafe(...a),
+      renderComposerState: (...a) => ctx.renderComposerState(...a),
+      renderSettings: (...a) => ctx.renderSettings(...a),
+      renderSessions: (...a) => ctx.renderSessions(...a), renderSessionComposer: (sessionId) => ctx.window.rendererAppPaneComposition?.getPaneComposition?.()?.renderSessionPane?.(sessionId, 'composer'),
+      getVisibleSessionMessages: (...a) => ctx.getVisibleSessionMessages(...a),
+      getRendererElapsedMs: (...a) => ctx.getRendererElapsedMs(...a),
+      appendClientLog: (...a) => ctx.appendClientLog(...a),
+      onStartupReady: () => ctx.runDeferredVisualStartup(),
+      onStartupRemoved: () => syncBackendNotice(), openLogs: () => ctx.setActiveView('logs'), openSettingsSection: (section) => ctx.openSettingsSection(section),
+      showToastMessage: (...a) => showToastMessage(...a), dismissToastsBySource: (source) => ctx.toastStore?.dismissBySource?.(source), toastSource: ctx.TOAST_SOURCE.backend,
     },
   }) || null;
   const {
-    getRuntimePreferenceSnapshot = noopObj,
-    renderComposerStatusNotice = noop,
-    handleActivityChange = noop,
-    runRuntimePreferenceActivity = noopAsync,
-    persistRuntimePreferences = noopAsync,
-    syncBackendNotice = noop, retryBackendStart = noop,
-    handleLifecycleProgress: _handleLifecycleProgress = noop,
-    handleLifecycleBackendStatus: _handleLifecycleBackendStatus = noop,
-    beginModelSwitch = noop,
-    updateModelSwitch = noop,
-    failModelSwitch = noop,
+    getRuntimePreferenceSnapshot = ctx.noopObj,
+    renderComposerStatusNotice = ctx.noop,
+    handleActivityChange = ctx.noop,
+    runRuntimePreferenceActivity = ctx.noopAsync,
+    persistRuntimePreferences = ctx.noopAsync,
+    syncBackendNotice = ctx.noop, retryBackendStart = ctx.noop,
+    handleLifecycleProgress: _handleLifecycleProgress = ctx.noop,
+    handleLifecycleBackendStatus: _handleLifecycleBackendStatus = ctx.noop,
+    beginModelSwitch = ctx.noop,
+    updateModelSwitch = ctx.noop,
+    failModelSwitch = ctx.noop,
   } = shellStatusController || {};
   return {
     dismissToast, renderToastViewport, showToastMessage, showShellErrorToast, toErrorMessage, showSessionActionError,
@@ -141,7 +139,6 @@
     persistRuntimePreferences, syncBackendNotice, retryBackendStart, _handleLifecycleProgress,
     _handleLifecycleBackendStatus, beginModelSwitch, updateModelSwitch, failModelSwitch,
   };
-    }
   }
 
   root.rendererAppNoticesComposition = {

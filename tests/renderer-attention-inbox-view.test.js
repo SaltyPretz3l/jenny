@@ -33,20 +33,14 @@ const MARKUP = '<div class="titlebar-brand">'
   + '<div class="attention-inbox" id="attentionInbox" hidden></div>'
   + '<div class="conversation-groups" id="conversationGroups"></div>'
   + '</div>';
-// The collapsed strip's own controls, as renderer-chats-strip.js builds them.
-const STRIP_MARKUP = '<div class="chats-strip" id="chatsStrip">'
-  + '<button id="chatsStripPanelToggle">Expand</button>'
-  + '<button id="chatsStripNeedsYou" aria-expanded="false">mark</button>'
-  + '</div>';
 
 function harness(options = {}) {
-  const dom = new JSDOM(MARKUP + (options.strip ? STRIP_MARKUP : ''), { url: 'https://jenny.local/' });
+  const dom = new JSDOM(MARKUP, { url: 'https://jenny.local/' });
   const { window } = dom;
   const approveCalls = [];
   const denyCalls = [];
   const openCalls = [];
   const viewCalls = [];
-  const collapseCalls = [];
   window.jennyShell = {
     tools: {
       approve: (...args) => { approveCalls.push(args); return Promise.resolve(true); },
@@ -73,7 +67,6 @@ function harness(options = {}) {
     callbacks: {
       openSession: (sessionId) => openCalls.push(sessionId),
       setActiveView: (viewId) => viewCalls.push(viewId),
-      setSidebarCollapsed: (value) => collapseCalls.push(value),
     },
     getAttentionInbox: options.getAttentionInbox,
   });
@@ -82,7 +75,7 @@ function harness(options = {}) {
     .find((node) => node.dataset.attentionKey === key) || null;
 
   return {
-    window, document: window.document, state, controller, approveCalls, denyCalls, openCalls, viewCalls, collapseCalls,
+    window, document: window.document, state, controller, approveCalls, denyCalls, openCalls, viewCalls,
     host: window.document.getElementById('attentionInbox'),
     rowFor,
     title: (key) => {
@@ -347,10 +340,8 @@ test('the failed-delivery count is a moved source: 0 -> 1 -> 2 -> 0 repaints eac
   h.window.close();
 });
 
-/* Row 158: the conversation on screen, the flyout, the snapshot. */
+/* Row 158: the conversation on screen, the snapshot. */
 const tick = () => new Promise((resolve) => setImmediate(resolve));
-const flyoutRow = (h, key) => [...h.document.querySelectorAll('#attentionInboxFlyout .attention-inbox__row')]
-  .find((node) => node.dataset.attentionKey === key) || null;
 
 test('the conversation on screen keeps a one-line row with no decisions; elsewhere it keeps them', () => {
   const sessions = [session('s1'), session('s2')];
@@ -375,124 +366,37 @@ test('the conversation on screen keeps a one-line row with no decisions; elsewhe
   h.window.close();
 });
 
-test('the badge with no visible strip mark expands the panel and focuses the first title, never Allow', () => {
+test('the badge reveals the section and focuses the first title, never Allow', () => {
   const h = harness({ sessions: [session('s1')], pendingToolApprovals: map([approval()]), currentSessionId: 'other' });
   h.controller.render();
   h.document.getElementById('attentionInboxBadge').click();
   assert.deepEqual(h.viewCalls, ['chat']);
-  assert.deepEqual(h.collapseCalls, [false]);
   assert.equal(h.document.activeElement, h.title('approval:call-1'));
-  assert.equal(h.controller.isFlyoutOpen(), false);
-
-  // A mark that exists but sits under a hidden strip is no mark at all.
-  const hiddenStrip = harness({ strip: true, sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
-  hiddenStrip.document.getElementById('chatsStrip').hidden = true;
-  hiddenStrip.controller.render();
-  hiddenStrip.document.getElementById('attentionInboxBadge').click();
-  assert.equal(hiddenStrip.controller.isFlyoutOpen(), false);
-  assert.deepEqual(hiddenStrip.collapseCalls, [false]);
-  hiddenStrip.controller.dispose();
-  hiddenStrip.window.close();
   h.controller.dispose();
   h.window.close();
 });
 
-test('the badge with a visible strip mark opens the flyout beside it and lands on the first title', () => {
-  const h = harness({ strip: true, sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
+test('Allow answers through the bridge with the approval id', async () => {
+  const h = harness({ sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
   h.controller.render();
-  const mark = h.document.getElementById('chatsStripNeedsYou');
-  h.document.getElementById('attentionInboxBadge').click();
-  assert.deepEqual(h.viewCalls, ['chat']);
-  assert.deepEqual(h.collapseCalls, [], 'the collapsed choice is not undone');
-  assert.equal(h.controller.isFlyoutOpen(), true);
-  assert.equal(mark.getAttribute('aria-expanded'), 'true');
-  const title = flyoutRow(h, 'approval:call-1').querySelector('.attention-inbox__open');
-  assert.equal(h.document.activeElement, title, 'focus lands on the title, so a stray Space cannot approve');
-  assert.equal(h.document.querySelector('#attentionInboxFlyout .attention-inbox__heading-static .attention-inbox__count').textContent, '1');
-  assert.equal(h.document.querySelector('#attentionInboxFlyout .attention-inbox__toggle'), null, 'the flyout heading is static');
-  assert.equal(h.document.getElementById('attention-inbox-flyout-list').hidden, false);
-
-  h.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(h.controller.isFlyoutOpen(), false);
-  assert.equal(h.document.activeElement, h.document.getElementById('attentionInboxBadge'), 'Escape returns to the badge that opened it');
-  assert.equal(h.document.querySelector('#attentionInboxFlyout .attention-inbox__row'), null, 'a closed flyout holds no rows');
-  h.controller.dispose();
-  h.window.close();
-});
-
-test('the panel and the flyout never repeat a DOM id, and the flyout list shows whatever the collapsed preference', () => {
-  const h = harness({
-    strip: true,
-    sessions: [session('s1'), session('s2', { pending_question_batch: { batch_id: 'b1', intro_text: 'Pick', questions: [{ id: 'q1' }] } })],
-    pendingToolApprovals: map([approval()]),
-  });
-  h.window.localStorage.setItem('jenny.attentionInbox.collapsed', 'true');
-  h.controller.render();
-  assert.equal(h.document.getElementById('attention-inbox-list').hidden, true, 'precondition: the panel section is collapsed');
-  h.controller.openFlyout(h.document.getElementById('chatsStripNeedsYou'), {});
-  const ids = [...h.document.querySelectorAll('[id]')].map((node) => node.id);
-  assert.equal(new Set(ids).size, ids.length, `ids repeat: ${ids.filter((id, index) => ids.indexOf(id) !== index)}`);
-  assert.ok(h.document.getElementById('attention-inbox-allow-approval-call-1'), 'panel ids stay as they were');
-  assert.ok(h.document.getElementById('attention-inbox-flyout-allow-approval-call-1'));
-  assert.equal(h.document.getElementById('attention-inbox-flyout-list').hidden, false);
-  h.controller.dispose();
-  h.window.close();
-});
-
-test('Allow in the flyout answers through the bridge with the approval id; the last row leaving closes it', async () => {
-  const h = harness({ strip: true, sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
-  h.controller.render();
-  const mark = h.document.getElementById('chatsStripNeedsYou');
-  h.controller.toggleFlyout(mark);
-  assert.equal(h.controller.isFlyoutOpen(), true);
-  h.document.getElementById('attention-inbox-flyout-allow-approval-call-1').click();
+  h.document.getElementById('attention-inbox-allow-approval-call-1').click();
   await tick();
   assert.deepEqual(h.approveCalls, [['appr-1', { alwaysAllow: false }]]);
-  assert.equal(h.controller.isFlyoutOpen(), false, 'nothing left to answer: the flyout goes');
-  assert.equal(h.document.getElementById('attentionInboxFlyout').hidden, true);
-  assert.equal(mark.getAttribute('aria-expanded'), 'false');
-  assert.equal(h.document.activeElement, h.document.getElementById('chatsStripPanelToggle'),
-    'focus that was inside the flyout does not fall to the body');
   h.controller.dispose();
   h.window.close();
 });
 
-test('answering one of two rows in the flyout lands focus on the remaining title, not the body', async () => {
+test('answering one of two rows lands focus on the remaining title, not the body', async () => {
   const h = harness({
-    strip: true,
     sessions: [session('s1'), session('s2')],
     pendingToolApprovals: map([approval(), approval({ approvalId: 'appr-2', callId: 'call-2', sessionId: 's2' })]),
   });
   h.controller.render();
-  h.controller.toggleFlyout(h.document.getElementById('chatsStripNeedsYou'));
-  const allow = h.document.getElementById('attention-inbox-flyout-allow-approval-call-1');
+  const allow = h.document.getElementById('attention-inbox-allow-approval-call-1');
   allow.focus();
   allow.click();
   await tick();
-  assert.equal(h.controller.isFlyoutOpen(), true, 'one row is still waiting');
-  assert.equal(h.document.activeElement, h.document.getElementById('attention-inbox-flyout-session-approval-call-2'));
-  h.controller.dispose();
-  h.window.close();
-});
-
-test('both targets repaint together and are left alone when nothing moved; busy shows in each', () => {
-  const h = harness({ strip: true, sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
-  h.window.jennyShell.tools.approve = () => new Promise(() => {});
-  h.controller.render();
-  h.controller.toggleFlyout(h.document.getElementById('chatsStripNeedsYou'));
-  const panelRow = h.rowFor('approval:call-1');
-  const inFlyout = flyoutRow(h, 'approval:call-1');
-  h.controller.render();
-  h.controller.render();
-  assert.equal(h.rowFor('approval:call-1'), panelRow, 'the panel row is not rebuilt');
-  assert.equal(flyoutRow(h, 'approval:call-1'), inFlyout, 'nor the flyout row');
-  inFlyout.querySelector('[data-attention-action="allow"]').click();
-  assert.equal(panelRow.querySelector('[data-attention-action="allow"]').disabled, true, 'the same wait is busy in the panel too');
-  assert.equal(inFlyout.querySelector('[data-attention-action="deny"]').disabled, true);
-  h.state.sessions = [session('s1', { title: 'Renamed' })];
-  h.controller.render();
-  assert.match(flyoutRow(h, 'approval:call-1').textContent, /Renamed/);
-  assert.match(h.rowFor('approval:call-1').textContent, /Renamed/);
+  assert.equal(h.document.activeElement, h.document.getElementById('attention-inbox-session-approval-call-2'));
   h.controller.dispose();
   h.window.close();
 });
@@ -526,41 +430,6 @@ test('the snapshot reads the last render: answerable, chats in row order, how ea
   assert.deepEqual([...third.waitingSessionIds], ['s3'], 'only chats that still wait');
   assert.equal(third.answerable, 1);
   assert.notEqual(third.key, second.key);
-  h.controller.dispose();
-  h.window.close();
-});
-
-test('dispose removes the flyout element and a disposed controller opens nothing', () => {
-  const h = harness({ strip: true, sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
-  h.controller.render();
-  h.controller.toggleFlyout(h.document.getElementById('chatsStripNeedsYou'));
-  assert.ok(h.document.getElementById('attentionInboxFlyout'));
-  h.controller.dispose();
-  assert.equal(h.document.getElementById('attentionInboxFlyout'), null);
-  assert.equal(h.controller.isFlyoutOpen(), false);
-  assert.equal(h.controller.openFlyout(h.document.getElementById('chatsStripNeedsYou'), {}), false);
-  assert.equal(h.document.getElementById('attentionInboxFlyout'), null);
-  h.controller.dispose();
-  h.window.close();
-});
-
-test('with no wait to show, the flyout does not open', () => {
-  const h = harness({ strip: true, sessions: [session('s1')] });
-  h.controller.render();
-  assert.equal(h.controller.openFlyout(h.document.getElementById('chatsStripNeedsYou'), {}), false);
-  assert.equal(h.document.getElementById('attentionInboxFlyout'), null, 'nothing was built for it');
-  h.controller.dispose();
-  h.window.close();
-});
-
-test('opening a conversation from the flyout closes it and opens the chat', () => {
-  const h = harness({ strip: true, sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
-  h.controller.render();
-  h.controller.toggleFlyout(h.document.getElementById('chatsStripNeedsYou'));
-  flyoutRow(h, 'approval:call-1').querySelector('.attention-inbox__open').click();
-  assert.deepEqual(h.openCalls, ['s1']);
-  assert.equal(h.controller.isFlyoutOpen(), false, 'the chat is open now, so the flyout is done');
-  assert.deepEqual(h.approveCalls, [], 'opening answers nothing');
   h.controller.dispose();
   h.window.close();
 });

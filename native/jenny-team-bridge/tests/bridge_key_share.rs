@@ -205,22 +205,33 @@ async fn an_unknown_key_at_its_share_is_closed_unasked_and_its_refusal_still_coo
     no_admit_for(&mut host, Duration::from_millis(1000)).await;
 }
 
+/// Review H11: a reconnect still waiting for its answer never pushes the live admitted link out;
+/// the oldest admitted one gives its slot only once the key holds more than two admitted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_member_with_one_admitted_and_one_waiting_is_asked_and_the_admitted_one_goes() {
+async fn a_waiting_reconnect_never_pushes_out_the_admitted_link() {
     let (mut host, host_public, at, _http) = host_at(host_limits()).await;
     let target = dial_addr(&host_public, at);
     let endpoint = client_endpoint(&random32(), IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
     let (admitted, _) = connect(&mut host, &endpoint, &target, Some("device")).await;
     host.stats_where("one connection", |line| line["connections"] == 1)
         .await;
-    let (waiting, _) = connect(&mut host, &endpoint, &target, None).await;
+    let (waiting, waiting_conn) = connect(&mut host, &endpoint, &target, None).await;
     let (third, _) = connect(&mut host, &endpoint, &target, Some("device")).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(admitted.close_reason().is_none(), "the admitted link stays");
+    assert!(waiting.close_reason().is_none(), "the waiting one stays");
+    assert!(third.close_reason().is_none(), "the newest stays");
+    host.send(json!({ "t": "admit_answer", "conn": waiting_conn, "kind": "device" }))
+        .await;
     assert!(
         closed_by_host(&admitted, Duration::from_secs(3)).await,
-        "the admitted one gives its slot"
+        "a third admitted takes the oldest one's slot"
     );
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(waiting.close_reason().is_none(), "the waiting one stays");
+    assert!(
+        waiting.close_reason().is_none(),
+        "the newly admitted one stays"
+    );
     assert!(third.close_reason().is_none(), "the newest stays");
 }
 
@@ -245,5 +256,39 @@ async fn a_full_host_still_takes_a_member_reconnect_in_place_of_its_oldest() {
             |line| line["t"] == "log" && line["event"] == "team.bridge.connection_refused"
         ),
         "no connection_cap refusal"
+    );
+}
+
+/// Review H11: a dropped connection that is still draining holds no connection slot, so a full
+/// host takes the next member while the drain runs out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_draining_connection_holds_no_connection_slot() {
+    let mut limits = host_limits();
+    limits["max_connections"] = json!(1);
+    limits["drop_grace_ms"] = json!(5000);
+    let (mut host, host_public, at, mut http) = host_at(limits).await;
+    let target = dial_addr(&host_public, at);
+    let dropped = keys();
+    let endpoint = client_endpoint(&dropped.secret, IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let (old, _) = connect(&mut host, &endpoint, &target, Some("device")).await;
+    // An open stream keeps the drain going until its deadline.
+    let (_send, _recv) = stream(&old).await;
+    let _socket = http.next_socket().await;
+    host.send(json!({ "t": "drop", "key": dropped.public }))
+        .await;
+    host.expect_log("team.bridge.dropped").await;
+    let other = client_endpoint(&random32(), IpAddr::V4(Ipv4Addr::LOCALHOST)).await;
+    let (second, _) = connect(&mut host, &other, &target, Some("device")).await;
+    let (_send2, _recv2) = stream(&second).await;
+    let _socket2 = http.next_socket().await;
+    assert!(
+        old.close_reason().is_none(),
+        "the drained one is still draining"
+    );
+    assert!(
+        !host.history_has(|line| line["t"] == "log"
+            && line["event"] == "team.bridge.connection_refused"
+            && line["fields"]["reason"] == "connection_cap"),
+        "no connection_cap refusal while the drain runs"
     );
 }

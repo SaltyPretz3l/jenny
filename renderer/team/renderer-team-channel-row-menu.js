@@ -3,6 +3,7 @@
  * (Unarchive on an archived channel) and Copy link. The rules are the header menu's (`channelActions`): an action this member
  * may not take is disabled with its reason, never hidden. A direct conversation has no link and cannot be renamed or archived.
  * Rename shows that channel and opens the header's name field; Archive acts on the row it was asked of without showing it.
+ * A project channel (`kind: 'project'`, OD-8) has the same menu, named by its project; its rename and archive are the project's, so they are greyed with the reason.
  * Created by the channel menu's controller (renderer-team-channel-menu.js), which owns the edit and the archive call.
  * Names are other members' text: they reach the menu as text, never markup. */
 (function (root, factory) {
@@ -28,7 +29,7 @@
     const menuApi = () => (globalThis.inventory && globalThis.inventory.contextMenu) || globalThis.inventoryContextMenu || null;
 
     function titleOf(team, row) {
-      if (!deps.channels.isDirect(row)) return '#' + deps.channels.channelName(row.channel_id);
+      if (!deps.channels.isDirect(row)) return '#' + deps.channels.channelName(row.channel_id, team.team_id);
       const name = deps.nameOf(team.team_id);
       const former = jt('team.chat.formerMember', 'Former member');
       return deps.channels.namesText(deps.channels.others(row, team.member_id).map((id) => name(id) || former));
@@ -67,7 +68,7 @@
       const team = deps.team();
       const api = menuApi();
       const row = team && el ? deps.chat().channel(team.team_id, el.dataset.teamChannel) : null;
-      if (!row || !api || typeof api.show !== 'function' || !(deps.channels.isDirect(row) || deps.channels.isCustom(row) || row.kind === 'team')) return false;
+      if (!row || !api || typeof api.show !== 'function' || !(deps.channels.isDirect(row) || deps.channels.isCustom(row) || deps.channels.isProject(row) || row.kind === 'team')) return false;
       const id = row.channel_id;
       openFor = id;
       api.show({ ...where, rootEl: el, restoreFocusTo: el, className: 'team-channel-menu', heading: titleOf(team, row), items: itemsFor(team, row),

@@ -88,15 +88,9 @@
   var canonicalOllamaTag = formatUtils.canonicalOllamaTag;
   var boundedErrorMessage = formatUtils.boundedErrorMessage;
 
-  function resolveFoldersModule() {
-    return (root && root.rendererModelLibraryFolders)
-      || (typeof require === 'function' ? require('./renderer-model-library-folders') : null);
-  }
+  function resolveFoldersModule() { return (root && root.rendererModelLibraryFolders) || (typeof require === 'function' ? require('./renderer-model-library-folders') : null); }
 
-  function resolveEngineBlocksModule() {
-    return (root && root.modelLibraryEngineBlocks)
-      || (typeof require === 'function' ? require('./model-library/model-library-engine-blocks') : null);
-  }
+  function resolveEngineBlocksModule() { return (root && root.modelLibraryEngineBlocks) || (typeof require === 'function' ? require('./model-library/model-library-engine-blocks') : null); }
 
   function createModelLibrarySectionController(deps) {
     var d = deps || {};
@@ -172,7 +166,7 @@
       var module = resolveEngineBlocksModule();
       if (typeof module?.createModelLibraryEngineBlocks !== 'function') return null;
       return module.createModelLibraryEngineBlocks({ windowRef: windowRef, documentRef: documentRef, imageEngineEnabled: mergeInputs.imageEngineFlagEnabled,
-        ninferEnabled: mergeInputs.ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } },
+        ninferEnabled: mergeInputs.ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } }, strataEnabled: mergeInputs.strataFlagEnabled, strata: { onState: rebuildFromState },
         llamaServerEnabled: accelerationFlagEnabled, llamaServer: mergeInputs.llamaServerInfo, folders: folders });
     }
 
@@ -210,6 +204,8 @@
           // Only "Remove from library", a card ⋯ action, reports on this line.
           setStatus: setStatusMessage,
           hostId: 'modelLibraryFoldersHost',
+          getCardMb: function () { return merged && merged.hardware ? merged.hardware.budgetMb : 0; }, // the too-large warning (add-move)
+          showFits: function () { root.modelLibraryServices?.shared?.({ documentRef: documentRef, windowRef: windowRef })?.close(); view.scope = 'get'; render(); },
         });
       }
       return foldersController;
@@ -260,6 +256,7 @@
       card: card, host: host, toolbarHost: toolbarHost, folders: folders, isDisposed: isDisposed,
       setStatusMessage: setStatusMessage, ninferLibraryInput: mergeInputs.ninferLibraryInput,
       getSourceData: getSourceData, requestRemove: deleteFlow.requestConfirm, share: share,
+      setDefault: function (tag) { return runtimeActions.handleSetDefault(tag); },
     });
 
     // Toolbar, card grid and Running now rendering (model-library-section-render.js).
@@ -278,6 +275,7 @@
     function render() {
       renderer.renderToolbar();
       renderRows();
+      windowRef.rendererSettingsLazyRenderers?.mountModelRoles?.({ windowRef: windowRef, documentRef: documentRef, state: state, onDefaultChange: rebuildFromState }); // row 194
     }
 
     // force: this refresh answers a user action or follows a mutation, so it must
@@ -377,7 +375,7 @@
       activeModel: function () { return activeModel(); },
       refresh: function () { return refresh({ force: true }); },
       refreshModelPickers: function () { return refreshModelPickers(); },
-      render: function () { renderRows(); },
+      render: function () { if (sourceData && !mergeInputs.signatureUnchanged()) merged = buildMerged(); renderRows(); }, // Set as default moves the Default flag
       setStatusMessage: setStatusMessage,
       showToastMessage: showToastMessage,
       appendClientLog: appendClientLog,
@@ -420,6 +418,7 @@
           if (!model) return;
           menu.open(model, tag, modelAction);
         } else if (action === 'use') runtimeActions.handleUse(tag);
+        else if (action === 'setDefault') runtimeActions.handleSetDefault(tag);
         else if (RECOVERY_ACTIONS.includes(action)) void recovery.handle(action, tag);
         else if (action === 'unload') runtimeActions.handleUnload(tag);
         else if (action === 'tune') openModelTuning(tag, modelAction, menu.tuneOptions(findModel(tag)));
@@ -441,6 +440,7 @@
         }
         else if (sectionActionId === 'pull-tag') startPull(view.query);
         else if (sectionActionId === 'add-gguf') addGguf(sectionAction);
+        else if (sectionActionId === 'cloud-providers') { var head = byId('modelServicesHost')?.querySelector('[data-service-head="cloud"]'); if (head) { head.setAttribute('tabindex', '-1'); head.scrollIntoView(); head.focus(); } }
         else if (sectionActionId === 'show-catalog' || sectionActionId === 'hide-catalog') {
           view.showAllCatalog = sectionActionId === 'show-catalog';
           renderRows();
@@ -518,14 +518,14 @@
     // The state tick's catch-up re-read and llama-server status reread
     // (model-library-section-live-sync.js).
     var liveSync = sectionLiveSyncModule.createModelLibrarySectionLiveSync({
-      windowRef: windowRef, state: state, source: source, sourcesModule: sourcesModule,
+      windowRef: windowRef, documentRef: documentRef, card: card, state: state, source: source, sourcesModule: sourcesModule,
       isDisposed: isDisposed, accelerationFlagEnabled: accelerationFlagEnabled, getSourceData: getSourceData,
       applyLlamaServer: function (next) {
         sourceData = Object.assign({}, sourceData, { llamaServer: next });
         merged = buildMerged();
         render();
       },
-      refresh: function () { return refresh(); }, rebuildFromState: rebuildFromState,
+      refresh: function () { return refresh(); }, rebuildFromState: rebuildFromState, onShown: function () { if (sourceData) render(); }, // Model roles loads after boot
     });
 
     function syncEngineSettings(localEngines) {
@@ -551,6 +551,7 @@
         unsubscribeFeatures = features.onChanged(syncFeatureState);
       }
       syncFeatureState();
+      liveSync.bindWatch();
     }
 
     function dispose() {

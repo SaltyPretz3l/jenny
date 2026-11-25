@@ -12,7 +12,8 @@
  * chip each second while it shows a time. Questions and approvals stand in that row and in the popover. A turn's state
  * changes (not its clock) are said in a polite live region. The view stays pinned to the bottom unless scrolled up.
  *
- * The box is the #team composer, built once (the field is never replaced, so typing and IME survive); drafts are kept
+ * Every id this view draws starts with its own prefix (two views in one document never share one) and dispose empties the root. The
+ * box is the #team composer, built once (the field is never replaced, so typing and IME survive); drafts are kept
  * per conversation while the app runs and on this PC (renderer-team-project-drafts.js, never the host); while the team is
  * not online Send waits and the text stays, and nothing is sent when it comes back (D3). Whoever may send now may queue up to three messages while a turn runs
  * (renderer-team-project-queue.js): one goes after a clean end and the snapshot after it; Stop, a failure, a takeover
@@ -69,10 +70,15 @@
   // Row 175 item 7: plan mode (the app's global, or under Node the file); without it the Plan chip and the plan row are not drawn.
   const NO_PLAN = { visible: (x) => x, blank: (x) => x, join: (x) => x, box: () => ({}), on: () => false, version: () => 0, footHtml: () => '', popHtml: () => '', cardsHtml: () => '', click: () => false, key: () => false, decided: () => false };
   function planModule() { if (globalThis.rendererTeamProjectPlan) return globalThis.rendererTeamProjectPlan; try { return require('./renderer-team-project-plan'); } catch (_error) { return null; } }
+  // OD-2: whether the project's rules are paused (renderer-team-project-rules.js); without it a card offers no always button.
+  const NO_WATCH = { paused: () => true, check() {} };
+  const rulesModule = () => globalThis.rendererTeamProjectRules || (() => { try { return require('./renderer-team-project-rules'); } catch (_error) { return null; } })();
+  let instances = 0; // each view draws its ids under its own prefix
   const standingText = () => jt('team.conv.standing', 'The team host and the member whose PC answers can read this conversation.');
 
   function createConversation({ root, teamId, projectId, sessionId, store, ctx, clock = Date.now, timers = defaultTimers, frames = defaultFrames, renders = { log: 0, live: 0, box: 0, head: 0, pop: 0 }, board = null }) {
     const ids = { team_id: teamId, session_id: sessionId };
+    const idPrefix = 'tc' + (instances += 1) + '-';
     const draftKey = teamId + '\u0000' + sessionId;
     const s = { snapshot: null, error: '', closed: '', viewers: [], stream: null, answeredQ: new Map(), thought: new Map(), busy: new Set(), confirm: false, takenBy: '', note: '',
       noteWait: false, disposed: false, popTurn: '', liveTurn: '', settling: false, lastEnd: '', announced: '' };
@@ -118,23 +124,24 @@
     const modelName = (name) => (name === POOL_ALIAS ? parts.teamModel(stores(), teamId) || parts.oneModel(parts.poolNodes(stores(), teamId)) : name);
     const rows = channelRows.createRows({ nameOf: (id) => c().nameOf(id), markdown, liveMarkdown, timeText: msgRow.timeText, dayLabel: (key) => msgRow.dayLabel(key, clock()) });
     const history = parts.createHistory({ cap: CAPS.messages, read: (cursor) => call('conversationOpen', { before_message_id: cursor }), errorText });
-    const plan = (planModule() ? planModule().createPlan : () => NO_PLAN)({ doc: root.ownerDocument, snapshot: () => s.snapshot, messages: () => history.messages(), me, role, mayDrive, driver, running: () => running() || s.settling,
+    const plan = (planModule() ? planModule().createPlan : () => NO_PLAN)({ doc: root.ownerDocument, root, idPrefix, snapshot: () => s.snapshot, messages: () => history.messages(), me, role, mayDrive, driver, running: () => running() || s.settling,
       nameOf: (id) => c().nameOf(id), time: () => msgRow.timeText(clock()), timeText: msgRow.timeText, errorText, decide: (payload) => call('conversationDecide', payload), send: (prompt) => send(prompt), redraw: () => draw(),
       change: (patch) => run('prefs', 'conversationPreferences', patch), takeover: async () => { const a = await run('box', 'conversationControl', { action: 'takeover' }); if (a && a.ok) setControl({ member_id: me(), expires_at: 0 }); return Boolean(a && a.ok); } });
     const approvals = parts.createApprovals({ snapshot: () => plan.visible(s.snapshot), send: (payload) => call('conversationDecide', payload), me, mayAnswer: () => role() !== 'reader' && !s.disposed,
       youOr: (id) => (id === me() ? jt('team.conv.you', 'You') : c().nameOf(id)), nameOf: (id) => c().nameOf(id), errorText, timeText: () => msgRow.timeText(clock()), receiptHtml: box.receiptHtml,
       outcomeHtml: box.outcomeHtml, offersAllow: box.offersAllow, acted: () => { s.takenBy = ''; }, redraw: () => draw(),
-      cardHtml: (a, state) => box.cardHtml(a, { role: role(), planMode: s.snapshot.session.plan_mode === true, projectName: projectName(), prompter: a.prompter_member_id ? c().nameOf(a.prompter_member_id) : '', askHtml: acts.askHtml(a),
+      cardHtml: (a, state) => box.cardHtml(a, { role: role(), planMode: s.snapshot.session.plan_mode === true, paused: rulesWatch.paused(), projectName: projectName(), prompter: a.prompter_member_id ? c().nameOf(a.prompter_member_id) : '', askHtml: acts.askHtml(a),
         ...state }),
       rules: async () => { const answer = await store.call('projectRules', { team_id: teamId, project_id: projectId }); return s.disposed ? null : answer; }, sessionId, projectName });
     const pending = approvals.pending;
+    const rulesWatch = (rulesModule() ? rulesModule().createPausedWatch : () => NO_WATCH)({ read: () => store.call('projectRules', { team_id: teamId, project_id: projectId }), clock, live: () => !s.disposed, redraw: () => draw() });
     // The host's answer settles a queued row even after this view went (a null would read "Not sent" for a posted one).
     const queue = queues.createQueue({ key: draftKey, send: (prompt) => store.call('conversationSend', { ...ids, ...sendPayload(prompt) }), errorText });
     // Row 172: the Tools chip and model pill (the conversation's preferences) and the quiet lines of their changes.
-    const prefs = controls.createControls({ root, nameOf: (id) => c().nameOf(id), projectName, role, mayDrive, driver, running: () => running() || s.settling, busy: () => s.busy.has('prefs'),
+    const prefs = controls.createControls({ root, idPrefix, nameOf: (id) => c().nameOf(id), projectName, role, mayDrive, driver, running: () => running() || s.settling, busy: () => s.busy.has('prefs'),
       session: () => (s.snapshot && s.snapshot.session) || null, pool: () => parts.poolRead(stores(), teamId), change: (patch) => run('prefs', 'conversationPreferences', patch), redraw: () => drawBox(), timeText: msgRow.timeText });
     const ch = channel.createChannel({ s, history, approvals, queue, rows, clock, me, nameOf: (id) => c().nameOf(id), role, mayDrive, running, streamId, asking, projectName, modelName,
-      liveText: () => liveCache.text, notes: () => prefs.notes(history.messages()), under: (item) => acts.under(item), underKey: () => acts.underKey(), placed: (id) => acts.placed(id), plan });
+      liveText: () => liveCache.text, notes: () => prefs.notes(history.messages()), under: (item) => acts.under(item), underKey: () => acts.underKey(), placed: (id) => acts.placed(id), plan, idPrefix });
 
     // ------------------------------------------------------------ markup
 
@@ -159,36 +166,36 @@
     function boxState() {
       return { connection: connection(), batch: approvals.batch(), role: role(), owner: owner(), driver: driver(), me: me(), running: running() || s.settling, approval: pending().length > 0, confirm: s.confirm, takenBy: s.takenBy,
         busy: s.busy.has('box'), note: s.note, nameOf: c().nameOf, boardHint: board && boardNow() ? String(board.hint || '') : '', gpu: gpuState(), mayQueue: mayDrive(),
-        board: Boolean(board), prefs: plan.join(prefs.box()), files: paths.enabled(), ...plan.box() };
+        board: Boolean(board), prefs: plan.join(prefs.box()), files: paths.enabled(), idPrefix, ...plan.box() };
     }
 
     // ------------------------------------------------------------ drawing
 
-    root.innerHTML = parts.channelShellHtml({ board, fieldHtml: box.composerFieldHtml(named()), standing: standingText() });
+    root.innerHTML = parts.channelShellHtml({ board, fieldHtml: box.composerFieldHtml(named(), idPrefix), standing: standingText() });
     const q = (selector) => root.querySelector(selector);
     const part = (name) => q('[data-conv-box="' + name + '"]');
     const region = (name) => q('[data-conv-region="' + name + '"]');
     const regions = { head: region('head'), log: region('log'), live: region('live'), queued: region('queued'), pop: region('pop'), announce: region('announce'), box: region('box') };
     const boxEls = { above: part('above'), shell: part('shell'), locked: part('locked'), composer: part('composer'), toolbar: part('toolbar'), left: part('left'), bar: part('bar'), below: part('below'),
-      field: q('#' + box.BOX_ID) };
+      field: q('[id="' + idPrefix + box.BOX_ID + '"]') };
     const scroller = q('.team-conv__scroll');
     const jump = q('.chat-jump-latest');
     const copier = parts.createCopy({ timers, view: root.ownerDocument.defaultView });
     const questions = parts.createQuestions({ log: root, asking, send: call, mayAnswer: () => role() !== 'reader', errorText,
       answered: (ref) => { remember(s.answeredQ, ref, true); draw(); focusBox(); } });
     const titles = parts.createTitle({ head: regions.head, named, shown: title, reason: renameBlock, rename: (next) => call('conversationRename', { title: next }), errorText, redraw: () => { drawHead(); drawBox(); },
-      timers, maxLength: column.TITLE_MAX,
+      timers, maxLength: column.TITLE_MAX, idPrefix,
       renamed: (next) => { if (s.snapshot) s.snapshot = { ...s.snapshot, session: { ...s.snapshot.session, title: next } }; } });
     const pop = parts.createPop({ s, ch, popper: () => popper, host: regions.pop, root, scroller, board, questions, asking, mayAnswer: () => role() !== 'reader', draw, earlier, stop, focusBox, renders });
     const paths = (pathsModule() ? pathsModule().createPaths : () => NO_PATHS)({ root, teamId, projectId, projectName, off: Boolean(board), call: (method, payload) => store.call(method, payload),
       files: () => typeof store.team === 'function' && Boolean((store.team(teamId) || {}).filesSupported), field: () => boxEls.field, shell: () => boxEls.shell });
-    const popper = turnPop.createTurnPop({ host: regions.pop, doc: root.ownerDocument, markdown, liveMarkdown, sessionKey: draftKey, onAction: (kind) => pop.action(kind), paths });
+    const popper = turnPop.createTurnPop({ host: regions.pop, doc: root.ownerDocument, markdown, liveMarkdown, sessionKey: draftKey, onAction: (kind) => pop.action(kind), paths, idPrefix });
     // A match in Jenny's work opens its turn and that one row; the focus stays in the field (the popover is never focused here).
-    const find = (findModule() ? findModule().createFind : () => NO_FIND)({ root, turns: () => ch.view().turns, markdown, toLocal: turnPop.toLocalMessages, more: () => history.more(), earlier,
+    const find = (findModule() ? findModule().createFind : () => NO_FIND)({ root, idPrefix, turns: () => ch.view().turns, markdown, toLocal: turnPop.toLocalMessages, more: () => history.more(), earlier,
       redrawHead: () => drawHead(), openTurn: (id, ref) => { if (s.popTurn !== id) { s.popTurn = id; draw(); } popper.revealRow(ref); } });
-    const acts = (actsModule() ? actsModule().createActions : () => NO_ACTS)({ root, teamId, projectId, sessionId, board: Boolean(board), call: (method, payload) => store.call(method, payload), timers, me, role, driver,
+    const acts = (actsModule() ? actsModule().createActions : () => NO_ACTS)({ root, teamId, projectId, sessionId, board: Boolean(board), onOpenConversation: board && typeof board.onOpenConversation === 'function' ? board.onOpenConversation : null, call: (method, payload) => store.call(method, payload), timers, me, role, driver,
       running: () => running() || s.settling, online: () => !connection(), nameOf: (id) => c().nameOf(id), projectName, messages: () => history.messages(), view: () => ch.view(), snapshot: () => s.snapshot,
-      viewers: () => s.viewers, openTurn: (id) => pop.open(id), errorText, timeText: msgRow.timeText, receiptHtml: box.receiptHtml, redraw: () => draw() });
+      viewers: () => s.viewers, openTurn: (id) => pop.open(id), errorText, timeText: msgRow.timeText, receiptHtml: box.receiptHtml, promptMax: box.PROMPT_MAX, redraw: () => draw() });
     jump.toggleAttribute('inert', true);
     const kept = draftStore.createDrafts({ memory: drafts, key: draftKey, cap: CAPS.drafts, timers, call: (method, payload) => store.call(method, { ...ids, ...payload }) });
     boxEls.field.value = kept.text();
@@ -206,11 +213,11 @@
       const doc = root.ownerDocument;
       const active = doc.activeElement;
       if (active && active !== doc.body && root.contains(active) && !active.closest('[hidden]')) return;
-      const same = had === box.BOX_ID ? null : Array.from(el.querySelectorAll('[id], [data-project-action]')).find((one) => !one.disabled && keyOf(one) === had);
+      const same = had === idPrefix + box.BOX_ID ? null : Array.from(el.querySelectorAll('[id], [data-project-action], .team-msg')).find((one) => !one.disabled && keyOf(one) === had);
       const next = same || el.querySelector('[data-project-action="takeover-cancel"]') || focusTarget();
       if (!next || typeof next.focus !== 'function') return;
       next.focus({ preventScroll: true });
-      if (next.id === RENAME_ID && typeof next.setSelectionRange === 'function') next.setSelectionRange(next.value.length, next.value.length);
+      if (next.id === idPrefix + RENAME_ID && typeof next.setSelectionRange === 'function') next.setSelectionRange(next.value.length, next.value.length);
     }
     function write(name, html, counter) {
       if (last[name] === html) return;
@@ -222,6 +229,7 @@
       acts.mark(regions[name]);
       renders[counter] += 1;
       if (name === 'live' && asking().length) questions.sync();
+      if (name === 'log' || name === 'live') rows.rove(scroller);
       refocus(regions[name], had);
     }
     // The find field goes back into a head that was written again (its slot is new); an unchanged head keeps it.
@@ -296,6 +304,7 @@
       const known = new Set(history.messages().map((m) => m.id));
       const answered = snapshot.messages.some((m) => m.role === 'assistant' && !known.has(m.id));
       s.snapshot = snapshot;
+      if (snapshot.pending_approvals && snapshot.pending_approvals.length) rulesWatch.check();
       history.take(snapshot);
       approvals.taken(snapshot);
       for (const ref of [...s.answeredQ.keys()]) if (!questionsIn(snapshot).some((p) => p.question_ref === ref)) s.answeredQ.delete(ref);
@@ -514,10 +523,11 @@
     // The box's field first; then the title's field and a question card, each by its own controller.
     function onInput(event) {
       if (event.target === boxEls.field) { saveDraft(); if (s.takenBy) { s.takenBy = ''; drawBox(); } return; }
-      if (!titles.handle(event)) questions.edit(event);
+      if (!plan.input(event) && !titles.handle(event)) questions.edit(event);
     }
     function onKeydown(event) {
       if (plan.key(event, boxEls.field) || prefs.key(event)) return;
+      rows.key(event, scroller);
       if (event.target === boxEls.field) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void send(); } return; }
       // Esc closes the popover from the channel too (the popover handles its own); a field keeps its Esc.
       if ((event.key === 'Escape' || event.key === 'Esc') && s.popTurn && !(event.target.closest && event.target.closest('textarea, input, .user-questions-block'))) {
@@ -535,7 +545,7 @@
       tick = null;
     }
 
-    const listeners = [['click', onClick], ['input', onInput], ['change', onInput], ['keydown', onKeydown], ['focusout', (event) => { titles.handle(event); }],
+    const listeners = [['click', onClick], ['input', onInput], ['change', onInput], ['keydown', onKeydown], ['focusout', (event) => { titles.handle(event); }], ['focusin', (event) => rows.note(event, scroller)],
       ['submit', (event) => { event.preventDefault(); }]];
     for (const [type, handler] of listeners) root.addEventListener(type, handler);
     scroller.addEventListener('scroll', onScroll);
@@ -579,6 +589,7 @@
         queue.detach();
         rows.clear();
         ch.clear();
+        root.textContent = '';
         void store.call('conversationClose', ids);
       },
     };

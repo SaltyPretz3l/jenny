@@ -297,60 +297,6 @@ class StdioMCPTransport(StdioChannelMixin, StdioPromptsMixin, MCPTransport):
         )
         return self._require_result(response, "tools/call")
 
-    def list_resources(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        self._ensure_initialized(cancel_handle=cancel_handle)
-        params: dict[str, Any] = {}
-        if isinstance(cursor, str) and cursor.strip():
-            params["cursor"] = cursor.strip()
-        response = self._send_request(
-            "resources/list",
-            params,
-            timeout_seconds=timeout_seconds,
-            cancel_handle=cancel_handle,
-        )
-        return self._require_result(response, "resources/list")
-
-    def read_resource(
-        self,
-        uri: str,
-        *,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        self._ensure_initialized(cancel_handle=cancel_handle)
-        response = self._send_request(
-            "resources/read",
-            {"uri": uri},
-            timeout_seconds=timeout_seconds,
-            cancel_handle=cancel_handle,
-        )
-        return self._require_result(response, "resources/read")
-
-    def list_resource_templates(
-        self,
-        *,
-        cursor: str | None = None,
-        timeout_seconds: float | None = None,
-        cancel_handle: Any = None,
-    ) -> dict[str, Any]:
-        self._ensure_initialized(cancel_handle=cancel_handle)
-        params: dict[str, Any] = {}
-        if isinstance(cursor, str) and cursor.strip():
-            params["cursor"] = cursor.strip()
-        response = self._send_request(
-            "resources/templates/list",
-            params,
-            timeout_seconds=timeout_seconds,
-            cancel_handle=cancel_handle,
-        )
-        return self._require_result(response, "resources/templates/list")
-
     def _ensure_initialized(self, *, cancel_handle: Any = None) -> None:
         if self._initialized:
             return

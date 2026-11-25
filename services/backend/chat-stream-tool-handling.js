@@ -418,6 +418,7 @@ function handleToolNotification(service, context, notification, options = {}) {
       result: { isError: params.success === false, metadata: normalizedMetadata }, turnEventCollector });
     service.suggestedChanges?.recordToolOutcome?.({ toolName, sessionId: resolvedSessionId, callId,
       turnId: streamId, result: { isError: params.success === false, metadata: normalizedMetadata } });
+    try { service.runView?.noteToolResult?.({ sessionId: resolvedSessionId, callId, toolName, success: params.success !== false, metadata: normalizedMetadata }); } catch { /* the chat never sees this */ }
     const metadataOptions = {
       streamId,
       callId,

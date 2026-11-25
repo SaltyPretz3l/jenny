@@ -327,6 +327,29 @@ test('an actor revoked between the mark and the last step: the host removes the 
   assert.equal(h.fx.logs.filter((entry) => entry.event === 'team_project.delete_finished_by_host').length, 1);
 });
 
+test('H19: a conversation created while the mark is awaited is deleted with the others, not orphaned', async (t) => {
+  const h = await createTeamProjectFixture(t, { projectsRoot: true });
+  const { id } = await populated(h);
+  let late = null;
+  const store = new Proxy(h.store, { get: (target, key) => {
+    if (key === 'markProjectDeleting') {
+      return async (input) => {
+        const marked = await target.markProjectDeleting(input);
+        late = h.backend.sessionStore.createSession({ title: 'Late', projectId: id }).id;
+        return marked;
+      };
+    }
+    return typeof target[key] === 'function' ? target[key].bind(target) : target[key];
+  } });
+  const deleter = createProjectDeleter({ store, folders: h.folders, router: () => h.core.router,
+    sessionStore: () => h.backend.sessionStore, records: () => h.state.remover, chat: () => h.state.chat, logger: h.fx.logger });
+  const answer = await deleter.run({ projectId: id, actor: asActor(h, 'alice') }, h.state.app);
+  assert.deepEqual([answer.ok, answer.deleted], [true, true], JSON.stringify(answer));
+  assert.equal(typeof late, 'string', 'the late conversation was made');
+  assert.deepEqual(sessionsOf(h, id), [], 'no conversation of the deleted project is left');
+  assert.equal(h.backend.sessionStore.getSession(late), null);
+});
+
 test('E67: with the real chat store a deleted project\'s channel, messages, attachments and index row leave the host', async (t) => {
   const h = await createTeamProjectFixture(t);
   const profileDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-e67-delete-')));

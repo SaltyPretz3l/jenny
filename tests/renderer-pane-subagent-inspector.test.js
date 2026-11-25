@@ -157,8 +157,8 @@ test('a delegate run streaming in pane 1 opens its monitor in the shared panel; 
   assert.deepEqual(paneZeroTranscript(doc), paneZeroBefore, 'pane 0\'s transcript is untouched');
   assert.equal(state.messagesBySession.get('session-a'), messagesA, 'session-a\'s messages are untouched');
 
-  // Closing from inside the panel ends the record and restores the closed panel.
-  doc.getElementById('artifactReviewPanel').querySelector('[data-subagent-close]').click();
+  // Row 195: the helper's page has no Close of its own; the panel's Close ends the record and restores the closed panel.
+  doc.getElementById('artifactReviewCollapseButton').click();
   await waitForUi(window, 40);
   assert.equal(state.ui.subagentMonitor, null);
   assert.equal(doc.getElementById('artifactReviewPanel').querySelector('.subagent-monitor-shell'), null);
@@ -193,7 +193,8 @@ test('pane 1\'s open monitor follows its subagent to the finish in the panel; pa
   assert.doesNotMatch(monitor().textContent, /Reading pane one files/);
   assert.deepEqual(paneZeroTranscript(doc), paneZeroBefore, 'pane 0\'s transcript is untouched');
   assert.equal(state.currentSessionId, 'session-b');
-  // Back to the tree at any width: the delegation with its one child, and the parent synthesizing.
-  monitor().querySelector('[data-subagent-back]').click();
-  assert.match(monitor().textContent, /Synthesizing results/, 'the tree shows the parent synthesizing');
+  // Back to the tree at any width (row 195: by key; the visible back control goes to Runs): the delegation with its one child, and the parent synthesizing.
+  monitor().querySelector('.subagent-monitor-body').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+  await waitForUi(window, 40);
+  assert.match(monitor().textContent, /Delegated research[\s\S]*Beta live survey/, 'the tree lists the delegation and its child (its old status header is the Runs back control now)');
 });

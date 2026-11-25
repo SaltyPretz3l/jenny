@@ -4,15 +4,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from sidecar.ai.error_codes import (
-    CMP_MCP_RESOURCE_INVALID,
-    CMP_MCP_RESOURCE_NOT_FOUND,
-    CMP_MCP_RESOURCE_UNSUPPORTED,
-    CMP_MCP_TOOL_SURFACE_CHANGED,
-)
+from sidecar.ai.error_codes import CMP_MCP_TOOL_SURFACE_CHANGED
 from sidecar.ai.mcp import (
     client_prompts,
     client_reuse,
@@ -27,7 +21,6 @@ from sidecar.ai.mcp.client_reconnect import (
     MCP_FAILURE_HISTORY_LIMIT,  # noqa: F401 - stable public re-export.
     ClientReconnectMixin,
 )
-from sidecar.ai.mcp.client_resources import ClientResourcesMixin
 from sidecar.ai.mcp.exceptions import (
     CMP_MCP_CONFIG_INVALID,
     CMP_MCP_SERVER_FAILED,
@@ -36,32 +29,15 @@ from sidecar.ai.mcp.exceptions import (
     MCPError,
 )
 from sidecar.ai.mcp.models import (
-    MCPResourceDescriptor,
-    MCPResourceReadResult,
     MCPServerCooldown,
     MCPServerDiagnostics,
     MCPServerFailure,
     MCPToolDescriptor,
     MCPToolResult,
 )
-from sidecar.ai.mcp.resource_payloads import (
-    MCP_RESOURCE_TEXT_EXCERPT_MAX_CHARS,
-    MCP_RESOURCE_TOOL_LIST_RESOURCES,
-    MCP_RESOURCE_TOOL_LIST_TEMPLATES,
-    MCP_RESOURCE_TOOL_READ_RESOURCE,
-    MCP_RESOURCE_URI_MAX_CHARS,
-    resource_mime_from_payload,
-    resource_result_payload,
-    resource_size_from_payload,
-    sanitize_resource_string,
-)
-from sidecar.ai.mcp.tool_namespace import (
-    is_namespaced_mcp_tool_name,
-    namespace_mcp_resource_id,
-)
+from sidecar.ai.mcp.tool_namespace import is_namespaced_mcp_tool_name
 from sidecar.ai.mcp.tool_surface import as_log_data, summarize_tools, tools_digest
 from sidecar.ai.tools.catalog import reserved_tool_names
-from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.ai.tools.tool_actions import effective_side_effecting
 from sidecar.runtime.cooldowns import CooldownRegistry
 from sidecar.runtime.diagnostics import log_event
@@ -80,9 +56,7 @@ def _raise_if_replay_unsafe(error: MCPError | None, descriptor: Any, args: dict[
         raise error
 
 
-class MCPClient(
-    client_prompts.ClientPromptsMixin, ClientResourcesMixin, ClientReconnectMixin
-):
+class MCPClient(client_prompts.ClientPromptsMixin, ClientReconnectMixin):
     def __init__(
         self,
         *,
@@ -94,10 +68,8 @@ class MCPClient(
         self._transports: dict[str, transport_base.MCPTransport] = {}
         self._tools_by_name: dict[str, MCPToolDescriptor] = {}
         self._compat_tools_by_name: dict[str, str] = {}
-        self._resources_by_id: dict[str, MCPResourceDescriptor] = {}
         self._server_configs: dict[str, MCPServerConfig] = {}
         self._sse_enabled = False
-        self._resources_enabled = False
         # Mirror tools_web_allow_private_addresses / tools_web_allow_loopback; they
         # relax only the SSRF address-class check on sse transport / oauth token URLs.
         self._allow_private_addresses = self._allow_loopback = False
@@ -119,22 +91,19 @@ class MCPClient(
             self._transports.clear()
             self._tools_by_name.clear()
             self._compat_tools_by_name.clear()
-            self._resources_by_id.clear()
             self._server_configs.clear()
             self._sse_enabled = False
-            self._resources_enabled = False
             self._allow_private_addresses = self._allow_loopback = False
             self._connected = []
             self._failures = []
             self._cooldowns.clear_namespace(MCP_COOLDOWN_NAMESPACE)
             self._reuse = client_reuse.ReuseState()
 
-    def configure(  # noqa: PLR0913 - keyword-only transport inputs.
+    def configure(
         self,
         servers: tuple[MCPServerConfig, ...],
         *,
         sse_enabled: bool,
-        resources_enabled: bool = False,
         allow_private_addresses: bool = False, allow_loopback: bool = False,
         reuse_from: MCPClient | None = None,
     ) -> None:
@@ -144,7 +113,6 @@ class MCPClient(
             self.close()
             self._server_configs = {server.name: server for server in servers}
             self._sse_enabled = sse_enabled
-            self._resources_enabled = resources_enabled
             self._allow_private_addresses = bool(allow_private_addresses)
             self._allow_loopback = bool(allow_loopback)
             client_reuse.connect_servers(self, servers, reuse_from=reuse_from)
@@ -246,27 +214,14 @@ class MCPClient(
             pending_replay_error = None
             server_tool_name = descriptor.server_tool_name or descriptor.name
             try:
-                if descriptor.synthetic_resource_tool:
-                    resource_budget = client_support.ToolCallBudget(
-                        deadline=deadline,
-                        fallback_timeout_seconds=timeout_seconds,
-                        cancel_handle=cancel_handle,
-                    )
-                    result_payload = self._execute_resource_tool_payload(
-                        transport,
-                        descriptor,
-                        arguments,
-                        budget=resource_budget,
-                    )
-                else:
-                    result_payload = client_support.call_transport_tool(
-                        transport,
-                        server_tool_name,
-                        arguments,
-                        timeout_seconds=remaining_timeout,
-                        cancel_handle=cancel_handle,
-                        on_output_chunk=on_output_chunk,
-                    )
+                result_payload = client_support.call_transport_tool(
+                    transport,
+                    server_tool_name,
+                    arguments,
+                    timeout_seconds=remaining_timeout,
+                    cancel_handle=cancel_handle,
+                    on_output_chunk=on_output_chunk,
+                )
             except MCPError as error:
                 attempts_completed += 1
                 prior_generation_id = error.generation_id
@@ -375,202 +330,10 @@ class MCPClient(
                 )
             pending_descriptors[descriptor.name] = descriptor
         self._tools_by_name.update(pending_descriptors)
-        # Resource adapters are Jenny-built tools, not part of the server's surface.
-        if self._resources_enabled:
-            self._register_resource_tools(transport)
         self._rebuild_compat_tool_index()
         self._transports[transport.server_name] = transport
         self._connected.append(transport.server_name)
         self._failures = [row for row in self._failures if row.name != transport.server_name]
-
-    def _execute_resource_tool_payload(
-        self,
-        transport: transport_base.MCPTransport,
-        descriptor: MCPToolDescriptor,
-        arguments: dict[str, Any],
-        *,
-        budget: client_support.ToolCallBudget,
-    ) -> dict[str, Any]:
-        raw_tool_name = descriptor.server_tool_name or descriptor.name
-        if raw_tool_name == MCP_RESOURCE_TOOL_LIST_RESOURCES:
-            return self._list_resources_tool_payload(
-                transport,
-                arguments,
-                budget=budget,
-            )
-        if raw_tool_name == MCP_RESOURCE_TOOL_READ_RESOURCE:
-            return self._read_resource_tool_payload(
-                transport,
-                arguments,
-                budget=budget,
-            )
-        if raw_tool_name == MCP_RESOURCE_TOOL_LIST_TEMPLATES:
-            return self._list_resource_templates_tool_payload(
-                transport,
-                arguments,
-                budget=budget,
-            )
-        raise MCPError(
-            code=CMP_MCP_TOOL_NOT_FOUND,
-            message=f"resource tool '{raw_tool_name}' is not registered",
-            retryable=False,
-        )
-
-    def _read_resource_tool_payload(
-        self,
-        transport: transport_base.MCPTransport,
-        arguments: dict[str, Any],
-        *,
-        budget: client_support.ToolCallBudget,
-    ) -> dict[str, Any]:
-        resource_id = arguments.get("resource_id")
-        resource_id = resource_id.strip() if isinstance(resource_id, str) else ""
-        uri = arguments.get("uri")
-        uri = uri.strip() if isinstance(uri, str) else ""
-        if uri and len(uri) > MCP_RESOURCE_URI_MAX_CHARS:
-            return resource_result_payload(
-                {
-                    "server_name": transport.server_name,
-                    "status": "invalid",
-                    "reason": "resource uri exceeds maximum length",
-                    "resource_id": resource_id,
-                    "uri": sanitize_resource_string(uri, max_chars=256),
-                    "artifact_ref": None,
-                },
-                success=False,
-                error_code=CMP_MCP_RESOURCE_INVALID,
-                metadata={"result_kind": "mcp_resource_read"},
-            )
-        with self._transport_registry_lock:
-            descriptor = self._resources_by_id.get(resource_id) if resource_id else None
-        if descriptor is not None and descriptor.server_name != transport.server_name:
-            descriptor = None
-        if descriptor is not None:
-            uri = descriptor.uri
-        elif resource_id and not uri:
-            return resource_result_payload(
-                {
-                    "server_name": transport.server_name,
-                    "status": "not_found",
-                    "reason": "resource_id is not known for this server",
-                    "resource_id": resource_id,
-                    "uri": uri,
-                    "artifact_ref": None,
-                },
-                success=False,
-                error_code=CMP_MCP_RESOURCE_NOT_FOUND,
-                metadata={"result_kind": "mcp_resource_read"},
-            )
-        elif resource_id:
-            resource_id = ""
-        if not uri:
-            return resource_result_payload(
-                {
-                    "server_name": transport.server_name,
-                    "status": "invalid",
-                    "reason": "read_resource requires resource_id or uri",
-                    "resource_id": resource_id,
-                    "uri": uri,
-                    "artifact_ref": None,
-                },
-                success=False,
-                error_code=CMP_MCP_RESOURCE_INVALID,
-                metadata={"result_kind": "mcp_resource_read"},
-            )
-        result = client_support.call_transport_resource(
-            transport.read_resource,
-            uri,
-            timeout_seconds=budget.remaining_timeout(),
-            cancel_handle=budget.cancel_handle,
-        )
-        contents = result.get("contents")
-        if not isinstance(contents, list):
-            contents = []
-        content = next((item for item in contents if isinstance(item, dict)), None)
-        if content is None:
-            return resource_result_payload(
-                {
-                    "server_name": transport.server_name,
-                    "status": "unsupported",
-                    "reason": "resource returned no readable content",
-                    "resource_id": resource_id
-                    or namespace_mcp_resource_id(transport.server_name, uri),
-                    "uri": uri,
-                    "artifact_ref": None,
-                },
-                success=False,
-                error_code=CMP_MCP_RESOURCE_UNSUPPORTED,
-                metadata={"result_kind": "mcp_resource_read"},
-            )
-        return self._resource_read_content_payload(
-            transport.server_name,
-            resource_id=resource_id,
-            uri=uri,
-            descriptor=descriptor,
-            content=content,
-        )
-
-    def _resource_read_content_payload(
-        self,
-        server_name: str,
-        *,
-        resource_id: str,
-        uri: str,
-        descriptor: MCPResourceDescriptor | None,
-        content: dict[str, Any],
-    ) -> dict[str, Any]:
-        effective_resource_id = resource_id or namespace_mcp_resource_id(server_name, uri)
-        mime_type = resource_mime_from_payload(content) or (
-            descriptor.mime_type if descriptor else ""
-        )
-        raw_text = content.get("text")
-        if not isinstance(raw_text, str):
-            return resource_result_payload(
-                {
-                    "server_name": server_name,
-                    "status": "unsupported",
-                    "reason": "binary or non-text MCP resources are not supported yet",
-                    "resource_id": effective_resource_id,
-                    "uri": uri,
-                    "mime_type": mime_type,
-                    "artifact_ref": None,
-                    "trust": MCPResourceReadResult(
-                        server_name=server_name,
-                        resource_id=effective_resource_id,
-                        uri=uri,
-                        mime_type=mime_type,
-                    ).trust,
-                },
-                success=False,
-                error_code=CMP_MCP_RESOURCE_UNSUPPORTED,
-                metadata={"result_kind": "mcp_resource_read", "status": "unsupported"},
-            )
-        text_excerpt = sanitize_tool_output(
-            raw_text,
-            max_chars=MCP_RESOURCE_TEXT_EXCERPT_MAX_CHARS,
-            tool_name="mcp_resource_read",
-        )
-        read_result = MCPResourceReadResult(
-            server_name=server_name,
-            resource_id=effective_resource_id,
-            uri=uri,
-            mime_type=mime_type,
-            text_excerpt=text_excerpt,
-            artifact_ref=None,
-            truncated=len(raw_text) > MCP_RESOURCE_TEXT_EXCERPT_MAX_CHARS,
-            size_bytes=resource_size_from_payload(content)
-            or len(raw_text.encode("utf-8", errors="replace")),
-        )
-        payload = asdict(read_result)
-        payload["status"] = "ok"
-        return resource_result_payload(
-            payload,
-            metadata={
-                "result_kind": "mcp_resource_read",
-                "server_name": server_name,
-                "truncated": read_result.truncated,
-            },
-        )
 
     def _remove_server_registration(self, server_name: str) -> dict[str, MCPToolDescriptor]:
         transport = self._transports.pop(server_name, None)
@@ -583,7 +346,6 @@ class MCPClient(
         }
         for name in removed_descriptors:
             self._tools_by_name.pop(name, None)
-        self._clear_resource_cache_for_server(server_name)
         self._connected = [name for name in self._connected if name != server_name]
         self._rebuild_compat_tool_index()
         return removed_descriptors

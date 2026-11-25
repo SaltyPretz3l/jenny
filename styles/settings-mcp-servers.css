@@ -20,31 +20,25 @@
   min-width: 0;
 }
 
-/* Row = status dot · text · actions. Without this the three children spread
-   across the row (space-between) and the dot reads as a stray bullet. */
-.mcp-servers-row {
-  gap: var(--space-3);
+/* A group's one action (add, export, new) sits at the right end of its heading: same shape as the MCP header. */
+.settings-group-bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
 
-.mcp-servers-row > .settings-field-row-text {
+.settings-group-bar > .settings-group-heading {
   flex: 1 1 auto;
-}
-
-.mcp-servers-row > .mcp-servers-row-actions {
-  margin-inline-start: var(--space-4);
+  min-width: 0;
+  margin: 0;
 }
 
 .mcp-servers-list {
   display: flex;
   flex-direction: column;
   margin-top: var(--space-4);
-}
-
-.mcp-servers-row-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: none;
 }
 
 .mcp-servers-note {

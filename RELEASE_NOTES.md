@@ -1,5 +1,70 @@
 # Release Notes
 
+## 1.9.0 - 2026-11-25
+
+Everything landed since 1.8.7, through private `main` on 2026-11-25. Two
+headlines. First, a local model can now use a desktop program: the `computer`
+tool sees a window and works its mouse and keyboard in programs you grant, and a
+chat's Live tab runs your project's own program beside the chat and restarts it
+after Jenny changes the code. Second, one layout for every room: Chat now sits on the same workbench as
+the Workspace and the Board, with Chats on the left, the chat panes in the
+centre and one right-hand panel of four fixed tabs (Session, Artifacts,
+Changes, Project) plus a Runs tab for everything running. A turn reads as one
+steps heading over its tool work and then the answer, Settings and Models
+follow one standard, and first run needs only a model. Cloud routes compact
+near 90% of the window, and helpers on a cloud route finish their work,
+report in full and can write in a worktree of their own. Strata joins the
+local engines, and the Team review fixes harden team hosting.
+
+### Changelog
+
+**Features**
+
+- Computer use (Windows): one `computer` tool lets a local vision model look at a window and use the mouse and keyboard in programs you grant. It is off in every chat until that chat's Computer switch is on; a person answers every program grant on its card; your own mouse or keyboard pauses it at once, and a Stop key ends it. Each step's result is a fresh picture, a turn has at most 60 steps, and a second changing step in one message waits until the model has looked. It is not offered in strict or paranoid safety or to a model that cannot see pictures. A small native helper (`jenny-computer`) does the capture and input. Kill switch `JENNY_ENABLE_TOOLS_COMPUTER_USE=0`.
+- Live tab: a project with a confirmed run command can run its own program in its own window, shown live in the chat's right-hand stack. Jenny can look at it and restart it after changing the code (`run_view_look`, `run_view_restart`); the program is a source of its own in Runs, a model load it blocks offers to stop it, and Run warns when less graphics memory is free than the program used last time. Kill switch `JENNY_ENABLE_LIVE_RUN_VIEW=0`.
+- Strata engine: Jenny finds your own Strata install, verifies its packs and runs it as a managed local engine beside llama-server and NInfer, starting with Inkling 2 Mini with vision. It has its own block in Settings > Models, a Library card and a Tune section. Kill switch `JENNY_ENABLE_STRATA=0`.
+- Plans and mockups in the Thinking view: the text before a plan or a question stays in view, a mockup is drawn live in a sealed frame, plan versions read in order, and a plan cut off by Stop keeps its card and Build it.
+- The model checks what it builds: a new image a command writes is named with a hint to open it, the commit card lists what was not checked, Test first runs the app when the project says how, and project notes ask for that how-to.
+- Chat on the workbench: Chats on the left, the chat panes in the centre and one right-hand stack, with no panel floating over the thread. Each chat pane has one header row holding its tabs and buttons; Ctrl+Tab cycles the focused pane's tabs. Workspace and Board show the side panel in their own right-hand stack, and the dock's tab carries the chat's title and opens the chat picker. Ctrl+B and Ctrl+Alt+B fold the stacks.
+- Right-hand panel as four fixed tabs, Session, Artifacts, Changes and Project (Tasks and Notes in one tab), with Runs, Terminal, Preview, Browser and Activity opening on demand. Runs lists servers, commands, helpers and tests in one place with filters and a count. Tabs past the edge are listed in the strip's menu.
+- Chat turns: a turn's tool work folds under one steps heading that names the running step, approval notes sit on their step, and a finished turn ends with one outcomes line. The composer shows a run-mode line, and the jump pill names the live step.
+- Settings standard: a row says why it is locked, who manages it, or that it waits for a restart; a restart bar lists what is waiting; resets and removals ask through one confirm strip; Readiness shows only what needs attention.
+- Models and engines: Load only loads and "Set as default" is its own action; the default is always a model on this PC; one Model roles block; the title bar names the loaded model; a GGUF larger than the graphics card warns before it is added; the card is read only while something is watching.
+- Cloud helpers: on a cloud route a helper gets 60 steps and the parent reads up to 16,000 characters of each answer. A helper task in write mode edits in a git worktree of its own and is kept on a `jenny-helper/` branch when it changed something (Auto, a project folder; kill switch `JENNY_ENABLE_HELPER_WORKTREES=0`).
+- On Auto, Python in the project folder and deleting a file the same turn wrote run without a card (outside paranoid safety and strict auto-run). The delete still goes to `.jenny/trash`.
+- A vision model sees the first image or chart its own `read_file` or `python_execute` call returns.
+- `jenny_status` reports how full the chat's context is. The browser tool gets a wait action and more keys for press. A command card for a dev server or watcher offers Copy only, and the model is told to start it in the background.
+- The empty chat's no-model hint offers your own API key beside ChatGPT sign-in. A single chat message may carry up to 1 MiB (was 256 KiB).
+- Board toolbar tools that do not fit go into a More menu; a chat card on a personal board opens in the Board's chat column; Ctrl+7 opens the Board.
+
+**Reworks**
+
+- Compaction on cloud routes: with the provider's own count, compaction fires near 90% of the window, leaving room for the reply, instead of at the padded estimate. Anthropic counts the prompt exactly, sizes each reply to the room left, and recovers from a context-overflow refusal by compacting and resending. One trim mid-turn, then a summary, and the context ring shows the real trigger.
+- First run: a model route alone completes setup; the workspace folder is optional. The first-run dialog waits for the startup curtain, setup no longer jumps to Home, and Reset onboarding reopens first run in place.
+- Thinking text keeps its paragraph and code repairs while it streams, and code in it keeps every character.
+- Removed four default-off features that never shipped enabled (the agent executor wrapper and task lifecycle, MCP resource tools, the coding-turn capsule, a ghost-edit flag) and collapsed six always-on chat render flags. Their `JENNY_ENABLE_*` names are accepted and ignored until 1.11.0.
+
+**Fixes**
+
+- Opening a Word document no longer fails under the code editor's script loader.
+- A new chat made in a project while another chat streams stays in that project.
+- An approval after building a Plan Mode plan no longer ends the turn as plan drift.
+- Switching back to a streaming chat keeps its live thinking.
+- A tool-call limit above 256 per turn no longer fails the first tool call.
+- Command exit labels read pipelines with quoted arguments correctly, and a search that could not open its input is no longer reported as "no matches".
+- Team: the ten critical and 24 high findings of an adversarial review are fixed, with its medium bugs. Team models are their own source ("From your teams" in Settings > Models, never a default or a model role); the rules pause holds end to end; a member keeps sharing an idle local engine while chatting on a cloud or team model; a shared model's context follows the serving node instead of a fixed 32K; project channels behave like other channels; on macOS and Linux, desktop hosting shows a plain notice instead of the Deploy form; Settings > Team keyboard, focus and copy fixes.
+- Notes between a turn's steps stay in place in the Thinking view.
+- Background jobs say why they ended. Session no longer reports a source that never answers; choosing Terminal starts Terminal 1; Clear in the run list can be undone. The MCP servers page no longer logs a render error on every launch.
+
+### Migration and qualification
+
+- Shell configuration moves from 59 to 60: the new sparse `workspace.tabPanes` map records which chat tabs belong to the second pane, and older layouts are upgraded on first start. Canonical sessions stay at schema 29 and the memory store at 10. The sidecar `API_VERSION` stays `2026-10-15`; Electron and its sidecar still ship together.
+- New default-on flags with kill switches: `HELPER_WORKTREES`, `TOOLS_COMPUTER_USE`, `LIVE_RUN_VIEW`, `TOOLS_RUN_VIEW` and `STRATA` (each as `JENNY_ENABLE_<KEY>=0`). The `computer` tool stays off in each chat until its Computer switch is on. Retired: `JENNY_ENABLE_CHAT_WORKBENCH` (the old Chat shell is gone) and the ten flags named above; setting any of them is harmless until 1.11.0.
+- A translation pass brought all 18 shipped languages level with English for the new strings, with no native-speaker review.
+- The candidate passed the full local CI gate on the cut tree: 47 policy checks, 3,499 Node test files, 18,274 Python tests, 283 backend contracts, lint, typing, 92.5% sidecar coverage and the packaged-flow smoke. Before the cut, a first full gate found one error code without a failure class and two lines over the Python line limit, and the public-export probe found six personal paths in computer-use test fixtures. All are fixed. The real-app GUI suite and the packaged smoke in a Linux container were not run for this cut.
+- Not yet covered by a person: computer use's long run and its interface steps, the Live tab with a real program and the folded right rail at 700 px; a Strata A/B against NInfer (stopped partway); the Team fixes' two-member real-app run; the Chat workbench, the right-hand panel and the chat turn at the review widths in light and dark; the Settings and Models owner-run checks; first run on a clean profile; the live cloud checks for compaction (an Anthropic chat past 250k) and helpers (a write-mode helper, a model describing a chart it drew). The 1.8.7 list of owed checks still stands.
+- Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
+
 ## 1.8.7 - 2026-11-18
 
 Everything landed since 1.8.6, through private `main` on 2026-11-18: a short

@@ -16,7 +16,7 @@ const MINUTE = 60_000;
 // The conversation module alone over a fake project store whose every call must pass main's own check, with names
 // cleaned as the tab's own context does. `restore` is registered with t.after so a failed assertion still puts the
 // globals back.
-function mount(t, { role = 'writer', teamRole = 'member', answers = {}, open = { ok: true, snapshot: snapshot() }, projectName = 'jenny-site', hold = false, teamState = 'online', gpus, clipboard } = {}) {
+function mount(t, { role = 'writer', teamRole = 'member', answers = {}, open = { ok: true, snapshot: snapshot() }, projectName = 'jenny-site', hold = false, teamState = 'online', gpus, clipboard, board } = {}) {
   const dom = new JSDOM('<!doctype html><body><div id="root"></div></body>', { pretendToBeVisual: true });
   const saved = ['window', 'document', 'inventory', 'inventoryTextField', 'markdownUtils'].map((k) => [k, globalThis[k]]);
   globalThis.window = dom.window;
@@ -53,7 +53,7 @@ function mount(t, { role = 'writer', teamRole = 'member', answers = {}, open = {
   };
   const renders = { log: 0, live: 0, box: 0, head: 0 };
   const root = dom.window.document.getElementById('root');
-  const conv = createConversation({ root, teamId: OTHER, projectId: P1, sessionId: S1, store, renders,
+  const conv = createConversation({ root, teamId: OTHER, projectId: P1, sessionId: S1, store, renders, board,
     ctx: () => ({ team: { team_id: OTHER, team_name: 'Dot lab', state: teamState, member_id: DOT, role: teamRole }, nameOf: (id) => clean(NAMES[id] || 'Former member', 64), errorText: (e) => words.errorText(e) }),
     clock: () => now, timers: { set: (fn, ms) => { const id = nextTimer++; timers.set(id, { fn, at: now + ms }); return id; }, clear: (id) => timers.delete(id) },
     frames: { request: (fn) => { const id = nextTimer++; frames.set(id, fn); return id; }, cancel: (id) => frames.delete(id) } });
@@ -82,7 +82,7 @@ function box(m) {
   for (const el of copy.querySelectorAll('[hidden], [data-standing], .team-conv-ctl')) el.remove();
   return copy.textContent.replace(/\s+/g, ' ').trim();
 }
-const field = (m) => m.q('#teamConversationInput');
+const field = (m) => m.q('[id$="teamConversationInput"]');
 function type(m, value) { field(m).value = value; field(m).dispatchEvent(new m.window.Event('input', { bubbles: true })); }
 
 module.exports = { NAMES, MINUTE, mount, box, field, type };

@@ -582,3 +582,19 @@ test('error code map covers CMP-PROPOSAL-0001..0012 in order', () => {
   assert.equal(R.isUuid(crypto.randomUUID()), true);
   assert.equal(R.isUuid('x'), false);
 });
+
+test('git input not_checked: trimmed items persist, empties drop, and the field is absent when empty or not given', () => {
+  assert.equal(Object.hasOwn(git({}).value, 'not_checked'), false, 'an input without the field normalizes as before');
+  assert.equal(Object.hasOwn(git({ not_checked: [] }).value, 'not_checked'), false);
+  assert.equal(Object.hasOwn(git({ not_checked: ['  ', ''] }).value, 'not_checked'), false);
+  assert.deepEqual(git({ not_checked: ['  start the app  ', '', 'screenshot'] }).value.not_checked, ['start the app', 'screenshot']);
+  assert.deepEqual(git({ not_checked: ['a', 'b', 'c'] }).value.not_checked, ['a', 'b', 'c']);
+  assert.equal(git({ not_checked: ['x'.repeat(160)] }).ok, true);
+  assert.deepEqual(R.normalizeGitProposalInput(git({ not_checked: ['a'] }).value).value.not_checked, ['a'], 'a stored record validates');
+});
+
+test('git input not_checked: a long list keeps its first 3 items of 160 code points; a non-string is refused', () => {
+  assert.deepEqual(git({ not_checked: ['a', '', 'b', 'c', 'd'] }).value.not_checked, ['a', 'b', 'c']);
+  assert.deepEqual(git({ not_checked: ['x'.repeat(161), '\u{1F600}'.repeat(161)] }).value.not_checked, ['x'.repeat(160), '\u{1F600}'.repeat(160)], 'cut by code points');
+  for (const bad of [[5], 'start the app', ['a\0b']]) assert.equal(causeOf(git({ not_checked: bad })), 'field_not_checked', JSON.stringify(bad));
+});

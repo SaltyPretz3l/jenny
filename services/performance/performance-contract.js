@@ -26,8 +26,9 @@ const REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
 const PHASES = Object.freeze(['waiting', 'loading', 'prefill', 'decode', 'finished', 'failed', 'cancelled']);
 const TERMINAL_PHASES = Object.freeze(['finished', 'failed', 'cancelled']);
 const SOURCES = Object.freeze(['provider', 'unavailable']);
-const PROVIDER_KINDS = Object.freeze(['ninfer', 'llama-server', 'ollama', 'other']);
+const PROVIDER_KINDS = Object.freeze(['ninfer', 'llama-server', 'strata', 'ollama', 'other']);
 // Providers that stream live per-token timings (NInfer v0.9.1, Jenny's own llama-server).
+// Not Strata: its timings arrive on the finish chunk only (row 200 F10).
 const LIVE_PROVIDER_KINDS = Object.freeze(new Set(['ninfer', 'llama-server']));
 const METRIC_STATES = Object.freeze(['available', 'warming', 'stale', 'unavailable', 'not_applicable', 'available_next_request']);
 

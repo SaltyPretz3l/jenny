@@ -121,9 +121,7 @@ test('legacy_article_innerhtml keeps its label and uses the preserving helper', 
     ui: { chatMode: 'thread', animateNextChatActivation: false },
     auth: { authenticated: true },
     backend: { phase: 'ready' },
-    features: { featureFlags: {
-      chat_timeline_streaming_article_morph: true,
-    } },
+    features: { featureFlags: {} },
   };
   const uiRuntime = {
     recapExpansionSignature: 'recap',

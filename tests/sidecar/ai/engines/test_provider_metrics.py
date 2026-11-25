@@ -233,3 +233,30 @@ def test_chat_send_accepts_and_copies_the_closed_metrics_field(provider, live):
     normalized = inference_performance_from_params({"inference_performance": raw})
     assert normalized == raw
     assert normalized is not raw
+
+
+# Row 200 S2 step 7: Strata is a provider kind of its own, never live (its
+# `timings` arrive on the finish chunk only and it never sends prompt_progress,
+# F10), and its recorded finish chunk still yields the terminal rates.
+def test_strata_is_a_kind_but_never_live_and_reads_its_finish_timings():
+    from sidecar.ai.engines.provider_metrics import configure_metrics_request
+
+    metrics = ProviderMetrics(provider_kind="strata", live=True)
+    assert metrics.provider_kind == "strata"
+    assert metrics.live is False
+    fixture = Path(__file__).parent / "fixtures/strata/think_medium.sse"
+    for line in fixture.read_text(encoding="utf-8").splitlines():
+        if line.startswith("data: {"):
+            metrics.feed(json.loads(line[6:]))
+    sample = metrics.finish().performance
+    assert sample.provider_kind == "strata"
+    assert sample.prompt_tokens == 31
+    assert sample.terminal_decode_tps == pytest.approx(148 / 1089.2 * 1000, rel=0.01)
+
+    class Engine:
+        def _current_request_context(self):
+            return {"inference_performance": {"live": True, "provider_kind": "strata"}}
+
+    payload = {}
+    configure_metrics_request(Engine(), payload)
+    assert payload == {}, "no per-token timings or progress are asked of Strata"

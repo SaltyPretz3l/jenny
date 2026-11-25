@@ -18,6 +18,7 @@ const PROPOSAL_LIMITS = Object.freeze({
   command_bytes: 8 * 1024,
   path_bytes: 4 * 1024,
   paths_max: 200,
+  not_checked_max: 3, not_checked_chars: 160,
   preconditions_max: 5,
   timeout_min: 1,
   timeout_max: 300,
@@ -161,8 +162,17 @@ function checkKeys(args, allowed) {
   return null;
 }
 
+// Checks the model says it did not run: trimmed, empties dropped, kept to the first 3 items of 160
+// code points (a long list is cut, not refused); the list ([] when none) or null when not strings.
+function normalizeNotChecked(given) {
+  const { not_checked_max: most, not_checked_chars: chars } = PROPOSAL_LIMITS;
+  const ok = Array.isArray(given) && given.every((entry) => typeof entry === 'string' && wellFormed(entry) && !entry.includes('\0'));
+  return ok ? given.map((entry) => entry.trim()).filter(Boolean).slice(0, most)
+    .map((entry) => (codePointLength(entry, chars) > chars ? Array.from(entry).slice(0, chars).join('').trim() : entry)) : null;
+}
+
 function normalizeGitProposalInput(args) {
-  const bad = checkKeys(args, ['schema_version', 'summary', 'question', 'paths']);
+  const bad = checkKeys(args, ['schema_version', 'summary', 'question', 'paths', 'not_checked']);
   if (bad) return bad;
   if (!validText(args.summary, PROPOSAL_LIMITS.summary_chars)) return fail('field_summary');
   if (!validText(args.question, PROPOSAL_LIMITS.question_chars)) return fail('field_question');
@@ -171,10 +181,10 @@ function normalizeGitProposalInput(args) {
   const paths = given.map(cleanRelativeSpelling);
   if (!paths.every((entry) => validRelativePath(entry))) return fail('field_paths');
   if (new Set(paths).size !== paths.length) return fail('field_paths');
-  return {
-    ok: true,
-    value: { schema_version: 1, summary: args.summary, question: args.question, paths: [...paths].sort() },
-  };
+  const notChecked = Object.hasOwn(args, 'not_checked') ? normalizeNotChecked(args.not_checked) : [];
+  if (!notChecked) return fail('field_not_checked');
+  const extra = notChecked.length ? { not_checked: notChecked } : {};
+  return { ok: true, value: { schema_version: 1, summary: args.summary, question: args.question, paths: [...paths].sort(), ...extra } };
 }
 
 function normalizeCommandProposalInput(args, { shell, backend } = {}) {

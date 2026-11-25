@@ -69,23 +69,24 @@ test('article uses terminal event time independently of copy target and survives
   assert.match(footer([{ ...messages[1], model_used: '', content: '123456789' }], turn).label, /Model unknown · ~3/);
 });
 
-test('buildShortAssistantMetaLabel drops Completed and the time qualifier; the full label is unchanged', () => {
+// Row 192 C10: "model · time taken · tokens · clock time"; a turn that did not succeed leads with its status.
+test('buildShortAssistantMetaLabel drops Completed and the time qualifier; the full label adds the time taken', () => {
   const fmt = (value) => `@${value}`;
   const base = { role: 'assistant', content: 'x', model_used: 'm', timestamp: '2026-03-12T14:22:00.000Z' };
   const complete = { ...base, status: 'complete', finalizedAt: '2026-03-12T14:23:00.000Z' };
-  assert.equal(buildShortAssistantMetaLabel(complete, fmt), '@2026-03-12T14:23:00.000Z · m');
-  assert.equal(buildAssistantMetaLabel(complete, fmt), 'Completed @2026-03-12T14:23:00.000Z · m');
+  assert.equal(buildShortAssistantMetaLabel(complete, fmt), 'm · 1m 00s · @2026-03-12T14:23:00.000Z');
+  assert.equal(buildAssistantMetaLabel(complete, fmt), 'Completed @2026-03-12T14:23:00.000Z · m · took 1m 00s');
 
   const cancelled = { ...complete, status: 'error', terminal_status: 'cancelled' };
-  assert.equal(buildShortAssistantMetaLabel(cancelled, fmt), 'Stopped @2026-03-12T14:23:00.000Z · m');
-  assert.equal(buildAssistantMetaLabel(cancelled, fmt), 'Stopped @2026-03-12T14:23:00.000Z · m');
+  assert.equal(buildShortAssistantMetaLabel(cancelled, fmt), 'Stopped · m · 1m 00s · @2026-03-12T14:23:00.000Z');
+  assert.equal(buildAssistantMetaLabel(cancelled, fmt), 'Stopped @2026-03-12T14:23:00.000Z · m · took 1m 00s');
 
   const failed = { ...complete, status: 'error' };
-  assert.equal(buildShortAssistantMetaLabel(failed, fmt), 'Failed @2026-03-12T14:23:00.000Z · m');
+  assert.equal(buildShortAssistantMetaLabel(failed, fmt), 'Failed · m · 1m 00s · @2026-03-12T14:23:00.000Z');
 
-  // Invalid finalizedAt falls back to the message time without the qualifier.
+  // Invalid finalizedAt falls back to the message time without the qualifier, and no time taken.
   const fallback = { ...base, status: 'complete', finalizedAt: 'invalid' };
-  assert.equal(buildShortAssistantMetaLabel(fallback, fmt), '@2026-03-12T14:22:00.000Z · m');
+  assert.equal(buildShortAssistantMetaLabel(fallback, fmt), 'm · @2026-03-12T14:22:00.000Z');
   assert.equal(buildAssistantMetaLabel(fallback, fmt), 'Completed · message time @2026-03-12T14:22:00.000Z · m');
 
   // No time at all: the time is omitted, never "time unknown".
@@ -97,19 +98,19 @@ test('buildShortAssistantMetaLabel drops Completed and the time qualifier; the f
 
   // A missing model keeps "Model unknown".
   const noModel = { ...complete, model_used: '' };
-  assert.equal(buildShortAssistantMetaLabel(noModel, fmt), '@2026-03-12T14:23:00.000Z · Model unknown');
+  assert.equal(buildShortAssistantMetaLabel(noModel, fmt), 'Model unknown · 1m 00s · @2026-03-12T14:23:00.000Z');
 
   // Runtime status prefixes lead like the full label.
-  assert.equal(buildShortAssistantMetaLabel({ ...complete, runtime_status: 'paused' }, fmt), 'Paused @2026-03-12T14:23:00.000Z · m');
+  assert.equal(buildShortAssistantMetaLabel({ ...complete, runtime_status: 'paused' }, fmt), 'Paused · m · 1m 00s · @2026-03-12T14:23:00.000Z');
 
   // Same empty cases as the full label.
   assert.equal(buildShortAssistantMetaLabel({ ...complete, status: 'streaming' }, fmt), '');
   assert.equal(buildShortAssistantMetaLabel({ role: 'user', content: 'hi' }, fmt), '');
   assert.equal(buildShortAssistantMetaLabel({ ...complete, kind: 'question_batch' }, fmt), '');
 
-  // A multi-model turn lists every model, like the full label.
+  // A multi-model turn lists every model, like the full label (no start time in these messages: no time taken).
   const turnMessages = [{ model_used: 'one' }, { model_used: 'two' }];
-  assert.equal(buildShortAssistantMetaLabel(complete, fmt, turnMessages), '@2026-03-12T14:23:00.000Z · one, two');
+  assert.equal(buildShortAssistantMetaLabel(complete, fmt, turnMessages), 'one, two · @2026-03-12T14:23:00.000Z');
 });
 
 test('formatMessageTokenMetaShort is a plain token count without estimates', () => {
@@ -129,10 +130,56 @@ test('turn article hands the hover row a short label and keeps the full one', ()
   ];
   const turn = { turn_id: 'turn', source_message_ids: ['a', 'b'], events: [{ kind: 'complete', status: 'complete', completed_at: '2026-09-08T11:00:00Z' }] };
   const result = footer(messages, turn);
-  assert.equal(result.shortLabel, '2026-09-08T11:00:00Z · one, two · 3 tokens');
+  assert.equal(result.shortLabel, 'one, two · 3 tokens · 2026-09-08T11:00:00Z');
   assert.match(result.label, /^Completed 2026-09-08T11:00:00Z · one, two · ~3 visible-reply tokens est\. \(whole turn\)$/);
   const stopped = footer(messages, { turn_id: 't', source_message_ids: ['b'], events: [{ kind: 'error', terminal_status: 'cancelled', completed_at: '2026-09-08T11:00:00Z' }] });
-  assert.match(stopped.shortLabel, /^Stopped 2026-09-08T11:00:00Z · two · \d+ tokens?$/);
+  assert.match(stopped.shortLabel, /^Stopped · two · \d+ tokens? · 2026-09-08T11:00:00Z$/);
+});
+
+// Row 192 C9: a turn whose only assistant-side row is its error card (or the calm stopped card) still gets the
+// details line; a running turn gets none. The error card is a system_notice row with subkind assistant_error
+// (renderer-turn-row-projector.js, renderer-turn-reducer-canonical-rows.js), never a row of kind assistant_error.
+function turnFooter(messages, turn, rows, target, projectionContext = {}) {
+  let result = null;
+  const pipeline = createArticleMarkupPipeline({ constants: { MESSAGE_STATUS: { STREAMING: 'streaming' } }, callbacks: {
+    getMessageFromCollection: id => messages.find(message => message.id === id),
+    deriveActionTargetMessageId: () => target,
+    buildAssistantMetaLabel,
+    buildMessageTokenMeta: model.buildMessageTokenMeta,
+    formatMessageTokenMeta: usage.formatMessageTokenMeta,
+    buildShortAssistantMetaLabel,
+    formatMessageTokenMetaShort: usage.formatMessageTokenMetaShort,
+    formatMessageTerminalTimestamp: format,
+    renderMessageHoverRow: (message, options, label, shortLabel) => { result = { target: message.id, label, shortLabel }; return ''; },
+  } });
+  pipeline.buildTurnArticleMarkup(turn, rows, messages, { projectionContext });
+  return result;
+}
+
+test('a turn that failed or stopped before any answer text still gets the details line; a running turn gets none', () => {
+  const errored = { id: 'e', role: 'assistant', status: 'error', content: '', model_used: 'm',
+    timestamp: '2026-11-23T15:40:00Z', finalizedAt: '2026-11-23T15:40:48Z' };
+  const turn = { turn_id: 't', source_message_ids: ['e'] };
+  const errorRows = [{ kind: 'system_notice', turn_id: 't', primary_message_id: 'e', payload: { subkind: 'assistant_error', stream_error: 'boom' } }];
+  const failed = turnFooter([errored], turn, errorRows, 'e');
+  assert.ok(failed, 'the failed-before-text turn renders the details line');
+  assert.equal(failed.target, 'e');
+  assert.equal(failed.shortLabel, 'Failed · m · 48s · 2026-11-23T15:40:48Z');
+  assert.match(failed.label, /^Failed 2026-11-23T15:40:48Z · m · took 48s( · |$)/);
+
+  const stopped = turnFooter([{ ...errored, terminal_status: 'cancelled' }], turn, errorRows, 'e');
+  assert.equal(stopped.shortLabel, 'Stopped · m · 48s · 2026-11-23T15:40:48Z');
+
+  // Another notice (a compaction hairline) alone is not an outcome card: no details line, as before.
+  assert.equal(turnFooter([errored], turn, [{ ...errorRows[0], payload: { subkind: 'context_compacted' } }], 'e'), null);
+
+  // While the turn runs there is no details line, even when an earlier segment has settled.
+  const settledSegment = { id: 'a', role: 'assistant', status: 'complete', content: 'Preamble.', model_used: 'm' };
+  const liveTurn = { turn_id: 't', source_message_ids: ['a'] };
+  const textRows = [{ kind: 'assistant_text', turn_id: 't', primary_message_id: 'a' }];
+  assert.equal(turnFooter([settledSegment], liveTurn, textRows, 'a', { liveTurnId: 't' }), null);
+  assert.equal(turnFooter([errored], turn, errorRows, 'e', { liveTurnId: 't' }), null);
+  assert.ok(turnFooter([settledSegment], liveTurn, textRows, 'a', { liveTurnId: 'other' }), 'a settled text turn keeps its line');
 });
 
 test('failed and stopped turn events override completed action messages without losing estimates', () => {

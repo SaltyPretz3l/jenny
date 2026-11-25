@@ -273,8 +273,33 @@ def test_stale_running_status_is_reconciled_after_restart(
     assert status["state"] == "failed"
     assert status["exit_code"] == -1
     assert "ownership was lost" in str(status["error"])
+    assert "no longer running" in str(status["error"])
     persisted = json.loads(status_file.read_text(encoding="utf-8"))
     assert persisted["state"] == "failed"
+
+
+def test_stale_running_status_names_a_still_live_pid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Past the PID-reuse window a live PID cannot be confirmed as the job; say so, not "died".
+    job_id = "abcdef012346"
+    status_dir = tmp_path / ".jenny" / "tool-results" / job_id
+    status_dir.mkdir(parents=True)
+    status_file = status_dir / "status.json"
+    status_file.write_text(
+        json.dumps({"schema_version": 1, "job_id": job_id, "state": "running", "pid": 4321}),
+        encoding="utf-8",
+    )
+    old = time.time() - shell_background_module.RUNNING_PID_REUSE_MAX_SECONDS - 60
+    os.utime(status_file, (old, old))
+    monkeypatch.setattr(shell_background_module, "_process_is_alive", lambda _pid: True)
+
+    status = shell_background_module.read_background_job(tmp_path, job_id)
+
+    assert status["state"] == "failed"
+    assert "PID (4321) is still running" in str(status["error"])
+    assert "no longer running" not in str(status["error"])
 
 
 @windows_only("safe liveness probe")

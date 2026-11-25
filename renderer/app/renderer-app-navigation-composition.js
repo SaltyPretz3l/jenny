@@ -1,12 +1,10 @@
 /* renderer/app/renderer-app-navigation-composition.js -- the navigation shell: sidebar, top navigation, Chats panel and workspace tabs */
-/* eslint no-with: "off", no-undef: "off", no-useless-assignment: "off" -- a with(ctx) section: names resolve through the scope the root hands it */
 /**
- * Extracted from renderer-app-lifecycle-composition.js (a with(ctx) section), in the order
+ * Extracted from renderer-app-lifecycle-composition.js, in the order
  * the root built them: the sidebar controller, the top navigation shell (bound and published
  * as window.rendererTopNavShellController), the Chats panel, the global error boundary, the
  * multi-stream controller and the workspace session coordinator with the workspace state and
- * tab chrome controllers. The sidebar resize handlers and setSidebarCollapsed stay hoisted
- * function declarations in the root; topNavShellController stays the root's late-bound
+ * tab chrome controllers. topNavShellController stays the root's late-bound
  * binding (read and written through accessors).
  *
  * The root passes `{ __proto__: ctx, ...its locals }`: shorthand values for root
@@ -15,112 +13,92 @@
  */
 (function (root) {
   function createNavigationComposition(ctx) {
-    with (ctx) {
   /* sidebarController */
-  const sidebarController = sidebarControllerUtils.createSidebarController?.({
-    state,
-    dom: { chatView, attachmentTray, attachmentNotice },
-    callbacks: { escapeHtml },
+  const sidebarController = ctx.sidebarControllerUtils.createSidebarController?.({
+    state: ctx.state,
+    dom: { chatView: ctx.chatView, attachmentTray: ctx.attachmentTray, attachmentNotice: ctx.attachmentNotice },
+    callbacks: { escapeHtml: ctx.escapeHtml },
   }) || null;
   const {
-    updateTokenDisplay = noop, renderAttachmentTray = noop,
+    updateTokenDisplay = ctx.noop, renderAttachmentTray = ctx.noop,
   } = sidebarController || {};
-  let chatsPanelController = null;
   /* topNavShellController (top navigation shell dispatcher) */
-  topNavShellController = (window.rendererTopNavShell || {}).createTopNavShellController?.({
-    state,
-    constants: { SIDEBAR_STORAGE_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_MAIN_STAGE_MIN_WIDTH },
+  ctx.topNavShellController = (ctx.window.rendererTopNavShell || {}).createTopNavShellController?.({
+    state: ctx.state,
     // Resolve rail nodes directly because they are not part of the app.js DOM bindings.
-    dom: { workspace, viewPanel: sidebar, sidebarResizer, searchInput, topRail: document.getElementById('topRail'), topRailTabs: document.getElementById('topRailTabs'), topRailIndicator: document.getElementById('topRailIndicator'), artifactSplitViewToggle: document.getElementById('artifactSplitViewToggle') },
+    dom: { workspace: ctx.workspace, viewPanel: ctx.sidebar, topRail: ctx.document.getElementById('topRail'), topRailTabs: ctx.document.getElementById('topRailTabs'), topRailIndicator: ctx.document.getElementById('topRailIndicator'), artifactSplitViewToggle: ctx.document.getElementById('artifactSplitViewToggle') },
     callbacks: {
-      setActiveView: (...a) => setActiveView(...a),
-      escapeHtml,
-      appendClientLog: (...a) => appendClientLog(...a),
-      updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a),
-      // A live sidebar drag re-fits an open artifact panel every frame (its
-      // overlay switch lands mid-drag) without the full chat re-render.
-      onLayoutChanged: (change) => {
-        if (change?.live) {
-          if (isArtifactReviewVisible()) syncArtifactReviewLayout();
-          return;
-        }
-        syncArtifactReviewLayout({ refreshChatChrome: true });
-      },
-      // Chats-strip plumbing (W11): open rides the workspace activation path
-      // (late-bound below); New Chat reuses the panel button's full pipeline.
-      getSessionMonogram,
+      setActiveView: (...a) => ctx.setActiveView(...a),
+      escapeHtml: ctx.escapeHtml,
+      appendClientLog: (...a) => ctx.appendClientLog(...a),
+      updateComposerSafeOffset: (...a) => ctx.updateComposerSafeOffset(...a),
+      onLayoutChanged: () => ctx.syncArtifactReviewLayout({ refreshChatChrome: true }),
+      // Opening a session rides the workspace activation path (late-bound below); the Board's picker uses it.
       openSession: (...a) => activateWorkspaceSession(...a),
-      newChat: () => document.getElementById('newChatButton')?.click?.(),
-      prepareChatsPanelForExpansion: () => chatsPanelController?.prepareForStripExpansion?.(),
       // The Board page (row 150, slice B4): the current project, and the app's toast for "Board deleted. Undo".
-      getProjectSwitcher: (...a) => getProjectSwitcher(...a),
-      showToastMessage: (...a) => showToastMessage(...a),
+      getProjectSwitcher: (...a) => ctx.getProjectSwitcher(...a),
+      showToastMessage: (...a) => ctx.showToastMessage(...a),
       // The Board's docked chat (slice C1): the dock's shell hooks when the Board opens before the Workspace.
-      showShellErrorToast: (...a) => showShellErrorToast(...a), noteScrollProgrammaticWrite: (reason) => chatScrollCoordinator?.noteProgrammaticWrite?.(reason),
+      showShellErrorToast: (...a) => ctx.showShellErrorToast(...a), noteScrollProgrammaticWrite: (reason) => ctx.chatScrollCoordinator?.noteProgrammaticWrite?.(reason),
     },
   }) || null;
-  _applySidebarLayout = (...a) => topNavShellController?.applyViewChrome?.(...a);
-  topNavShellController?.bind?.();
-  window.rendererTopNavShellController = topNavShellController;
-  registerRendererCleanup(() => {
-    topNavShellController?.dispose?.();
-    if (window.rendererTopNavShellController === topNavShellController) {
-      window.rendererTopNavShellController = null;
+  ctx._applySidebarLayout = (...a) => ctx.topNavShellController?.applyViewChrome?.(...a);
+  ctx.window.rendererTopNavShellController = ctx.topNavShellController;
+  ctx.registerRendererCleanup(() => {
+    ctx.topNavShellController?.dispose?.();
+    if (ctx.window.rendererTopNavShellController === ctx.topNavShellController) {
+      ctx.window.rendererTopNavShellController = null;
     }
   });
-  chatsPanelController = (window.rendererChatsPanel || {}).createChatsPanelController?.({
-    state, documentRef: document, windowRef: window,
-    dom: { conversationGroups, conversationCount, searchInput,
-      scopeSlot: document.getElementById('chatsScopeSlot'), projectRow: document.getElementById('chatsProjectRow'),
-      status: document.getElementById('chatsPanelStatus') },
-    inventory: { actionButton: window.inventoryActionButton, segmentedControl: window.inventorySegmentedControl },
-    callbacks: { newChat: () => document.getElementById('newChatButton')?.click?.(),
-      appendClientLog: (...a) => appendClientLog(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
-      showToastMessage: (...a) => showToastMessage(...a),
-      afterRenderSessions: (...a) => { renderWorkspaceSidebarBadges(...a); topNavShellController?.syncChatsStrip?.(); } },
+  const chatsPanelController = (ctx.window.rendererChatsPanel || {}).createChatsPanelController?.({
+    state: ctx.state, documentRef: ctx.document, windowRef: ctx.window,
+    dom: { conversationGroups: ctx.conversationGroups, conversationCount: ctx.conversationCount, searchInput: ctx.searchInput,
+      scopeSlot: ctx.document.getElementById('chatsScopeSlot'), projectRow: ctx.document.getElementById('chatsProjectRow'),
+      status: ctx.document.getElementById('chatsPanelStatus') },
+    inventory: { actionButton: ctx.window.inventoryActionButton, segmentedControl: ctx.window.inventorySegmentedControl },
+    callbacks: { newChat: () => ctx.document.getElementById('newChatButton')?.click?.(),
+      appendClientLog: (...a) => ctx.appendClientLog(...a), getProjectSwitcher: (...a) => ctx.getProjectSwitcher(...a),
+      showToastMessage: (...a) => ctx.showToastMessage(...a),
+      afterRenderSessions: (...a) => renderWorkspaceSidebarBadges(...a) },
   }) || null;
-  const { renderSessions = noop,
-    setRovingSession: setRovingChatSession = noop, toggleScope: toggleChatsScope = noop } = chatsPanelController || {};
-  registerRendererCleanup(() => chatsPanelController?.dispose?.());
+  const { renderSessions = ctx.noop,
+    setRovingSession: setRovingChatSession = ctx.noop, toggleScope: toggleChatsScope = ctx.noop } = chatsPanelController || {};
+  ctx.registerRendererCleanup(() => chatsPanelController?.dispose?.());
   /* lifecycleController continued (late-bound) */
-  attachGlobalErrorBoundary();
-  registerRendererCleanup(() => detachGlobalErrorBoundary());
-  const multiStreamController = (window.rendererMultiStreamUtils || {}).createMultiStreamController?.({
-    getState: () => state,
-    appendClientLog: (...a) => appendClientLog(...a),
+  ctx.attachGlobalErrorBoundary();
+  ctx.registerRendererCleanup(() => ctx.detachGlobalErrorBoundary());
+  const multiStreamController = (ctx.window.rendererMultiStreamUtils || {}).createMultiStreamController?.({
+    getState: () => ctx.state,
+    appendClientLog: (...a) => ctx.appendClientLog(...a),
   }) || null;
-  window.rendererMultiStreamController = multiStreamController;
-  registerRendererCleanup(() => {
+  ctx.window.rendererMultiStreamController = multiStreamController;
+  ctx.registerRendererCleanup(() => {
     multiStreamController?.dispose?.();
-    if (window.rendererMultiStreamController === multiStreamController) {
-      window.rendererMultiStreamController = null;
+    if (ctx.window.rendererMultiStreamController === multiStreamController) {
+      ctx.window.rendererMultiStreamController = null;
     }
   });
-  const _wsUtils = window.rendererWorkspaceSessionUtils || {};
+  const _wsUtils = ctx.window.rendererWorkspaceSessionUtils || {};
   const workspaceSessionCoordinator = _wsUtils.createWorkspaceSessionCoordinator?.({
-    state, windowRef: window,
-    constants: { TOAST_SOURCE },
-    dom: { workspaceRailShell },
+    state: ctx.state, windowRef: ctx.window,
+    constants: { TOAST_SOURCE: ctx.TOAST_SOURCE },
+    dom: { workspaceRailShell: ctx.workspaceRailShell },
     callbacks: {
-      openSession: (...a) => openSession(...a),
-      renderAll: (...a) => renderAll(...a),
+      openSession: (...a) => ctx.openSession(...a),
+      renderAll: (...a) => ctx.renderAll(...a),
       renderSessions: (...a) => renderSessions(...a),
-      renderSettings: (...a) => renderSettings(...a),
+      renderSettings: (...a) => ctx.renderSettings(...a),
       renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
-      syncChatsStrip: () => topNavShellController?.syncChatsStrip?.(),
-      patchChatsStripRuntime: () => topNavShellController?.patchChatsStripRuntime?.(),
-      showToastMessage: (...a) => showToastMessage(...a),
-      showSessionActionError: (...a) => showSessionActionError(...a),
-      patchSessionSummary: (...a) => patchSessionSummary(...a),
-      getOpenSessionsInNewTab: () => (globalThis.sessionOpenPrefUtils?.getOpenSessionsInNewTab?.() === true),
-      isChatsPanelCollapsed: () => topNavShellController?.isActivePanelCollapsed?.() === true,
-      expandChatsPanel: () => setSidebarCollapsed(false),
-      onWorkspaceRestored: () => window.rendererAppPaneComposition?.getPaneComposition?.()?.hydrateOnce?.(),
+      showToastMessage: (...a) => ctx.showToastMessage(...a),
+      showSessionActionError: (...a) => ctx.showSessionActionError(...a),
+      patchSessionSummary: (...a) => ctx.patchSessionSummary(...a),
+      getOpenSessionsInNewTab: () => (ctx.globalThis.sessionOpenPrefUtils?.getOpenSessionsInNewTab?.() === true),
+      onWorkspaceRestored: () => ctx.window.rendererAppPaneComposition?.getPaneComposition?.()?.hydrateOnce?.(),
     },
     controllers: {
       getMultiStreamController: () => multiStreamController,
-      getWorkspaceStateController: () => workspaceStateController,
-      getWorkspaceChromeController: () => workspaceChromeController,
+      getWorkspaceStateController: () => ctx.workspaceStateController,
+      getWorkspaceChromeController: () => ctx.workspaceChromeController,
       getChatsPanelController: () => chatsPanelController,
     },
   }) || {};
@@ -128,46 +106,56 @@
     isWorkspaceSessionBusy = () => false,
     getSessionSummary = () => null,
     applyWorkspaceSnapshot = (s) => s,
-    syncWorkspaceFromStore = async () => state.workspace,
-    activateWorkspaceSession = async (sid, opts) => { await openSession(sid, opts); return state.workspace; },
+    syncWorkspaceFromStore = async () => ctx.state.workspace,
+    activateWorkspaceSession = async (sid, opts) => { await ctx.openSession(sid, opts); return ctx.state.workspace; },
     closeWorkspaceSession: closeWorkspaceSessionBase = async () => false,
     reorderWorkspaceSession = async () => {},
     closeOtherWorkspaceSessions: closeOtherWorkspaceSessionsBase = async () => {},
     closeWorkspaceSessionsToRight: closeWorkspaceSessionsToRightBase = async () => {},
     closeAllWorkspaceSessions: closeAllWorkspaceSessionsBase = async () => {},
-    renderWorkspaceSidebarBadges = noop,
-    handleLinkedSessionPopover = noop,
-    renderWorkspaceChrome = noop,
-    handleWorkspaceShortcut = noop,
+    renderWorkspaceSidebarBadges = ctx.noop,
+    handleLinkedSessionPopover = ctx.noop,
+    renderWorkspaceChrome = ctx.noop,
+    handleWorkspaceShortcut = ctx.noop,
   } = workspaceSessionCoordinator;
   // Split view: a tab close another pane still shows closes that pane (the store already blanked it).
-  const withPaneTabRule = (fn) => async (...args) => { const next = await fn(...args); ctx.paneLayoutController?.closePanesWithoutTab?.(state.workspace?.openSessionIds); return next; };
+  const withPaneTabRule = (fn) => async (...args) => { const next = await fn(...args); ctx.paneLayoutController?.closePanesWithoutTab?.(ctx.state.workspace?.openSessionIds); return next; };
   const closeWorkspaceSession = withPaneTabRule(closeWorkspaceSessionBase);
   const [closeOtherWorkspaceSessions, closeWorkspaceSessionsToRight, closeAllWorkspaceSessions] = [closeOtherWorkspaceSessionsBase, closeWorkspaceSessionsToRightBase, closeAllWorkspaceSessionsBase].map(withPaneTabRule);
-  workspaceStateController = workspaceStateUtils.createWorkspaceStateController?.({ jennyShell: window.jennyShell, isSessionBusy: isWorkspaceSessionBusy, onStateChanged: applyWorkspaceSnapshot, onPersistenceError: (failure) => appendClientLog('WARN', 'workspace.state_persist_failed', failure) }) || null;
-  workspaceChromeController = workspaceChromeUtils.createWorkspaceChromeController?.({
-    containerEl: workspaceRailShell,
+  ctx.workspaceStateController = ctx.workspaceStateUtils.createWorkspaceStateController?.({ jennyShell: ctx.window.jennyShell, isSessionBusy: isWorkspaceSessionBusy, onStateChanged: applyWorkspaceSnapshot, onPersistenceError: (failure) => ctx.appendClientLog('WARN', 'workspace.state_persist_failed', failure) }) || null;
+  const chromeCallbacks = {
     getSessionSummary,
     isSessionBusy: isWorkspaceSessionBusy,
     onSessionActivated: (sessionId) => activateWorkspaceSession(sessionId),
     onSessionClosed: (sessionId) => closeWorkspaceSession(sessionId),
     onLinkSessionsRequested: (sessionId, anchor) => handleLinkedSessionPopover(sessionId, anchor),
     // Tab rename rides the sidebar's rename path (unchanged-title check, sessions.renamed log).
-    onRenameSession: (sessionId, title) => lifecycleController?.handleRenameSession?.(sessionId, title),
-    onRenameFailed: (...a) => showSessionActionError(...a),
-    onNewSessionRequested: () => handleCreateSessionWithWorkspace(),
+    onRenameSession: (sessionId, title) => ctx.lifecycleController?.handleRenameSession?.(sessionId, title),
+    onRenameFailed: (...a) => ctx.showSessionActionError(...a),
+    onNewSessionRequested: () => ctx.handleCreateSessionWithWorkspace(),
     onSessionReordered: (sessionId, newIndex) => reorderWorkspaceSession(sessionId, newIndex),
     onCloseOtherSessions: (keepId) => closeOtherWorkspaceSessions(keepId),
     onCloseSessionsToRight: (anchorId) => closeWorkspaceSessionsToRight(anchorId),
     onCloseAllSessions: () => closeAllWorkspaceSessions(),
     onOpenBeside: (sessionId) => ctx.paneLayoutController?.openBeside?.(sessionId), isSessionInPane: (sessionId) => ctx.paneLayoutController?.isSessionInPane?.(sessionId) === true,
-  }) || null;
+  };
+  ctx.workspaceChromeController = ctx.workspaceChromeUtils.createWorkspaceChromeController?.({ containerEl: ctx.workspaceRailShell, ...chromeCallbacks }) || null;
+  // Row 190 Wave 3: the Chat room's second pane gets its own tab row from the same callbacks (renderer-chat-pane-rows.js).
+  ctx.window.rendererWorkspaceChromeKit = {
+    create: (containerEl, overrides) => ctx.workspaceChromeUtils.createWorkspaceChromeController?.({ containerEl, ...chromeCallbacks, ...overrides }) || null,
+    getPaneLayout: () => ctx.paneLayoutController || null,
+    activate: (sessionId) => activateWorkspaceSession(sessionId),
+    newSession: () => ctx.handleCreateSessionWithWorkspace(),
+    getMainChrome: () => ctx.workspaceChromeController,
+    renderChrome: () => renderWorkspaceChrome(),
+  };
+  // renderer-stream-handler-session-helpers.js falls back to this global to activate a session's tab.
+  ctx.globalThis.workspaceChromeController = ctx.workspaceChromeController;
   return {
     updateTokenDisplay, renderAttachmentTray, renderSessions, setRovingChatSession, toggleChatsScope,
     multiStreamController, syncWorkspaceFromStore, applyWorkspaceSnapshot, activateWorkspaceSession,
     handleLinkedSessionPopover, renderWorkspaceChrome, handleWorkspaceShortcut,
   };
-    }
   }
 
   root.rendererAppNavigationComposition = {

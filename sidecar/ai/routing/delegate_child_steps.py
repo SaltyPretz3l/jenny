@@ -28,6 +28,7 @@ MAX_CHILD_STEP_TEXT_CHARS = 160
 MAX_CHILD_STEP_PATTERN_CHARS = 60
 MAX_CHILD_STEP_RANGE_CHARS = 40
 MAX_CHILD_STEP_HEADING_CHARS = 30
+# The monitor's copy; Electron clamps to the same (subagent-report-metadata.js).
 MAX_CHILD_ANSWER_CHARS = 4_000
 # Shorter input-path fragments would scrub ordinary words out of an error line.
 _MIN_PATH_NEEDLE_CHARS = 3
@@ -213,14 +214,28 @@ def _heading_label(headings: object) -> str:
 
 
 def child_answer(response_text: object, *, summary_chars: int) -> tuple[str, str, bool]:
-    """One sanitize pass over the child's reply: the summary and the stored
-    answer, each cut exactly as ``_safe_text`` cuts (the parent reads the
-    answer), and whether the reply was longer than the stored answer."""
+    """The summary, the monitor's stored answer and whether the reply was longer."""
+
+    summary, answer, truncated, _parent = child_answer_texts(
+        response_text, summary_chars=summary_chars, parent_chars=0
+    )
+    return summary, answer, truncated
+
+
+def child_answer_texts(
+    response_text: object, *, summary_chars: int, parent_chars: int
+) -> tuple[str, str, bool, str]:
+    """One sanitize pass over the child's reply: the summary, the monitor's stored
+    answer, whether the reply was longer than that, and the parent's copy (up to
+    *parent_chars*, row 184). The parent's copy never enters the report metadata."""
 
     full = sanitize_tool_output_no_truncate(response_text, tool_name=DELEGATE_TOOL_NAME)
     summary = truncate_text(full, summary_chars).strip()
     answer = strip_format_controls(truncate_text(full, MAX_CHILD_ANSWER_CHARS).strip())
-    return summary, answer, len(full) > MAX_CHILD_ANSWER_CHARS
+    parent = ""
+    if parent_chars:
+        parent = strip_format_controls(truncate_text(full, parent_chars).strip())
+    return summary, answer, len(full) > MAX_CHILD_ANSWER_CHARS, parent
 
 
 def scrub_failed_paths(text: str, tool_input: object, *, max_chars: int) -> str:
@@ -362,6 +377,7 @@ def bound_report_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 __all__ = [
     "MAX_CHILD_ANSWER_CHARS",
+    "child_answer_texts",
     "MAX_CHILD_STEPS",
     "REPORT_METADATA_BUDGET_BYTES",
     "bound_report_metadata",

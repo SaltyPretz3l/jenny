@@ -3,31 +3,25 @@
  *
  * The artifact-review rail's state machine (UMD), split out of the artifact
  * manager (renderer-artifacts-utils.js): the persisted preferences, the
- * visibility and layout sync, open / close / toggle across the rail modes
- * (artifact, tasks, code_review, file_preview, subagents), the per-chat
- * maximize and wrap, the resizer, focus hand-off, the auto-open wiring and
- * the session-switch rules. The manager keeps selection and rendering and
- * hands in the few hooks the rail needs (`manager`).
+ * visibility sync, open / close / toggle across the rail modes (artifact,
+ * tasks, code_review, file_preview, subagents), the per-chat wrap, focus
+ * hand-off, the auto-open wiring and the session-switch rules. The panel's
+ * place and size belong to the right stack of the room on screen
+ * (`getLayoutHost`): the rail only tells it what to show. The manager keeps
+ * selection and rendering and hands in the few hooks the rail needs (`manager`).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-artifact-review-prefs'), require('./renderer-artifact-review-autoopen'), require('./renderer-side-panel-motion'));
+    module.exports = factory(require('./renderer-artifact-review-prefs'), require('./renderer-artifact-review-autoopen'));
     return;
   }
-  root.rendererArtifactReviewRail = factory(root.rendererArtifactReviewPrefs, root.rendererArtifactReviewAutoopen, root.rendererSidePanelMotion);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (artifactReviewPrefs, artifactReviewAutoopenModule, sidePanelMotionModule) {
+  root.rendererArtifactReviewRail = factory(root.rendererArtifactReviewPrefs, root.rendererArtifactReviewAutoopen);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (artifactReviewPrefs, artifactReviewAutoopenModule) {
   'use strict';
-
-  // Below this chat-stage width the panel overlays chat as a drawer.
-  const ARTIFACT_REVIEW_MIN_STAGE_WIDTH = 800;
-  const ARTIFACT_REVIEW_KEYBOARD_STEP = 24;
 
   function createArtifactReviewRail(deps) {
     const { state, dom = {}, callbacks = {}, manager = {} } = deps || {};
-    const {
-      workspace, sidebar, chatView,
-      artifactSplitViewToggle, artifactReviewResizer, artifactReviewPanel, artifactReviewCollapseButton,
-    } = dom;
+    const { chatView, artifactSplitViewToggle, artifactReviewPanel, artifactReviewCollapseButton } = dom;
     const {
       getActiveSession, setActiveView, updateComposerSafeOffset, renderAll, appendClientLog,
       // When this app run began (the shell bridge records it at boot; the
@@ -37,8 +31,7 @@
       resetFilePreview = null,
       panelV2 = null,
       sidePanel = null, // split view W3-2 panel owner (shell artifact bridge); absent: the focused session
-      // The chat panes' scroll coordinators (pane 0 first): the column motion brackets each reflow with their reader anchor.
-      getScrollCoordinators = null,
+      getLayoutHost = null, // the right stack of the room on screen (renderer-chat-right-stack.js): it owns the panel's place and size; null presents nothing
     } = callbacks;
     const {
       getArtifactsForSession = () => [],
@@ -48,15 +41,12 @@
       getExistingEditor = () => null,
     } = manager;
     const {
-      ARTIFACT_REVIEW_STORAGE_KEY, ARTIFACT_REVIEW_DEFAULT_WIDTH, ARTIFACT_REVIEW_MIN_WIDTH,
-      clampArtifactReviewWidth, normalizeArtifactReviewMode, normalizeArtifactReviewPreferences,
-      resolveArtifactReviewMaxWidth, resolveEffectiveArtifactReviewWidth, recordArtifactReviewWidth,
-      resolveArtifactReviewMaximized, recordArtifactReviewMaximized, recordArtifactReviewDismissed, resolveArtifactReviewDismissed,
+      ARTIFACT_REVIEW_STORAGE_KEY, normalizeArtifactReviewMode, normalizeArtifactReviewPreferences,
+      recordArtifactReviewDismissed, resolveArtifactReviewDismissed,
       resolveArtifactReviewTextWrap, setArtifactReviewTextWrap, pruneArtifactReviewSessionPreferences,
       rekeyArtifactReviewSessionPreferences,
     } = artifactReviewPrefs;
     const runStartedAt = Number(getRunStartedAt?.()) || Date.now();
-    const resizeRuntime = { pointerId: null, startX: 0, startWidth: ARTIFACT_REVIEW_DEFAULT_WIDTH };
     let stateLoaded = false;
     let autoOpenController = null;
     let bound = false;
@@ -64,8 +54,6 @@
     // rail (it was opened from another conversation).
     let lastRenderedSessionId = '';
     let reviewReturnFocus = null;
-    // Side-by-side open and close glide the column while the reading text reflows once (renderer-side-panel-motion.js).
-    const motion = sidePanelMotionModule?.createSidePanelMotion?.({ chatView, getCoordinators: () => getScrollCoordinators?.() || [] }) || null;
 
     // ── prefs ──
     function loadArtifactReviewPreferences() {
@@ -77,7 +65,6 @@
         : {};
       if (!stateLoaded) {
         state.ui.artifactReview = normalizeArtifactReviewPreferences({
-          width: existing.width,
           ...existing,
           ...loadArtifactReviewPreferences(),
         });
@@ -102,8 +89,8 @@
       saveArtifactReviewPreferences();
     }
     // A draft chat that gets its real id keeps its rail state: the per-chat
-    // width, maximize and Close, its spent presentation, and the render
-    // bookkeeping (a rekey is not a session switch).
+    // Close, its spent presentation, and the render bookkeeping (a rekey is
+    // not a session switch).
     function rekeySession(fromSessionId, toSessionId) {
       const from = String(fromSessionId || '').trim();
       const to = String(toSessionId || '').trim();
@@ -138,71 +125,17 @@
 
     // ── visibility and layout ──
     function getActiveSessionIdForReview() { return String((typeof getActiveSession === 'function' ? getActiveSession()?.id : '') || '').trim(); }
-    function getWorkspaceWidth() {
-      // Measure the chat stage because workspace width includes the sidebar and
-      // can select the wrong layout.
-      const workspaceWidth = Math.max(Number(workspace?.getBoundingClientRect?.().width || 0), 0);
-      // The sidebar resizer overlays the panel edge on a 0-wide track, so it takes no width.
-      const sidebarWidth = Number(sidebar?.getBoundingClientRect?.().width || 0);
-      return Math.max(workspaceWidth - sidebarWidth, 0);
-    }
     function isArtifactReviewEligible() {
       // No artifacts>0 clause (owner call 2026-07-05): an enabled panel with
       // zero artifacts shows its empty state instead of silently hiding;
       // auto-open keeps its own artifact-count gate.
-      // No width clause (W1-5): with the studio fallback removed, a narrow
-      // stage renders the panel as an overlay drawer (syncArtifactReviewLayout
-      // stamps .artifact-review-overlay) instead of losing artifact access.
+      // No width clause: the stack places the panel whatever the window width.
       const activeSession = typeof getActiveSession === 'function' ? getActiveSession() : null;
-      return state.ui?.activeView === 'chat' && Boolean(activeSession);
+      return (state.ui?.activeView === 'chat' || roomServes(state.ui?.artifactReview?.mode)) && Boolean(activeSession); // row 190 W4: or the room on screen has the mode's view
     }
+    function roomServes(mode) { return getLayoutHost?.()?.serves?.(normalizeArtifactReviewMode(mode)) === true; }
     function isArtifactReviewVisible() {
       return getArtifactReviewState().enabled === true && isArtifactReviewEligible();
-    }
-    function getArtifactReviewWindowWidth() { return typeof window !== 'undefined' ? window.innerWidth : 0; }
-    function getArtifactReviewOverlayThreshold() {
-      return chatView?.dataset?.paneCount === '2' && getArtifactReviewWindowWidth() > 1180
-        ? 1080 : ARTIFACT_REVIEW_MIN_STAGE_WIDTH;
-    }
-    function getArtifactReviewLayoutWidth() {
-      const stageWidth = getWorkspaceWidth();
-      return stageWidth > 0 ? stageWidth : getArtifactReviewWindowWidth();
-    }
-    // The chat column the rail must leave: one pane keeps 320 + 10 resizer +
-    // 30 slack; two visible panes keep 2*320 + 10 divider + 10 + 30; an
-    // overlay drawer shares no chat column. The split folds to one pane by a
-    // VIEWPORT media query (chat-panes.css, max-width: 1180px), not by stage.
-    function getArtifactReviewReserve(stageWidth) {
-      if (stageWidth < getArtifactReviewOverlayThreshold()) return 0;
-      return chatView?.dataset?.paneCount === '2' && getArtifactReviewWindowWidth() > 1180 ? 690 : 360;
-    }
-    // The APPLIED maximum (90% of the stage, less the reserve), so
-    // drag/keyboard writes and layout agree.
-    function getResolvedArtifactReviewMaxWidth(stageWidth = getArtifactReviewLayoutWidth()) {
-      return resolveArtifactReviewMaxWidth(stageWidth, getArtifactReviewReserve(stageWidth));
-    }
-    function getEffectiveArtifactReviewWidth(prefs, stageWidth = getArtifactReviewLayoutWidth()) {
-      return resolveEffectiveArtifactReviewWidth(prefs, getActiveSessionIdForReview(),
-        { stageWidth, windowWidth: getArtifactReviewWindowWidth(), reserve: getArtifactReviewReserve(stageWidth) });
-    }
-    function isArtifactReviewMaximized() {
-      return resolveArtifactReviewMaximized?.(getArtifactReviewState(), getActiveSessionIdForReview()) === true;
-    }
-    // Split view (row 34 S5, v2 §6): when the two visible panes can't each
-    // keep about 40rem (text scale included) beside the panel, the review
-    // opens over the pane of the chat that owns it and the other chat stays
-    // usable. Returns that pane's id, or '' to sit beside both as before.
-    function resolveReviewPaneOverlay(stageWidth, width) {
-      const layout = state.panes;
-      if (chatView?.dataset?.paneCount !== '2' || getArtifactReviewWindowWidth() <= 1180 || !Array.isArray(layout?.panes)) return '';
-      const root = chatView.ownerDocument?.documentElement;
-      const rem = (root && Number.parseFloat(globalThis.getComputedStyle?.(root)?.fontSize)) || 16;
-      const ratio = Number.isFinite(layout.splitRatio) ? Math.min(Math.max(layout.splitRatio, 0), 1) : 0.5;
-      const narrowestPane = (stageWidth - 20 - width) * Math.min(ratio, 1 - ratio);
-      if (narrowestPane >= 40 * rem) return '';
-      const ownerSessionId = String((sidePanel ? sidePanel.getSessionId() : getActiveSessionIdForReview()) || '');
-      const index = layout.panes.findIndex((pane) => String(pane?.sessionId || '') === ownerSessionId);
-      return index >= 0 ? String(index) : '';
     }
     // Pressed only while the rail shows artifacts; other modes own their state.
     function syncSplitViewToggle(visible, mode) {
@@ -211,111 +144,26 @@
       artifactSplitViewToggle.setAttribute('aria-pressed', artifactsShowing ? 'true' : 'false');
       artifactSplitViewToggle.classList.toggle('active', artifactsShowing);
     }
-    // `options.animate` marks an explicit open or close (a click, an open verb, auto-open): only those glide the
-    // column (see renderer-side-panel-motion.js). Every other sync (render passes, a window resize, the first
-    // paint and session restore, overlay / maximized / over-pane layouts) applies its state at once.
-    function syncArtifactReviewLayout(options = {}) {
-      const stageWidth = getArtifactReviewLayoutWidth();
-      const prefs = getArtifactReviewState();
-      const width = getEffectiveArtifactReviewWidth(prefs, stageWidth);
-      const visible = isArtifactReviewVisible();
-      const mode = normalizeArtifactReviewMode(prefs.mode);
-      const wasOpen = chatView?.classList?.contains?.('artifact-review-open') === true;
-      const wasMaximized = chatView?.classList?.contains?.('artifact-review-maximized') === true;
-      const wasOverPane = Boolean(chatView?.dataset?.sidePanelPane);
-      const panelWasShown = artifactReviewPanel?.classList?.contains?.('hidden') === false;
-      const panelWasOverlay = artifactReviewPanel?.classList?.contains?.('artifact-review-overlay') === true;
-      const overlay = visible && stageWidth < getArtifactReviewOverlayThreshold();
-      const maximized = visible && !overlay && isArtifactReviewMaximized();
-      const overPane = visible && !overlay && !maximized && mode === 'code_review' ? resolveReviewPaneOverlay(stageWidth, width) : '';
-      const sideBySide = visible && !overlay && !overPane;
-      let interrupted = false;
-      if (motion) {
-        const phase = motion.state();
-        // A close in flight keeps the column until it has collapsed: the end state lands from the motion itself.
-        if (phase === 'closing' && !sideBySide) { syncSplitViewToggle(visible, mode); return; }
-        // A re-toggle mid-motion (the opposite state) cancels it and snaps; render passes in the same state leave it running.
-        if ((phase === 'closing' && sideBySide) || (phase === 'opening' && !sideBySide)) { motion.cancel(); interrupted = true; }
-      }
-      const animated = options.animate === true && Boolean(motion) && Boolean(artifactReviewPanel) && !interrupted && !maximized && !wasMaximized
-        && !overPane && !wasOverPane && !panelWasOverlay;
-      if (animated && sideBySide && !wasOpen && !panelWasShown) {
-        motion.open({ panel: artifactReviewPanel, applyEnd: () => applyArtifactReviewLayout(options, { stageWidth, width, visible, mode, overlay, maximized, overPane }) });
-        return;
-      }
-      if (animated && !visible && wasOpen && panelWasShown) {
-        syncSplitViewToggle(visible, mode);
-        // Deferred: the panel stays up until the column has collapsed, then the state below lands and the lock releases.
-        motion.close({ panel: artifactReviewPanel, deferEnd: true, applyEnd: () => syncArtifactReviewLayout({ refreshChatChrome: options.refreshChatChrome }) });
-        return;
-      }
-      applyArtifactReviewLayout(options, { stageWidth, width, visible, mode, overlay, maximized, overPane });
+    function park() {
+      artifactReviewPanel?.classList?.toggle('hidden', true);
+      chatView?.classList?.remove('artifact-review-mode', 'code-review-open');
     }
-    function applyArtifactReviewLayout(options, { stageWidth, width, visible, mode, overlay, maximized, overPane }) {
-      workspace?.style?.setProperty('--artifact-review-width', `${width}px`);
-      artifactReviewPanel?.ownerDocument?.documentElement?.style?.setProperty('--artifact-review-width', `${width}px`); // toasts live outside the workspace
-      artifactReviewPanel?.style?.setProperty('width', `${width}px`);
-      artifactReviewPanel?.classList.toggle('hidden', !visible);
-      // W1-5 narrow-stage fallback (studio removed): below the side-by-side
-      // width threshold the panel overlays chat as a drawer instead of
-      // becoming ineligible: same DOM, one modifier class. In overlay mode
-      // chat keeps its full width (no artifact-review-open layout shift) and
-      // the resizer is parked (drawer width is fixed by CSS).
-      if (overPane) {
-        chatView.dataset.sidePanelPane = overPane;
-        artifactReviewPanel?.style?.removeProperty('width');
-      } else if (chatView?.dataset) {
-        delete chatView.dataset.sidePanelPane;
-      }
-      artifactReviewPanel?.classList.toggle('artifact-review-overlay', overlay);
-      if (artifactReviewPanel?.dataset) artifactReviewPanel.dataset.panelNarrow = width < 360 ? 'true' : 'false';
-      artifactReviewPanel?.classList.toggle('code-review-mode', mode === 'code_review');
-      if (artifactReviewPanel?.dataset) {
-        artifactReviewPanel.dataset.artifactReviewMode = mode;
-      }
+    // The rail keeps mode and open state; the room's right stack places the panel and sets its classes.
+    // `options.animate` marks an explicit open or close (a click, an open verb, auto-open): the stack adds an
+    // optional tab only for those. Without a host (before the room is built) nothing is presented.
+    function syncArtifactReviewLayout(options = {}) {
+      const host = getLayoutHost?.() || null;
+      const mode = normalizeArtifactReviewMode(getArtifactReviewState().mode);
+      const visible = isArtifactReviewVisible();
       sidePanel?.syncOwnerLine?.(artifactReviewPanel, mode);
-      artifactReviewResizer?.classList.toggle('hidden', !visible || overlay || maximized || Boolean(overPane));
-      if (artifactReviewResizer) {
-        artifactReviewResizer.tabIndex = (visible && !overlay && !maximized && !overPane) ? 0 : -1;
-        // role="separator" value range: the max is the RESOLVED 90% bound, so
-        // assistive tech reports the same ceiling the End key lands on.
-        artifactReviewResizer.setAttribute('aria-valuemin', String(ARTIFACT_REVIEW_MIN_WIDTH));
-        artifactReviewResizer.setAttribute('aria-valuemax', String(getResolvedArtifactReviewMaxWidth(stageWidth)));
-        artifactReviewResizer.setAttribute('aria-valuenow', String(width));
-      }
       syncSplitViewToggle(visible, mode);
-      chatView?.classList.toggle('artifact-review-open', visible && !overlay && !overPane);
-      chatView?.classList.toggle('artifact-review-mode', visible);
-      chatView?.classList.toggle('code-review-open', visible && mode === 'code_review');
-      chatView?.classList.toggle('artifact-review-maximized', maximized);
+      if (host) host.present({ visible, mode, panel: artifactReviewPanel, chatView, explicit: options.animate === true });
+      else park(); // no room stack on screen: nothing shows the panel
       updateComposerSafeOffset?.();
       if (options.refreshChatChrome) renderAll?.();
     }
 
-    // ── maximize, width and wrap ──
-    function toggleArtifactReviewMaximized(nextValue) {
-      if (!getActiveSessionIdForReview()) return false;
-      // Read the current value BEFORE capturing prefs: every state read swaps in
-      // a fresh normalized object, so a read after the capture detaches it.
-      const next = typeof nextValue === 'boolean' ? nextValue : !isArtifactReviewMaximized();
-      const prefs = getArtifactReviewState();
-      recordArtifactReviewMaximized?.(prefs, getActiveSessionIdForReview(), next);
-      saveArtifactReviewPreferences();
-      syncArtifactReviewLayout();
-      panelV2?.afterRender?.(manager.getSelectedArtifact?.() || null);
-      return isArtifactReviewMaximized();
-    }
-    // Width writes go to widthBySession[activeSession]; the legacy global `width` stays the fallback seed.
-    // Drag-time clamp: bound the WRITE by the resolved 90% max so persistence
-    // never drifts above what the stage can actually show (the static clamp
-    // inside recordArtifactReviewWidth is only the sanity ceiling now).
-    function applyArtifactReviewWidth(prefs, nextWidth) {
-      const numeric = Number(nextWidth);
-      const bounded = Number.isFinite(numeric)
-        ? Math.max(ARTIFACT_REVIEW_MIN_WIDTH, Math.min(getResolvedArtifactReviewMaxWidth(), Math.round(numeric)))
-        : nextWidth;
-      recordArtifactReviewWidth(prefs, getActiveSessionIdForReview(), bounded);
-    }
+    // ── wrap ──
     // One persisted wrap state per body kind ('output' | 'code' | 'diff'), never carried by
     // the body: the panel class flips text bodies, Monaco flips through its API.
     function applyArtifactTextWrap(kind) {
@@ -348,27 +196,25 @@
       syncArtifactReviewLayout({ refreshChatChrome: true, animate: options.animate !== false });
     }
     // W3-2 owner-pane close: no dismissal, so auto-open still works later. A layout
-    // reconcile, not a click, so it snaps instead of gliding.
+    // reconcile, not a click, so it is not an explicit close.
     function collapseArtifactReview() { closeArtifactReview({ dismiss: false, animate: false }); }
 
     // An explicit artifact open (every verb since the studio left, W1-5):
     // artifact mode, open, this chat's Close forgotten. Eligibility requires
-    // the chat view, so opens from other views switch to chat first; narrow
-    // stages get the overlay drawer via the layout sync.
+    // a room that serves the mode, so opens elsewhere switch to chat first.
     function enableForArtifactOpen(sessionId) {
       const prefs = getArtifactReviewState();
       prefs.mode = 'artifact';
       prefs.enabled = true;
       recordArtifactReviewDismissed(prefs, sessionId, false);
-      if (state.ui?.activeView !== 'chat') setActiveView('chat');
+      if (state.ui?.activeView !== 'chat' && !roomServes(prefs.mode)) setActiveView('chat');
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout({ animate: true });
     }
 
     // Shared open path for the non-artifact rail modes: everything an artifact
     // open does EXCEPT selecting an artifact. Callers (the file preview owner
-    // today) hand it a mode; eligibility still requires the chat view, and
-    // narrow stages get the overlay drawer via the layout sync.
+    // today) hand it a mode; eligibility still requires a room that serves it.
     function openArtifactRail(mode, options) {
       rememberReviewFocus();
       if (sidePanel) { sidePanel.claim(); lastRenderedSessionId = String(sidePanel.getSessionId() || '').trim(); } // a claim is not a session switch
@@ -378,9 +224,7 @@
       prefs.enabled = true;
       // Only an artifact open clears this chat's artifact dismissal.
       if (prefs.mode === 'artifact') recordArtifactReviewDismissed(prefs, sessionId, false);
-      if (state.ui?.activeView !== 'chat') {
-        setActiveView('chat');
-      }
+      if (state.ui?.activeView !== 'chat' && !roomServes(prefs.mode)) setActiveView('chat');
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout({ animate: true });
       if (options?.focus !== false) focusReview(); // an automatic open must not take the keyboard from the composer
@@ -397,13 +241,13 @@
     }
 
     // Explicit artifact open: clears this chat's dismissal, selects an artifact if none is.
-    function openArtifactsMode() {
+    // options.focus === false: an open no click asked for here (a workbench tab, a saved layout) leaves focus alone.
+    function openArtifactsMode(options) {
       sidePanel?.claim();
       const sessionId = getActiveSessionIdForReview();
       const prefs = getArtifactReviewState();
       prefs.mode = 'artifact';
       prefs.enabled = true;
-      prefs.width = clampArtifactReviewWidth(prefs.width);
       recordArtifactReviewDismissed(prefs, sessionId, false);
       const activeSession = typeof getActiveSession === 'function' ? getActiveSession() : null;
       if (activeSession) {
@@ -413,7 +257,7 @@
       saveArtifactReviewPreferences();
       syncArtifactReviewLayout({ refreshChatChrome: true, animate: true });
       renderArtifactReviewPanel();
-      if (isArtifactReviewVisible()) focusReview();
+      if (options?.focus !== false && isArtifactReviewVisible()) focusReview();
     }
 
     // Generic toggle (the Tasks toggle's close path, the bridge's primer)
@@ -423,7 +267,7 @@
     function toggleArtifactReview(options) {
       rememberReviewFocus();
       const artifactsShowing = normalizeArtifactReviewMode(getArtifactReviewState().mode) === 'artifact';
-      if (!isArtifactReviewVisible() || (options?.artifactsOnly === true && !artifactsShowing)) return openArtifactsMode();
+      if (!isArtifactReviewVisible() || (options?.artifactsOnly === true && !artifactsShowing)) return openArtifactsMode(options);
       closeArtifactReview({ dismiss: true });
       restoreReviewFocus();
     }
@@ -464,7 +308,6 @@
       const renderSessionId = String((sidePanel ? sidePanel.getSessionId() : state.currentSessionId) || '').trim();
       const sessionSwitched = renderSessionId !== lastRenderedSessionId;
       if (sessionSwitched) {
-        motion?.cancel(); // a switch releases any lock and snaps the column
         const hadSession = lastRenderedSessionId !== '';
         lastRenderedSessionId = renderSessionId;
         if (hadSession && normalizeArtifactReviewMode(getArtifactReviewState().mode) === 'file_preview') {
@@ -495,69 +338,10 @@
       return isArtifactReviewVisible();
     }
 
-    // ── resizer and keys ──
-    function finishArtifactReviewResize(event) {
-      if (resizeRuntime.pointerId !== event.pointerId) return;
-      artifactReviewResizer.classList.remove('dragging');
-      artifactReviewResizer.releasePointerCapture(event.pointerId);
-      resizeRuntime.pointerId = null;
-      saveArtifactReviewPreferences();
-      syncArtifactReviewLayout({ refreshChatChrome: true });
-    }
-    function handleArtifactReviewResizeMove(event) {
-      if (resizeRuntime.pointerId !== event.pointerId) return;
-      const delta = resizeRuntime.startX - event.clientX;
-      applyArtifactReviewWidth(getArtifactReviewState(), resizeRuntime.startWidth + delta);
-      syncArtifactReviewLayout();
-    }
-    function handleArtifactReviewResizeStart(event) {
-      if (!isArtifactReviewVisible()) return;
-      event.preventDefault();
-      resizeRuntime.pointerId = event.pointerId;
-      resizeRuntime.startX = event.clientX;
-      resizeRuntime.startWidth = getEffectiveArtifactReviewWidth(getArtifactReviewState());
-      artifactReviewResizer.classList.add('dragging');
-      artifactReviewResizer.setPointerCapture(event.pointerId);
-    }
-    // Keyboard steps use the per-session helpers: arrows step the effective
-    // width, Home lands on the default width and End on the resolved
-    // 90%-of-stage max with the visible-pane reserve.
-    function handleArtifactReviewResizeKeydown(event) {
-      if (!isArtifactReviewVisible()) return;
-      const prefs = getArtifactReviewState();
-      const targets = {
-        ArrowLeft: () => getEffectiveArtifactReviewWidth(prefs) + ARTIFACT_REVIEW_KEYBOARD_STEP,
-        ArrowRight: () => getEffectiveArtifactReviewWidth(prefs) - ARTIFACT_REVIEW_KEYBOARD_STEP,
-        Home: () => ARTIFACT_REVIEW_DEFAULT_WIDTH,
-        End: () => getResolvedArtifactReviewMaxWidth(),
-      };
-      if (!Object.prototype.hasOwnProperty.call(targets, event.key)) return;
-      event.preventDefault();
-      applyArtifactReviewWidth(prefs, targets[event.key]());
-      syncArtifactReviewLayout();
-      saveArtifactReviewPreferences();
-    }
-    function handleArtifactPanelKeydown(event) {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      if (artifactReviewPanel?.classList.contains('artifact-review-overlay')) {
-        event.preventDefault();
-        artifactReviewCollapseButton?.click();
-      } else if (isArtifactReviewMaximized()) {
-        event.preventDefault();
-        toggleArtifactReviewMaximized(false);
-      }
-    }
-
     // One table so bind and dispose cannot drift: [target, type, handler].
     function listenerTable() {
       return [
-        [artifactReviewPanel, 'keydown', handleArtifactPanelKeydown],
         [artifactSplitViewToggle, 'click', handleArtifactsToggleClick],
-        [artifactReviewResizer, 'pointerdown', handleArtifactReviewResizeStart],
-        [artifactReviewResizer, 'pointermove', handleArtifactReviewResizeMove],
-        [artifactReviewResizer, 'pointerup', finishArtifactReviewResize],
-        [artifactReviewResizer, 'pointercancel', finishArtifactReviewResize],
-        [artifactReviewResizer, 'keydown', handleArtifactReviewResizeKeydown],
       ];
     }
     function bind() {
@@ -573,7 +357,6 @@
       }
       autoOpenController?.dispose?.();
       autoOpenController = null;
-      motion?.dispose();
     }
 
     panelV2?.setTextWrapController?.({ apply: applyArtifactTextWrap, toggle: toggleArtifactTextWrap });
@@ -581,11 +364,11 @@
     return {
       bind, dispose, beginRender,
       getArtifactReviewState, saveArtifactReviewPreferences, setArtifactRailMode, pruneSessionPreferences, rekeySession,
-      isArtifactReviewVisible, syncArtifactReviewLayout, isArtifactReviewMaximized, toggleArtifactReviewMaximized,
+      isArtifactReviewVisible, syncArtifactReviewLayout,
       closeArtifactReview, collapseArtifactReview, enableForArtifactOpen, openArtifactRail, restoreArtifactReviewPrefs,
       toggleArtifactReview, rememberReviewFocus, focusReview, restoreReviewFocus,
     };
   }
 
-  return { ARTIFACT_REVIEW_MIN_STAGE_WIDTH, createArtifactReviewRail };
+  return { createArtifactReviewRail };
 });

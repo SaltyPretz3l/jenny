@@ -2,7 +2,7 @@
 
 /* Row 59 checkpoint 6 (renderer): the Performance section's pure model and markup. Every metric state,
    stale never shown as live, finished turns labelled as averages, the engine named when a metric is
-   unavailable, the host scope line, and the toggle readout's source value. */
+   unavailable, the host scope line. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -28,7 +28,6 @@ test('available: live rates, first token and cache reuse read as values', () => 
   assert.equal(row(v, 'first_token').text, '640 ms');
   assert.equal(row(v, 'cache').text, '60%');
   assert.equal(v.header, '182 tok/s');
-  assert.equal(v.readout, '182 tok/s');
   assert.equal(v.live, true);
 });
 
@@ -44,16 +43,15 @@ test('formatters: rate tiers, durations and bytes', () => {
   assert.equal(perf.formatPercent(null), '');
 });
 
-test('warming reads "Measuring…" and no readout is offered', () => {
+test('warming reads "Measuring…"', () => {
   const v = view({ inference: fx.inference({ live_decode: fx.metric(null, 'warming', null), live_prefill: fx.metric(null, 'warming', null) }) });
   assert.equal(row(v, 'writing').text, 'Measuring…');
   assert.equal(row(v, 'writing').tone, 'muted');
   assert.equal(v.header, 'Measuring…');
-  assert.equal(v.readout, '');
   assert.equal(v.live, true);
 });
 
-test('stale keeps its value labelled "stale" and is never a live reading or a readout', () => {
+test('stale keeps its value labelled "stale" and is never a live reading', () => {
   const v = view({ inference: fx.inference({ live_decode: fx.metric(180, 'stale', 900), live_prefill: fx.metric(null, 'stale', 900) }) });
   assert.equal(row(v, 'writing').text, '180 tok/s');
   assert.equal(row(v, 'writing').meta, 'stale');
@@ -62,7 +60,6 @@ test('stale keeps its value labelled "stale" and is never a live reading or a re
   assert.equal(row(v, 'prompt_reading').text, '');
   assert.equal(row(v, 'prompt_reading').meta, 'stale');
   assert.equal(v.header, 'stale');
-  assert.equal(v.readout, '', 'a stale number is not on display');
 });
 
 test('an "available" reading older than the freshness window is aged to stale locally', () => {
@@ -72,7 +69,6 @@ test('an "available" reading older than the freshness window is aged to stale lo
   assert.equal(row(aged, 'writing').state, 'stale');
   assert.equal(row(aged, 'writing').meta, 'stale');
   assert.equal(row(aged, 'writing').text, '182 tok/s');
-  assert.equal(aged.readout, '');
   assert.equal(aged.header, 'stale');
   assert.equal(row(aged, 'cache').state, 'available', 'a cache proportion is a cumulative fact, not a live rate');
 });
@@ -85,7 +81,6 @@ test('a finished turn shows the terminal averages, labelled as averages', () => 
   assert.equal(row(v, 'writing').state, 'average');
   assert.equal(row(v, 'prompt_reading').text, '5.2k tok/s');
   assert.equal(row(v, 'prompt_reading').meta, 'average');
-  assert.equal(v.readout, '');
   assert.equal(v.live, false);
 });
 
@@ -115,14 +110,12 @@ test('not_applicable is a dash; available_next_request is a short hint', () => {
   assert.equal(row(v, 'prompt_reading').state, 'not_applicable');
   assert.equal(row(v, 'writing').text, 'from the next request');
   assert.equal(row(v, 'writing').state, 'available_next_request');
-  assert.equal(v.readout, '');
 });
 
 test('idle (no request yet) reads dashes, not zeros', () => {
   const v = view({ inference: null });
   assert.deepEqual(v.rows.map((entry) => entry.text), ['—', '—', '—', '—']);
   assert.equal(v.header, '');
-  assert.equal(v.readout, '');
   assert.equal(v.live, false);
 });
 
@@ -136,7 +129,6 @@ test('first token: measuring while the request has not produced output yet', () 
 test('the counter off: the view is disabled and offers nothing', () => {
   const v = view({ settings: fx.settings({ show_counter: false }) });
   assert.equal(v.enabled, false);
-  assert.equal(v.readout, '');
   assert.equal(v.live, false);
   assert.equal(perf.buildPerformanceView({ snapshot: null }).enabled, false);
 });

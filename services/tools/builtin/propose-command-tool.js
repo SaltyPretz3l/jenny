@@ -6,6 +6,7 @@ const {
 const { manifestSchema } = require('./tool-result');
 const { PROPOSAL_LIMITS } = require('../../backend/chat-proposal-records');
 const { sandboxReady, sandboxMode } = require('../../execution/command-bridge');
+const { looksLongRunning } = require('../../backend/long-running-command');
 
 const NAME = 'propose_command';
 const COPY_OR_RUN = 'The user can Copy or Run this command from the card under your answer. ';
@@ -26,8 +27,13 @@ const SYNCED_RUN = 'Run executes it offline in a Linux copy of the workspace wit
   + 'undone, except .git, hook folders, dependency folders and links. Copy is for the user\'s own terminal. ';
 const SANDBOX_NOT_READY = 'The command sandbox is not ready, so Run is unavailable on the card: tell the user '
   + 'to Copy the command into their own terminal. ';
+// Run waits for the command to end; the card keeps Copy only for a server or watcher (chat-proposal-projection.js).
+const LONG_RUNNING = 'This command keeps running until stopped (a server or watcher), so Run is off on the card and the '
+  + 'user can only Copy it. If it should run now, start it yourself with run_command and run_in_background: true '
+  + 'instead of offering it. Do not tell the user to press Run. ';
 
-function resultSpec(backend, context) {
+function resultSpec(backend, context, command) {
+  if (looksLongRunning(command)) return { ...RESULT, content: LONG_RUNNING + TAIL };
   if (backend !== 'docker') return RESULT;
   const synced = sandboxMode(context.backendService) === 'synced';
   const lead = sandboxReady(context.backendService) ? COPY_OR_RUN + (synced ? SYNCED_RUN : SANDBOX_RUN)
@@ -85,6 +91,6 @@ module.exports = {
     });
     if (!validated?.ok) return invalidCommand(validated?.cause_code);
     if (!checkLiveCall(context).ok) return proposalFailure(NAME, 'authority_changed');
-    return publishProposal(NAME, resultSpec(captured.binding?.command?.backend, context), validated.value, captured.binding, live, context);
+    return publishProposal(NAME, resultSpec(captured.binding?.command?.backend, context, validated.value.command), validated.value, captured.binding, live, context);
   },
 };

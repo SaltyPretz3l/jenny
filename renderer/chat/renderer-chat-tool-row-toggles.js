@@ -1,8 +1,8 @@
 /* renderer/chat/renderer-chat-tool-row-toggles.js owns the transcript's
  * tool-row disclosure motion: the legacy .tool-call-header details toggle
  * (with its pretext height prediction and motion timing, wired per pane by
- * renderer-chat-event-utils.js) and the minimal tool row / Answers tool-run
- * toggles with lazy detail materialization (wired by
+ * renderer-chat-event-utils.js) and the minimal tool row / Answers tool-run / steps heading
+ * (row 192) toggles with lazy detail materialization (wired by
  * renderer-chat-event-transcript-bindings.js). Loaded before both. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -291,16 +291,44 @@
       }
     }
 
-    // Answers tool run (renderer-turn-row-list-utils): the summary row and its
-    // flat member rows share data-run-id; the override is keyed like a tool row
-    // so a view switch resets it with the session's other tool overrides.
+    // A run's summary and members share data-run-id; a steps heading (row 192)
+    // and its members share one .turn-row-list, and applyWorkLedgerShow decides
+    // what is in view. Choices are kept per turn in the tool-row override store.
+    function applyLedgerShow(list, expanded) {
+      const apply = globalThis.toolCallUtils?.applyWorkLedgerShow;
+      if (apply) list.querySelectorAll(':scope > .chat-row[data-ledger-member]').forEach((node) => apply(node, expanded));
+    }
+
+    function toggleWorkLedger(toggleNode, heading, forceExpanded) {
+      const list = heading.closest?.('.turn-row-list');
+      if (!list) return;
+      const next = typeof forceExpanded === 'boolean' ? forceExpanded : heading.getAttribute('data-ledger-expanded') !== 'true';
+      heading.setAttribute('data-ledger-expanded', next ? 'true' : 'false');
+      applyLedgerShow(list, next);
+      toggleNode.setAttribute('aria-expanded', next ? 'true' : 'false');
+      const title = globalThis.toolCallUtils?.workLedgerToggleTitle?.(next);
+      if (title) toggleNode.setAttribute('title', title);
+      const ledgerKey = toggleNode.getAttribute('data-tool-run-key') || '';
+      globalThis.rendererTurnRowToolRenderUtils?.setToolRowExpansion?.(ledgerKey, next);
+      dispatchToolRowUserExpansion(chatTimeline, doc, ledgerKey, next);
+    }
+
     function toggleToolRun(toggleNode, forceExpanded) {
+      const ledgerHeading = toggleNode?.closest?.('.chat-row[data-row-kind="work_ledger"]');
+      if (ledgerHeading) {
+        toggleWorkLedger(toggleNode, ledgerHeading, forceExpanded);
+        return;
+      }
       const summaryRow = toggleNode?.closest?.('.chat-row[data-row-kind="tool_run"]');
       const list = summaryRow?.closest?.('.turn-row-list');
       if (!summaryRow || !list) return;
       const next = typeof forceExpanded === 'boolean' ? forceExpanded : summaryRow.getAttribute('data-run-expanded') !== 'true';
       globalThis.toolCallUtils?.getToolRunRows?.(list, summaryRow.getAttribute('data-run-id'))
         ?.forEach((node) => node.setAttribute('data-run-expanded', next ? 'true' : 'false'));
+      if (summaryRow.hasAttribute('data-ledger-member')) {
+        const heading = list.querySelector(':scope > .chat-row[data-row-kind="work_ledger"]');
+        applyLedgerShow(list, heading?.getAttribute('data-ledger-expanded') === 'true');
+      }
       toggleNode.setAttribute('aria-expanded', next ? 'true' : 'false');
       const runKey = toggleNode.getAttribute('data-tool-run-key') || '';
       globalThis.rendererTurnRowToolRenderUtils?.setToolRowExpansion?.(runKey, next);

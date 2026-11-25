@@ -148,3 +148,18 @@ def log_preflight_compaction_result(
         },
         request_id=request_id,
     )
+
+
+def record_compaction_cost(engine: Any, request_id: Any, phase: str, result: Any) -> None:
+    """Note a compaction in the turn's diagnostics; the next provider call's usage fills in
+    the tokens it re-sent uncached (row 183 W3)."""
+    store = getattr(engine, "_turn_diagnostics_store", None)
+    recorder = getattr(store, "record_compaction", None)
+    if callable(recorder) and request_id:
+        recorder(
+            request_id=str(request_id),
+            phase=phase,
+            strategy=str(result.strategy or "micro"),
+            tokens_before=int(result.tokens_before or 0),
+            tokens_after=int(result.tokens_after or 0),
+        )

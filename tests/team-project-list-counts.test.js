@@ -120,3 +120,35 @@ test('a teammate\'s ask is an asked notice naming the asker, each time; a malfor
   assert.notEqual(told[0].notice_id, told[1].notice_id);
   list.stop();
 });
+
+// Team review fixes (row 201), Part III: an approval that timed out ends with its `tool_use` alone (no
+// decision_changed, the run goes on), so the badge count must leave with it, like the waiting count does.
+test('a timed-out approval leaves the badge count; a live one and an unrelated tool_use stay', async () => {
+  const { list, pushes } = listOf('writer', [row(S1)]);
+  await list.refresh();
+  const stream = (inner) => list.onEvent({ event_type: 'chat_stream', session_id: S1, stream_id: 'stream_1', event: inner });
+  stream({ type: 'started' });
+  stream({ type: 'tool_approval_needed', approval_id: 'approval_a', call_id: 'call_a' });
+  stream({ type: 'tool_approval_needed', approval_id: 'approval_b', call_id: 'call_b' });
+  assert.equal(list.view().activity[S1].approvals, 2);
+  stream({ type: 'tool_use', approval_id: 'approval_a', status: 'running' });
+  assert.equal(list.view().activity[S1].approvals, 2, 'a tool_use that is not a timeout changes nothing');
+  stream({ type: 'tool_use', approval_id: 'approval_a', status: 'timeout' });
+  assert.equal(list.view().activity[S1].approvals, 1);
+  assert.deepEqual(pushes.filter((p) => p.kind === 'activity').at(-1), { kind: 'activity', team_id: 'team_a', session_id: S1,
+    approvals: 1, running: true });
+  stream({ type: 'tool_use', approval_id: 'approval_a', status: 'timeout' });
+  assert.equal(list.view().activity[S1].approvals, 1, 'the same timeout twice counts once');
+  stream({ type: 'tool_use', approval_id: 'approval_b', status: 'timeout' });
+  assert.equal(list.view().activity[S1].approvals, 0);
+  list.stop();
+});
+
+test('a timed-out approval the list only seeded (no live id) leaves the badge count too', async () => {
+  const { list } = listOf('writer', [row(S1, { approvals: 1, questions: 0 })]);
+  await list.refresh();
+  list.onEvent({ event_type: 'chat_stream', session_id: S1, stream_id: 'stream_1',
+    event: { type: 'tool_use', approval_id: 'approval_seeded', status: 'timeout' } });
+  assert.equal(list.view().activity[S1]?.approvals ?? 0, 0);
+  list.stop();
+});

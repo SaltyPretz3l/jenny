@@ -16,6 +16,7 @@
  * The same call also finds ```board fences (Jenny's proposed board changes): with the
  * project_boards flag on it loads renderer-board-block-row.js (once) and hands the
  * container over, which turns each finished block into a compact row.
+ * ```mockup fences go to renderer-mockup-block.js the same way.
  */
 /* global window, document */
 
@@ -98,18 +99,18 @@
     return mermaidRuntimePromise;
   }
 
-  const SKETCH_HOST_SRC = 'renderer/features/renderer-sketch-frame-host.js';
-  const SKETCH_HOST_NEEDS = Object.freeze([
-    { src: 'renderer/features/renderer-sketch-frame-messages.js', name: 'rendererSketchFrameMessages' },
-    { src: 'renderer/features/renderer-sketch-frame-palette.js', name: 'rendererSketchFramePalette' },
+  const SKETCH_HOST_LOADS = Object.freeze([
+    ['renderer/features/renderer-sketch-frame-messages.js', 'rendererSketchFrameMessages'],
+    ['renderer/features/renderer-sketch-frame-palette.js', 'rendererSketchFramePalette'],
+    ['renderer/features/renderer-sketch-frame-host.js', 'rendererSketchFrameHost'],
   ]);
   // Each sets a global with attach(host) and adds its controls to a drawing's action row.
   const SKETCH_ACTION_MODULES = Object.freeze([
-    { src: 'renderer/features/renderer-sketch-followup.js', name: 'rendererSketchFollowUp' },
-    { src: 'renderer/features/renderer-sketch-export.js', name: 'rendererSketchExport' },
-    { src: 'renderer/features/renderer-sketch-markup.js', name: 'rendererSketchMarkup' },
-    { src: 'renderer/features/renderer-sketch-open.js', name: 'rendererSketchOpen' },
-    { src: 'renderer/features/renderer-sketch-pin.js', name: 'rendererSketchPin' },
+    ['renderer/features/renderer-sketch-followup.js', 'rendererSketchFollowUp'],
+    ['renderer/features/renderer-sketch-export.js', 'rendererSketchExport'],
+    ['renderer/features/renderer-sketch-markup.js', 'rendererSketchMarkup'],
+    ['renderer/features/renderer-sketch-open.js', 'rendererSketchOpen'],
+    ['renderer/features/renderer-sketch-pin.js', 'rendererSketchPin'],
   ]);
   let sketchHostPromise = null;
   const SKETCH_CODE_SELECTOR = 'pre > code.language-sketch';
@@ -131,33 +132,18 @@
     if (getSketchHost()) {
       return Promise.resolve(getSketchHost());
     }
-    const loader = resolveScriptLoader();
-    if (!loader || typeof loader.ensureScript !== 'function') {
-      return Promise.resolve(null);
-    }
-    const load = function (entry) {
-      return loader.ensureScript({ src: entry.src, isReady: function () { return Boolean(globalThis[entry.name]); } });
-    };
-    // What the host reads first, then the host, then the action modules. An action module that fails
-    // to load or attach costs its buttons, never the drawing.
-    sketchHostPromise = SKETCH_HOST_NEEDS.reduce(function (chain, entry) { return chain.then(function () { return load(entry); }); }, Promise.resolve())
-      .then(function () { return loader.ensureScript({ src: SKETCH_HOST_SRC, isReady: function () { return Boolean(getSketchHost()); } }); })
-      .then(function () {
-        return Promise.all(SKETCH_ACTION_MODULES.map(function (entry) {
-          return load(entry).then(function () { globalThis[entry.name].attach(getSketchHost()); }).catch(function () { return null; });
-        }));
-      })
-      .then(function () { return getSketchHost(); })
-      .catch(function () {
-        sketchHostPromise = null;
-        return null;
-      });
+    // A failing action module costs its buttons, never the drawing.
+    sketchHostPromise = ensureLazy('sketch', SKETCH_HOST_LOADS).then((host) => {
+      if (!host) sketchHostPromise = null;
+      return host && Promise.all(SKETCH_ACTION_MODULES.map((pair) => ensureLazy(pair[1], [pair]).then((module) => module.attach(host)).catch(() => null))).then(() => host);
+    });
     return sketchHostPromise;
   }
 
   /** Returns true when the container has a sketch block and its host was asked to draw it. */
   function renderSketchBlocks(container, options) {
     renderBoardBlocks(container, options);
+    renderMockupBlocks(container, options);
     if (!sketchBlocksEnabled || !container || typeof container.querySelector !== 'function'
       || !container.querySelector(SKETCH_CODE_SELECTOR)) {
       return false;
@@ -174,7 +160,26 @@
   const BOARD_CODE_SELECTOR = 'pre > code.language-board';
   // project_boards, as the shell reports it; until it has, the Board tab being in the page says the flag is on.
   let boardBlocksEnabled = null;
-  let boardRowPromise = null;
+  let lazyLoads = {};
+
+  /** Loads [src, global] pairs in order, while their globals are missing; resolves the last global or null (retried by the next call). */
+  function ensureLazy(name, pairs) {
+    const got = (key) => globalThis[key] || null;
+    const loader = resolveScriptLoader();
+    if (lazyLoads[name]) return lazyLoads[name];
+    if (pairs.every((pair) => got(pair[1]))) return Promise.resolve(got(pairs[pairs.length - 1][1]));
+    if (!loader || typeof loader.ensureScript !== 'function') return Promise.resolve(null);
+    lazyLoads[name] = pairs.reduce((chain, [src, key]) => chain.then(() => got(key) || loader.ensureScript({ src, isReady: () => Boolean(got(key)) })), Promise.resolve())
+      .then(() => got(pairs[pairs.length - 1][1]), () => null)
+      .then((module) => { if (!module) delete lazyLoads[name]; return module; });
+    return lazyLoads[name];
+  }
+
+  /** Hands the container to a lazy module; true. */
+  function handOver(container, options, name, pairs) {
+    ensureLazy(name, pairs).then((module) => module?.render?.(container, options));
+    return true;
+  }
 
   function setBoardBlocksEnabled(enabled) {
     const was = boardBlocksEnabled;
@@ -191,40 +196,22 @@
     return Boolean(doc && typeof doc.getElementById === 'function' && doc.getElementById('boardTopRailTab'));
   }
 
-  function ensureBoardRow() {
-    if (boardRowPromise) {
-      return boardRowPromise;
-    }
-    const ready = function () { return (typeof globalThis !== 'undefined' && globalThis.rendererBoardBlockRow) || null; };
-    if (ready()) {
-      return Promise.resolve(ready());
-    }
-    const loader = resolveScriptLoader();
-    if (!loader || typeof loader.ensureScript !== 'function') {
-      return Promise.resolve(null);
-    }
-    boardRowPromise = loader.ensureScript({ src: BOARD_ROW_SRC, isReady: function () { return Boolean(ready()); } })
-      .then(function () { return ready(); })
-      .catch(function () { return null; })
-      .then(function (row) {
-        if (!row) boardRowPromise = null;
-        return row;
-      });
-    return boardRowPromise;
-  }
-
   /** Returns true when the container has a board block and the row module was asked to draw it. */
   function renderBoardBlocks(container, options) {
     if (!container || typeof container.querySelector !== 'function'
       || !boardBlocksOn(container) || !container.querySelector(BOARD_CODE_SELECTOR)) {
       return false;
     }
-    ensureBoardRow().then(function (row) {
-      if (row && typeof row.render === 'function') {
-        row.render(container, options);
-      }
-    });
-    return true;
+    return handOver(container, options, 'board', [[BOARD_ROW_SRC, 'rendererBoardBlockRow']]);
+  }
+
+  // The frame utils are a startup script; loaded here only if a page lacks them.
+  const MOCKUP_LOADS = [['renderer/features/renderer-html-artifact-frame-utils.js', 'rendererHtmlArtifactFrameUtils'], ['renderer/features/renderer-mockup-block.js', 'rendererMockupBlock']];
+
+  /** Returns true when the container has a mockup block and its module was asked to show it. */
+  function renderMockupBlocks(container, options) {
+    return Boolean(container?.querySelector?.('pre > code.language-mockup'))
+      && handOver(container, options, 'mockup', MOCKUP_LOADS);
   }
 
   function _resetForTests() {
@@ -232,7 +219,7 @@
     sketchBlocksEnabled = false;
     sketchHostPromise = null;
     boardBlocksEnabled = null;
-    boardRowPromise = null;
+    lazyLoads = {};
   }
 
   return {
@@ -243,6 +230,7 @@
     renderSketchBlocks,
     setBoardBlocksEnabled,
     renderBoardBlocks,
+    renderMockupBlocks,
     _resetForTests,
   };
 });

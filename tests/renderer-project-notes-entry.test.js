@@ -147,6 +147,7 @@ function setup(options = {}) {
     appendClientLog: (...args) => calls.logs.push(args),
     showToastMessage: (message) => calls.toasts.push(message),
     getHost: () => host,
+    ...(options.onSignalsChanged ? { onSignalsChanged: options.onSignalsChanged } : {}),
   });
   return { win, doc, entry, state, calls, listeners, notes, hostState, getHost: () => host };
 }
@@ -167,7 +168,7 @@ test('toggle is inserted after the tasks toggle and mirrors the split toggle hid
   assert.equal(toggle.getAttribute('title'), 'Notes');
   assert.equal(toggle.getAttribute('aria-pressed'), 'false');
   assert.ok(toggle.classList.contains('chat-timeline-notes-toggle'));
-  assert.ok(toggle.querySelector('.chat-timeline-notes-dot[hidden]'));
+  assert.equal(toggle.querySelector('.chat-timeline-notes-dot'), null, 'nothing paints a dot onto the toolbar button');
   assert.equal(toggle.hidden, false);
   ctx.doc.getElementById('artifactSplitViewToggle').hidden = true;
   await flush();
@@ -240,62 +241,70 @@ function assistantNote(revision = 5) {
   return { projectId: 'proj-1', text: 'x', revision, updatedAt: 't', updatedBy: 'assistant', journal: [{ id: 'entry-9', undoable: true }] };
 }
 
-test('an assistant write shows the accent dot and markSeen hides it', async () => {
+test('an assistant write sets noteChanged() and markSeen clears it', async () => {
   const ctx = setup({ note: assistantNote(5) });
   ctx.entry.bind();
   await flush();
-  const dot = ctx.doc.querySelector('.chat-timeline-notes-dot');
-  assert.equal(dot.hidden, false);
+  assert.equal(ctx.entry.noteChanged(), true);
   assert.deepEqual(ctx.calls.get, ['proj-1']);
   ctx.entry.markSeen('proj-1', 5);
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   emit(ctx, { projectId: 'proj-1', revision: 5, updatedBy: 'assistant', journalEntryId: 'entry-9', reason: 'append' });
   await flush();
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   emit(ctx, { projectId: 'proj-1', revision: 6, updatedBy: 'assistant', journalEntryId: 'entry-10', reason: 'append' });
   await flush();
-  assert.equal(dot.hidden, false);
+  assert.equal(ctx.entry.noteChanged(), true);
   ctx.entry.dispose();
 });
 
-test('user writes and other projects never light the dot', async () => {
+test('the strip hears of every flip of noteChanged(), and only of flips', async () => {
+  const heard = [];
+  const ctx = setup({ note: assistantNote(5), onSignalsChanged: () => heard.push(ctx.entry.noteChanged()) });
+  ctx.entry.bind();
+  await flush();
+  assert.deepEqual(heard, [true]);
+  ctx.entry.markSeen('proj-1', 5);
+  ctx.entry.markSeen('proj-1', 5);
+  assert.deepEqual(heard, [true, false], 'a second markSeen is not a change');
+  ctx.entry.dispose();
+});
+
+test('user writes and other projects never set noteChanged()', async () => {
   const ctx = setup({ note: { ...assistantNote(2), updatedBy: 'user' } });
   ctx.entry.bind();
   await flush();
-  const dot = ctx.doc.querySelector('.chat-timeline-notes-dot');
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   emit(ctx, { projectId: 'proj-1', revision: 3, updatedBy: 'user', journalEntryId: '', reason: 'save' });
   emit(ctx, { projectId: 'proj-2', revision: 3, updatedBy: 'assistant', journalEntryId: 'e', reason: 'append' });
   await flush();
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   ctx.entry.dispose();
 });
 
-test('an open rail marks the current note seen instead of lighting the dot', async () => {
+test('an open rail marks the current note seen instead of setting noteChanged()', async () => {
   const ctx = setup({ host: true, note: assistantNote(5) });
   ctx.hostState.open = true;
   ctx.entry.bind();
   await flush();
-  const dot = ctx.doc.querySelector('.chat-timeline-notes-dot');
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   emit(ctx, { projectId: 'proj-1', revision: 6, updatedBy: 'assistant', journalEntryId: 'e', reason: 'append' });
   await flush();
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   ctx.entry.dispose();
 });
 
-test('switching the current chat to another project refreshes the dot', async () => {
+test('switching the current chat to another project refreshes noteChanged()', async () => {
   const ctx = setup({ note: assistantNote(5) });
   ctx.entry.bind();
   await flush();
-  const dot = ctx.doc.querySelector('.chat-timeline-notes-dot');
-  assert.equal(dot.hidden, false);
+  assert.equal(ctx.entry.noteChanged(), true);
   ctx.state.currentSessionId = 's2';
   ctx.notes.value = { ...assistantNote(1), projectId: 'proj-2', updatedBy: 'user' };
   ctx.doc.getElementById('chatInput').dispatchEvent(new ctx.win.FocusEvent('focusin', { bubbles: true }));
   await flush();
   assert.deepEqual(ctx.calls.get, ['proj-1', 'proj-2']);
-  assert.equal(dot.hidden, true);
+  assert.equal(ctx.entry.noteChanged(), false);
   assert.equal(ctx.entry.currentProjectId(), 'proj-2');
   ctx.entry.dispose();
 });
@@ -375,14 +384,14 @@ test('the seen revision survives a restart through localStorage', async () => {
   const first = setup({ note: assistantNote(5), storage });
   first.entry.bind();
   await flush();
-  assert.equal(first.doc.querySelector('.chat-timeline-notes-dot').hidden, false);
+  assert.equal(first.entry.noteChanged(), true);
   first.entry.markSeen('proj-1', 5);
   assert.deepEqual(JSON.parse(stored['jenny.projectNotes.seen']), { 'proj-1': 5 });
   first.entry.dispose();
   const again = setup({ note: assistantNote(5), storage });
   again.entry.bind();
   await flush();
-  assert.equal(again.doc.querySelector('.chat-timeline-notes-dot').hidden, true, 'revision 5 was already seen');
+  assert.equal(again.entry.noteChanged(), false, 'revision 5 was already seen');
   again.entry.dispose();
 });
 

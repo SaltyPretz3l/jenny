@@ -49,9 +49,6 @@
       scripts: [
         { src: 'renderer/inventory/file-input.js', global: 'inventoryFileInput' },
         { src: 'renderer/shared/bytes-base64.js', global: 'rendererBytesBase64' },
-        // The Read view's renderer: docx-preview reads the global JSZip.
-        { src: 'node_modules/jszip/dist/jszip.min.js', global: 'JSZip' },
-        { src: 'node_modules/docx-preview/dist/docx-preview.min.js', global: 'docx' },
         { src: 'renderer/features/renderer-ide-docx-zip.js', global: 'rendererIdeDocxZip' },
         { src: 'renderer/features/renderer-ide-docx-ooxml.js', global: 'rendererIdeDocxOoxml' },
         { src: 'renderer/features/renderer-ide-docx-image-model.js', global: 'rendererIdeDocxImageModel' },

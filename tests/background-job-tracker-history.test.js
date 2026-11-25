@@ -264,7 +264,7 @@ test('clearFinished hides the finished jobs of one chat, leaves live ones and ke
   h.tracker.onChanged((sessionIds) => changes.push(sessionIds));
   const bridgeBefore = h.bridgeEvents.length;
 
-  assert.deepEqual(h.tracker.clearFinished('s-1'), { ok: true, cleared: 2 });
+  assert.deepEqual(h.tracker.clearFinished('s-1'), { ok: true, cleared: 2, jobIds: [jobIdAt(2), jobIdAt(1)] });
   assert.deepEqual(changes, [['s-1']], 'one changed notification for that chat');
   assert.equal(h.bridgeEvents.length, bridgeBefore + 1);
   assert.deepEqual(h.tracker.getSessionJobs('s-1').map((job) => [job.jobId, job.state]), [[jobIdAt(3), 'running']]);
@@ -275,7 +275,7 @@ test('clearFinished hides the finished jobs of one chat, leaves live ones and ke
     'deleting the chat still removes their output');
   assert.equal(h.tracker.getSessionJobs('s-2').length, 1, 'another chat is untouched');
 
-  assert.deepEqual(h.tracker.clearFinished('s-1'), { ok: true, cleared: 0 });
+  assert.deepEqual(h.tracker.clearFinished('s-1'), { ok: true, cleared: 0, jobIds: [] });
   assert.equal(changes.length, 1, 'nothing cleared: no notification');
   for (const bad of ['', '   ', null, undefined, 42]) {
     assert.deepEqual(h.tracker.clearFinished(bad), { ok: false, reason: 'invalid_session' });
@@ -283,6 +283,41 @@ test('clearFinished hides the finished jobs of one chat, leaves live ones and ke
   settle(h, jobIdAt(3));
   h.tracker.pollNow();
   assert.equal(h.tracker.getSessionJobs('s-1')[0].state, 'completed', 'a job finishing after Clear shows up');
+});
+
+test('restoreFinished only brings back this chat\'s dismissed finished jobs and refuses malformed input', (t) => {
+  const h = makeTracker(t);
+  for (const index of [1, 2]) h.tracker.registerJob({ jobId: jobIdAt(index), sessionId: 's-1' });
+  h.tracker.registerJob({ jobId: jobIdAt(3), sessionId: 's-1' });
+  h.tracker.registerJob({ jobId: jobIdAt(9), sessionId: 's-2' });
+  settle(h, jobIdAt(1));
+  settle(h, jobIdAt(2));
+  settle(h, jobIdAt(9));
+  h.statusByPath.set(h.statusPath(jobIdAt(3)), { state: 'running' });
+  h.tracker.pollNow();
+  const { jobIds } = h.tracker.clearFinished('s-1');
+  h.tracker.clearFinished('s-2');
+  const changes = [];
+  h.tracker.onChanged((sessionIds) => changes.push(sessionIds));
+
+  assert.deepEqual(h.tracker.restoreFinished('s-1', [jobIdAt(9), jobIdAt(3), jobIdAt(500)]), { ok: true, restored: 0 },
+    'another chat\'s id, a live job and an unknown id are ignored');
+  assert.deepEqual(changes, [], 'nothing restored: no notification');
+  assert.equal(h.tracker.getSessionJobs('s-2').length, 0, 'the other chat stays cleared');
+
+  assert.deepEqual(h.tracker.restoreFinished('s-1', [jobIds[0], jobIds[0], jobIdAt(500)]), { ok: true, restored: 1 });
+  assert.deepEqual(changes, [['s-1']]);
+  assert.deepEqual(h.tracker.restoreFinished('s-1', [jobIds[0]]), { ok: true, restored: 0 }, 'a visible job is not restored twice');
+  assert.deepEqual(h.tracker.restoreFinished('s-1', jobIds), { ok: true, restored: 1 });
+  assert.deepEqual(h.tracker.getSessionJobs('s-1').map((job) => job.jobId).sort(), [jobIdAt(1), jobIdAt(2), jobIdAt(3)]);
+
+  for (const bad of ['', '   ', null, undefined, 42]) {
+    assert.deepEqual(h.tracker.restoreFinished(bad, jobIds), { ok: false, reason: 'invalid_session' });
+  }
+  for (const bad of [undefined, null, 'abc123def456', [42], ['../../evil'], ['ABC123DEF456'], [jobIdAt(1), {}],
+    Array.from({ length: 201 }, () => jobIdAt(1))]) {
+    assert.deepEqual(h.tracker.restoreFinished('s-1', bad), { ok: false, reason: 'invalid_jobs' });
+  }
 });
 
 test('dismissed jobs leave the per-chat cap and are evicted first at the global cap', (t) => {

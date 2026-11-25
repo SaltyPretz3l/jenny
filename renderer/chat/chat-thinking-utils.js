@@ -166,7 +166,10 @@
   const isProseBoundary = typeof _prettifyUtils.isProseBoundary === 'function'
     ? _prettifyUtils.isProseBoundary
     : () => false;
-  const PRETTIFY_CACHE_LIMIT = 64;
+  // Sized like the reasoning renderer's settled-body cache: a render pass
+  // re-joins every settled row in order, and an LRU smaller than the pass
+  // misses every lookup.
+  const PRETTIFY_CACHE_LIMIT = 256;
   const prettifyCache = new Map();
 
   function getCachedPrettifiedEntry(cacheKey) {
@@ -178,43 +181,55 @@
     return cached;
   }
 
-  function setCachedPrettifiedEntry(cacheKey, rawText, prettified) {
+  function setCachedPrettifiedEntry(cacheKey, entry) {
     prettifyCache.delete(cacheKey);
-    prettifyCache.set(cacheKey, { rawText, prettified });
+    prettifyCache.set(cacheKey, entry);
     if (prettifyCache.size > PRETTIFY_CACHE_LIMIT) {
       prettifyCache.delete(prettifyCache.keys().next().value);
     }
+  }
+
+  // Prettify rules are block-local past a paragraph break, so the text after
+  // the last \n\n can be repaired standalone. The leading break gives the
+  // standalone remainder the paragraph threshold the full text uses after a
+  // real break.
+  function prettifyRemainder(text) {
+    return prettifyReasoningMarkdown(`\n\n${text}`).replace(/^\n+/, '');
+  }
+
+  // Where the cached output splits at a raw paragraph break: the length of
+  // the output before the remainder that starts at remainderStart, or -1.
+  function cachedPrefixLength(cached, remainderStart) {
+    // The split found for this break on an earlier delta still holds.
+    if (cached.remainderStart === remainderStart) return cached.prefixLength;
+    // Safety is judged with the prettifier's own code segmentation: the prefix
+    // must end outside code.
+    if (!isProseBoundary(cached.rawText.slice(0, remainderStart - 2))) return -1;
+    const remainder = prettifyRemainder(cached.rawText.slice(remainderStart));
+    return cached.prettified.endsWith(remainder) ? cached.prettified.length - remainder.length : -1;
   }
 
   function prettifyReasoningEntry(rawText, cacheKey) {
     const cached = getCachedPrettifiedEntry(cacheKey);
     if (cached?.rawText === rawText) return cached.prettified;
 
-    let prettified = '';
+    const entry = { rawText, prettified: '', remainderStart: -1, prefixLength: -1 };
     const isStrictAppend = cached?.rawText
       && rawText.length > cached.rawText.length
       && rawText.startsWith(cached.rawText);
     const rawBoundary = isStrictAppend ? cached.rawText.lastIndexOf('\n\n') : -1;
-    // Safety is judged with the prettifier's own code segmentation: the prefix
-    // must end outside code with balanced quotes in its trailing prose segment.
-    if (rawBoundary >= 0 && isProseBoundary(cached.rawText.slice(0, rawBoundary))) {
+    if (rawBoundary >= 0) {
       const remainderStart = rawBoundary + 2;
-      // Prettify rules are block-local past a paragraph break, so the text
-      // after the last \n\n can be repaired standalone. The leading break
-      // makes the standalone remainder judge sparseness the way the full
-      // text does (formatted, not a newline-free wall).
-      const prettifyRemainder = (text) => prettifyReasoningMarkdown(`\n\n${text}`).replace(/^\n+/, '');
-      const previousRemainder = prettifyRemainder(cached.rawText.slice(remainderStart));
-      if (cached.prettified.endsWith(previousRemainder)) {
-        const prettifiedPrefix = previousRemainder
-          ? cached.prettified.slice(0, -previousRemainder.length)
-          : cached.prettified;
-        prettified = prettifiedPrefix + prettifyRemainder(rawText.slice(remainderStart));
+      const prefixLength = cachedPrefixLength(cached, remainderStart);
+      if (prefixLength >= 0) {
+        entry.prettified = cached.prettified.slice(0, prefixLength) + prettifyRemainder(rawText.slice(remainderStart));
+        entry.remainderStart = remainderStart;
+        entry.prefixLength = prefixLength;
       }
     }
-    if (!prettified) prettified = prettifyReasoningMarkdown(rawText);
-    setCachedPrettifiedEntry(cacheKey, rawText, prettified);
-    return prettified;
+    if (!entry.prettified) entry.prettified = prettifyReasoningMarkdown(rawText);
+    setCachedPrettifiedEntry(cacheKey, entry);
+    return entry.prettified;
   }
 
   /**

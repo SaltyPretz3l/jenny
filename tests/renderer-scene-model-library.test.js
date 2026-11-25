@@ -63,7 +63,7 @@ function harness(t, options = {}) {
     },
     ...(options.offline || {}),
   };
-  windowRef.jennyShell = { models, offline };
+  windowRef.jennyShell = { models, offline, ...(options.backend ? { backend: options.backend } : {}) };
   const setupService = {
     subscribePullProgress(listener) {
       progressListener = listener;
@@ -375,4 +375,63 @@ test('diagnostics degradation still renders installed cards', async (t) => {
 
   assert.ok(h.root.querySelector('[data-model-key="installed:1b"]'));
   assert.match(h.root.textContent, /diagnostics offline/);
+});
+
+test('a library read while the backend starts says why once, hides the empty grid, and offers Retry', async (t) => {
+  let ready = false;
+  const starting = { available: false, reason: 'Jenny is still starting.' };
+  const h = harness(t, {
+    models: {
+      async list() { return ready ? { data: [{ id: 'installed:1b', size: 1024, engine_type: 'ollama' }] } : starting; },
+      async listOllamaTags() { return ready ? { data: [] } : starting; },
+    },
+    offline: { async getDiagnostics() { return ready ? diagnostics() : {}; } },
+  });
+  await flush();
+
+  const status = h.root.querySelector('.setup-model-library-status').textContent;
+  assert.equal(status, 'Jenny is still starting.', 'two sources with one reason print it once');
+  assert.doesNotMatch(h.root.textContent, /No models match this filter/);
+  const retry = h.root.querySelector('[data-step-modal-action="retry"]');
+  assert.equal(retry?.textContent, 'Retry');
+  ready = true;
+  click(h.windowRef, retry);
+  await flush();
+  assert.ok(h.root.querySelector('[data-model-key="installed:1b"]'));
+  assert.equal(h.root.querySelector('[data-step-modal-action="retry"]'), null);
+});
+
+test('an unavailable library reloads by itself when the backend turns ready', async (t) => {
+  let ready = false;
+  let statusListener = null;
+  let unsubscribed = 0;
+  let reads = 0;
+  const h = harness(t, {
+    shellState: { status: {}, offline: {}, backend: { phase: 'sidecar_spawned' } },
+    backend: { onStatus(listener) { statusListener = listener; return () => { unsubscribed += 1; }; } },
+    models: {
+      async list() {
+        reads += 1;
+        return ready ? { data: [{ id: 'installed:1b', size: 1024, engine_type: 'ollama' }] } : { available: false, reason: 'Not ready.' };
+      },
+    },
+  });
+  await flush();
+  assert.ok(h.root.querySelector('[data-step-modal-action="retry"]'));
+  assert.equal(reads, 1);
+
+  statusListener({ phase: 'model_loading' });
+  await flush();
+  assert.equal(reads, 1, 'only a ready backend triggers the reload');
+  ready = true;
+  statusListener({ phase: 'ready' });
+  await flush();
+  assert.equal(reads, 2);
+  assert.equal(h.root.querySelector('.setup-model-library-status').textContent, '');
+  assert.equal(h.root.querySelector('[data-step-modal-action="retry"]'), null);
+  statusListener({ phase: 'ready' });
+  await flush();
+  assert.equal(reads, 2, 'a repeated ready status does not re-read a healthy library');
+  h.scene.dispose();
+  assert.equal(unsubscribed, 1, 'dispose drops the status subscription');
 });

@@ -65,6 +65,7 @@ class ChatWorkspaceService {
     getExecutionEnvironment = () => 'local',
     getWorkspaceTestSource = () => null,
     getBackgroundJobTracker = () => null,
+    getRunView = () => null,
     getRuntimeStore = () => null,
     isActivityEnabled = () => false,
     changeSummary = createWorkspaceGitChangeSummary(),
@@ -90,6 +91,7 @@ class ChatWorkspaceService {
     this._getExecutionEnvironment = getExecutionEnvironment;
     this._getWorkspaceTestSource = getWorkspaceTestSource;
     this._getBackgroundJobTracker = getBackgroundJobTracker;
+    this._getRunView = getRunView;
     this._getRuntimeStore = getRuntimeStore;
     this._isActivityEnabled = isActivityEnabled;
     this._changeSummary = changeSummary;
@@ -395,8 +397,21 @@ class ChatWorkspaceService {
       workspaceTestSupported: rows !== null,
       linkedRows: this._linkedWorkRows(sessionId, failedSources),
       jobRows: this._getBackgroundJobTracker()?.getSessionJobs?.(sessionId) ?? null,
+      liveRows: this._liveRunRows(sessionId, authority, failedSources),
       failedSources,
     });
+  }
+
+  // The Live tab's run for this chat in this chat's project. No holder (a
+  // composition without the Live tab) lists none; a failed read is a failed source.
+  _liveRunRows(sessionId, authority, failedSources) {
+    try {
+      const all = this._getRunView()?.runsForChat?.(sessionId);
+      return Array.isArray(all) && authority ? all.filter((row) => row?.projectId === authority.project_id) : [];
+    } catch {
+      failedSources.push('live_run');
+      return [];
+    }
   }
 
   // The session that spawned `sessionId`, from its summary's spawned_from (read

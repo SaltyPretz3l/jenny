@@ -8,12 +8,14 @@ const SURFACE_FAMILIES = Object.freeze([
   { id: 'git', section: 'project', sidecarFamilies: ['git'], toolNames: [] },
   { id: 'python', section: 'project', sidecarFamilies: ['python'], toolNames: [] },
   { id: 'code', section: 'project', sidecarFamilies: ['code_intelligence'], toolNames: [] },
-  { id: 'checks', section: 'project', sidecarFamilies: [], toolNames: ['workspace_present', 'preview_test', 'verify'] },
+  { id: 'checks', section: 'project', sidecarFamilies: [], toolNames: ['workspace_present', 'preview_test', 'verify', 'run_view_look', 'run_view_restart'] },
   { id: 'artifacts', section: 'create', sidecarFamilies: ['artifact', 'diagram'], toolNames: [] },
   { id: 'images', section: 'create', sidecarFamilies: [], toolNames: ['image_generate'] },
   { id: 'web', section: 'reach', sidecarFamilies: ['web'], toolNames: [] },
   // Row 114: the model-driven browser; off unless a chat's switch says true (DEFAULT_OFF_FAMILIES below).
   { id: 'browser_use', section: 'reach', sidecarFamilies: ['browser_use'], toolNames: [] },
+  // Row 196: the real mouse and keyboard in granted programs; off unless a chat's switch says true.
+  { id: 'computer_use', section: 'reach', sidecarFamilies: ['computer_use'], toolNames: [] },
   { id: 'knowledge', section: 'reach', sidecarFamilies: ['knowledge'], toolNames: [] },
   { id: 'home', section: 'reach', sidecarFamilies: ['home'], toolNames: ['automation_list'] },
   // Row 69 Q6 (2026-10-20): the session directory joined Helpers when it left the always-on list.
@@ -38,7 +40,7 @@ const SURFACE_FAMILIES = Object.freeze([
 
 // Every other family is on until a chat switches it off. These are off until a chat switches them on,
 // so a request that carries no preference (delegates, scheduled turns, CLI, hosted) never offers them.
-const DEFAULT_OFF_FAMILIES = new Set(['browser_use']);
+const DEFAULT_OFF_FAMILIES = new Set(['browser_use', 'computer_use']);
 
 // A request that names no preference still follows the chat's own switch for these.
 function defaultOffFamilySwitches(overrides) {

@@ -347,3 +347,51 @@
 .chat-timeline[data-transcript-view="answers"] .chat-row[data-run-member][data-run-expanded="true"] {
   padding-inline-start: var(--space-5);
 }
+
+/* Steps heading (row 192; renderer-turn-row-list-utils.js). In Thinking and
+   Everything a turn's work gets one work_ledger heading row first in its list;
+   the steps, thinking rows and mid-turn notes stay flat siblings stamped
+   data-ledger-member, and the heading decides which are in view
+   (data-ledger-show). Rows in view under it sit one step in; a note there
+   reads at the UI size, not as the answer. Answers keeps its own runs; the
+   first rule only guards a node left over from a view switch. */
+.chat-timeline[data-transcript-view="answers"] .chat-row[data-row-kind="work_ledger"] {
+  display: none;
+}
+
+.chat-row[data-ledger-member]:not([data-ledger-show="true"]) {
+  display: none;
+}
+
+.chat-row[data-ledger-member][data-ledger-show="true"] {
+  padding-inline-start: var(--space-5);
+}
+
+/* C15: under a closed heading the steps between two notes read as one run
+   line (the Answers summary row, stamped a member like the rest), and an
+   opened run lists its steps one indent further in. */
+.chat-timeline:not([data-transcript-view="answers"]) .chat-row[data-row-kind="tool_run"][data-ledger-show="true"] {
+  display: flex;
+}
+
+.chat-row[data-ledger-show="true"][data-ledger-nested="true"] {
+  padding-inline-start: calc(var(--space-5) * 2);
+}
+
+/* The rhythm above pairs DOM neighbours, and a folded member is still one: a
+   row in view right after a folded one would take the gap of the hidden row
+   (a folded note gave the next step the 16px prose gap). The row above it on
+   screen is a step in view or the heading, so: machinery spacing for a step,
+   the cluster break for a note in view or the first row past the work. */
+.turn-row-list .chat-row[data-ledger-member]:not([data-ledger-show="true"]) + .chat-row[data-ledger-show="true"] {
+  margin-block-start: var(--tl-row-gap);
+}
+
+.turn-row-list .chat-row[data-ledger-member]:not([data-ledger-show="true"]) + .chat-row[data-ledger-show="true"][data-row-kind="assistant_text"],
+.turn-row-list .chat-row[data-ledger-member]:not([data-ledger-show="true"]) + .chat-row:not([data-ledger-member]) {
+  margin-block-start: var(--tl-cluster-gap);
+}
+
+.chat-row[data-ledger-member][data-row-kind="assistant_text"] .chat-bubble-markdown {
+  font-size: var(--tl-font-ui);
+}

@@ -34,7 +34,7 @@ function project(id, name, rootPath = null, revision = 0, authorityKey = `${id}:
   return { id, name, root_path: rootPath, root_revision: revision, authority_key: authorityKey };
 }
 
-function createHarness({ api, memoryApi, state, chooseWorkspaceRoot, clearWorkspaceRoot, renderSessions, switcher, setActiveView, setSidebarCollapsed, formatTime } = {}) {
+function createHarness({ api, memoryApi, state, chooseWorkspaceRoot, clearWorkspaceRoot, renderSessions, switcher, setActiveView, formatTime } = {}) {
   const dom = new JSDOM('<div id="sessionRuntimeSettingsMount"></div>');
   const errors = [];
   const controller = createSessionRuntimeSettingsController({
@@ -46,7 +46,6 @@ function createHarness({ api, memoryApi, state, chooseWorkspaceRoot, clearWorksp
     clearWorkspaceRoot,
     renderSessions,
     setActiveView,
-    setSidebarCollapsed,
     formatTime,
     ...(switcher ? { getProjectSwitcher: async () => switcher } : {}),
   });
@@ -394,7 +393,6 @@ test('binder passes the Workspace callbacks and registers disposal', () => {
   const chooser = async () => {};
   const clearer = async () => {};
   const switcherGetter = async () => null;
-  const collapse = () => {};
   const repaint = () => {};
   const windowRef = {
     document: {},
@@ -409,7 +407,7 @@ test('binder passes the Workspace callbacks and registers disposal', () => {
     state,
     windowRef,
     getLazySectionDom: () => ({ sessionRuntimeSettingsMount: mount }),
-    callbacks: { handleWorkspaceRootChoose: chooser, clearWorkspaceRoot: clearer, getProjectSwitcher: switcherGetter, setSidebarCollapsed: collapse, renderSessions: repaint },
+    callbacks: { handleWorkspaceRootChoose: chooser, clearWorkspaceRoot: clearer, getProjectSwitcher: switcherGetter, renderSessions: repaint },
   });
   let cleanup = null;
   let marked = false;
@@ -424,7 +422,6 @@ test('binder passes the Workspace callbacks and registers disposal', () => {
   assert.equal(received.chooseWorkspaceRoot, chooser);
   assert.equal(received.clearWorkspaceRoot, clearer);
   assert.equal(received.getProjectSwitcher, switcherGetter, 'the switcher reaches the page');
-  assert.equal(received.setSidebarCollapsed, collapse);
   assert.equal(received.renderSessions, repaint);
   cleanup();
   assert.equal(disposals, 1);
@@ -493,11 +490,16 @@ const pickFromMenu = (h, projectId, rowId) => {
   menu.onPick(menu.rows.find((row) => row.id === rowId));
 };
 
-test('manager: "New project from folder" is always in the header and runs the switcher\'s folder pick', async () => {
+test('manager: "New project from folder" sits on the group heading bar, not the page header, and runs the switcher\'s folder pick', async () => {
   for (const projects of [managerProjects(), [project('project_general', 'General')]]) {
     const h = await managerHarness({ projects });
-    const create = h.document.querySelector('.settings-card-header [data-action="projects-new-folder"]');
-    assert.ok(create, 'the header carries the create button');
+    const header = h.document.querySelector('.settings-card-header');
+    assert.equal(header.children.length, 1, 'the page header holds only the title');
+    assert.equal(header.querySelector('h3').textContent.trim(), 'Projects');
+    assert.equal(header.querySelector('button'), null);
+    const create = h.document.querySelector('.settings-group-bar [data-action="projects-new-folder"]');
+    assert.ok(create, 'the group heading bar carries the create button');
+    assert.equal(create.closest('.settings-group-bar').querySelector('.settings-group-heading').textContent.trim(), 'Your projects');
     assert.equal(create.textContent.trim(), 'New project from folder');
     assert.ok(create.classList.contains('btn--primary'));
     assert.equal(create.disabled, false);
@@ -590,10 +592,9 @@ test('manager: Reveal folder appears only with the id-only IPC and a present fol
 
 test('manager: menu commands run the switcher; Show chats sets the Chats filter and navigates to Chats', async () => {
   const views = [];
-  const collapsed = [];
   let repaints = 0;
   const state = { ui: { chatsProjectFilter: '', activeView: 'settings', activeSettingsSection: 'runtime' }, sessions: [], workspaceRoot: { path: '' } };
-  const h = await managerHarness({ state, options: { setActiveView: (view) => views.push(view), setSidebarCollapsed: (value) => collapsed.push(value), renderSessions: () => { repaints += 1; } } });
+  const h = await managerHarness({ state, options: { setActiveView: (view) => views.push(view), renderSessions: () => { repaints += 1; } } });
   pickFromMenu(h, 'project_budget', 'open');
   pickFromMenu(h, 'project_budget', 'new-chat');
   pickFromMenu(h, 'project_budget', 'change-folder');
@@ -603,7 +604,6 @@ test('manager: menu commands run the switcher; Show chats sets the Chats filter 
   pickFromMenu(h, 'project_budget', 'show-chats');
   assert.equal(state.ui.chatsProjectFilter, 'project_budget');
   assert.deepEqual(views, ['chat', 'chat']);
-  assert.deepEqual(collapsed, [false]);
   assert.equal(repaints, 1);
   primaryOf(h, 'project_general').click();
   assert.equal(state.ui.chatsProjectFilter, 'project_general', 'General\'s Show chats');

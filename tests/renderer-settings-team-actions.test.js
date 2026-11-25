@@ -237,7 +237,7 @@ test('Make owner waits for the inline confirm, then sends ownerTransfer; Cancel 
   assert.deepEqual(h.sent('ownerTransfer').map((c) => c.payload), [{ team_id: TEAM, member_id: DOT }]);
 });
 
-test('Add another device shows the code once; removing another device is direct, the last one confirms', async (t) => {
+test('Add another device shows the code once; removing any device asks first, with Escape and Cancel returning focus to Remove', async (t) => {
   let devices = [device(DESK, 'Desk'), device(LAPTOP, 'Laptop')];
   const h = harness({ teams: ownerTeams, answers: { deviceList: () => ({ ok: true, devices }) } });
   t.after(h.restore);
@@ -247,15 +247,28 @@ test('Add another device shows the code once; removing another device is direct,
   assert.deepEqual(h.sent('deviceInvite').map((c) => c.payload), [{ team_id: TEAM }]);
   assert.equal(h.q('.team-set-code code').textContent, DEVICE_CODE);
   assert.match(h.text(), /Paste it into Jenny on your other PC within 15 minutes\. It adds a device to you, not a new person\./);
-  h.click(`[data-team-action="device-revoke"][data-device-id="${LAPTOP}"]`);
+  const removeLaptop = () => h.q(`[data-team-action="device-revoke"][data-device-id="${LAPTOP}"]`);
+  removeLaptop().focus();
+  removeLaptop().click();
+  assert.equal(h.sent('deviceRevoke').length, 0, 'a removal cannot be restored, so it asks first');
+  assert.match(h.text(), /This device leaves the team at once\. To use the team on it again, add it from one of your other devices\./);
+  h.q('.team-set-confirm [data-team-action="confirm-cancel"]').dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(h.q('.team-set-confirm'), null, 'Escape closes the strip');
+  assert.equal(h.window.document.activeElement, removeLaptop(), 'focus returns to the Remove that opened it');
+  removeLaptop().click();
+  h.click('[data-team-action="confirm-cancel"]');
+  assert.equal(h.window.document.activeElement, removeLaptop(), 'Cancel returns focus too');
+  assert.equal(h.sent('deviceRevoke').length, 0);
+  removeLaptop().click();
+  h.click('[data-team-action="confirm-device"]');
   await flush();
   assert.deepEqual(h.sent('deviceRevoke').map((c) => c.payload), [{ team_id: TEAM, device_id: LAPTOP }]);
   devices = [device(DESK, 'Desk')];
   h.listeners.state({ teams: ownerTeams });
   await pushed();
   h.click(`[data-team-action="device-revoke"][data-device-id="${DESK}"]`);
-  assert.equal(h.sent('deviceRevoke').length, 1, 'the last device asks first');
-  assert.match(h.text(), /This is your only device in this team\. Only the owner can bring you back\./);
+  assert.equal(h.sent('deviceRevoke').length, 1, 'the last device asks first, in its own words');
+  assert.match(h.text(), /This is your only device in this team\. You can get back in from this PC with Get back in as the owner\./);
   h.click('[data-team-action="confirm-device"]');
   await flush();
   assert.deepEqual(h.sent('deviceRevoke')[1].payload, { team_id: TEAM, device_id: DESK });

@@ -144,7 +144,7 @@ const openMenu = async (m) => { m.button().click(); await m.flush(); };
 const pickTeam = async (m, name = 'jenny-site') => { await openMenu(m); await choose(m, name); };
 
 
-const inputs = (m) => m.qa('#teamConversationInput').length;
+const inputs = (m) => m.qa('[data-board-chat-host] .team-composer__input').length;
 const picker = (m) => m.q('[data-board-team-conv="pick"]');
 const order = (m) => m.bridge.calls.map(([name, payload]) => `${name}:${payload && payload.session_id ? payload.session_id : ''}`).filter((x) => /^conversation(Open|Close):/.test(x));
 // A team project with the chat column open and the first conversation mounted.
@@ -286,12 +286,12 @@ test('chat column: who else has the board open, by name', async (t) => {
 test('a message sent from the Board names the open board; with no board open it names none', async (t) => {
   const board = teamBoard(1, 'Plan');
   const m = await teamChat(t, { boards: [board] });
-  const send = async (text) => { const field = m.q('#teamConversationInput'); field.value = text; m.q('[data-project-action="send"]').click(); await m.flush(); };
+  const send = async (text) => { const field = m.q('[data-board-chat-host] .team-composer__input'); field.value = text; m.q('[data-project-action="send"]').click(); await m.flush(); };
   await send('look at this');
   assert.deepEqual(m.bridge.of('conversationSend').at(-1), { team_id: TEAM, session_id: S1, prompt: 'look at this', board_id: board.id });
   assert.equal(m.q('.team-composer__hint').textContent, 'Jenny can see this board from here. The host and the computer that runs the model can read it.');
   const none = await teamChat(t);
-  await (async () => { none.q('#teamConversationInput').value = 'hello'; none.q('[data-project-action="send"]').click(); await none.flush(); })();
+  await (async () => { none.q('[data-board-chat-host] .team-composer__input').value = 'hello'; none.q('[data-project-action="send"]').click(); await none.flush(); })();
   assert.deepEqual(none.bridge.of('conversationSend').at(-1), { team_id: TEAM, session_id: S1, prompt: 'hello' });
   assert.equal(none.q('.team-composer__hint').textContent.includes('Jenny can see this board'), false, 'the hint is for an open board');
 });
@@ -314,10 +314,10 @@ test('presence: another member pointer is drawn with their name, moves on a push
   const m = await presenceMount(t);
   await pickTeam(m);
   await m.flush();
-  assert.deepEqual(cursors(m).map((el) => [el.textContent, el.getAttribute('aria-hidden'), el.style.left, el.style.top]), [['Maya', 'true', '120px', '80px'], ['Former member', 'true', '10px', '10px']]);
+  assert.deepEqual(cursors(m).map((el) => [el.textContent, el.getAttribute('aria-hidden'), el.style.transform]), [['Maya', 'true', 'translate(120px, 80px) scale(1)'], ['Former member', 'true', 'translate(10px, 10px) scale(1)']]);
   const node = cursors(m)[0];
   pushPresence(m, { viewers: [DOT, MAYA], cursors: [{ member_id: MAYA, x: 200, y: 90, selected: [] }], locks: [] });
-  assert.deepEqual([cursors(m).length, cursors(m)[0] === node, node.style.left, node.style.top], [1, true, '200px', '90px'], 'the same node moved');
+  assert.deepEqual([cursors(m).length, cursors(m)[0] === node, node.style.transform], [1, true, 'translate(200px, 90px) scale(1)'], 'the same node moved');
   assert.equal(m.q('.board-team-hold'), null, 'the hold went with the lock');
 });
 
@@ -522,4 +522,54 @@ test('proposals on a team board: a reader has every answer control off with the 
   writer.bar().querySelector('[data-board-act="accept-additions"]').click();
   await writer.flush();
   assert.deepEqual(writer.decided, [{ boardId: boardId(1), proposalId: 'p1', action: 'accept_additions' }]);
+});
+
+const held = () => { const out = {}; out.promise = new Promise((resolve) => { out.release = resolve; }); return out; };
+
+test('chat column: New conversation ignores a second click while the first is on its way and says it is in progress (H24)', async (t) => {
+  const slow = held();
+  const m = await teamChat(t, { answers: { projectList: host.listAnswer({ conversations: [] }), conversationCreate: () => slow.promise } });
+  const button = () => m.q('[data-board-team-conv="new"]');
+  button().click();
+  button().click();
+  await m.flush();
+  assert.deepEqual([m.bridge.of('conversationCreate').length, button().disabled, m.toasts.map((x) => x.message)], [1, true, ['Starting a conversation…']]);
+  slow.release({ ok: true, session: { session_id: host.S3 } });
+  await m.flush();
+  assert.deepEqual([m.bridge.of('conversationCreate').length, inputs(m)], [1, 1]);
+  // Through the picker too: the second choice of New conversation is the first one's.
+  const again = held();
+  const p = await teamChat(t, { answers: { conversationCreate: () => again.promise } });
+  picker(p).click();
+  await p.flush();
+  await choose(p, 'New conversation');
+  picker(p).click();
+  await p.flush();
+  assert.equal(items(p).find((el) => el.textContent.trim() === 'New conversation').disabled, true, 'while one is on its way the picker offers no second one');
+  picker(p).click(); // closes the picker
+  await p.flush();
+  assert.equal(p.bridge.of('conversationCreate').length, 1);
+  again.release({ ok: false, error: { reason: 'role_forbidden' } });
+  await p.flush();
+  picker(p).click();
+  await p.flush();
+  await choose(p, 'New conversation');
+  assert.equal(p.bridge.of('conversationCreate').length, 2, 'after the answer a new one may go');
+});
+
+test('chat column: Branch from here in the column opens the branch in the column, not the Team tab (H23)', async (t) => {
+  const m = await mount(t);
+  await openMenu(m); // the Team tab scripts load with the first menu
+  let board = null;
+  const real = m.window.rendererTeamProjectConversation;
+  m.window.rendererTeamProjectConversation = { ...real, createConversation: (options) => { board = options.board; return real.createConversation(options); } };
+  await choose(m, 'jenny-site');
+  const asked = [];
+  m.window.rendererTeamNotify = { request: (intent) => { asked.push(intent); return true; } };
+  assert.equal(m.captured.part.openChat(), true);
+  await m.flush();
+  assert.equal(typeof board.onOpenConversation, 'function', 'the conversation is given the way to open a branch in the column');
+  board.onOpenConversation(host.S3); // the branch the host just made: the project list does not name it yet
+  await m.flush();
+  assert.deepEqual([asked, inputs(m), order(m).at(-1), m.captured.ctx.chat.isOpen()], [[], 1, `conversationOpen:${host.S3}`, true]);
 });

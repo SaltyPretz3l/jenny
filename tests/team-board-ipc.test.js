@@ -196,7 +196,7 @@ test('a plain call is one host command and its answer is rebuilt field by field'
   assert.deepEqual(await s.boards.call('boardDelete', s.at(id)), { ok: true });
   // A malformed answer is refused, never passed on.
   for (const boards of [[{ ...row, id: 'board_x' }], [{ ...row, rev: -1 }], [{ ...row, created_at: 'yesterday' }], 'rows',
-    Array.from({ length: 257 }, () => row)]) {
+    Array.from({ length: 512 }, () => row)]) { // past the host index's 511 boards, live and in the trash together
     s.manager.answers['team.board.list'] = { ok: true, boards };
     assert.equal(reasonOf(await s.boards.call('boardList', { team_id: TEAM, project_id: PROJECT })), 'team_response_invalid');
   }

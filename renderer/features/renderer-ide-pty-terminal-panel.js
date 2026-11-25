@@ -486,7 +486,7 @@
 
     function releaseHost() {
       if (!outsideEl) return false;
-      outsideEl = null;
+      outsideEl = null; xterm.detach(); // the chat's element must not keep the xterm while the IDE view is not the active panel
       renderTerminalPanel(); // the placeholder's sentinel differs: the IDE markup is rebuilt and the xterm re-attaches
       onHostChange?.();
       return true;

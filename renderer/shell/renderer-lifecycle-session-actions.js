@@ -41,6 +41,8 @@
     }
 
     async function handleCreateSession(options = {}) {
+      const requestedProjectId = typeof options.projectId === 'string' && /^project_[A-Za-z0-9_-]{1,128}$/u.test(options.projectId)
+        ? options.projectId : '';
       const previousCurrentSessionId = String(state.currentSessionId || '').trim();
       const knownSessionIds = new Set(
         Array.isArray(state.sessions)
@@ -54,6 +56,8 @@
         const timestamp = new Date().toISOString();
         fwd.upsertSessionSummary({
           id: sessionId, title: 'New Chat', session_type: 'chat',
+          // The draft is listed under, and materializes into, the project it was asked for.
+          ...(requestedProjectId ? { project_id: requestedProjectId } : {}),
           created_at: timestamp, updated_at: timestamp, message_count: 0,
           last_message_preview: '', last_model_used: '',
           preferred_model: runtimePreferences.preferredModel,
@@ -90,7 +94,7 @@
       const payload = await window.jennyShell.sessions.create({
         title: String(options.title || 'New Chat').trim(),
         ...(typeof options.initialPrompt === 'string' ? { initialPrompt: options.initialPrompt } : {}), ...(typeof options.linkedTaskId === 'string' && options.linkedTaskId ? { linkedTaskId: options.linkedTaskId } : {}),
-        ...(typeof options.projectId === 'string' && /^project_[A-Za-z0-9_-]{1,128}$/u.test(options.projectId) ? { projectId: options.projectId } : {}),
+        ...(requestedProjectId ? { projectId: requestedProjectId } : {}),
         // /handoff links the new chat to its source (row 60 W4); the backend refuses one from the primary chat.
         ...(typeof options.handoffFromSessionId === 'string' && options.handoffFromSessionId && options.handoffFromSessionId.length <= 256
           ? { handoffFromSessionId: options.handoffFromSessionId } : {}),

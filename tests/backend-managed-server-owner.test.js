@@ -151,3 +151,71 @@ test('4b member wiring: a live team selection resolves to its own port before NI
   assert.equal(resolveOpenAICompatibleApiUrl(ready), 'http://127.0.0.1:8034', 'a selection counts only while its engine runs');
   assert.notEqual(resolveManagedConfiguredModel(ready), 'alpha');
 });
+
+// Row 200 S2 step 5: managed Strata is the fourth owner kind. Its origin is
+// brokered only while ready, its key goes only to its own origin, it never
+// borrows llama-server's profile context or prefill progress, and a failure is
+// stamped on the most recently changed of the three managers.
+const STRATA_URL = 'http://127.0.0.1:8035';
+
+function strataManager({ state = 'ready', changedAt = 0, lastError = '' } = {}) {
+  return {
+    getStatus: () => ({ state, alias: 'inkling-2-mini-sq-20', changedAt, lastError }),
+    getBaseUrl: () => (state === 'stopped' || state === 'crashed' ? '' : `${STRATA_URL}/v1`),
+    getApiKey: () => 'strata-key',
+  };
+}
+
+function strataBackend({ strata = strataManager(), apiUrl = '' } = {}) {
+  const service = makeBackend({ apiUrl, llamaState: 'stopped' });
+  service.options.getStrataManager = () => strata;
+  service.options.managedLlamaServerProfile = { contextSize: 131_072 };
+  return service;
+}
+
+test('a Strata origin resolves to its own manager and key, and is brokered only while ready', () => {
+  const { strataManagedOrigin } = require('../services/backend/managed-server-owner');
+  const { resolveOpenAICompatibleApiUrl } = require('../services/backend/managed-sidecar-config-model');
+  const service = { options: { ...owners({ ninfer: 'stopped', llama: 'stopped' }).options, getStrataManager: () => strataManager() } };
+  assert.equal(resolveManagedServerOwner(service, `${STRATA_URL}/v1`)?.kind, 'strata');
+  assert.equal(managedServerApiKey(service, `${STRATA_URL}/v1`), 'strata-key');
+  assert.equal(managedServerApiKey(service, 'http://127.0.0.1:9000/v1'), '', 'never to another origin');
+  assert.equal(managedServerAlias(service, `${STRATA_URL}/v1`), 'inkling-2-mini-sq-20');
+  assert.equal(strataManagedOrigin(service), STRATA_URL);
+  const starting = { options: { getStrataManager: () => strataManager({ state: 'starting' }) } };
+  assert.equal(strataManagedOrigin(starting), '', 'a loading server is not brokered (G9)');
+  assert.equal(resolveOpenAICompatibleApiUrl(strataBackend()), STRATA_URL);
+  assert.equal(resolveOpenAICompatibleApiUrl(strataBackend({ strata: strataManager({ state: 'starting' }), apiUrl: 'http://127.0.0.1:9000/v1' })), 'http://127.0.0.1:9000/v1');
+});
+
+test('pointed at Strata, the sidecar gets its key and alias, no llama-server profile context and no prefill progress', () => {
+  const service = strataBackend();
+  service.featureFlags = { ...(service.featureFlags || {}), prefill_progress: true };
+  assert.deepEqual(buildManagedSidecarSecrets(service), { openai_compatible_api_key: 'strata-key' });
+  const config = buildManagedSidecarConfig(service);
+  assert.equal(config.api_url, STRATA_URL);
+  assert.equal(config.model, 'inkling-2-mini-sq-20');
+  assert.equal(config.context_length, null, 'the server reports its own window');
+  assert.equal(config.managed_prefill_progress, false);
+  assert.equal(config.json_schema_response_format, false);
+  // A user's own server (no managed owner) keeps today's profile fallback.
+  const user = strataBackend({ strata: strataManager({ state: 'stopped' }), apiUrl: 'http://127.0.0.1:9000/v1' });
+  assert.equal(buildManagedSidecarConfig(user).context_length, 131_072);
+});
+
+test('a load failure is stamped on the live manager, else the most recently changed one', () => {
+  const { managedServerKindForFailure } = require('../services/backend/ninfer-load-path');
+  const status = (state, changedAt, lastError = '') => ({ getStatus: () => ({ state, changedAt, lastError }) });
+  const kind = ({ strata = null, ninfer = null, llama = null }, engine = 'openai-compatible') => managedServerKindForFailure({
+    options: { getStrataManager: () => strata, getNinferManager: () => ninfer, getLlamaServerManager: () => llama },
+  }, engine);
+  assert.equal(kind({ strata: status('starting', 10), llama: status('stopped', 50, 'x') }), 'strata');
+  assert.equal(kind({ strata: status('crashed', 200, 'strata_exited:1'), llama: status('stopped', 100, 'x') }), 'strata');
+  assert.equal(kind({ strata: status('stopped', 100, 'strata_pack:sha256_mismatch'), ninfer: status('crashed', 300) }), 'ninfer');
+  assert.equal(kind({ strata: status('stopped', 300, 'x'), llama: status('ready', 100) }), 'llama-server', 'a live manager wins');
+  assert.equal(kind({ strata: status('stopped', 0) }), '', 'a clean stop names nobody');
+  assert.equal(kind({ strata: status('ready', 1) }, 'ollama'), '');
+  // Unchanged two-manager answers.
+  assert.equal(kind({ ninfer: status('stopped', 0, 'e'), llama: status('stopped', 0) }), 'ninfer');
+  assert.equal(kind({ ninfer: status('stopped', 0, 'e'), llama: status('ready', 0) }), 'llama-server');
+});

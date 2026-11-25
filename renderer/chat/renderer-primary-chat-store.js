@@ -259,7 +259,7 @@
         else toast(jt('chat.primary.held.notRun', '“{label}” could not be changed just now.', { label }), { tone: 'warning', dedupeKey: `${key}:skip` });
       };
       // The check stays held until it runs or is skipped; the handlers close the toast then.
-      const actions = [{ id: 'choose_model', label: jt('chat.primary.held.choose', 'Choose a model'), kind: 'primary', keepOpen: true, onClick: () => openSettingsAt('chat', { focusId: 'checkModelSelect' }) }];
+      const actions = [{ id: 'choose_model', label: jt('chat.primary.held.choose', 'Choose a model'), kind: 'primary', keepOpen: true, onClick: () => openSettingsAt('models', { focusId: 'modelRoleCheckSelect' }) }];
       if (small) actions.push({ id: 'run_anyway', label: jt('chat.primary.held.run', 'Run on {model}', { model }), keepOpen: true, onClick: runAnyway });
       actions.push({ id: 'skip', label: jt('chat.primary.held.skip', 'Skip'), keepOpen: true, onClick: skip });
       toast(small ? jt('chat.primary.held.tooSmall', '“{label}” is waiting: {model} is too small for checks (under 7B).', { label, model })
@@ -329,7 +329,7 @@
       setModels,
       runHeld,
       skipHeld,
-      openSettings: (target) => openSettingsAt('chat', { focusId: target === 'check' ? 'checkModelSelect' : 'primaryModelSelect' }),
+      openSettings: (target) => openSettingsAt('models', { focusId: target === 'check' ? 'modelRoleCheckSelect' : 'modelRoleJennySelect' }), // row 194: the roles live on Models
       // '' for every chat but the Jenny chat, and while the switch is off; else 'offered' or 'armed'.
       fullAutoFor(sessionId) {
         if (!sessionId || data.session_id !== sessionId || data.full_auto.available !== true) return '';

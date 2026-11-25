@@ -22,6 +22,7 @@ from sidecar.ai.context.diagram_guidance import (
     diagram_guidance_kwargs,
     resolve_diagram_guidance,
 )
+from sidecar.ai.context.mockup_guidance import MOCKUP_GUIDANCE
 from sidecar.ai.feature_flags import FEATURE_SKETCH_BLOCKS
 from sidecar.ai.routing import tool_budget_filter as tool_budget_filter_module
 from sidecar.runtime.chat_resume import _build_live_approval_system_prompt
@@ -192,3 +193,32 @@ def test_approval_resume_prompt_passes_the_same_variant(
     )
 
     assert captured["diagram_guidance"] == expected
+
+
+def test_mockup_guidance_text_is_the_two_lines_of_the_contract() -> None:
+    lines = MOCKUP_GUIDANCE.split("\n")
+    assert lines[0] == "## Mockups"
+    assert len(lines) == 2
+    assert lines[1].startswith("To show what a screen, panel or other interface would look like")
+    assert "fenced code block tagged mockup" in lines[1]
+    assert "never text art" in lines[1]
+    assert "works in Plan Mode too." in lines[1]
+    assert not MOCKUP_GUIDANCE.endswith("\n")
+
+
+@pytest.mark.parametrize("variant", DIAGRAM_GUIDANCE_VARIANTS)
+def test_built_prompt_carries_the_mockup_block_right_after_the_diagram_block(
+    tmp_path, variant: str
+) -> None:
+    builder = _builder(tmp_path)
+    plain = str(builder.build_system_prompt("Base.", diagram_guidance=variant))
+    cached = builder.build_system_prompt(
+        "Base.", cache_aware=True, diagram_guidance=variant
+    ).to_text()
+
+    for prompt in (plain, cached):
+        assert prompt.count(MOCKUP_GUIDANCE) == 1
+        assert prompt.count("## Mockups") == 1
+        assert prompt.count("## Diagrams") == 1
+        diagram_end = prompt.index(_TEXTS[variant]) + len(_TEXTS[variant])
+        assert prompt[diagram_end:].lstrip("\n").startswith(MOCKUP_GUIDANCE)

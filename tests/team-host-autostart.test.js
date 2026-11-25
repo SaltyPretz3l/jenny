@@ -15,21 +15,28 @@ const { deriveTeamId, encodeBase64url, keyPairFromSeed } = require('../server/te
 const { HOST_SEED } = require('./server/helpers/team-host-fixture');
 const { BOUNDS, createTestHostController, healthyHostScript } = require('./helpers/team-host-fakes');
 const { createMemorySecureStore, tempProfile } = require('./helpers/team-client-host');
+const { MAYA, seedOwnership, seedTeamFiles } = require('./helpers/team-host-seed');
 
 const TEAM_ID_OF_SEED = deriveTeamId(keyPairFromSeed(Buffer.from(HOST_SEED)).publicKey);
 
 // A profile whose server was deployed before and is stopped: the saved config and the key, nothing running.
-function deployedProfile(t) {
+// `owner`: this Jenny's saved membership names the member store's owner (`memberId`: another member's, for a refusal).
+function deployedProfile(t, { owner = false, memberId } = {}) {
   const userDataPath = tempProfile(t, 'jenny-host-autostart-');
   const secureStore = createMemorySecureStore();
   secureStore.values.set(HOST_KEY_NAME, encodeBase64url(Buffer.from(HOST_SEED)));
-  const layout = prepareHostLayout(userDataPath);
-  writeHostConfig(layout, buildHostConfig({ layout, name: 'Studio', directPort: 45123 }));
+  if (owner || memberId) {
+    seedTeamFiles(userDataPath);
+    seedOwnership(userDataPath, secureStore, memberId ? { memberId } : {});
+  } else {
+    const layout = prepareHostLayout(userDataPath);
+    writeHostConfig(layout, buildHostConfig({ layout, name: 'Studio', directPort: 45123 }));
+  }
   return { userDataPath, secureStore, root: path.join(userDataPath, 'team-host') };
 }
 
 test('hostAutostart on and off: the file, the answer, the state and the pushed state', async (t) => {
-  const { userDataPath, secureStore, root } = deployedProfile(t);
+  const { userDataPath, secureStore, root } = deployedProfile(t, { owner: true });
   const file = path.join(root, 'autostart.json');
   const { controller, pushed } = createTestHostController(t, { userDataPath, secureStore });
   assert.equal((await controller.handle('hostStatus', {})).host.autostart, false);
@@ -62,8 +69,28 @@ test('hostAutostart is refused with no server deployed here, and writes nothing'
   assert.equal(status.host.autostart, false, 'never true for a profile that is not deployed');
 });
 
+test("hostAutostart is the owner's: a member's Jenny on this profile is refused and nothing is written", async (t) => {
+  const { userDataPath, secureStore, root } = deployedProfile(t, { memberId: MAYA });
+  const { controller } = createTestHostController(t, { userDataPath, secureStore });
+  const answer = await controller.handle('hostAutostart', { enabled: true });
+  assert.deepEqual([answer.ok, answer.error?.reason], [false, 'team_owner_only'], JSON.stringify(answer));
+  assert.equal(fs.existsSync(path.join(root, 'autostart.json')), false);
+});
+
+test('hostAutostart takes the lock a manual start holds: while a Deploy runs it answers team_host_busy and writes nothing', async (t) => {
+  const { userDataPath, secureStore, root } = deployedProfile(t, { owner: true });
+  const { controller } = createTestHostController(t, { userDataPath, secureStore, script: () => {} }); // a host that never says ready
+  const deploying = controller.handle('hostDeploy', { name: 'Studio', display_name: 'Olive Owner', label: 'Desk' });
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  const answer = await controller.handle('hostAutostart', { enabled: true });
+  assert.deepEqual([answer.ok, answer.error?.reason], [false, 'team_host_busy'], JSON.stringify(answer));
+  assert.equal(fs.existsSync(path.join(root, 'autostart.json')), false);
+  await controller.handle('hostStop', {});
+  await deploying;
+});
+
 test('a verdict-only push of a running host after the setting changed still carries the new value', async (t) => {
-  const { userDataPath, secureStore } = deployedProfile(t);
+  const { userDataPath, secureStore } = deployedProfile(t, { owner: true });
   const { controller, pushed, fake } = createTestHostController(t, { userDataPath, secureStore,
     bounds: { ...BOUNDS, reachPushMs: 5 }, script: healthyHostScript({ teamId: TEAM_ID_OF_SEED }) });
   assert.equal((await controller.handle('hostDeploy', { name: 'Studio', display_name: 'Olive Owner', label: 'Desk' })).ok, true);

@@ -29,9 +29,10 @@
  * - Files (slice 2c renderer): renderer-team-attach.js owns the paperclip, paste, the drop, the chips and why Send
  *   is greyed; here the hint and Send's tooltip say that reason, Enter does nothing while it applies, and a post
  *   carries the files' ids in chip order. A message with files is never queued: offline it waits greyed.
- * - The mention list opens from its button; a press on it keeps the focus in
- *   the text area (its default is prevented, so no blur follows), and Esc
- *   closes it from anywhere in the composer.
+ * - The mention list opens from its button or when an `@` that starts a word is typed; typing on filters it by the start of a
+ *   name (any word of it), a pick replaces what was typed, and a space, no match or Esc closes it. In a direct conversation it
+ *   lists only that conversation's other people, never @channel. A press on it keeps the focus in the text area (its default
+ *   is prevented, so no blur follows), and Esc closes it from anywhere in the composer.
  * Names are text: escaped in markup, set through textContent elsewhere, and a
  * picked name is inserted as text, never as markup. */
 (function (root, factory) {
@@ -75,7 +76,7 @@
     const where = threadRootId ? { channel_id: channelId, thread_root_id: threadRootId } : { channel_id: channelId };
     let names = new Map();
     const draft = { saved: null, timer: null, busy: false, again: false, final: null };
-    let menu = { open: false, index: 0, options: [] };
+    let menu = { open: false, index: 0, options: [], at: null }; // `at`: the typed `@query` a pick replaces ({ start, end }), null from the button
     const attach = attachModule.createAttach({ root, teamId, channelId, threadRootId, ctx, onChange: () => refresh() });
 
     const q = (selector) => root.querySelector(selector);
@@ -238,11 +239,16 @@
 
     // ------------------------------------------------------------ mention list
 
-    function mentionOptions() {
+    // The people a mention may name: in a direct conversation its other participants and no @channel; else the team and @channel.
+    // `query`: what was typed after the `@`; a name matches when any word of it starts with it.
+    function mentionOptions(query = '') {
       const c = ctx();
-      return c.people.filter((m) => m.member_id !== c.me)
-        .map((m) => ({ id: m.member_id, name: m.display_name, shown: '@' + m.display_name, note: '' }))
-        .concat({ id: 'channel', name: '@channel', shown: '@channel', note: jt('team.composer.channelNote', 'everyone here') });
+      const direct = c.direct ? new Set(c.othersOf(channelId) || []) : null;
+      const people = c.people.filter((m) => m.member_id !== c.me && (!direct || direct.has(m.member_id)))
+        .map((m) => ({ id: m.member_id, name: m.display_name, shown: '@' + m.display_name, note: '' }));
+      const options = direct ? people : people.concat({ id: 'channel', name: '@channel', shown: '@channel', note: jt('team.composer.channelNote', 'everyone here') });
+      const typed = query.toLowerCase();
+      return typed ? options.filter((o) => o.name.replace(/^@/, '').toLowerCase().split(/\s+/).some((word) => word.startsWith(typed))) : options;
     }
     function drawMenu() {
       const list = q('.team-menu--mention');
@@ -250,8 +256,8 @@
         + '<span class="team-row__name" dir="auto">' + escapeHtml(o.name) + '</span>' + (o.note ? '<span class="team-row__note">' + escapeHtml(o.note) + '</span>' : '') + '</div>').join('');
       input.setAttribute('aria-activedescendant', id + '-opt' + menu.index);
     }
-    function openMentions() {
-      menu = { open: true, index: 0, options: mentionOptions() };
+    function openMentions(at = null, options = mentionOptions()) {
+      menu = { open: true, index: 0, options, at };
       drawMenu();
       q('.team-menu--mention').hidden = false;
       q('[data-team-composer="mention"]').setAttribute('aria-expanded', 'true');
@@ -266,10 +272,22 @@
     }
     function pickMention(index) {
       const option = menu.options[index];
+      const at = menu.at;
       closeMentions();
       if (!option) return;
       names.set(option.shown, '<@' + option.id + '>');
+      if (at) input.setSelectionRange(at.start, at.end); // the typed @query is what the name replaces
       insert(option.shown + ' ');
+    }
+    // An `@` that starts a word, just before the caret: the list follows what is typed after it.
+    function syncMentions() {
+      const caret = input.selectionStart ?? input.value.length;
+      const typed = /(^|\s)@([^\s@]*)$/.exec(input.value.slice(0, caret));
+      if (!typed) { if (menu.open && menu.at) closeMentions(); return; }
+      const options = mentionOptions(typed[2]);
+      if (!options.length) { closeMentions(); return; }
+      const at = { start: caret - typed[2].length - 1, end: caret };
+      if (menu.open) { menu = { open: true, index: Math.min(menu.index, options.length - 1), options, at }; drawMenu(); } else openMentions(at, options);
     }
 
     // ------------------------------------------------------------ events
@@ -280,6 +298,7 @@
       typingOut();
       scheduleDraft();
       refresh();
+      syncMentions();
     }
 
     function onKeydown(event) {

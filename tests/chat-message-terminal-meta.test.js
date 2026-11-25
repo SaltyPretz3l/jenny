@@ -39,7 +39,7 @@ test('buildAssistantMetaLabel reads Stopped, not Failed, for cancelled turns', (
   });
   assert.equal(
     buildAssistantMetaLabel(stoppedMessage, formatTime),
-    'Stopped @ 2026-07-20T10:01:05.000Z · Model unknown'
+    'Stopped @ 2026-07-20T10:01:05.000Z · Model unknown · took 5.0s'
   );
 });
 
@@ -59,6 +59,6 @@ test('normalizeChatMessage preserves an explicit terminal_status through re-norm
   assert.equal(live.terminal_status, 'cancelled');
   assert.equal(
     buildAssistantMetaLabel(live, (value) => `@ ${value}`),
-    'Stopped @ 2026-07-20T11:00:05.000Z · Model unknown'
+    'Stopped @ 2026-07-20T11:00:05.000Z · Model unknown · took 5.0s'
   );
 });

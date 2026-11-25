@@ -496,3 +496,98 @@ test('closing Settings during a download leaves no timer running', async () => {
   h.controller.dispose();
   assert.equal(h.liveTimers(), 0);
 });
+
+// C9: a file too large for the card warns before the where-to-keep-it question; fitFor is the host's estimate.
+function fitFlow(fit, planOver = {}) {
+  const { createModelLibraryAddMove } = require('../renderer/shell/model-library/model-library-add-move');
+  const actionButton = require('../renderer/inventory/action-button');
+  const dom = new JSDOM('<body><div id="h"></div><button data-model-library-folder-action="add-model"></button></body>', { url: 'http://localhost/' });
+  const log = [];
+  dom.window.jennyShell = { llamaServer: {
+    async planGgufImport() { return outsidePlan(planOver); },
+    async importGguf() { log.push('import'); return { ok: true, modelPath: MOVED, dir: MOVED_DIR }; },
+    async ggufImportStatus() { return { active: false }; },
+  } };
+  const host = dom.window.document.getElementById('h');
+  let flow;
+  flow = createModelLibraryAddMove({
+    windowRef: dom.window, documentRef: dom.window.document, escapeHtml: actionButton.escapeHtml, actionButton,
+    rerender: () => { host.innerHTML = flow.html(); },
+    announce() {}, addRefusal: async () => '', tagFor: () => TAG,
+    writeModel: async () => { log.push('write'); return 'added'; },
+    fitFor: fit === undefined ? undefined : async () => fit,
+    showFits: () => log.push('show-fits'),
+  });
+  return {
+    flow, log, host, begin: () => flow.begin(PICKED, 'C:\\Users\\me\\Downloads'),
+    click: (name) => { flow.handleClick(host.querySelector(action(name))); },
+  };
+}
+const OVER = { needMb: 26.8 * 1024, cardMb: 24 * 1024, ctx: 32768, smallNeedMb: 25.2 * 1024 };
+
+test('too large for the card: the warning shows first, and nothing is added or moved until the answers are in', async () => {
+  const f = fitFlow(OVER);
+  const pending = f.begin();
+  await flush();
+  const text = f.host.textContent;
+  assert.match(text, /LFM3-Omni-2B-F16\.gguf \(3\.2 GB\) is too large for your graphics card\./);
+  assert.match(text, /Needs about 26\.8 GB at a 32K context · 2\.8 GB more than this card has24 GB card/);
+  assert.match(text, /replies will be slow\. A smaller context does not fix it: at 8K it still needs about 25\.2 GB\./);
+  assert.ok(f.host.querySelector('.model-library-add-fit .mm-bar .mm-ghost--over'));
+  assert.deepEqual([...f.host.querySelectorAll('button')].map((b) => b.textContent), ['Choose another file', 'Add anyway', 'Cancel', 'Show models that fit']);
+  assert.equal(f.flow.isBusy(), true);
+  f.click('add-anyway');
+  assert.match(f.host.textContent, /Too large for this card: it will run slowly\. You chose to add it anyway\.[\s\S]*Move it to/);
+  assert.deepEqual(f.log, [], 'the where-to-keep-it question is still open');
+  f.click('move');
+  assert.equal(await pending, 'added');
+  assert.deepEqual(f.log, ['import', 'write']);
+  f.flow.dispose();
+});
+
+test('a smaller context that fits is said, and Cancel leaves no trace', async () => {
+  const f = fitFlow({ ...OVER, smallNeedMb: 20 * 1024 });
+  const pending = f.begin();
+  await flush();
+  assert.match(f.host.textContent, /At an 8K context it needs about 20 GB and fits\./);
+  f.click('cancel');
+  assert.equal(await pending, null);
+  assert.equal(f.host.innerHTML, '');
+  assert.equal(f.flow.isBusy(), false);
+  assert.deepEqual(f.log, []);
+  f.flow.dispose();
+});
+
+test('a file that fits, an unknown card size and no estimate all add with no warning step', async () => {
+  for (const fit of [{ ...OVER, needMb: 10 * 1024 }, { ...OVER, cardMb: 0 }, null, undefined]) {
+    const f = fitFlow(fit);
+    void f.begin();
+    await flush();
+    assert.match(f.host.textContent, /is in Downloads\. Move it to/);
+    assert.equal(f.host.querySelector('.model-library-add-fit'), null);
+    f.flow.dispose();
+  }
+});
+
+test('Add anyway on a file already in a GGUF folder adds it; Show models that fit and Choose another file close the step', async () => {
+  const inside = fitFlow(OVER, { inside: true });
+  const added = inside.begin();
+  await flush();
+  assert.deepEqual(inside.log, []);
+  inside.click('add-anyway');
+  assert.equal(await added, 'added');
+  assert.deepEqual(inside.log, ['write']);
+  for (const [name, expected] of [['show-fits', ['show-fits']], ['another-file', []]]) {
+    const f = fitFlow(OVER);
+    const pending = f.begin();
+    await flush();
+    let reopened = 0;
+    f.host.ownerDocument.querySelector('[data-model-library-folder-action="add-model"]').addEventListener('click', () => { reopened += 1; });
+    f.click(name);
+    assert.equal(await pending, null);
+    assert.deepEqual(f.log, expected);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(reopened, name === 'another-file' ? 1 : 0);
+    f.flow.dispose();
+  }
+});

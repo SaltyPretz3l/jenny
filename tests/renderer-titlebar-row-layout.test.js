@@ -8,7 +8,7 @@
  * these are the layout gates for the title bar:
  *
  *   - one 52px row at >= 1200px, the nav on a 40px second row below;
- *     --toprail-height is 0 and the content starts right under the header
+ *     --toprail-height no longer exists and the content starts right under the header
  *   - nothing overlaps at 519 / 719 / 900 / 1200 / 1600, the wordmark is never
  *     under the cluster (a click on it lands on it), and the drag gutter keeps
  *     its 48px
@@ -150,11 +150,11 @@ function assertNoOverlap(boxes, label) {
   });
 }
 
-test('one 52px row at >= 1200px, a 40px nav row below; the rail height is 0 and content starts under the header', { skip: SKIP }, async () => {
+test('one 52px row at >= 1200px, a 40px nav row below; no rail height token and content starts under the header', { skip: SKIP }, async () => {
   for (const width of WIDTHS) {
     const m = await measureAtWidth(width);
     const expected = width >= 1200 ? 52 : 92;
-    assert.equal(m.toprailHeight, '0px', `${width}: --toprail-height resolves to 0`);
+    assert.equal(m.toprailHeight, '', `${width}: --toprail-height is not defined`);
     assert.equal(m.header.top, 0);
     assert.equal(m.header.height, expected, `${width}: header height`);
     assert.equal(m.workspaceTop, expected, `${width}: content starts right under the header`);

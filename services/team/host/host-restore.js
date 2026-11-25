@@ -40,6 +40,7 @@ const { HOST_DIR_NAME, RESTORING_PREFIX, markLeftover } = require('./host-sweep'
 const { PUBLIC_KEY_BYTES, decodeBase64url } = require('../../../server/team/ids');
 const { isCleanText } = require('../../../server/team/member-schema');
 const { isRelayToken } = require('../../../server/team/invites');
+const { DIR_MODE, FILE_MODE, dropNotMoved, hostKeyMatches, rewriteProjectRoots } = require('../../../server/team/restore-core');
 
 const DRAFT_FILE = 'internet-draft.json';
 // Room left over in the profile beyond the backup's size.
@@ -129,6 +130,18 @@ async function roomFor(userDataPath, file, statfs) {
   }
 }
 
+// The steps the headless restore shares (server/team/restore-core.js), on the restored tree before it is moved: the
+// profile's own files a backup never brings in are dropped; the backup's key must be the member store's host key
+// (`team_host_key_mismatch`); and each project's folder is pointed at this PC's `team-host/projects` (a backup from
+// another PC or OS names that PC's paths; a project store of a newer schema refuses with `team_backup_too_new`).
+function checkRestored(userDataPath, temp, seed) {
+  const profile = path.join(temp, 'profile');
+  dropNotMoved(profile);
+  if (!hostKeyMatches(profile, seed)) throw new BackupError('team_host_key_mismatch');
+  const projects = path.join(fs.realpathSync.native(userDataPath), HOST_DIR_NAME, 'projects');
+  if (rewriteProjectRoots(profile, projects) === null) throw new BackupError('team_backup_too_new');
+}
+
 /**
  * Restores `file` with `password`. `keys`: the host key store; `setAside`: the facts of the keyless team to set
  * aside first (lost-key page), or null. Answers { ok: true, team_name, exported_at, set_aside } or
@@ -150,25 +163,26 @@ async function restoreTeam({ userDataPath, file, password, keys, setAside = null
       onManifest: (manifest) => {
         restored = checkedManifest(manifest);
         if (!realParentInside(userDataPath, temp)) throw new BackupError('team_restore_failed');
-        fs.mkdirSync(temp);
+        fs.mkdirSync(temp, { mode: DIR_MODE });
         made = true;
       },
       onDir: (rel) => {
         const parts = checkedRel(rel);
         if (!parts) throw new BackupError('team_backup_password_wrong');
-        fs.mkdirSync(path.join(temp, ...parts), { recursive: true });
+        fs.mkdirSync(path.join(temp, ...parts), { recursive: true, mode: DIR_MODE });
         noteFolders(parts);
       },
       onFileStart: (rel) => {
         const parts = checkedRel(rel);
         if (!parts || parts.length < 2) throw new BackupError('team_backup_password_wrong');
-        fs.mkdirSync(path.join(temp, ...parts.slice(0, -1)), { recursive: true });
+        fs.mkdirSync(path.join(temp, ...parts.slice(0, -1)), { recursive: true, mode: DIR_MODE });
         noteFolders(parts.slice(0, -1));
-        out = fs.openSync(path.join(temp, ...parts), 'wx');
+        out = fs.openSync(path.join(temp, ...parts), 'wx', FILE_MODE);
       },
       onFileData: (data) => { fs.writeSync(out, data); },
       onFileEnd: async () => { await syncFd(out); fs.closeSync(out); out = null; },
     } });
+    checkRestored(userDataPath, temp, restored.seed);
     for (const folder of folders) syncFolder(folder);
   } catch (error) {
     if (out !== null) { try { fs.closeSync(out); } catch { /* closed */ } }

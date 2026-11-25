@@ -68,8 +68,6 @@
   'use strict';
 
   var NODE = 'data-chat-node';
-  // Dispatched on a .chat-pane by renderer-side-panel-motion.js (same literal there).
-  var FIT_FLUSH_EVENT = 'jenny:composer-fit-flush';
   var jtFallback = function (key, fallback) { return fallback; };
   var CLONE_CLEARED_ATTRIBUTES = ['id', 'for', 'aria-describedby', 'aria-disabled', 'tabindex'];
   var CLONE_CLEARED_CLASSES = ['composer-control-inert', 'inv-chip--open'];
@@ -254,8 +252,7 @@
   function chipRunMode(groupEl) {
     var chip = groupEl.querySelector('[data-inv-chip="composer-run-mode"]');
     if (!chip) return 'ask';
-    if (chip.classList.contains('composer-run-mode-plan')) return 'plan';
-    return chip.classList.contains('composer-run-mode-auto') ? 'auto' : 'ask';
+    return ['plan', 'auto', 'propose', 'full_auto'].find(function (mode) { return chip.classList.contains('composer-run-mode-' + mode); }) || 'ask';
   }
 
   function createComposerSettingsFit(options) {
@@ -524,23 +521,30 @@
       getHost: deps.getHost,
     });
     // Side-panel motion measures the end state in one task; it asks every pane to settle its fit first.
-    function onFitFlush() { fit.flush(); }
-    if (paneRoot) paneRoot.addEventListener(FIT_FLUSH_EVENT, onFitFlush);
 
     /* The summary text: the model pill's visible label, run mode first when it
-       is not `ask`. Rewritten, and the fit rechecked, only when it changed. */
+       is not `ask` (row 192: every other mode, Full auto when armed over a stored
+       Auto), and the pill's cloud marking. Rewritten, and the fit rechecked,
+       only when it changed. */
     function sync() {
       if (disposed) return false;
-      var pillLabel = groupEl.querySelector('[data-inv-chip="composer-model"] .inv-chip-label');
+      var pill = groupEl.querySelector('[data-inv-chip="composer-model"]');
+      var pillLabel = pill && pill.querySelector('.inv-chip-label');
       var modelText = pillLabel ? String(pillLabel.textContent || '').trim() : '';
+      var cloudIcon = pill && pill.classList.contains('composer-model-pill--cloud') ? pill.querySelector('.composer-model-pill-cloud-icon') : null;
       var mode = String(getRunMode() || 'ask');
-      var modeText = mode === 'plan' ? jt('composer.runMode.plan', 'Plan') : mode === 'auto' ? jt('composer.runMode.auto', 'Auto') : '';
+      var modeChip = groupEl.querySelector('[data-inv-chip="composer-run-mode"]');
+      if (mode === 'auto' && modeChip && modeChip.classList.contains('composer-run-mode-full_auto')) mode = 'full_auto';
+      var modeText = mode === 'plan' ? jt('composer.runMode.plan', 'Plan') : mode === 'auto' ? jt('composer.runMode.auto', 'Auto')
+        : mode === 'propose' ? jt('composer.runMode.propose', 'Propose') : mode === 'full_auto' ? jt('composer.runMode.fullAuto', 'Full auto') : '';
       // The mode icon is the run-mode chip's own svg (keyed by its markup, so
       // a chip that re-renders after the projection still updates the clone).
-      var iconSource = modeText ? groupEl.querySelector('[data-inv-chip="composer-run-mode"] .inv-chip-icon svg') : null;
-      var key = modeText + '\u0000' + modelText + '\u0000' + (iconSource ? iconSource.outerHTML : '');
+      var iconSource = modeText && modeChip ? modeChip.querySelector('.inv-chip-icon svg') : null;
+      var key = modeText + '\u0000' + modelText + '\u0000' + (iconSource ? iconSource.outerHTML : '') + '\u0000' + Boolean(cloudIcon);
       if (key === summaryKey) return false;
       summaryKey = key;
+      var oldCloud = summary.querySelector(':scope > .composer-model-pill-cloud-icon');
+      if (oldCloud) oldCloud.remove();
       if (iconSource) {
         if (!modeIconEl) {
           modeIconEl = doc.createElement('span');
@@ -552,6 +556,9 @@
       } else if (modeIconEl) {
         modeIconEl.remove();
       }
+      // Row 192 C14: the model pill's cloud class and icon, right before the label.
+      summary.classList.toggle('composer-model-pill--cloud', Boolean(cloudIcon));
+      if (cloudIcon) summary.insertBefore(cloudIcon.cloneNode(true), labelEl);
       labelEl.replaceChildren();
       if (modeText) {
         var tag = doc.createElement('span');
@@ -594,7 +601,6 @@
       setOpen(false);
       disposed = true;
       fit.dispose();
-      if (paneRoot) paneRoot.removeEventListener(FIT_FLUSH_EVENT, onFitFlush);
       if (observer) observer.disconnect();
       observer = null;
       summary.removeEventListener('click', onSummaryClick);
@@ -862,7 +868,6 @@
   }
 
   return {
-    FIT_FLUSH_EVENT: FIT_FLUSH_EVENT,
     createPaneComposerRail: createPaneComposerRail,
     createComposerSettingsFit: createComposerSettingsFit,
     measureComposerToolbar: measureComposerToolbar,

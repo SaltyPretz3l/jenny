@@ -207,9 +207,8 @@ test('CSS: a chat-view button row stays on one line; the summary label gives way
   assert.match(body('.composer[data-toolbar-compact] .composer-rail > :is(.composer-send, .composer-stop-button, .composer-pause-button)'), /flex: none;/);
   // Gate F3 (2026-09-27): an overflowing rail spills past its end edge, never back over Attach and Commands.
   assert.match(body(':is(.chat-view, .ide-chat-dock-body) .composer .composer-toolbar-right'), /justify-content: safe flex-end;/);
-  // Collapsed while streaming, the queue button is the send arrow alone, Stop's size.
-  assert.match(body('.composer[data-toolbar-compact] .composer-rail > .composer-send.composer-send-queue'), /aspect-ratio: 1;[\s\S]*font-size: 0;/);
-  assert.match(body('.composer[data-toolbar-compact] .composer-rail > .composer-send.composer-send-queue::before'), /content: "\\2191" \/ "";/);
+  // Row 192: Queue is Send's size at every width, so the compact arrow override is gone.
+  assert.equal(css.includes('composer-send-queue'), false);
   assert.match(body('.composer[data-toolbar-compact] .composer-settings-summary'), /min-width: 0;/);
   assert.match(body('.composer[data-toolbar-compact] .composer-settings-summary .inv-chip-label'), /min-width: 0;[\s\S]*text-overflow: ellipsis;/);
   assert.match(body('.composer-settings-summary-mode-icon,\n.composer-settings-summary-caret'), /flex: none;/);

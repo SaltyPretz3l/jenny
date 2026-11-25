@@ -34,6 +34,9 @@
 //
 // Slice 6-7: `hostModelRelay { flowing }` (0 off, 1 to 4 at once): the owner's model relay setting for this Jenny's
 // own host (services/team/host/host-model-relay.js). Local to the host controller; never a host operation.
+// Row 201 (OD-5): `hostPoolContext { context_cap }`: the owner's cap on the pool's context length for the team this Jenny
+// hosts (null is Auto); like hostFileTools it is main's own, never a host operation. Row 201 (OD-4): `shareOllamaModels
+// { team_id, names? }`: the Ollama models this PC shares (a list sets them, null returns to the default, no `names` reads).
 // Row 123: `hostFileTools { on }`: the owner's project files setting for this Jenny's own host
 // (services/team/host/host-file-tools.js). Local to the host controller; never a host operation.
 //
@@ -88,6 +91,7 @@ const { BOARD_METHODS, BOARD_OPERATIONS, isBoardMethod } = require('./board-ipc'
 const boardIds = require('../boards/board-ids');
 const { LIMITS } = require('../host/team-chat-schema');
 const { isCursor } = require('./chat-answers');
+const { cleanShareSet } = require('./node/sharing-file');
 const { ATTACHMENT_METHODS, UPLOAD_ID, isAttachmentIds, isByteContainer } = require('./chat-attachments');
 const { PRESENCE_REPORTS } = require('./chat-live');
 const { isId, isSessionId } = require('../../server/team/ids');
@@ -128,6 +132,12 @@ const settingText = (value) => value === null || (typeof value === 'string' && v
 // A direct conversation's other participants: 1 to 7 distinct member ids.
 // A team model id (member-schema.js isTeamModel), or null for Automatic.
 const modelOrNull = (value) => value === null || isTeamModel(value);
+// Row 201 (OD-4): this PC's Ollama share set, or null for the default: the share set's own rule (sharing-file.js: 1 to 64 distinct printable names).
+const shareNames = (value) => value === null || (Array.isArray(value) && cleanShareSet(value)?.length === value.length);
+// Row 201 (OD-5): the owner's cap on the pool's context length in whole tokens, or null for Auto. The bounds are
+// host-layout.js POOL_CONTEXT_MIN and POOL_CONTEXT_AUTO, restated: a member's call loads no host module (tests/team-host-off.test.js).
+const poolCap = integer(2048, 1048576);
+const poolCapOrNull = (value) => value === null || poolCap(value);
 // Slice 5-6: an old team's id (its 17 UTC digits) and a backup password (its length rule is the controller's;
 // a password is never logged or answered).
 const setAsideId = (value) => typeof value === 'string' && /^\d{17}$/u.test(value);
@@ -267,10 +277,12 @@ const METHODS = Object.freeze({
     optional: ['public_address', 'relay_url', 'token'] },
   hostModelRelay: { fields: { flowing: integer(0, 4) } },
   hostFileTools: { fields: { on: boolean } },
+  hostPoolContext: { fields: { context_cap: poolCapOrNull } },
   shareStatus: { fields: {} },
   shareSet: { fields: { ...TEAM, on: boolean, confirmed: boolean }, optional: ['confirmed'] },
   sharePause: { fields: { ...TEAM, on: boolean, stop_running: boolean }, optional: ['stop_running'] },
   shareStop: { fields: { ...TEAM } },
+  shareOllamaModels: { fields: { ...TEAM, names: shareNames }, optional: ['names'] },
   gpuList: { fields: { ...TEAM } },
   gpuUse: { fields: { ...TEAM, cursor: COUNT, limit: integer(1, 50) }, optional: ['cursor', 'limit'] },
   teamModelSet: { fields: { ...TEAM, model: modelOrNull } },
@@ -298,7 +310,9 @@ const METHODS = Object.freeze({
   projectLeave: { fields: { ...PROJECT } },
   projectUnjoined: { fields: { ...TEAM } },
   projectJoin: { fields: { ...PROJECT, role: projectRole } },
-  projectAudit: { fields: { ...PROJECT, after_seq: COUNT, limit: integer(1, 100) }, optional: ['after_seq', 'limit'] },
+  // `before_seq`: the newest page below it, oldest first (the tail in one call; `next_cursor` is then the next `before_seq`).
+  projectAudit: { fields: { ...PROJECT, after_seq: COUNT, before_seq: POSITIVE, limit: integer(1, 100) },
+    optional: ['after_seq', 'before_seq', 'limit'] },
   projectConversations: { fields: { ...PROJECT } },
   conversationCreate: { fields: { ...PROJECT, title: bounded(0, 80) }, optional: ['title'] },
   // Row 169: `before_message_id` reads the page before that message for a conversation already open.
@@ -405,10 +419,10 @@ const LOCAL_METHODS = Object.freeze(['join', 'status', 'removeTeam', 'teamReconn
 const LIFECYCLE_METHODS = Object.freeze(['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow',
   'hostExport', 'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder']);
 const HOST_METHODS = Object.freeze(['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode',
-  'hostInternet', 'hostModelRelay', 'hostFileTools', ...LIFECYCLE_METHODS]);
+  'hostInternet', 'hostModelRelay', 'hostFileTools', 'hostPoolContext', ...LIFECYCLE_METHODS]);
 const RECONNECT_METHODS = Object.freeze(['teamReconnectCode', 'hostReconnectCode']);
 // Slice 4e: sharing this PC's GPU (local) and the team's GPUs (one host operation each, pool-view.js).
-const SHARE_METHODS = Object.freeze(['shareStatus', 'shareSet', 'sharePause', 'shareStop']);
+const SHARE_METHODS = Object.freeze(['shareStatus', 'shareSet', 'sharePause', 'shareStop', 'shareOllamaModels']);
 const PROJECT_DRAFT_METHODS = Object.freeze(['projectDraftGet', 'projectDraftSet']); // row 175 F6: local, no host operation
 const POOL_OPERATIONS = Object.freeze({ gpuList: 'team.node.list', gpuUse: 'team.pool.usage', teamModelSet: 'team.pool.model.set' });
 // Slice 3-9: the host operation each project method sends (services/team/team-projects.js). Marked local: a close

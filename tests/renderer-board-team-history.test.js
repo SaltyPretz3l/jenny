@@ -447,7 +447,34 @@ test('deleted boards: Restore sends boardRestore once, says so, reads again; a r
   m.bridge.push('onBoard', { kind: 'list_changed', team_id: TEAM, project_id: PROJECT });
   m.timers.fire(300);
   await tick();
-  assert.equal(m.q('[data-board-team-deleted]'), null, 'a failed read draws nothing');
+  assert.equal(m.q('[data-board-team-deleted]') !== null, true, 'a failed read keeps the section (it says so, see the retry test)');
+});
+
+test('deleted boards: a failed read keeps the section with an error and Retry; Retry reads again and the error goes (H24)', async (t) => {
+  const m = await mountTeam(t, { answers: { members: people(), boardTrash: { ok: true, boards: TRASHED } } });
+  const toggle = () => m.q('[data-board-team-deleted="toggle"]');
+  const retry = () => m.q('[data-board-team-deleted="retry"]');
+  assert.deepEqual([retry(), m.q('.board-team-deleted__error')], [null, null]);
+  m.bridge.answers.boardTrash = { ok: false, error: { reason: 'team_board_trash_limit' } };
+  m.bridge.push('onBoard', { kind: 'list_changed', team_id: TEAM, project_id: PROJECT });
+  m.timers.fire(300);
+  await tick();
+  assert.deepEqual([toggle().textContent.trim(), m.q('.board-team-deleted__error').textContent, retry().tagName, retry().title, m.q('.board-team-deleted__error').getAttribute('role')],
+    ['3 deleted boards', 'This project has too many deleted boards. Each is removed for good 7 days after it was deleted.', 'BUTTON', 'Try again', 'alert'], 'the rows stay and the host\'s sentence is said beside them');
+  retry().focus();
+  m.bridge.answers.boardTrash = { ok: true, boards: TRASHED.slice(0, 2) };
+  const reads = m.bridge.of('boardTrash').length;
+  retry().click();
+  await tick();
+  assert.deepEqual([m.bridge.of('boardTrash').length - reads, m.q('.board-team-deleted__error'), retry(), toggle().textContent.trim()], [1, null, null, '2 deleted boards']);
+  assert.equal(m.doc.activeElement, toggle(), 'the focus moves on with the control that went');
+  // A first read that fails: no rows to show, but the section is there with the error and Retry.
+  const first = await mountTeam(t, { answers: { members: people(), boardTrash: { ok: false, reason: 'team_board_unavailable' } } });
+  assert.deepEqual([first.q('[data-board-team-deleted="toggle"]'), first.q('.board-team-deleted__error').textContent, first.q('[data-board-team-deleted="retry"]') !== null], [null, 'Deleted boards could not be read.', true]);
+  first.bridge.answers.boardTrash = { ok: true, boards: TRASHED };
+  first.q('[data-board-team-deleted="retry"]').click();
+  await tick();
+  assert.deepEqual([first.q('.board-team-deleted__error'), first.q('[data-board-team-deleted="toggle"]').textContent.trim()], [null, '3 deleted boards']);
 });
 
 test('keyboard: Take back stays reachable by Tab, the toggle is a button with aria-expanded, and the stylesheet hides with opacity and moves nothing', async (t) => {

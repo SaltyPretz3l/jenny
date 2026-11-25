@@ -64,6 +64,9 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// What /props says when no node has reported a context length (the old desktop default).
+const UNKNOWN_CONTEXT_LENGTH = 32768;
+
 function hasImagePart(body) {
   if (!Array.isArray(body.messages)) return false;
   return body.messages.some((message) => isPlainObject(message) && Array.isArray(message.content)
@@ -168,8 +171,10 @@ function createPoolGateway({ scheduler, bootKey, clock = Date.now, logger, limit
   function serveProps(context) {
     const summary = scheduler.poolSummary();
     // The largest model's length, capped by the owner's configured value: each turn
-    // carries its own leased model's length as a per-request bound (slice 4f).
-    const lengths = [summary.largest_context_length, limits.contextCap].filter((n) => Number.isSafeInteger(n));
+    // carries its own leased model's length as a per-request bound (slice 4f). No node says its length yet
+    // (row 201, OD-5: the desktop default cap is Auto, 1048576): the old 32K default stands in, never Auto.
+    const largest = Number.isSafeInteger(summary.largest_context_length) ? summary.largest_context_length : UNKNOWN_CONTEXT_LENGTH;
+    const lengths = [largest, limits.contextCap].filter((n) => Number.isSafeInteger(n));
     const props = { modalities: { vision: summary.vision === true } };
     if (lengths.length) props.default_generation_settings = { n_ctx: Math.min(...lengths) };
     if (summary.thinking) {

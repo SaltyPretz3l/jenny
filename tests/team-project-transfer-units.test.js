@@ -367,3 +367,24 @@ test('progress pushes at most twice a second; every state change goes at once', 
   progress({ state: 'failed' }, true);
   assert.deepEqual(pushes.slice(-2).map((p) => p.state), ['done', 'failed']);
 });
+
+test('E69: the call refuses a sensitive folder with the host word and the name, so the UI can name it', async (t) => {
+  const picked = path.join(tempDir(t, 'jenny-units-src-'), '.vscode');
+  fs.mkdirSync(picked);
+  fs.writeFileSync(path.join(picked, 'tasks.json'), '{}');
+  const { one } = transfers(t, fakeHost(), { picks: [picked] });
+  assert.deepEqual(await one.call('uploadFolder', { project_id: P }),
+    { ok: false, error: { code: 'invalid_request', reason: 'team_project_path_invalid', name: '.vscode' } });
+});
+
+test('download: a file over the 64 MiB limit is an explicit per-file error; the others still land', async (t) => {
+  const folder = tempDir(t, 'jenny-units-dest-');
+  const small = Buffer.from('small');
+  const big = { index: 0, path: 'big.bin', size: LIMITS.maxFileBytes + 1, sha256: sha(Buffer.from('x')) };
+  const host = fakeHost({ pages: [manifest([big, entryOf(1, 'ok.txt', small)])], parts: { 1: small } });
+  const done = await runDownload(deps(host.manager, folder));
+  assert.deepEqual([done.files, done.skipped], [1, 0], JSON.stringify(done));
+  assert.deepEqual(done.failed, [{ path: 'big.bin', reason: 'team_download_file_too_large' }]);
+  assert.deepEqual(tree(folder), ['ok.txt']);
+  assert.deepEqual(host.sent.filter((call) => call[0] === 'getPart').map((call) => call[1]), [1], 'no part read for it');
+});

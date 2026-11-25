@@ -110,10 +110,8 @@ function requiredModelStepStatus(steps) {
 function computeSetupHealth(setup) {
   const source = setup && typeof setup === 'object' && !Array.isArray(setup) ? setup : {};
   const steps = normalizeSetupSteps(source.steps);
-  const required = {
-    workspaceRoot: normalizeSetupStepStatus(steps.workspaceRoot),
-    model: requiredModelStepStatus(steps),
-  };
+  // A model route alone completes setup; the workspace folder is asked for when file tools need it.
+  const required = { model: requiredModelStepStatus(steps) };
   const pendingSteps = [];
   const skippedSteps = [];
   Object.keys(required).forEach((key) => {

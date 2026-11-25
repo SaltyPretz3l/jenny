@@ -1,6 +1,6 @@
 const path = require('node:path');
 const { buildMemoryPolicy } = require('./backend-memory');
-const { browserOffNote } = require('./browser-off-note');
+const { browserOffNote, computerOffNote } = require('./browser-off-note');
 const { visibleChatPredicate } = require('./memory-reflection-eligibility');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
 
@@ -426,7 +426,8 @@ async function assembleContextForChat(service, options) {
   // Row 94 P3: app_view outcomes ride the same block, so the protocol's block vocabulary stays closed.
   const presentationNote = [service.workspacePresentationService?.consumeOutcomeNote?.(resolvedSessionId),
     service.appView?.consumeOutcomeNote?.(resolvedSessionId),
-    browserOffNote(service, resolvedSessionId, { planMode: sessionSummary?.plan_mode === true })].filter(Boolean).join('\n\n');
+    browserOffNote(service, resolvedSessionId, { planMode: sessionSummary?.plan_mode === true }),
+    computerOffNote(service, resolvedSessionId, { planMode: sessionSummary?.plan_mode === true })].filter(Boolean).join('\n\n');
   if (presentationNote) {
     appendContextBlock('workspace_presentation', presentationNote);
     promptContributions.workspace_presentation_block = summarizeTextBlock(presentationNote);

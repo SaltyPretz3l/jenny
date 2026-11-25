@@ -854,15 +854,6 @@ class _ReconfigureTransport(MCPTransport):
     def call_tool(self, tool_name, arguments, **_kwargs):
         return {"content": [{"type": "text", "text": "ok"}]}
 
-    def list_resources(self, **_kwargs):
-        return {"resources": []}
-
-    def read_resource(self, uri, **_kwargs):
-        return {"contents": []}
-
-    def list_resource_templates(self, **_kwargs):
-        return {"resourceTemplates": []}
-
     def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
         return []
 

@@ -6,6 +6,7 @@ const {
 const { refusalMessageForStatus } = require('./vram-load-preflight');
 const { managedModelKey } = require('../shell-config-engines');
 const { createCancellationError } = require('./chat-stream-terminal-utils');
+const { isStrataModel } = require('./strata-load-path');
 
 async function waitForManagedInitialization(service, signal) {
   while (service._managedInitializeFlight) {
@@ -413,6 +414,47 @@ async function ensureManagedNinferReadyForChat(
   return true;
 }
 
+// The Strata sibling (row 200 S2 step 6): only while Strata is the last-used
+// managed server (the three boot targets are mutually exclusive) and its model,
+// or no model, is current. A crashed or stopped server relaunches with the saved
+// settings; a server still starting is awaited.
+async function ensureManagedStrataReadyForChat(
+  service,
+  { engineType, sessionId, streamId, traceId } = {}
+) {
+  if (service?.hostPorts?.posture?.ownsEngineLifecycle === false) return false;
+  if (String(engineType || '').trim().toLowerCase() !== 'openai-compatible') return false;
+  if (service.configService?.getLocalEngines?.()?.strata?.lastUsed !== true) return false;
+  const manager = service.options?.getStrataManager?.() || null;
+  if (!manager) return false;
+  const currentModel = String(service.currentModel || '').trim();
+  if (currentModel && !isStrataModel(service, currentModel)) return false;
+  let status = manager.getStatus?.() || {};
+  if (status.state === 'ready' && typeof manager.settled === 'function') status = (await manager.settled()) || status;
+  if (status.state === 'ready') return true;
+  if (!['crashed', 'stopped', 'stopping', 'starting'].includes(status.state)) return false;
+  if (status.state !== 'starting') {
+    service._emitServiceLog('WARN', 'chat.strata_preflight_restart', {
+      sessionId, streamId, traceId, state: status.state, stoppedBy: status.stoppedBy || '',
+    });
+  }
+  let readyStatus;
+  try {
+    readyStatus = await manager.ensureRunning(null);
+  } catch (error) {
+    readyStatus = { state: status.state, lastError: String(error?.message || error) };
+  }
+  if (readyStatus?.state !== 'ready') {
+    const detail = refusalMessageForStatus(service, readyStatus) || readyStatus?.lastError || readyStatus?.state;
+    service._emitServiceLog('WARN', 'chat.strata_preflight_unavailable', {
+      sessionId, streamId, traceId, state: readyStatus?.state, message: detail,
+    });
+    throw createOllamaPreflightError(`Strata is unavailable: ${detail}`);
+  }
+  service._emitServiceLog('INFO', 'chat.strata_preflight_ready', { sessionId, streamId, traceId });
+  return true;
+}
+
 function resolveReconnectReason(errorPayload) {
   const payload = errorPayload && typeof errorPayload === 'object' && !Array.isArray(errorPayload)
     ? errorPayload
@@ -467,6 +509,7 @@ module.exports = {
   ensureManagedEngineNotFallbackForChat,
   ensureManagedLlamaServerReadyForChat,
   ensureManagedNinferReadyForChat,
+  ensureManagedStrataReadyForChat,
   ensureManagedOllamaReadyForChat,
   ensureManagedSidecarReadyForChat,
   scheduleManagedSidecarReconnectAfterFailure,

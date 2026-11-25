@@ -205,7 +205,7 @@
 
     async function runTool() {
       const canvas = ctx.surface.element.parentNode;
-      const opener = canvas ? canvas.querySelector('[data-board-tool="kind-file"]') : null;
+      const opener = canvas ? canvas.querySelector('[data-board-tool="kind-file"]:not([hidden]), [data-board-more]') : null; // More while the tool is in its menu
       if (form) { form.field.focus({ preventScroll: true }); return; }
       // The folder is asked first: with none, the reason is told and no field opens.
       let status;

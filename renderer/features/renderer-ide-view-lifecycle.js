@@ -75,7 +75,7 @@
         p.debugInspector?.dispose();
         p.quickOpen?.dispose(); p.branchSwitcher?.dispose();
         p.tabsController?.dispose(); p.statusBar?.dispose();
-        p.gitFeature?.dispose(); p.problemsPanel?.dispose(); p.workspaceChats?.dispose();
+        p.gitFeature?.dispose(); p.problemsPanel?.dispose(); p.gitLinks?.dispose();
         p.runScripts?.dispose(); p.testRunnerWiring?.dispose(); p.activityView?.dispose();
         p.workbenchWiring?.dispose(); p.stageSwitch?.dispose(); p.editorGroups?.dispose();
         p.ideChatDock?.dispose();
@@ -95,7 +95,6 @@
     // Layout lives in renderer-ide-layout.js; renderTabs stays in the controller.
     function renderIde() {
       p.editorGroups?.reconcile(); // editor stacks follow the tabs' groups before the workbench renders
-      p.workspaceChats?.reconcileLayout(); // and Chat 2 / Changes 2 join it once a second chat exists
       p.layout?.render();
       p.renderTabs();
       p.stageSwitch?.render();

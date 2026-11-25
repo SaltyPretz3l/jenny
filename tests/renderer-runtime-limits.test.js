@@ -385,9 +385,9 @@ test('Advanced and its limits companion build one skeleton before engine state, 
     pending.resolve({ values: { cloudMaxToolsPerTurn: 7 }, fields: require('../renderer/shared/engine-tuning-schema').ENGINE_TUNING_FIELDS });
     await settle();
     assert.equal(host.querySelector('[data-draft="limit_local_descendants"]'), input);
-    targets.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
+    targets.advancedTuningActions.querySelector('[data-tuning-reset-all="arm"]').click();
     assert.deepEqual(writes, []); assert.deepEqual(engineResets, []);
-    targets.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
+    targets.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]').click();
     await settle();
     assert.deepEqual(writes[0].patch, { resources: { tests: snap.limit_defaults.defaults.resources.tests } });
     assert.deepEqual(engineResets, [[]]);

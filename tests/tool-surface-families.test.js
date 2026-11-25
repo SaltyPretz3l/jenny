@@ -10,7 +10,7 @@ test('surface registry has the ordered sections and frozen public arrays', () =>
   assert.deepEqual(SURFACE_FAMILIES.map(({ id, section }) => [id, section]), [
     ['files', 'project'], ['terminal', 'project'], ['git', 'project'], ['python', 'project'],
     ['code', 'project'], ['checks', 'project'], ['artifacts', 'create'], ['images', 'create'],
-    ['web', 'reach'], ['browser_use', 'reach'], ['knowledge', 'reach'], ['home', 'reach'], ['helpers', 'reach'],
+    ['web', 'reach'], ['browser_use', 'reach'], ['computer_use', 'reach'], ['knowledge', 'reach'], ['home', 'reach'], ['helpers', 'reach'],
   ]);
   assert.ok(Object.isFrozen(SURFACE_FAMILIES));
   assert.ok(Object.isFrozen(ALWAYS_ON_TOOL_NAMES));
@@ -44,9 +44,9 @@ test('explicit tool names win and manifest families provide the fallback', () =>
 });
 
 test('terminal off disables all six shell tools including monitors', () => {
-  // Row 114: browser is off until a chat says true, so every resolution lists it.
+  // Row 114: browser is off until a chat says true, so every resolution lists it; row 196 adds computer.
   assert.deepEqual(resolveRequestToolPreferences({ families: { terminal: false } }), {
-    disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'monitor',
+    disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'computer', 'monitor',
       'run_command', 'run_temp_script', 'stop_background_job'],
   });
 });
@@ -83,10 +83,10 @@ test('MCP connection off disables only matching catalog tools', () => {
     read_file: { available: true },
   };
   assert.deepEqual(resolveRequestToolPreferences({ connections: { 'mcp:github': false } }, catalog), {
-    disabled_tools: ['browser', 'mcp__github__search'],
+    disabled_tools: ['browser', 'computer', 'mcp__github__search'],
   });
   assert.deepEqual(resolveRequestToolPreferences({ connections: { 'plugin:render': false } }, catalog), {
-    disabled_tools: ['browser', 'plugin_render'],
+    disabled_tools: ['browser', 'computer', 'plugin_render'],
   });
 });
 
@@ -98,17 +98,18 @@ test('catalog family members join manifest tools and always-on names cannot be d
   };
   const result = resolveRequestToolPreferences({ families: { terminal: false },
     connections: { 'plugin:shell': false } }, catalog);
-  assert.deepEqual(result, { disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'monitor',
+  assert.deepEqual(result, { disabled_tools: ['browser', 'check_background_job', 'check_monitor', 'computer', 'monitor',
     'plugin_shell', 'run_command', 'run_temp_script', 'stop_background_job'] });
 });
 
 test('all-on, empty, unknown and non-boolean preferences emit no request arrays', () => {
   const allOn = Object.fromEntries(SURFACE_FAMILIES.map(family => [family.id, true]));
   assert.equal(resolveRequestToolPreferences({ families: allOn }), undefined);
-  // Row 114: anything short of an explicit browser_use true still lists the browser, and nothing else.
+  // Row 114: anything short of an explicit browser_use true still lists the browser, and nothing else
+  // but the computer tool (row 196), whose own switch is also off.
   for (const raw of [undefined, {}, { families: {} },
     { families: { unknown: false, files: 'false', terminal: 0 }, connections: { unknown: false } },
     { families: [], connections: [] }, { connections: { 'mcp:github': true } }]) {
-    assert.deepEqual(resolveRequestToolPreferences(raw), { disabled_tools: ['browser'] });
+    assert.deepEqual(resolveRequestToolPreferences(raw), { disabled_tools: ['browser', 'computer'] });
   }
 });

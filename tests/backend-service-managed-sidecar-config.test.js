@@ -165,29 +165,6 @@ test('managed sidecar config forwards codex CLI runtime settings from integratio
   assert.equal(config.codex_cli_request_timeout_seconds, 900);
 });
 
-test('managed sidecar config forwards internal MCP resource flag default-off', async () => {
-  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-managed-mcp-resource-config-'));
-  trackDirectory(userDataPath);
-
-  const service = new BackendService({
-    userDataPath,
-    repoRoot: process.cwd(),
-    pythonExecutable: process.execPath,
-    safeStorage: createFakeSafeStorage(),
-    defaultModel: DEFAULT_MANAGED_SHELL_MODEL,
-  });
-
-  const disabledConfig = buildManagedSidecarConfig(service);
-  service.featureFlags = {
-    ...(service.featureFlags || {}),
-    mcp_resources: true,
-  };
-  const enabledConfig = buildManagedSidecarConfig(service);
-
-  assert.equal(disabledConfig.tools_mcp_resources_enabled, false);
-  assert.equal(enabledConfig.tools_mcp_resources_enabled, true);
-});
-
 test('managed sidecar config merges the mcpDiscoveryService.getSidecarConfig result', async () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-managed-mcp-http-transport-config-'));
   trackDirectory(userDataPath);

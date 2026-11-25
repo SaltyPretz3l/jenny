@@ -128,13 +128,16 @@ async function streamThreeToolTurn(send, document, window) {
   await settle(document, window, streamId, replay, tools.map((tool) => tool.callId));
 }
 
-test('Answers folds a settled run into one summary row; Thinking renders no run', async (t) => {
+test('Answers folds a settled run into one summary row; Thinking shows it as a run line under the heading', async (t) => {
   const { window, document, send } = await loadApp(t);
   await streamThreeToolTurn(send, document, window);
   const timeline = timelineOf(document);
   assert.equal(timeline.dataset.transcriptView, 'thinking');
-  assert.equal(runRows(timeline).length, 0, 'the default view emits no run rows');
-  assert.equal(timeline.querySelectorAll('[data-run-id]').length, 0, 'the default view stamps no run attributes');
+  // C15: the default view emits the run line as a heading member, in view after the turn's opening note.
+  assert.equal(runRows(timeline).length, 1);
+  assert.equal(runRows(timeline)[0].getAttribute('data-ledger-member'), 'run');
+  assert.equal(runRows(timeline)[0].getAttribute('data-ledger-show'), 'true');
+  assert.equal(runRows(timeline)[0].querySelector('.tool-run-summary').textContent, 'Read 3 files');
 
   await switchView(window, document, 'answers');
   const [summary] = runRows(timeline);
@@ -148,6 +151,31 @@ test('Answers folds a settled run into one summary row; Thinking renders no run'
   assert.equal(summary.nextElementSibling, members[0], 'the summary sits directly before its first step');
   assert.ok(members.every((row) => row.getAttribute('data-run-expanded') === 'false'), 'the run starts collapsed');
   assert.ok(members.every((row) => row.parentElement === summary.parentElement), 'members stay flat siblings of the summary');
+});
+
+// Row 192: the default view gives the same turn one steps heading through the real shell.
+test('Thinking gives a settled turn one folded steps heading that click, Enter and Space toggle', async (t) => {
+  const { window, document, send } = await loadApp(t);
+  await streamThreeToolTurn(send, document, window);
+  const timeline = timelineOf(document);
+  const headings = [...timeline.querySelectorAll('.chat-row[data-row-kind="work_ledger"]')];
+  assert.equal(headings.length, 1, 'one heading for the turn');
+  const [heading] = headings;
+  assert.equal(heading.parentElement.firstElementChild, heading, 'the heading is the first row of the list');
+  assert.equal(heading.querySelector('.work-ledger-lead').textContent, '3 steps');
+  assert.equal(heading.querySelector('.tool-run-summary').textContent.replace(/\s+/g, ' ').trim(), '3 steps · Read 3 files');
+  const steps = () => [...timeline.querySelectorAll('.chat-row[data-ledger-member="step"]')];
+  assert.equal(steps().length, 3);
+  assert.ok(steps().every((row) => !row.hasAttribute('data-ledger-show')), 'a finished turn starts folded');
+  const toggle = heading.querySelector('[data-tool-run-toggle]');
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'click opens');
+  assert.ok(steps().every((row) => row.getAttribute('data-ledger-show') === 'true'));
+  toggle.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'Enter closes');
+  toggle.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'Space opens');
+  assert.ok(steps().every((row) => row.getAttribute('data-ledger-show') === 'true'));
 });
 
 test('the run toggle expands in place, survives a re-render and resets on a view switch', async (t) => {

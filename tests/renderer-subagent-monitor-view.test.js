@@ -27,7 +27,7 @@ test('terminal summary uses the inventory action primitive and stable inspector 
   assert.match(html, /<button/);
   assert.match(html, /data-subagent-open="call-1"/);
   assert.match(html, /aria-controls="subagentInspector"/);
-  assert.match(html, /title="Open subagent monitor: &lt;Inspect persistence&gt;,/);
+  assert.match(html, /title="Open helper monitor: &lt;Inspect persistence&gt;,/);
   assert.doesNotMatch(html, /<script>/);
 });
 
@@ -66,7 +66,7 @@ test('live summary renders only the newest active delegate call', () => {
   const html = view.renderLiveSummary(steps, { now: 3_000 });
 
   assert.match(html, /data-subagent-open="call-newer"/);
-  assert.match(html, /1 subagent/);
+  assert.match(html, /1 helper /);
   assert.doesNotMatch(html, /call-older/);
 });
 const modelUtils = require('../renderer/chat/renderer-subagent-monitor-model');
@@ -82,7 +82,8 @@ const CHILDREN = [
 
 test('the tree page: parent row, one treeitem button per child, footer totals', () => {
   const parts = view.renderMonitor(batchModel(CHILDREN), { page: 'tree' });
-  assert.match(parts.header, /<h2[^>]*>Subagents<\/h2>/);
+  assert.match(parts.header, /<h2[^>]*>Helpers<\/h2>/);
+  assert.doesNotMatch((parts.header + parts.body + parts.footer).replace(/<[^>]+>/g, ''), /ubagent/, 'one name, Helpers');
   assert.match(parts.header, /data-subagent-close="true"/);
   assert.match(parts.body, /role="tree"/);
   assert.match(parts.body, /Jenny<\/span>/);
@@ -114,7 +115,7 @@ test('the drill-in page: back control, title and status line, steps, answer, evi
   }]), { page: 'detail' });
   assert.match(parts.header, /data-subagent-back="true"/);
   assert.match(parts.body, /Tool observed/, 'tool-observed provenance is labelled');
-  assert.match(parts.header, /title="Back to subagent list"/);
+  assert.match(parts.header, /title="Back to helper list"/);
   assert.match(parts.body, /<h2[^>]*class="subagent-detail-title"[^>]*>Survey &lt;renderer&gt;<\/h2>/);
   assert.match(parts.body, /Completed · <span>41s<\/span> · qwen-test/);
   assert.match(parts.body, /subagent-step--ok/);
@@ -378,9 +379,45 @@ test('a delegation whose details were too large says where the answer is, on bot
   const step = { source: 'delegate', toolCallId: 'call-1', childTaskId: 'a', childOrdinal: 1, childCount: 1, childLabel: 'Survey', status: 'running', startedAt: 1, updatedAt: 2 };
   const tooLarge = { tool_result: { call_id: 'call-1', metadata: { _externalized: true } } };
   const settled = model.buildMonitorFromMessages([{ agent_status_steps: [step] }, tooLarge], 'call-1');
-  const note = /Subagent details were too large to show here\. The answer is in the delegate tool result in the chat\./;
+  const note = /Helper details were too large to show here\. The answer is in the delegate tool result in the chat\./;
   assert.match(view.renderMonitor(settled, { page: 'tree' }).body, note);
   assert.match(view.renderMonitor(settled, { page: 'detail' }).body, note);
   const live = model.buildMonitorFromMessages([{ agent_status_steps: [step] }], 'call-1');
   assert.doesNotMatch(view.renderMonitor(live, { page: 'tree' }).body, /too large/);
+});
+
+test('a write child shows where its change is kept, or that nothing changed', () => {
+  const page = (worktree) => view.renderMonitor(batchModel([{ ...CHILDREN[0], answer: 'Done.', worktree }]), { page: 'detail' }).body;
+  const kept = page({ branch: 'jenny-helper/fix-<1>', path: 'C:/wt/fix', kept: true, files_changed: 2, insertions: 5, deletions: 1, commits: 0 });
+  assert.match(kept, />Worktree</);
+  assert.match(kept, /Kept on branch jenny-helper\/fix-&lt;1&gt;\. Files changed: 2\. Lines: \+5 −1\. Commits: 0\./);
+  assert.match(kept, /C:\/wt\/fix/);
+  assert.match(page({ branch: 'b', path: 'p', kept: true, files_changed: null }), /its changes could not be counted/);
+  const removed = page({ branch: 'b', path: 'C:/wt/gone', kept: false, files_changed: 0, insertions: 0, deletions: 0, commits: 0 });
+  assert.match(removed, /No changes; its worktree was removed\./);
+  assert.doesNotMatch(removed, /C:\/wt\/gone/);
+  assert.doesNotMatch(page(undefined), />Worktree</);
+});
+
+test('Runs (row 195): the panel header is one back control carrying the helper it came from, with no title or Close', () => {
+  for (const page of ['tree', 'detail']) {
+    const parts = view.renderMonitor(batchModel(CHILDREN), { page });
+    assert.match(parts.runsHeader, /data-subagent-runs-back="helper:call-1:b"/);
+    assert.equal(parts.runsHeader.replace(/<[^>]+>/g, ''), 'Runs');
+    assert.match(parts.runsHeader, /aria-label="Back to Runs"/);
+    assert.doesNotMatch(parts.runsHeader, /data-subagent-close|data-subagent-back|subagent-monitor-title/);
+    assert.match(parts.header, /data-subagent-close="true"/, 'the dock keeps its own header');
+  }
+});
+
+test('Runs (row 195): helperRuns lists every child of every delegation, running and settled, and ignores plain messages', () => {
+  const step = (extra) => ({ source: 'delegate', toolCallId: 'call-1', childTaskId: 'a', childLabel: 'Scan', status: 'running', startedAt: 1_000, updatedAt: 2_000, ...extra });
+  const done = { tool_result: { call_id: 'call-2', metadata: { subagent_batch_report: { status: 'completed', tasks: CHILDREN } } } };
+  const rows = view.helperRuns([{ role: 'user', content: 'hi' }, { agent_status_steps: [step(), step({ childTaskId: 'b', childLabel: 'Check', status: 'completed', childTerminal: true })] }, done]);
+  assert.deepEqual(rows.map((row) => [row.id, row.label, row.live, row.failed]), [
+    ['helper:call-1:a', 'Scan', true, false], ['helper:call-1:b', 'Check', false, false],
+    ['helper:call-2:a', 'Survey <renderer>', false, false], ['helper:call-2:b', 'Survey sidecar', false, true]]);
+  assert.deepEqual([rows[0].delegationKey, rows[0].childKey, rows[0].statusLabel, rows[0].startedAtMs, rows[0].endedAtMs], ['call-1', 'a', 'Running', 1_000, 0]);
+  assert.deepEqual(view.helperRuns([{ role: 'user', content: 'hi' }]), []);
+  assert.deepEqual(view.helperRuns(null), []);
 });

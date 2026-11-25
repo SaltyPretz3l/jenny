@@ -107,7 +107,7 @@ test('shell config service seeds workspace root once and persists reminders', ()
 
   const nextState = reloaded.getState();
   assert.equal(nextState.toolsWorkspaceRoot, 'C:/saved/workspace');
-  assert.equal(nextState.tools.imageRead, false);
+  assert.equal(nextState.tools.imageRead, true);
   assert.equal(nextState.tools.pythonRuntime, true);
   assert.equal(nextState.proactive.reminders.length, 1);
   assert.equal(nextState.proactive.reminders[0].dailyAt, '09:15');
@@ -209,7 +209,7 @@ test('shell config service rejects invalid reminder upserts', () => {
 test('shell config v20 exposes setup, assistant identity, and Codex CLI defaults', () => {
   const normalized = normalizeState({});
 
-  assert.equal(CONFIG_VERSION, 59);
+  assert.equal(CONFIG_VERSION, 60);
   assert.equal(normalized.workspaceIde.preferences.showGenerated, false);
   assert.deepEqual(normalized.codexCli, DEFAULT_CODEX_CLI);
   assert.deepEqual(normalized.setup, {
@@ -707,17 +707,17 @@ test('shell config service persists hidden python runtime enablement', () => {
   assert.equal(reloaded.getState().tools.pythonRuntime, true);
 });
 
-test('shell config service persists hidden image read enablement', () => {
+test('shell config service defaults image reads on and persists turning them off', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-image-read-'));
   trackDirectory(userDataPath);
 
   const service = new ShellConfigService({ userDataPath });
-  assert.equal(service.getState().tools.imageRead, false);
+  assert.equal(service.getState().tools.imageRead, true);
 
-  service.updateFeatureSettings({ tools: { imageRead: true } });
+  service.updateFeatureSettings({ tools: { imageRead: false } });
 
   const reloaded = new ShellConfigService({ userDataPath });
-  assert.equal(reloaded.getState().tools.imageRead, true);
+  assert.equal(reloaded.getState().tools.imageRead, false);
 });
 
 test('shell config service retires the hidden Mermaid preference', () => {
@@ -870,6 +870,7 @@ test('shell config service migrates v6 tool toggles and feature overrides into t
     richFiles: true,
     subagents: true,
     lsp: false,
+    computer: true,
   });
   assert.equal(state.tools.todo, undefined);
   assert.equal(state.toolsWorktreeEnabled, false);

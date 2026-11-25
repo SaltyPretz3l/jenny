@@ -30,7 +30,6 @@ class MCPConnectPlan:
     servers: tuple[MCPServerConfig, ...]
     request_timeout_seconds: float
     sse_enabled: bool
-    resources_enabled: bool
     allow_private_addresses: bool
     allow_loopback: bool = False
 
@@ -56,7 +55,6 @@ class MCPConnectTask:
             self.client.configure(
                 self.plan.servers,
                 sse_enabled=self.plan.sse_enabled,
-                resources_enabled=self.plan.resources_enabled,
                 allow_private_addresses=self.plan.allow_private_addresses,
                 allow_loopback=self.plan.allow_loopback,
                 reuse_from=reuse_from,

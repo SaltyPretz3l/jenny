@@ -26,6 +26,12 @@ def test_validate_chat_messages_rejects_message_content_over_cap() -> None:
         chat_message_validation.validate_chat_messages(messages)
 
 
+def test_validate_chat_messages_accepts_a_100k_token_document() -> None:
+    # Row 200 S3: the frozen ab_l2_100k prompt is 433,633 bytes; the old 256 KiB cap refused it.
+    assert chat_message_validation.MAX_MESSAGE_CONTENT_BYTES == 1024 * 1024
+    chat_message_validation.validate_chat_messages([{"role": "user", "content": "x" * 433_633}])
+
+
 def test_validate_chat_messages_accepts_nested_content_under_cap() -> None:
     chat_message_validation.validate_chat_messages(
         [

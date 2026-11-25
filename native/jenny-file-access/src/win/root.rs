@@ -5,6 +5,8 @@
 //! configured root. Nothing below the root is opened here.
 #![forbid(unsafe_code)]
 
+use std::sync::{Mutex, PoisonError};
+
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
 };
@@ -44,6 +46,31 @@ impl RootPin {
     pub fn identity(&self) -> Identity {
         self.identity
     }
+}
+
+/// The roots whose self-check passed in this process, by identity. The check
+/// enumerates a directory, so it runs once per root and not on every tool
+/// call; everything else `open_root` decides still runs on each open. Only a
+/// pass is remembered, and the list is bounded: the oldest entry makes room.
+static CHECKED_ROOTS: Mutex<Vec<Identity>> = Mutex::new(Vec::new());
+/// More roots than one process pins in practice; a forgotten root is checked
+/// again, which costs one enumeration.
+const CHECKED_ROOTS_MAX: usize = 256;
+
+fn already_checked(identity: Identity) -> bool {
+    let checked = CHECKED_ROOTS.lock().unwrap_or_else(PoisonError::into_inner);
+    checked.contains(&identity)
+}
+
+fn remember_checked(identity: Identity) {
+    let mut checked = CHECKED_ROOTS.lock().unwrap_or_else(PoisonError::into_inner);
+    if checked.contains(&identity) {
+        return;
+    }
+    if checked.len() == CHECKED_ROOTS_MAX {
+        checked.remove(0);
+    }
+    checked.push(identity);
 }
 
 /// The pins the exports hand out.
@@ -134,10 +161,15 @@ pub fn open_root<P: SystemProbe>(
         return Err(Refusal::of(Status::RootIdentity));
     }
 
-    // 6. The read-only self-check.
-    probe
-        .self_check(&handle)
-        .map_err(|error| Refusal::system(Status::SelfcheckFailed, error.0))?;
+    // 6. The read-only self-check, once per root in this process. The identity
+    // above was read from this handle, so a root that is not the one that
+    // passed is checked itself.
+    if !already_checked(identity) {
+        probe
+            .self_check(&handle)
+            .map_err(|error| Refusal::system(Status::SelfcheckFailed, error.0))?;
+        remember_checked(identity);
+    }
     Ok(RootPin { handle, identity })
 }
 

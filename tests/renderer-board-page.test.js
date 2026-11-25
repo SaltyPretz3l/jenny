@@ -160,13 +160,12 @@ test('leaving the Board parks the page (kept built), and the tab going away mid-
   assert.equal(s.state.ui.activeView, 'chat', 'with the flag off a Board view is not kept');
 });
 
-test('the Board is remembered as the active view, is full-bleed, and the chrome pipeline shows #boardView only for it', async (t) => {
+test('the Board is remembered as the active view and the chrome pipeline shows #boardView only for it', async (t) => {
   const s = shellHarness(t);
   const persistence = require('../renderer/shell/renderer-active-view-persistence');
   persistence.persistActiveView('board');
   assert.equal(persistence.readPersistedActiveView(), 'board');
   persistence.persistActiveView('chat');
-  assert.equal(require('../renderer/shell/renderer-view-panel-registry').createViewPanelRegistry({ dom: {}, constants: {}, callbacks: {} }).getPanelDescriptor('board').panel, null);
   const chromePath = require.resolve('../renderer/chat/renderer-render-pipeline-chrome');
   delete require.cache[chromePath]; // it binds `window` when it loads
   const pipeline = require(chromePath).createChromePipeline({ state: s.state, dom: {}, callbacks: {} });

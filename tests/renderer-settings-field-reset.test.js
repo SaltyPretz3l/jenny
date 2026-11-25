@@ -40,30 +40,10 @@ function buildDom() {
   return { dom, documentRef: dom.window.document };
 }
 
-function createFakeTimers() {
-  let idCounter = 0;
-  const pending = new Map();
-  return {
-    setTimeoutFn: (fn) => {
-      const id = (idCounter += 1);
-      pending.set(id, fn);
-      return id;
-    },
-    clearTimeoutFn: (id) => { pending.delete(id); },
-    fireAll: () => {
-      const fns = Array.from(pending.values());
-      pending.clear();
-      fns.forEach((fn) => fn());
-    },
-    pendingCount: () => pending.size,
-  };
-}
-
 function createHarness(dom, documentRef, options) {
   const opts = options || {};
   const onAfterResetCalls = [];
   const logs = [];
-  const timers = createFakeTimers();
   const resetActionCalls = { appearance: 0, chatZoom: 0 };
   const resetActions = Object.assign(
     {
@@ -79,12 +59,10 @@ function createHarness(dom, documentRef, options) {
     log: (message) => logs.push(message),
     resetActions,
     confirmLabels: opts.confirmLabels,
-    armTimeoutMs: 5000,
-    setTimeoutFn: timers.setTimeoutFn,
-    clearTimeoutFn: timers.clearTimeoutFn,
+    confirmDetails: opts.confirmDetails,
   });
   return {
-    fieldReset, onAfterResetCalls, logs, timers, resetActionCalls,
+    fieldReset, onAfterResetCalls, logs, resetActionCalls,
   };
 }
 
@@ -106,79 +84,80 @@ test("mount() adds no per-field reset affordance: Revert is the shared binding's
   dom.window.close();
 });
 
-// ── two-step section reset: arm ─────────────────────────────────────────
+// ── section reset: the confirm strip ────────────────────────────────────
 
-test('the first click on a section reset trigger ARMS an inline confirm group instead of resetting immediately', () => {
+const stripOf = (documentRef) => documentRef.querySelector('.projects-confirm');
+
+test('the first click on a section reset trigger opens the confirm strip under the button instead of resetting', () => {
   const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
+  const harness = createHarness(dom, documentRef, { confirmLabels: { appearance: 'Reset Appearance to its defaults?' },
+    confirmDetails: { appearance: 'Your theme goes back to its defaults.' } });
   harness.fieldReset.mount();
 
   const trigger = documentRef.getElementById('appearanceResetButton');
   trigger.click();
 
-  assert.equal(harness.resetActionCalls.appearance, 0, 'not reset yet -- only armed');
-  assert.equal(trigger.hidden, true);
-  const container = trigger.closest('.settings-actions');
-  assert.equal(container.classList.contains('settings-reset-confirm'), true);
-  assert.equal(container.getAttribute('data-armed'), 'true');
-  assert.ok(container.querySelector('[data-action="confirm"]'), 'Confirm affordance shown');
-  assert.ok(container.querySelector('[data-action="cancel"]'), 'Cancel affordance shown');
-  assert.match(container.querySelector('.settings-reset-confirm-label').textContent, /Reset all\?/);
+  assert.equal(harness.resetActionCalls.appearance, 0, 'not reset yet -- only asked');
+  const strip = stripOf(documentRef);
+  assert.equal(strip.previousElementSibling, trigger.closest('.settings-actions'), 'under the button');
+  assert.equal(strip.getAttribute('role'), 'group');
+  assert.equal(strip.querySelector('strong').textContent, 'Reset Appearance to its defaults?');
+  assert.match(strip.textContent, /Your theme goes back to its defaults\./);
+  assert.equal(strip.querySelector('[data-action="confirm"]').textContent.trim(), 'Reset Appearance');
+  assert.ok(strip.querySelector('[data-action="confirm"]').className.includes('btn--danger'), 'the danger button');
+  assert.ok(strip.querySelector('[data-action="cancel"]'), 'Cancel shown');
+  assert.equal(documentRef.activeElement, strip.querySelector('[data-action="cancel"]'), 'the safe answer holds focus');
 
   dom.window.close();
 });
 
-test('Confirm performs the resetActions callback for that section and calls onAfterReset, then disarms', async () => {
+test('Confirm performs the resetActions callback for that section and calls onAfterReset, then removes the strip', async () => {
   const { dom, documentRef } = buildDom();
   const harness = createHarness(dom, documentRef);
   harness.fieldReset.mount();
 
   const trigger = documentRef.getElementById('appearanceResetButton');
   trigger.click();
-  const container = trigger.closest('.settings-actions');
-  container.querySelector('[data-action="confirm"]').click();
+  stripOf(documentRef).querySelector('[data-action="confirm"]').click();
   await flushAsync();
 
   assert.equal(harness.resetActionCalls.appearance, 1);
   assert.equal(harness.onAfterResetCalls.length, 1);
-  assert.equal(container.classList.contains('settings-reset-confirm'), false, 'disarmed after confirm settles');
-  assert.equal(trigger.hidden, false);
+  assert.equal(stripOf(documentRef), null, 'strip gone after confirm settles');
 
   dom.window.close();
 });
 
-test('Cancel disarms without invoking the reset action', () => {
+test('Cancel removes the strip without invoking the reset action, and a second click does not stack strips', () => {
   const { dom, documentRef } = buildDom();
   const harness = createHarness(dom, documentRef);
   harness.fieldReset.mount();
 
   const trigger = documentRef.getElementById('appearanceResetButton');
   trigger.click();
-  const container = trigger.closest('.settings-actions');
-  container.querySelector('[data-action="cancel"]').click();
+  trigger.click();
+  assert.equal(documentRef.querySelectorAll('.projects-confirm').length, 1);
+  stripOf(documentRef).querySelector('[data-action="cancel"]').click();
 
   assert.equal(harness.resetActionCalls.appearance, 0);
-  assert.equal(container.classList.contains('settings-reset-confirm'), false);
-  assert.equal(trigger.hidden, false);
+  assert.equal(stripOf(documentRef), null);
 
   dom.window.close();
 });
 
-test('arming moves a focused trigger to Cancel; Escape cancels and focus returns to the trigger', () => {
+test('Escape cancels and focus returns to the button that opened the strip', () => {
   const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef, { confirmLabels: { appearance: 'Reset Appearance to its defaults?' } });
+  const harness = createHarness(dom, documentRef);
   harness.fieldReset.mount();
 
   const trigger = documentRef.getElementById('appearanceResetButton');
-  const container = trigger.closest('.settings-actions');
   trigger.focus();
   trigger.click();
-  const cancel = container.querySelector('[data-action="cancel"]');
-  assert.equal(documentRef.activeElement, cancel, 'focus does not fall to the page when the trigger hides');
-  assert.equal(container.querySelector('.settings-reset-confirm-label').textContent, 'Reset Appearance to its defaults?');
+  const cancel = stripOf(documentRef).querySelector('[data-action="cancel"]');
+  assert.equal(documentRef.activeElement, cancel);
 
   cancel.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(container.getAttribute('data-armed'), null, 'Escape disarms');
+  assert.equal(stripOf(documentRef), null, 'Escape closes the strip');
   assert.equal(harness.resetActionCalls.appearance, 0);
   assert.equal(documentRef.activeElement, trigger, 'focus returns to the trigger');
 
@@ -193,7 +172,7 @@ test('a confirmed reset that leaves the trigger disabled hands focus to the page
 
   trigger.focus();
   trigger.click();
-  const confirm = trigger.closest('.settings-actions').querySelector('[data-action="confirm"]');
+  const confirm = stripOf(documentRef).querySelector('[data-action="confirm"]');
   confirm.focus();
   confirm.click();
   // What the app's repaint does once the page is back at its defaults.
@@ -201,71 +180,26 @@ test('a confirmed reset that leaves the trigger disabled hands focus to the page
   await flushAsync();
 
   assert.equal(harness.resetActionCalls.appearance, 1);
-  assert.equal(trigger.hidden, false);
   assert.equal(documentRef.activeElement, documentRef.querySelector('.settings-card h3'), 'focus does not fall to the page body');
 
   dom.window.close();
 });
 
-test('the timeout returns focus to the trigger; a click elsewhere does not pull focus back', () => {
+test('the strip has no timer: it stays until answered, and a click elsewhere leaves it open', () => {
   const { dom, documentRef } = buildDom();
   const harness = createHarness(dom, documentRef);
   harness.fieldReset.mount();
 
-  const trigger = documentRef.getElementById('appearanceResetButton');
-  trigger.focus();
-  trigger.click();
-  harness.timers.fireAll();
-  assert.equal(trigger.hidden, false);
-  assert.equal(documentRef.activeElement, trigger);
-
-  trigger.click();
-  const palette = documentRef.getElementById('appearancePaletteSelect');
-  palette.focus();
-  palette.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-  assert.equal(trigger.hidden, false, 'the outside click disarmed');
-  assert.equal(documentRef.activeElement, palette, 'and left focus where the person put it');
-
-  dom.window.close();
-});
-
-test('clicking outside the armed confirm group disarms it', () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-
-  const trigger = documentRef.getElementById('appearanceResetButton');
-  trigger.click();
+  documentRef.getElementById('appearanceResetButton').click();
   documentRef.body.click();
 
-  assert.equal(harness.resetActionCalls.appearance, 0);
-  const container = trigger.closest('.settings-actions');
-  assert.equal(container.classList.contains('settings-reset-confirm'), false);
-  assert.equal(trigger.hidden, false);
-
-  dom.window.close();
-});
-
-test('the 5s arm timeout disarms an untouched confirm group', () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-
-  const trigger = documentRef.getElementById('appearanceResetButton');
-  trigger.click();
-  assert.equal(harness.timers.pendingCount(), 1);
-
-  harness.timers.fireAll();
-
-  const container = trigger.closest('.settings-actions');
-  assert.equal(container.classList.contains('settings-reset-confirm'), false);
-  assert.equal(trigger.hidden, false);
+  assert.ok(stripOf(documentRef), 'still open');
   assert.equal(harness.resetActionCalls.appearance, 0);
 
   dom.window.close();
 });
 
-// ── two-step section reset: single in-flight guard ──────────────────────
+// ── section reset: single in-flight guard ──────────────────────
 
 test('rapid confirm/confirm/cancel while a reset is in flight is idempotent: the action fires exactly once', async () => {
   const { dom, documentRef } = buildDom();
@@ -281,9 +215,8 @@ test('rapid confirm/confirm/cancel while a reset is in flight is idempotent: the
 
   const trigger = documentRef.getElementById('appearanceResetButton');
   trigger.click();
-  const container = trigger.closest('.settings-actions');
-  const confirmBtn = container.querySelector('[data-action="confirm"]');
-  const cancelBtn = container.querySelector('[data-action="cancel"]');
+  const confirmBtn = stripOf(documentRef).querySelector('[data-action="confirm"]');
+  const cancelBtn = stripOf(documentRef).querySelector('[data-action="cancel"]');
 
   confirmBtn.click();
   assert.equal(callCount, 1);
@@ -291,13 +224,13 @@ test('rapid confirm/confirm/cancel while a reset is in flight is idempotent: the
   confirmBtn.click();
   cancelBtn.click();
   assert.equal(callCount, 1, 'the action only ran once');
-  assert.equal(container.classList.contains('settings-reset-confirm'), true, 'still armed/pending mid-flight');
+  assert.ok(stripOf(documentRef), 'the strip stays mid-flight');
 
   resolveAction();
   await flushAsync();
 
   assert.equal(harness.onAfterResetCalls.length, 1);
-  assert.equal(container.classList.contains('settings-reset-confirm'), false);
+  assert.equal(stripOf(documentRef), null);
 
   dom.window.close();
 });
@@ -311,13 +244,12 @@ test('a resetActions rejection logs but still disarms and does not call onAfterR
 
   const trigger = documentRef.getElementById('appearanceResetButton');
   trigger.click();
-  const container = trigger.closest('.settings-actions');
-  container.querySelector('[data-action="confirm"]').click();
+  stripOf(documentRef).querySelector('[data-action="confirm"]').click();
   await flushAsync();
 
   assert.equal(harness.onAfterResetCalls.length, 0);
   assert.match(harness.logs.join('\n'), /storage unavailable/);
-  assert.equal(container.classList.contains('settings-reset-confirm'), false, 'disarmed even on failure');
+  assert.equal(stripOf(documentRef), null, 'the strip closes even on failure');
 
   dom.window.close();
 });
@@ -333,7 +265,7 @@ test('a failed reset is shown inline beside the trigger until the next arm', asy
   const trigger = documentRef.getElementById('appearanceResetButton');
   const container = trigger.closest('.settings-actions');
   trigger.click();
-  container.querySelector('[data-action="confirm"]').click();
+  stripOf(documentRef).querySelector('[data-action="confirm"]').click();
   await flushAsync();
 
   const alert = container.querySelector('.settings-reset-error');
@@ -344,7 +276,7 @@ test('a failed reset is shown inline beside the trigger until the next arm', asy
   fail = false;
   trigger.click();
   assert.equal(container.querySelector('.settings-reset-error'), null, 'the next arm clears it');
-  container.querySelector('[data-action="confirm"]').click();
+  stripOf(documentRef).querySelector('[data-action="confirm"]').click();
   await flushAsync();
   assert.equal(container.querySelector('.settings-reset-error'), null, 'a successful reset shows no error');
 
@@ -361,7 +293,7 @@ test('a reset action that throws synchronously is shown inline too', () => {
   const trigger = documentRef.getElementById('appearanceResetButton');
   const container = trigger.closest('.settings-actions');
   trigger.click();
-  container.querySelector('[data-action="confirm"]').click();
+  stripOf(documentRef).querySelector('[data-action="confirm"]').click();
 
   assert.match(container.querySelector('.settings-reset-error').textContent, /boom/);
   assert.equal(trigger.hidden, false);
@@ -373,23 +305,21 @@ test('a reset action that throws synchronously is shown inline too', () => {
 
 // ── dispose ──────────────────────────────────────────────────────────────
 
-test('dispose() removes listeners and any still-armed confirm group', () => {
+test('dispose() removes listeners and any still-open confirm strip', () => {
   const { dom, documentRef } = buildDom();
   const harness = createHarness(dom, documentRef);
   harness.fieldReset.mount();
 
   const trigger = documentRef.getElementById('appearanceResetButton');
   trigger.click();
-  const container = trigger.closest('.settings-actions');
-  assert.equal(container.classList.contains('settings-reset-confirm'), true);
+  assert.ok(stripOf(documentRef));
 
   harness.fieldReset.dispose();
 
-  assert.equal(container.classList.contains('settings-reset-confirm'), false);
-  assert.equal(trigger.hidden, false);
-  // Clicking the (now unbound) trigger no longer arms anything.
+  assert.equal(stripOf(documentRef), null);
+  // Clicking the (now unbound) trigger no longer opens anything.
   trigger.click();
-  assert.equal(container.classList.contains('settings-reset-confirm'), false);
+  assert.equal(stripOf(documentRef), null);
 
   dom.window.close();
 });
@@ -413,9 +343,7 @@ test('when the actionButton builder is unavailable, a section-reset click falls 
   await flushAsync();
 
   assert.equal(resetActionCalls.appearance, 1, 'reset ran directly');
-  assert.equal(trigger.hidden, false, 'trigger never hidden/stranded');
-  const container = trigger.closest('.settings-actions');
-  assert.equal(container.getAttribute('data-armed'), null, 'never armed');
+  assert.equal(stripOf(documentRef), null, 'no strip without a builder');
 
   fieldReset.dispose();
   dom.window.close();

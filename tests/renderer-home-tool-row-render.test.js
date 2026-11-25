@@ -280,7 +280,8 @@ test('project notes writes render the notes row outside detail bodies in both to
     assert.equal(turnNotes.dataset.notesProject, 'proj-1');
     assert.equal(turnRow.querySelector('.tool-call-row-body').contains(turnNotes), false);
     assert.ok(turnNotes.querySelector('[data-notes-undo="entry-3"]'));
-    assert.equal(turnRow.getAttribute('data-run-foldable'), null);
+    // Row 192: an own-content row never folds under the steps heading either, so it is stamped in every view.
+    assert.equal(turnRow.getAttribute('data-run-foldable'), 'false');
 
     const transcript = documentFor(markup.transcript);
     const block = transcript.querySelector('.tool-call-block');

@@ -35,6 +35,15 @@ test('a card whose load failed shows the flag, plain words and the cause-matched
   assert.equal(compact.querySelector('.model-card-note--failed'), null);
 });
 
+test('row 197 R3b: a failure the Live tab caused names the program and the row draws no empty Stop button', () => {
+  const failure = { cause: 'out_of_memory', message: 'vram_in_use', context: null, at: '2026-10-07T12:00:00.000Z', engine: 'openai-compatible',
+    model: 'acme/model:q6', liveRun: { projectId: 'proj-1', program: 'game.exe' } };
+  const row = libRow(card({ loadFailure: failure }), { actions: ['use', 'unload', 'tune', 'menu', 'stopLiveRun', 'retry', 'loadSmaller', 'showFits'], pull: {}, activation: {} });
+  assert.equal(row.querySelector('.model-card-note--failed').textContent, 'game.exe, started from the Live tab, is using the GPU memory this model needs.');
+  assert.deepEqual(actionNames(row), ['retry', 'tune', 'menu'], 'the Stop lives on the composer line; the row keeps Retry');
+  for (const button of row.querySelectorAll('button')) assert.notEqual(button.textContent.trim(), '', 'no blank button');
+});
+
 function card(overrides = {}) {
   return {
     key: 'acme/model:q6',

@@ -43,7 +43,6 @@ class _FakeMcpServer:
         self.protocol_versions: list[str | None] = []
         self.initialized = False
         self.tool_call_args: list[dict[str, Any]] = []
-        self.resources_cursors: list[str | None] = []
         self.malformed_sse = False
         self._release = threading.Event()
         server = self
@@ -116,13 +115,6 @@ class _FakeMcpServer:
         if method == "tools/call":
             self.tool_call_args.append(dict(params))
             return {"content": [{"type": "text", "text": "called"}]}
-        if method == "resources/list":
-            self.resources_cursors.append(params.get("cursor"))
-            return {"resources": [{"uri": "file:///a", "name": "a"}]}
-        if method == "resources/read":
-            return {"contents": [{"uri": params.get("uri"), "text": "body"}]}
-        if method == "resources/templates/list":
-            return {"resourceTemplates": [{"uriTemplate": "file:///{p}"}]}
         return {}
 
     def _reply(
@@ -234,21 +226,6 @@ def test_call_tool_passes_arguments(make_server: Any) -> None:
         transport.close()
     assert result == {"content": [{"type": "text", "text": "called"}]}
     assert server.tool_call_args[0] == {"name": "echo", "arguments": {"text": "hi"}}
-
-
-def test_resource_methods_round_trip(make_server: Any) -> None:
-    server = make_server()
-    transport = SSEMCPTransport(_config(server.url))
-    try:
-        listed = transport.list_resources(cursor="page-1")
-        read = transport.read_resource("file:///a")
-        templates = transport.list_resource_templates()
-    finally:
-        transport.close()
-    assert listed["resources"][0]["uri"] == "file:///a"
-    assert read["contents"][0]["text"] == "body"
-    assert templates["resourceTemplates"][0]["uriTemplate"] == "file:///{p}"
-    assert server.resources_cursors[0] == "page-1"
 
 
 def test_server_name_and_close_idempotent(make_server: Any) -> None:

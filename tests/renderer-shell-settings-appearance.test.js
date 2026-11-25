@@ -403,16 +403,21 @@ test('appearance reset restores the default shell appearance', async (t) => {
   const resetButton = window.document.getElementById('appearanceResetButton');
   const root = window.document.documentElement;
 
-  // Tier C item 10 upgraded the reset control to a two-step arm -> confirm
-  // flow: the first click arms and renders a Confirm/Cancel pair inside the
-  // button's container; only Confirm applies the reset.
+  // Settings standard (row 193): the reset asks through one confirm strip
+  // inserted after the button's container (the Projects delete strip's shape);
+  // only its Confirm applies the reset, and nothing changes before that.
   resetButton.click();
   const container = resetButton.closest('.settings-actions') || resetButton.parentElement;
-  assert.equal(container.dataset.armed, 'true');
-  const confirmButton = container.querySelector('[data-action="confirm"]');
+  assert.equal(container.dataset.armed, undefined, 'the container itself is no longer armed');
+  const strip = container.nextElementSibling;
+  assert.ok(strip && strip.classList.contains('projects-confirm'), 'arming renders the confirm strip after the container');
+  assert.equal(root.dataset.palette, 'darkroom', 'arming alone does not reset');
+  assert.ok(strip.querySelector('[data-action="cancel"]'), 'the strip offers Cancel');
+  const confirmButton = strip.querySelector('[data-action="confirm"]');
   assert.ok(confirmButton, 'arming renders a Confirm button');
   confirmButton.click();
   await waitForUi(window, 30);
+  assert.equal(window.document.querySelector('.projects-confirm'), null, 'the strip closes after the reset');
 
   assert.equal(root.dataset.palette, 'slate');
   assert.equal(root.dataset.typography, 'technical');
@@ -813,7 +818,7 @@ test('Reset Appearance covers the Appearance page: Chat width (on Chat since row
   assert.equal(resetButton.disabled, false, 'Text size counts as a non-default appearance');
 
   resetButton.click();
-  (resetButton.closest('.settings-actions') || resetButton.parentElement).querySelector('[data-action="confirm"]').click();
+  (resetButton.closest('.settings-actions') || resetButton.parentElement).nextElementSibling.querySelector('[data-action="confirm"]').click();
   await waitForUi(window, 30);
   assert.equal(doc.documentElement.dataset.fontScale, 'default', 'the reset restores the Appearance rows');
   assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'narrow', 'and leaves the Chat page row alone');
@@ -844,26 +849,13 @@ test('the JS-mounted Chat width control keeps a stable node and carries the shar
   assert.equal(segmentedGroup(doc, 'appearanceChatWidthSelect'), widthGroup);
 });
 
-// Team chat density (row 123, slice 2a-5b): an Appearance row only while the Team feature is on.
-test('Team chat density: absent with the Team flag off; with it on, the last Text row, applied at once and restored by Reset', async (t) => {
+// Team chat density (row 193 C14): it lives on the Team page now, never on Appearance, with the Team flag on or off.
+test('Team chat density is not an Appearance row, with the Team flag off or on', async (t) => {
   const off = await loadRendererTestApp(t);
   assert.equal(off.window.document.querySelector('[data-settings-field="appearanceTeamDensitySelect"]'), null, 'no row with the flag off');
   const { window } = await loadRendererTestApp(t, { shell: { features: { state: { featureFlags: { team: true } } } } });
   const doc = window.document;
+  assert.equal(doc.querySelector('[data-settings-section="appearance"] [data-settings-field="appearanceTeamDensitySelect"]'), null, 'the Team flag does not put it on Appearance');
   const text = doc.getElementById('appearanceTypeHeading').closest('.settings-group');
-  const rowsInText = [...text.querySelectorAll('[data-settings-field]')].map((el) => el.dataset.settingsField);
-  assert.equal(rowsInText.at(-1), 'appearanceTeamDensitySelect', 'last, after app zoom');
-  assert.equal(rowsInText.at(-2), 'appearanceAppZoomSelect');
-  assert.deepEqual(segmentedOptions(doc, 'appearanceTeamDensitySelect').map((o) => o.value), ['comfortable', 'compact']);
-  assert.equal(doc.documentElement.dataset.teamDensity, 'comfortable');
-  segmentedGroup(doc, 'appearanceTeamDensitySelect').querySelector('[data-value="compact"]').click();
-  await waitForUi(window, 30);
-  assert.equal(doc.documentElement.dataset.teamDensity, 'compact', 'the root attribute follows at once');
-  const resetButton = doc.getElementById('appearanceResetButton');
-  assert.equal(resetButton.disabled, false, 'a changed density enables Reset Appearance');
-  resetButton.click();
-  (resetButton.closest('.settings-actions') || resetButton.parentElement).querySelector('[data-action="confirm"]').click();
-  await waitForUi(window, 30);
-  assert.equal(doc.documentElement.dataset.teamDensity, 'comfortable');
-  assert.equal(segmentedValue(doc, 'appearanceTeamDensitySelect'), 'comfortable');
+  assert.equal([...text.querySelectorAll('[data-settings-field]')].map((el) => el.dataset.settingsField).at(-1), 'appearanceAppZoomSelect', 'app zoom is the last Text row again');
 });

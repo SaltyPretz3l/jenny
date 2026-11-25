@@ -248,8 +248,9 @@ test('an export that cannot read the whole team fails with a count before any pa
   assert.deepEqual([links.error?.reason, links.error?.count], ['team_export_links', 1], JSON.stringify(links));
   fs.rmSync(path.join(host.userDataPath, 'team-host', 'profile', 'linked'));
   const unreadable = path.join(host.userDataPath, 'team-host', 'projects', 'project_site', 'index.html');
-  const realLstat = fs.lstatSync;
-  t.mock.method(fs, 'lstatSync', (target, ...rest) => { if (String(target) === unreadable) throw Object.assign(new Error('locked'), { code: 'EBUSY' }); return realLstat(target, ...rest); });
+  const realLstat = fs.promises.lstat;
+  t.mock.method(fs.promises, 'lstat', (target, ...rest) => (String(target) === unreadable
+    ? Promise.reject(Object.assign(new Error('locked'), { code: 'EBUSY' })) : realLstat(target, ...rest)));
   const locked = await host.controller.handle('hostExport', { password: PASSWORD });
   assert.deepEqual([locked.error?.reason, locked.error?.count], ['team_export_unreadable_files', 1], JSON.stringify(locked));
   assert.equal(derive.mock.callCount(), 0, 'no key was derived');
@@ -429,4 +430,100 @@ test('X4b-F03: a restore syncs every restored file and its folder before the key
   const folders = [...new Set(files.map((rel) => path.posix.dirname(rel)))];
   const dirs = inside(atRestore.dirs);
   assert.deepEqual(folders.filter((folder) => !dirs.includes(folder)), [], 'each folder holding a restored file');
+});
+
+// ------------------------------------------------------------------ review fixes (C4, H8, performance)
+
+const { walkTree, walkTreeAsync } = require('../services/team/host/host-files');
+
+test('walkTreeAsync sizes files with the asynchronous lstat, gives walkTree\'s totals, and counts a file it cannot size', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-walk-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (let d = 0; d < 3; d += 1) {
+    fs.mkdirSync(path.join(root, `d${d}`, 'deep'), { recursive: true });
+    for (let i = 0; i < 90; i += 1) fs.writeFileSync(path.join(root, `d${d}`, i % 2 ? 'deep' : '', `f${i}.bin`), Buffer.alloc(i + 1, 1));
+  }
+  const sync = walkTree(root);
+  const sizes = [];
+  const realLstatSync = fs.lstatSync;
+  const inTree = (target) => String(target).startsWith(root);
+  let syncCalls = 0;
+  t.mock.method(fs, 'lstatSync', (target, ...rest) => { if (inTree(target)) syncCalls += 1; return realLstatSync(target, ...rest); });
+  const async = await walkTreeAsync(root, { onFile: (rel, abs, size) => { sizes.push(size); } });
+  assert.deepEqual(async, sync, 'the same totals');
+  assert.equal(sizes.length, 270);
+  assert.equal(sizes.reduce((a, b) => a + b, 0), sync.bytes);
+  assert.equal(syncCalls, 0, 'no synchronous lstat on the calling thread');
+  const target = path.join(root, 'd0', 'f0.bin');
+  const realLstat = fs.promises.lstat;
+  t.mock.method(fs.promises, 'lstat', (file, ...rest) => (String(file) === target
+    ? Promise.reject(Object.assign(new Error('locked'), { code: 'EBUSY' })) : realLstat(file, ...rest)));
+  const locked = await walkTreeAsync(root);
+  assert.equal(locked.unreadable, 1);
+  assert.equal(locked.files, 269);
+  const capped = await walkTreeAsync(root, { limit: 100 });
+  assert.equal(capped.truncated, true);
+});
+
+const { keyPairFromSeed } = require('../server/team/ids');
+const { createGeneralProject } = require('../services/projects/project-schema');
+
+const POSIX = process.platform !== 'win32';
+const BAREBONES_SEED = Buffer.alloc(PUBLIC_KEY_BYTES, 9);
+
+// A backup of a team made on another PC (the project's folder recorded under that PC's path), with the profile's own
+// ownership files and a ready marker a file must never bring along. `hostKey` is the host key the member store names.
+async function foreignBackup(t, { hostKey = keyPairFromSeed(BAREBONES_SEED).publicKey } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-foreign-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const files = {
+    'profile/team-members.json': JSON.stringify({ schema_version: 3, rev: 1, team: { team_id: 'team_x', host_public_key: hostKey, name: 'Away' }, members: [] }),
+    'profile/projects.json': JSON.stringify({ schema_version: 1, projects: {
+      project_general: createGeneralProject('2026-11-01T00:00:00.000Z'),
+      project_site: { id: 'project_site', name: 'Site', root_path: 'C:\\Users\\someone\\AppData\\Roaming\\jenny\\team-host\\projects\\project_site',
+        root_id: 'stale', root_revision: 1, runtime_preferences: {}, created_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-01T00:00:00.000Z' } } }),
+    'profile/profile-owner.json': '{"owner":"someone else"}',
+    'profile/team-ready.json': '{"ready":true}',
+    'profile/.jenny-team-restoring': '',
+    'projects/project_site/index.html': '<h1>away</h1>',
+  };
+  const entries = [{ rel: 'profile', dir: true }, { rel: 'projects', dir: true }, { rel: 'projects/project_site', dir: true }];
+  for (const [rel, text] of Object.entries(files)) {
+    const abs = path.join(dir, rel.replace(/\//gu, '_'));
+    fs.writeFileSync(abs, text);
+    entries.push({ rel, abs });
+  }
+  const file = path.join(dir, 'away.jennyteam');
+  await writeBackup({ target: file, password: PASSWORD, entries, manifest: { schema: 1, team_name: 'Away', exported_at: NOW, relay_token: null,
+    key: encodeBase64url(BAREBONES_SEED), setting: { name: 'Away', direct_port: null, internet: null } } });
+  return file;
+}
+
+test('H8: a desktop restore points each project folder at this PC, drops the profile\'s own files, and makes the tree private', async (t) => {
+  const file = await foreignBackup(t);
+  const userDataPath = tempProfile(t, 'jenny-restore-roots-');
+  const keys = { restore() {} };
+  const answer = await restoreTeam({ userDataPath, file, password: PASSWORD, keys });
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  const root = path.join(fs.realpathSync.native(userDataPath), 'team-host');
+  const doc = JSON.parse(fs.readFileSync(path.join(root, 'profile', 'projects.json'), 'utf8'));
+  assert.equal(doc.projects.project_site.root_path, path.join(root, 'projects', 'project_site'), 'a folder on this PC, not the other one');
+  assert.equal(fs.readFileSync(path.join(root, 'projects', 'project_site', 'index.html'), 'utf8'), '<h1>away</h1>');
+  for (const name of ['profile-owner.json', 'team-ready.json', '.jenny-team-restoring']) {
+    assert.equal(fs.existsSync(path.join(root, 'profile', name)), false, `${name} is never brought in from a file`);
+  }
+  assert.equal(fs.existsSync(path.join(root, 'profile', 'team-members.json')), true);
+  if (POSIX) {
+    assert.equal(fs.statSync(path.join(root, 'profile')).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(root, 'projects', 'project_site')).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(root, 'projects', 'project_site', 'index.html')).mode & 0o777, 0o600);
+  }
+});
+
+test('H8: a desktop restore refuses a backup whose key is not the member store\'s host key, and changes nothing', async (t) => {
+  const file = await foreignBackup(t, { hostKey: keyPairFromSeed(Buffer.alloc(PUBLIC_KEY_BYTES, 4)).publicKey });
+  const userDataPath = tempProfile(t, 'jenny-restore-mismatch-');
+  const keys = { restore: () => { throw new Error('must not be reached'); } };
+  assert.deepEqual(await restoreTeam({ userDataPath, file, password: PASSWORD, keys }), { ok: false, reason: 'team_host_key_mismatch' });
+  assert.deepEqual(fs.readdirSync(userDataPath), [], 'no team-host and no restoring folder');
 });

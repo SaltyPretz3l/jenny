@@ -383,3 +383,29 @@ test('threads with a stored mark are listed before threads that track the channe
   assert.deepEqual(row.threads.map((thread) => thread.root_id), [id(3), id(2), id(1)],
     'id(3) holds a stored mark: first, though its reply is the oldest; the rest newest reply first');
 });
+
+// ------------------------------------------------------------ tombstones (review Part III)
+
+test('a deleted message keeps no mentions and no implicit follow it created, in memory and after a reload', async (t) => {
+  const { fx, store, say } = await storeWith(t);
+  const root = await say(ALICE, 'root');
+  await say(ALICE, 'first', { threadRootId: root.message_id });
+  const reply = await say(BOB, 'ping', { threadRootId: root.message_id, mentions: ['member_carol'] });
+  assert.deepEqual([...(await store.threadMembers('chan_team', root.message_id)).members.keys()].sort(),
+    [ALICE, BOB, 'member_carol']);
+  const deleted = await fx.del(store, { actorId: BOB, deviceId: 'device_bob1', messageId: reply.message_id });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.deepEqual(store.getMessage('chan_team', reply.message_id).message.mentions, []);
+  assert.deepEqual(fx.readDoc('chan_team/seg-1.json').messages.find((m) => m.id === reply.message_id).mentions, []);
+  for (const reader of [store, fx.openStore()]) {
+    assert.deepEqual([...(await reader.threadMembers('chan_team', root.message_id)).members.entries()], [[ALICE, root.seq]]);
+  }
+});
+
+test('row 201: a deleted root with no reply seeds no implicit follower; a live one seeds its author and member mentions', () => {
+  const state = { threads: new Map() };
+  const entry = { id: 'msg_root', seq: 7 };
+  const root = { author: { member_id: ALICE }, mentions: [BOB, 'everyone'], deleted: null };
+  assert.deepEqual([...marks.implicitMembers(state, entry, root)].sort(), [[ALICE, 7], [BOB, 7]].sort());
+  assert.equal(marks.implicitMembers(state, entry, { ...root, deleted: { at: '2026-11-24T00:00:00.000Z' } }).size, 0);
+});

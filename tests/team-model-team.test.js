@@ -453,3 +453,34 @@ test('R14-F04: staging is swept at the first model call even when no team entry 
     assert.equal(models.resources().teams, 0, 'no entry was built');
   }
 });
+
+test('an accept the host refused is answered only once its fresh staging is cancelled: the slot is free the moment the call returns', async (t) => {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-model-claim-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, 'models');
+  fs.mkdirSync(root);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const calls = [];
+  const incoming = createModelIncoming({
+    teamId: TEAM, hasher: { hash: async () => { throw new Error('unused'); } },
+    transport: { accept: async () => { calls.push('accept'); throw Object.assign(new Error('offline'), { code: 'team_model_sender_offline' }); },
+      resume: async () => {}, takePart: async () => {}, pause: async () => {}, complete: async () => {},
+      cancel: async () => { calls.push('cancel'); await gate; } },
+    roots: () => [{ path: root, display: root }], discovery: async () => [], self: () => ({ memberId: ME, displayName: 'Mika Member' }),
+    nameOf: () => 'Olive Owner',
+    command: async (operation) => (operation === 'team.model.offer.read' ? { ok: true, offer: SUMMARY, manifest: MANIFEST } : { ok: true }),
+  });
+  t.after(() => { release(); return incoming.dispose(); });
+  await incoming.offerRead(SUMMARY.offer_id, null);
+  let answered = null;
+  const first = incoming.accept(SUMMARY.offer_id, 0).then((answer) => { answered = answer; return answer; });
+  await flush();
+  assert.deepEqual(calls, ['accept', 'cancel'], 'the receiver is cancelling the fresh staging');
+  assert.equal(answered, null, 'the call does not answer, or give its claim back, while the cancel is still running');
+  release();
+  assert.equal((await first).error?.reason, 'team_model_sender_offline');
+  // The receiver is free at once: a second accept reaches the host instead of answering busy.
+  await incoming.offerRead(SUMMARY.offer_id, null);
+  assert.notEqual((await incoming.accept(SUMMARY.offer_id, 0)).error?.reason, 'model_receiver_busy');
+});

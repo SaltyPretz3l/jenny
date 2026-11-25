@@ -124,6 +124,11 @@ class TokenBudget:
     # The engine clamps the wire max_tokens to the room the prompt leaves, so
     # the budget need not hold the whole answer + thinking allowance back.
     fitted_output: bool = False
+    # The count is the provider's own (exact, calibrated, or a measured prompt) and the engine
+    # fits its reply: the trigger is then a share of the whole window held short of the reply
+    # floor (row 183 D1), not a share of what is left after reserving the answer and the tool
+    # schemas. An engine that sends its whole max_tokens keeps the reserved shape.
+    provider_units: bool = False
 
     def _output_reservation(self) -> int:
         # Cap the output reservation used for budgeting so a model's advertised
@@ -189,10 +194,36 @@ class TokenBudget:
             return self
         return replace(self, context_window=max(self.context_window - reserved, 1))
 
+    def provider_trigger(self) -> int:
+        """Whole-prompt compaction point for a provider count (row 183 D1).
+
+        About ``auto_compact_ratio`` of the window, never closer to the edge than the reply
+        floor: ``min(0.90 * window, window - floor)``. The tool schemas are inside the count,
+        so they take no separate reserve.
+        """
+        floor = self._output_reservation()
+        return max(0, min(int(self.context_window * self.auto_compact_ratio),
+                          self.context_window - floor))
+
+    def provider_error_line(self) -> int:
+        """Whole-prompt point past which a provider-counted prompt is unrecoverable: the reply
+        keeps half its floor (engines fit ``max_tokens`` to the room the prompt leaves)."""
+        return max(self.provider_trigger() + 1,
+                   self.context_window - self._output_reservation() // 2)
+
+    def _provider_share(self, whole: int, num_tools: int) -> int:
+        # Message-estimate thresholds sit below the whole-prompt figure by the tool reserve.
+        return max(0, whole - self.tool_overhead(num_tools))
+
     def warning_threshold(self, num_tools: int = 0) -> int:
+        if self.provider_units:
+            ratio = self.warning_ratio / max(self.auto_compact_ratio, 1e-6)
+            return self._provider_share(int(self.provider_trigger() * min(ratio, 1.0)), num_tools)
         return int(self.effective_context(num_tools) * self.warning_ratio)
 
     def auto_compact_threshold(self, num_tools: int = 0) -> int:
+        if self.provider_units:
+            return self._provider_share(self.provider_trigger(), num_tools)
         return int(self.effective_context(num_tools) * self.auto_compact_ratio)
 
     def meter_compact_threshold(self, num_tools: int = 0) -> int:
@@ -207,6 +238,8 @@ class TokenBudget:
         return threshold + self.tool_overhead(num_tools) if threshold > 0 else 0
 
     def error_threshold(self, num_tools: int = 0) -> int:
+        if self.provider_units:
+            return self._provider_share(self.provider_error_line(), num_tools)
         return int(self.effective_context(num_tools) * _ERROR_RATIO)
 
 
@@ -417,6 +450,10 @@ class BudgetTracker:
     # provider's own prompt count needs no headroom, so the tool loop judges
     # it against this (0 when unknown: the estimate path only).
     raw_context_window: int = 0
+    # True while the last request's provider count is the meter's used figure (it is at
+    # least the whole-prompt estimate; note_request_measurement): compaction then judges
+    # that count against ``raw_context_window``, and so must the meter's threshold.
+    provider_counted: bool = False
     # Where ``backend``'s counts come from: "estimate" (the plain estimator) or
     # "exact" / "calibrated" (an estimator rescaled to the provider's own count).
     count_source: str = "estimate"
@@ -450,10 +487,25 @@ class BudgetTracker:
             return self.tool_schema_tokens
         return self.budget.tool_overhead(self.num_tools) if self.budget is not None else 0
 
+    def provider_compact_threshold(self, num_tools: int | None = None) -> int:
+        """The compaction trigger for a provider-counted prompt (see the module function)."""
+        tools = self.num_tools if num_tools is None else num_tools
+        return provider_compact_threshold(self.budget, self.raw_context_window, tools)
+
     def meter_compact_threshold(self) -> int:
         """The auto-compact point in whole-prompt tokens: compaction fires when the
         message estimate reaches the threshold, and the prompt then also carries
-        the tool schemas (``context.preview``'s ``compact_at_tokens``)."""
+        the tool schemas (``context.preview``'s ``compact_at_tokens``). Once the
+        provider counts the prompt, compaction compares that count against the
+        served window instead, so the meter shows that trigger (a 350k window read
+        163k from the estimate's headroom while compaction fired at 238k)."""
+        if self.provider_counted:
+            provider = self.provider_compact_threshold()
+            if provider > 0:
+                return provider
+        if self.budget is not None and self.budget.provider_units:
+            # Already the whole-prompt figure (an exact or calibrated turn-start count).
+            return self.budget.meter_compact_threshold(self.num_tools)
         threshold = self.budget.auto_compact_threshold(self.num_tools) if self.budget else 0
         return threshold + self.meter_tool_tokens() if threshold > 0 else 0
 
@@ -766,11 +818,13 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
     window = int(context_window)
     if headroom > 0:
         window = int(context_window * (1.0 - headroom))
+    fitted = engine_fits_output_to_window(engine)
     budget = TokenBudget(
         context_window=window,
         max_output_tokens=int(max_output),
         output_reservation_tokens=explicit_output_reservation,
-        fitted_output=engine_fits_output_to_window(engine),
+        fitted_output=fitted,
+        provider_units=fitted and count_source != "estimate",
         **budget_kwargs,
     )
     tracker = BudgetTracker(
@@ -781,6 +835,18 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
         count_source=count_source,
     )
     return working_messages, budget, tracker
+
+
+def provider_compact_threshold(budget: TokenBudget | None, raw_window: int, num_tools: int) -> int:
+    """The compaction trigger for a provider-counted prompt, in whole-prompt tokens.
+
+    A provider's own count needs none of the estimator's headroom, so it is judged against
+    the served window (0 when that window or the budget is unknown).
+    """
+    if budget is None or int(raw_window or 0) <= 0:
+        return 0
+    raw = replace(budget, context_window=int(raw_window), provider_units=budget.fitted_output)
+    return raw.meter_compact_threshold(num_tools)
 
 
 def engine_fits_output_to_window(engine: Any) -> bool:

@@ -225,7 +225,7 @@ test('readDataUrl skips fonts without calling the api and builds image data urls
   assert.deepEqual(await h.captured.options.readDataUrl('noext'), { ok: false, reason: 'binary' });
   assert.equal(h.fsCalls.readImage.length, 0);
   const r = await h.captured.options.readDataUrl('img/Logo.PNG');
-  assert.deepEqual(r, { ok: true, dataUrl: 'data:image/png;base64,AAAA', bytes: 3 });
+  assert.deepEqual(r, { ok: true, dataUrl: 'data:image/png;base64,AAAA', bytes: 3, version: '' });
   assert.deepEqual(h.fsCalls.readImage, [{ path: 'img/Logo.PNG' }]);
 });
 
@@ -238,10 +238,10 @@ test('readDataUrl rejects a bad mime or payload and maps failures without throwi
   assert.equal((await badBase.captured.options.readDataUrl('a.png')).ok, false);
   const notFound = makeSurface({ readImage: () => ({ ok: false, code: NOT_FOUND }) });
   await notFound.surface.build('p.html', 'x');
-  assert.deepEqual(await notFound.captured.options.readDataUrl('a.png'), { ok: false, reason: 'not_found' });
+  assert.deepEqual(await notFound.captured.options.readDataUrl('a.png'), { ok: false, reason: 'not_found', code: NOT_FOUND });
   const thrown = makeSurface({ readImage: () => { throw new Error('x'); } });
   await thrown.surface.build('p.html', 'x');
-  assert.deepEqual(await thrown.captured.options.readDataUrl('a.png'), { ok: false, reason: 'unavailable' });
+  assert.deepEqual(await thrown.captured.options.readDataUrl('a.png'), { ok: false, reason: 'unavailable', code: undefined });
   const noApi = makeSurface({ api: null });
   await noApi.surface.build('p.html', 'x');
   assert.deepEqual(await noApi.captured.options.readDataUrl('a.png'), { ok: false, reason: 'unavailable' });

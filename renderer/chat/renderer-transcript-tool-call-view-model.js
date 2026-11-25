@@ -194,8 +194,13 @@
       const reviewableChange = source.reviewableChange && typeof source.reviewableChange === 'object'
         ? source.reviewableChange
         : null;
+      // Row 196 C8: a computer step that did not work shows a warn dot and its reason (a real error keeps its own).
+      const stepDisplay = typeof globalThis !== 'undefined' && globalThis.rendererComputerStepDisplay
+        || (typeof require === 'function' ? require('./renderer-computer-step-display') : null);
+      const computerStep = !isError && normalizeId(toolName) === 'computer' ? stepDisplay?.computerStepDisplay(metadata) : null;
       return {
         callId,
+        tone: computerStep?.tone,
         sessionId: normalizeId(source.sessionId),
         rowKey,
         domToken,
@@ -236,9 +241,9 @@
         resultSummary,
         errorCode,
         // R2-12: the header's one-line failure text for a collapsed failed row.
-        failureSummary: typeof toolCallUtils.summarizeToolFailure === 'function'
+        failureSummary: (typeof toolCallUtils.summarizeToolFailure === 'function'
           ? toolCallUtils.summarizeToolFailure({ isError, status, errorCode, outputText, resultSummary })
-          : '',
+          : '') || computerStep?.failureSummary || '',
         retryMessageId: normalizeId(source.retryMessageId),
         metadata,
         generatedArtifacts,

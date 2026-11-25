@@ -15,6 +15,15 @@
   // On the 16px family icon grid, so connection rows line up with the family rows.
   const plug = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 2v3.5m5-3.5v3.5M4 5.5h8v2a4 4 0 0 1-8 0zm4 6v2.5"/></svg>';
   const SEARCH_MIN_ROWS = 8;
+  const COMPUTER = 'computer_use';
+  const toolSettings = () => jt('composer.chatPanel.computer.toolSettings', 'Tool settings');
+  // Electron's own reasons for withholding the Computer tool (status().reason); any other reason is not overridden.
+  const COMPUTER_REASONS = {
+    sandbox: () => ({ text: jt('composer.chatPanel.computer.sandbox', 'Off while the command sandbox is on'), fix: 'settings', label: toolSettings() }),
+    strict_safety: () => ({ text: jt('composer.chatPanel.computer.strictSafety', 'Off in strict safety mode'), fix: 'settings', label: toolSettings() }),
+    engine_not_local: () => ({ text: jt('composer.chatPanel.computer.notLocal', 'Needs a model on this computer') }),
+    not_windows: () => ({ text: jt('composer.chatPanel.computer.notWindows', 'Windows only for now') }),
+  };
   function extractToolEntries(list) {
     return (Array.isArray(list) ? list : []).map(model.normalizeToolEntry).filter((entry) => entry.name);
   }
@@ -38,6 +47,11 @@
     const resetButton = panel?.querySelector('[data-chat-panel-action="reset"]');
     const rowsFor = (vm) => [...vm.sections.flatMap((section) => section.families), ...vm.connections];
     const focusInside = (node) => node.contains(slot.ownerDocument.activeElement);
+    // The Computer row's extras from the bridge: Electron's status and this chat's granted programs (null: unknown).
+    const computer = { status: null, grants: null, sessionId: '', watching: false };
+    const chatId = () => String(state.currentSessionId || '').trim();
+    const bridge = () => windowRef.jennyShell?.computerUse;
+    const ask = async (method, args) => { try { return await bridge()?.[method]?.(args); } catch (_error) { return null; } };
     function hydrate(force = false) {
       const id = String(state.currentSessionId || '').trim();
       const active = state.sessions?.find((session) => String(session?.id || '').trim() === id);
@@ -54,7 +68,27 @@
       }
       return id;
     }
+    // The row's Electron reason wins over the sidecar's; with no computer tool at all, "not_windows" still shows the row.
+    function withComputer(vm) {
+      const computerReason = computer.status?.reason;
+      if (!COMPUTER_REASONS[computerReason]) return vm;
+      const ids = model.SURFACE_FAMILY_UI.map((family) => family.id);
+      const block = (row) => ({ ...row, on: false, state: 'blocked', usable: 0, computerReason });
+      const sections = vm.sections.map((section) => {
+        if (section.id !== 'reach') return section;
+        if (section.families.some((row) => row.id === COMPUTER)) return { ...section, families: section.families.map((row) => (row.id === COMPUTER ? block(row) : row)) };
+        if (computerReason !== 'not_windows') return section;
+        const family = model.SURFACE_FAMILY_UI[ids.indexOf(COMPUTER)];
+        const families = section.families.slice();
+        const next = families.findIndex((row) => ids.indexOf(row.id) > ids.indexOf(COMPUTER));
+        families.splice(next < 0 ? families.length : next, 0, block({ id: COMPUTER, overridden: false, total: 0, reason: '', members: [], approval: 'none',
+          label: family.label(), description: family.description(), icon: family.icon, defaultOff: true }));
+        return { ...section, families };
+      });
+      return { ...vm, sections };
+    }
     function reasonFor(row, vm) {
+      if (row.computerReason) return COMPUTER_REASONS[row.computerReason]();
       const reason = row.reason || row.members?.find((member) => !member.usable)?.reason || '';
       if (vm.lockdown && row.state === 'blocked') return { text: jt('composer.chatPanel.offlineReason', 'Offline for this chat') };
       // Exact sidecar reason constants (sidecar/ai/tools/assembly.py); any other reason shows as sent.
@@ -78,6 +112,37 @@
       node.innerHTML = html;
       owner[field] = html;
       return false;
+    }
+    function grantsHtml(grants) {
+      if (!grants.length) return '<p class="composer-tool-grants-empty">' + escapeHtml(jt('composer.chatPanel.computer.empty', 'No programs yet. Jenny asks the first time it needs one.')) + '</p>';
+      return '<span class="composer-tool-grants-label">' + escapeHtml(jt('composer.chatPanel.computer.allowed', 'Allowed in this chat')) + '</span>'
+        + grants.map((grant) => { const revokeLabel = jt('composer.chatPanel.computer.revokeLabel', 'Revoke {name}', { name: grant.name });
+          return '<div class="composer-tool-grant" title="' + escapeHtml(grant.path) + '"><span class="composer-tool-grant-name">' + escapeHtml(grant.name) + '</span>'
+          + (grant.viewOnly ? '<span class="composer-tool-grant-kind">' + escapeHtml(jt('composer.chatPanel.computer.viewOnly', 'View only')) + '</span>' : '')
+          + windowRef.inventory.actionButton({ label: jt('composer.chatPanel.computer.revoke', 'Revoke'), plain: true, className: 'composer-chat-link',
+            ariaLabel: revokeLabel, title: revokeLabel, dataset: { 'grant-path': grant.path } }) + '</div>'; }).join('');
+    }
+    // Revoke is immediate: the line goes at once, then the bridge's answer is re-read. Clicks here never flip the row.
+    function grantsClick(event) {
+      event.stopPropagation();
+      const path = event.target.closest('[data-grant-path]')?.dataset.grantPath;
+      if (path === undefined) return;
+      const entry = mounted.get(COMPUTER);
+      computer.grants = (computer.grants || []).filter((grant) => grant.path !== path);
+      if (focusInside(entry.grants)) entry.track.focus();
+      render();
+      ask('revoke', { sessionId: chatId(), path }).then(reloadComputer);
+    }
+    // Returns true when a focused list kept its markup.
+    function patchGrants(entry, on) {
+      if (!entry.grants) {
+        entry.grants = element('<div class="composer-tool-grants" role="group" aria-label="' + escapeHtml(jt('composer.chatPanel.computer.groupLabel', 'Programs in this chat')) + '" hidden></div>');
+        entry.grants.addEventListener('click', grantsClick);
+        entry.node.appendChild(entry.grants);
+      }
+      const grants = on ? computer.grants : null;
+      entry.grants.hidden = !grants;
+      return grants ? setHtml(entry, 'grantsHtml', entry.grants, grantsHtml(grants)) : false;
     }
     function mountRow(row, section) {
       const inv = windowRef.inventory;
@@ -125,6 +190,7 @@
       entry.count.setAttribute('aria-label', jt('composer.chatPanel.showMembers', 'Show the tools in {label}', { label: row.label }));
       deferred = setHtml(entry, 'membersHtml', entry.members, members.map((member) => '<code>' + escapeHtml(member.name) + '</code>'
         + (member.asksFirst ? ' ' + warn(jt('composer.chatPanel.asksFirst', 'asks first')) : '')).join(', ')) || deferred;
+      if (row.id === COMPUTER) deferred = patchGrants(entry, on) || deferred;
       const labelHit = row.label.toLowerCase().includes(query);
       const memberHit = members.some((member) => member.name.toLowerCase().includes(query));
       node.hidden = !labelHit && !memberHit;
@@ -139,7 +205,8 @@
     function render() {
       const id = hydrate();
       if (!panel || !controller || !windowRef.inventory?.actionButton) return;
-      const vm = controller.getViewModel();
+      if (computer.sessionId !== id) computer.grants = null;
+      const vm = withComputer(controller.getViewModel());
       const rows = rowsFor(vm);
       const browserRow = rows.find((row) => row.id === 'browser_use');
       windowRef.rendererSyncBrowserUse?.({ sessionId: id, enabled: Boolean(browserRow?.on && browserRow.state !== 'blocked'), chipHost });
@@ -147,7 +214,7 @@
       const hideFilter = rows.length < SEARCH_MIN_ROWS;
       if (filter && filter.hidden !== hideFilter) filter.hidden = hideFilter;
       if (filter && hideFilter && filter.value) filter.value = '';
-      const next = JSON.stringify({ id, vm, filter: filter?.value || '' });
+      const next = JSON.stringify({ id, vm, grants: computer.grants, filter: filter?.value || '' });
       if (signature === next) return;
       const query = (filter?.value || '').toLowerCase().trim();
       const { on, off, total } = toggleModule.countRows(vm);
@@ -210,6 +277,31 @@
       resetButton.hidden = !vm.hasOverrides;
       signature = deferred ? null : next;
     }
+    async function refreshComputer() {
+      if (!bridge()) return;
+      const id = chatId();
+      watchComputer();
+      const [status, granted] = await Promise.all([ask('status'), id ? ask('grants', { sessionId: id }) : null]);
+      if (id !== chatId()) return;
+      computer.status = status?.ok ? status : null;
+      computer.grants = granted?.ok && Array.isArray(granted.grants) ? granted.grants.filter((grant) => typeof grant?.path === 'string')
+        .map((grant) => ({ name: String(grant.name || grant.path), path: grant.path, viewOnly: grant.viewOnly === true })) : null;
+      computer.sessionId = id;
+      render();
+    }
+    const reloadComputer = () => refreshComputer().catch((error) => appendClientLog('WARN', 'composer.computer_refresh_failed', { message: error.message || String(error) }));
+    // Listens only once the panel has opened, so a chat that never opens Tools never subscribes.
+    function watchComputer() {
+      if (computer.watching) return;
+      computer.watching = true;
+      bridge().onStatus?.((status) => { if (status?.ok) { computer.status = status; render(); } });
+      // Grants change only on an open or focus step, or when the turn ends.
+      windowRef.rendererComputerStepDisplay?.turnState?.subscribe?.((sessionId, entry) => {
+        const grantsMayChange = entry?.state === 'idle' || (entry?.state === 'thinking' && (entry.action === 'open' || entry.action === 'focus'));
+        if (grantsMayChange && sessionId === chatId() && !panel?.hidden) reloadComputer();
+      });
+    }
+    panel?.addEventListener('inv-popover-toggle', (event) => { if (event.target === panel && event.detail?.open) reloadComputer(); });
     function settle(persistence) {
       render();
       Promise.resolve(persistence).then(render, (error) => appendClientLog('WARN', 'composer.tool_toggle_failed', { message: error.message || String(error) }));
@@ -271,7 +363,7 @@
       hydrate();
       return controller?.getToggleStates() || { families: {}, connections: {} };
     }
-    return { render, refresh, handleToggleChange, getToolPreferences, extractToolEntries };
+    return { render, refresh, refreshComputer, handleToggleChange, getToolPreferences, extractToolEntries };
   }
   return { createComposerToolsSlot, extractToolEntries };
 });

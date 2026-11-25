@@ -51,6 +51,20 @@ test('startup promotes and finalizes with rollback on the runtime volume', async
   assert.equal((await startup.promotePendingRestore(f.app)).status, 'none');
 });
 
+test('row 197 review F3.1: a promoted restore asks again for every Live tab run command; no restore leaves them', async (t) => {
+  const { createRunCommandStore } = require('../services/run-view/run-command-store');
+  const f = await fixture(t);
+  const binding = { projectId: 'proj-1', rootId: 'root-a', rootRevision: 3, worktree: null };
+  const command = { build: '', program: 'game.exe', args: [], cwd: '', env: {}, watch: [] };
+  assert.equal(createRunCommandStore({ userDataPath: f.userDataPath }).confirm({ ...binding, command }).ok, true);
+  assert.equal((await startup.promotePendingRestore(f.app)).status, 'promoted');
+  const after = createRunCommandStore({ userDataPath: f.userDataPath }).get(binding);
+  assert.deepEqual([after.status, after.reason], ['needs_confirmation', 'restore']);
+  assert.equal(createRunCommandStore({ userDataPath: f.userDataPath }).confirm({ ...binding, command }).ok, true);
+  assert.equal((await startup.promotePendingRestore(f.app)).status, 'none');
+  assert.equal(createRunCommandStore({ userDataPath: f.userDataPath }).get(binding).status, 'confirmed');
+});
+
 test('failed copying restores original bytes and startup retry succeeds', async (t) => {
   const f = await fixture(t);
   const copy = fs.copyFileSync;

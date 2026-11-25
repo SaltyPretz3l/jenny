@@ -413,3 +413,31 @@ test('row 142 S3: a bundled no with no trusted reader carries the download offer
   assert.deepEqual(asked, ['lfm3']);
   return undefined;
 });
+
+// Row 194: the plan carries what the model would need from the card, from the app's estimator (hardware-free: the card is the renderer's).
+test('a plan carries the need at the load context and at 8K, read from the size class in the file name', (t) => {
+  const root = tempRoot(t);
+  const library = path.join(root, 'gguf');
+  const outside = write(path.join(root, 'Downloads'), 'Qwen3-14B-Q4_K_M.gguf', 100);
+  const inside = write(path.join(library, 'Qwen3-14B'), 'Qwen3-14B-Q4_K_M.gguf', 100);
+  const unnamed = write(path.join(root, 'Downloads'), 'mystery-Q4_K_M.gguf', 100);
+  const imports = service(root, { roots: [library] });
+  [outside, inside, unnamed].forEach((file) => imports.recordModelPick(file));
+  assert.deepEqual(imports.plan(outside).fit, { ctx: 32768, needMb: 829, smallNeedMb: 657 });
+  const planned = imports.plan(inside);
+  assert.equal(planned.inside, true);
+  assert.deepEqual([planned.sizeBytes, planned.fit], [100, { ctx: 32768, needMb: 829, smallNeedMb: 657 }], 'a file already in a folder is sized too');
+  assert.deepEqual(imports.plan(unnamed).fit, { ctx: 32768, needMb: 600, smallNeedMb: 600 }, 'no size class: the weights and the runtime only');
+});
+
+test('a plan folds the shards of a file in a folder into its size and need', (t) => {
+  const root = tempRoot(t);
+  const library = path.join(root, 'gguf');
+  const main = write(path.join(library, 'Big'), 'Big-Q4_K_M-00001-of-00002.gguf', 2 * 1048576);
+  write(path.join(library, 'Big'), 'Big-Q4_K_M-00002-of-00002.gguf', 1048576);
+  const imports = service(root, { roots: [library] });
+  imports.recordModelPick(main);
+  const planned = imports.plan(main);
+  assert.equal(planned.sizeBytes, 3 * 1048576, 'both shards');
+  assert.equal(planned.fit.needMb, Math.round(3 * 1.12 + 600));
+});

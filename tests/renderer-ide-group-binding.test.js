@@ -261,10 +261,13 @@ function groupsWithTerminals() {
   return layout;
 }
 
-test('chat targets: unbound is undefined, the primary is empty, pane 1 is Chat 2', () => {
-  const base = ops.addStackBeside(groupsWithTerminals(), ['chat-2', 'changes-2'], 'chat', 'col');
-  const rig = bindingRig(ops.setBinding(ops.setBinding(base, 'chat', 'editor-1'), 'chat-2', 'editor-2'));
-  assert.equal(rig.binding.chatTarget(0), '');
+test('chat targets: unbound is undefined, the primary is empty, both panes follow the one chat dock', () => {
+  const base = groupsWithTerminals();
+  const primary = bindingRig(ops.setBinding(base, 'chat', 'editor-1'));
+  assert.equal(primary.binding.chatTarget(0), '');
+  assert.equal(primary.binding.chatTarget(1), '', 'pane 1 has no dock of its own: it follows the chat view');
+  const rig = bindingRig(ops.setBinding(base, 'chat', 'editor-2'));
+  assert.equal(rig.binding.chatTarget(0), 'editor-2');
   assert.equal(rig.binding.chatTarget(1), 'editor-2');
   assert.equal(bindingRig(base).binding.chatTarget(0), undefined);
   assert.deepEqual(rig.binding.boundGroups(), ['editor-2']);
@@ -302,14 +305,17 @@ test('openDiffFrom moves only the newly opened diff it names, from a still-bound
   assert.equal(ide.activeTabPath, 'diff://other', 'the other diff keeps the primary group');
   const count = moved.length;
   await binding.openDiffFrom(0, opens('diff://old'), 'diff://old');
-  await binding.openDiffFrom(1, opens('diff://chat2'), 'diff://chat2');
   await binding.openDiffFrom(undefined, opens('diff://nopane'), 'diff://nopane');
   await binding.openDiffFrom(0, opens('diff://failed', false), 'diff://failed');
   await binding.openDiffFrom(0, opens('diff://unnamed'));
   const rebind = binding.openDiffFrom(0, opens('diff://rebound'), 'diff://rebound');
   layout = ops.setBinding(layout, 'chat', '');
   await rebind;
-  assert.equal(moved.length, count, 'open before, Chat 2 unbound, no pane, a failed open, no id or unbound meanwhile: no move');
+  assert.equal(moved.length, count, 'open before, no pane, a failed open, no id or unbound meanwhile: no move');
+  // Pane 1 has no dock of its own: its diffs follow the one chat's binding.
+  layout = ops.setBinding(layout, 'chat', 'editor-2');
+  await binding.openDiffFrom(1, opens('diff://pane1'), 'diff://pane1');
+  assert.deepEqual(moved.at(-1), ['diff://pane1', 'editor-2']);
 });
 
 test('Bind to rows and the badge use each group\'s own number, not its place in the tree', () => {

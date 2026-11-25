@@ -16,8 +16,8 @@ function twoGroups() {
 }
 
 test('only chats and terminals are bindable; Changes reads its chat binding', () => {
-  for (const id of ['chat', 'chat-2', 'terminal', 'terminal-3']) assert.equal(isBindableView(id), true, id);
-  for (const id of ['changes', 'explorer', 'run', 'terminal-5', '__proto__']) assert.equal(isBindableView(id), false, id);
+  for (const id of ['chat', 'terminal', 'terminal-3']) assert.equal(isBindableView(id), true, id);
+  for (const id of ['changes', 'chat-2', 'explorer', 'run', 'terminal-5', '__proto__']) assert.equal(isBindableView(id), false, id);
   const layout = setBinding(twoGroups(), 'chat', 'editor-2');
   assert.equal(bindingOf(layout, 'chat'), 'editor-2');
   assert.equal(bindingOf(layout, 'changes'), 'editor-2');
@@ -46,7 +46,7 @@ test('normalize keeps valid bindings across persistence and drops dangling ones'
   assert.deepEqual(restored.bind, { chat: 'editor-2', terminal: 'editor-1' });
   assert.deepEqual(boundGroups(restored).sort(), ['editor-1', 'editor-2']);
   const raw = JSON.parse(JSON.stringify(bound));
-  raw.bind = { chat: 'editor-3', terminal: 'editor-2', explorer: 'editor-1', constructor: 'editor-1', 'chat-2': 7 };
+  raw.bind = { chat: 'editor-3', terminal: 'editor-2', explorer: 'editor-1', constructor: 'editor-1', 'chat-2': 'editor-1' };
   assert.deepEqual(normalizeLayout(raw).bind, { terminal: 'editor-2' });
   raw.bind = 'nope';
   assert.equal(normalizeLayout(raw).bind, undefined);

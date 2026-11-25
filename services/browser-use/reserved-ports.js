@@ -5,7 +5,7 @@
  * the debug port. Read per call because engine ports move at runtime.
  */
 
-const FIXED_PORTS = Object.freeze([11434, 8033, 8034, 8000, 8080, 9222]);
+const FIXED_PORTS = Object.freeze([11434, 8033, 8034, 8035, 8000, 8080, 9222]); // 8035: managed Strata (row 200)
 const DEFAULT_PORTS = Object.freeze({ 'http:': 80, 'https:': 443 });
 const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 

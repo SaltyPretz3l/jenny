@@ -465,3 +465,39 @@ test('fix 3: the sharing file is its own; a bad one reads as not sharing and is 
   assert.equal(s.sharing.snapshot(), null, 'not sharing');
   assert.equal(events(s, 'team.sharing.file_refused').length, 1, 'logged once a run');
 });
+
+test('H14: an engine switch while a request runs pauses claiming until it ends, then registers against the new engine', async (t) => {
+  const s = await setup(t);
+  await shareOn(s);
+  const held = holdEngine(s.engine);
+  const first = s.host.queueJob();
+  await s.drive(() => held.length === 1, 'forwarding');
+  const other = await startEngine(t, { models: ['alpha'] });
+  s.engineState.value = { url: other.url, kind: 'llama-server', key: '' };
+  await s.drive(() => s.host.of('team.node.pause').some((call) => call.params.on === true), 'paused to drain');
+  const second = s.host.queueJob();
+  held[0].end(Buffer.concat([sse('rest'), DONE]));
+  await s.drive(() => first.state === 'done', 'the running request finished');
+  await s.drive(() => second.state === 'done', 'the next request is served');
+  assert.equal(s.engine.chats().length, 1, 'the old engine is asked nothing after the switch');
+  assert.equal(other.chats().length, 1, 'the new engine serves the next request');
+  assert.equal(s.host.of('team.node.unregister').length, 1, 'the old agent let go first');
+  assert.equal(s.host.of('team.node.register').length, 2, 'and a new one registered');
+  assert.equal(stateOf(s), 'idle');
+});
+
+test('OD-4: the share set is saved beside the sharing mark, kept by a later save, removed by null and bounded', (t) => {
+  const dir = tempProfile(t, 'jenny-team-share-set-');
+  fs.mkdirSync(require('node:path').dirname(sharingFilePath(dir, TEAM)), { recursive: true });
+  assert.deepEqual(saveSharing(dir, TEAM, { on: true, claim_seq: 5, ollama_models: ['qwen3:8b', 'gemma:2b'] }), { ok: true });
+  assert.deepEqual(loadSharing(dir, TEAM), { ok: true, on: true, claim_seq: 5, ollama_models: ['qwen3:8b', 'gemma:2b'] });
+  assert.deepEqual(saveSharing(dir, TEAM, { on: false, claim_seq: 9 }), { ok: true });
+  assert.deepEqual(loadSharing(dir, TEAM), { ok: true, on: false, claim_seq: 9, ollama_models: ['qwen3:8b', 'gemma:2b'] }, 'a save naming none keeps it');
+  assert.deepEqual(saveSharing(dir, TEAM, { on: false, claim_seq: 9, ollama_models: null }), { ok: true });
+  assert.deepEqual(loadSharing(dir, TEAM), { ok: true, on: false, claim_seq: 9 }, 'null returns to the default');
+  for (const bad of [[], 'x', ['ok', 3], ['bad\u0001'], Array.from({ length: 65 }, (_, i) => `m${i}`)]) {
+    assert.deepEqual(saveSharing(dir, TEAM, { on: true, claim_seq: 9, ollama_models: bad }), { ok: false, reason: 'team_sharing_invalid' }, JSON.stringify(bad).slice(0, 30));
+  }
+  fs.writeFileSync(sharingFilePath(dir, TEAM), '{"schema_version":1,"on":true,"claim_seq":5,"ollama_models":["a","a"]}');
+  assert.equal(loadSharing(dir, TEAM).bad, true, 'a duplicate in the file fails its rule');
+});

@@ -13,7 +13,9 @@ from sidecar.ai.context.context_rows import (
 
 _ALLOWED_MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
 MAX_CHAT_MESSAGES_PER_REQUEST = 1024
-MAX_MESSAGE_CONTENT_BYTES = 256 * 1024
+# 1 MiB (owner, 2026-11-24, row 200 S3): a pasted ~100K-token document is about 434 KB, which the
+# 256 KiB cap refused; the stdio frame cap (sidecar/server.py, 10 MiB) still bounds the request.
+MAX_MESSAGE_CONTENT_BYTES = 1024 * 1024
 
 
 def _message_path(index: int, field: str | None = None) -> str:

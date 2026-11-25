@@ -196,3 +196,47 @@ def test_snapshot_ledger_is_detached_from_later_calls(monkeypatch) -> None:
     second = store.snapshot()
     assert second is not None
     assert len(second["provider_calls"]) == 2
+
+
+
+# -- what a compaction cost: the next call's uncached prompt (row 183 W3) ------------------------
+
+
+def test_the_call_after_a_compaction_records_what_it_resent_uncached() -> None:
+    store = TurnDiagnosticsStore()
+    store.begin_turn(request_id="req_c", session_id="sess", mode="assist")
+    _start_call(store, "req_c")
+    store.record_provider_usage(request_id="req_c", prompt_eval_count=240_000, cached_tokens=230_000)
+    store.record_compaction(
+        request_id="req_c", phase="tool_loop", strategy="full",
+        tokens_before=240_000, tokens_after=150_000,
+    )
+    # The summary call itself is internal and is not the cost.
+    _start_call(store, "req_c", purpose="compaction_summary")
+    store.record_provider_usage(request_id="req_c", prompt_eval_count=90_000, cached_tokens=0)
+    _start_call(store, "req_c")
+    store.record_provider_usage(request_id="req_c", prompt_eval_count=152_000, cached_tokens=27_000)
+    _start_call(store, "req_c")
+    store.record_provider_usage(request_id="req_c", prompt_eval_count=155_000, cached_tokens=150_000)
+
+    snapshot = store.get_snapshot_for_request("req_c")
+    assert snapshot is not None
+    assert snapshot["compactions"] == [{
+        "phase": "tool_loop", "strategy": "full", "tokens_before": 240_000,
+        "tokens_after": 150_000, "after_provider_call": 1,
+        "next_prompt_tokens": 152_000, "resent_uncached_tokens": 125_000,
+    }]
+    snapshot["compactions"][0]["phase"] = "changed"  # a copy, not the live ledger
+    assert store.get_snapshot_for_request("req_c")["compactions"][0]["phase"] == "tool_loop"
+
+
+def test_the_compaction_ledger_is_bounded() -> None:
+    store = TurnDiagnosticsStore()
+    store.begin_turn(request_id="req_b", session_id="sess", mode="assist")
+    for index in range(20):
+        store.record_compaction(
+            request_id="req_b", phase="tool_loop", strategy="micro",
+            tokens_before=index, tokens_after=0,
+        )
+    entries = store.get_snapshot_for_request("req_b")["compactions"]
+    assert len(entries) == 8 and entries[-1]["tokens_before"] == 19

@@ -98,15 +98,6 @@
     return status === 'done' || status === 'skipped';
   }
 
-  function isRequiredStep(stepId) {
-    var spec = STEPS[stepId];
-    return Boolean(spec && spec.health !== 'optional');
-  }
-
-  function requiredStepIds() {
-    return STEP_ORDER.filter(isRequiredStep);
-  }
-
   function countCompletedSteps(steps) {
     var done = 0;
     for (var i = 0; i < STEP_ORDER.length; i += 1) {
@@ -118,9 +109,8 @@
   // UIUX-005: renderer-side twin of services/shell-config-setup-state.js's
   // computeSetupHealth (that module runs in the main process / Node tests
   // only -- it is never script-tagged into the browser renderer). Required
-  // for HEALTH (distinct from the wizard's optional steps) is workspaceRoot
-  // plus model access via EITHER localModel or endpoint; a required step that
-  // is merely 'skipped' still falls short of 'complete'.
+  // for HEALTH is model access via EITHER localModel or endpoint; a route that
+  // is merely 'skipped' still falls short of 'complete'. The folder is optional.
   function requiredModelStepStatus(steps) {
     var localModel = (steps && steps.localModel) || 'pending';
     var endpoint = (steps && steps.endpoint) || 'pending';
@@ -135,10 +125,7 @@
     var steps = (setup && setup.steps && typeof setup.steps === 'object' && !Array.isArray(setup.steps))
       ? setup.steps
       : {};
-    var required = {
-      workspaceRoot: steps.workspaceRoot || 'pending',
-      model: requiredModelStepStatus(steps),
-    };
+    var required = { model: requiredModelStepStatus(steps) };
     var pendingSteps = [];
     var skippedSteps = [];
     Object.keys(required).forEach(function (key) {
@@ -209,8 +196,6 @@
     snakeStepKey: snakeStepKey,
     setupStepEyebrow: setupStepEyebrow,
     isTerminalStatus: isTerminalStatus,
-    isRequiredStep: isRequiredStep,
-    requiredStepIds: requiredStepIds,
     countCompletedSteps: countCompletedSteps,
     computeSetupHealth: computeSetupHealth,
   };

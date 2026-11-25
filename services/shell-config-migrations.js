@@ -52,7 +52,7 @@ const {
 const { normalizeFollowUp } = require('./shell-config-followups-schema');
 const { normalizeSessionRuntime } = require('./shell-config-session-runtime');
 
-const CONFIG_VERSION = 59;
+const CONFIG_VERSION = 60;
 const RETIRED_ENGINE_TUNING_KEYS = Object.freeze([
   'maxLoopIterations',
   'tokenBudgetReservedForSummary',
@@ -491,6 +491,20 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     if (home && typeof home === 'object' && !Array.isArray(home)) {
       const { weather: _retiredWeather, ...homeWithoutWeather } = home;
       migrated.home = homeWithoutWeather;
+    }
+  }
+  if (version < 60) {
+    // Chat tabs belong to a pane (row 190 Wave 3). A two-pane workspace seeds
+    // its pane-1 session into the sparse `tabPanes` map; every other tab stays
+    // in pane 0. A workspace that already stores the map is left as stored.
+    const storedWorkspace = migrated.workspace || migrated.workspace_state;
+    if (storedWorkspace && typeof storedWorkspace === 'object' && !Array.isArray(storedWorkspace)
+      && !Object.prototype.hasOwnProperty.call(storedWorkspace, 'tabPanes')) {
+      const workspace = normalizeWorkspaceState(storedWorkspace, validWorkspaceSessionIds);
+      const paneOneSessionId = workspace.panes.length > 1 ? workspace.panes[1].sessionId : '';
+      migrated.workspace = paneOneSessionId
+        ? { ...workspace, tabPanes: { [paneOneSessionId]: 1 } }
+        : workspace;
     }
   }
   migrated.version = CONFIG_VERSION;

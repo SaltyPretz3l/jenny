@@ -15,6 +15,9 @@
  * change; and when what had the focus goes (the conversation shown deleted, the column
  * collapsed or left with the picker open), the focus moves to the project button, or the page's first control, once the page has drawn.
  *
+ * New conversation ignores a second click while one is being made, and says it has started. A conversation that branches in the column
+ * (Branch from here) is shown in the column: the conversation is given `board.onOpenConversation`, not sent to the Team tab.
+ *
  * "Open in Team" (header, beside History) opens the conversation shown in the Team tab through the Team notifier's conversation intent
  * (`rendererTeamNotify.request`); it is greyed with the reason while no conversation is shown or the team is offline.
  *
@@ -58,6 +61,7 @@
     let source = null;
     let offPresence = null;
     let pickerOpen = false;
+    let creating = false; // a New conversation is on its way: another click is ignored
 
     const inv = () => globalThis.inventory || windowRef.inventory || {};
     const conversations = () => windowRef.rendererTeamProjectConversation || null;
@@ -193,7 +197,7 @@
       if (!id) { drawEmpty(); if (had) focusIn(); return; }
       if (!store || !made) return;
       conv = made.createConversation({ root: body, teamId: project.team.id, projectId: project.id, sessionId: id, store, ctx: () => data.ctxOf(project.team.id),
-        board: { id: () => String(ctx.getOpenBoardId() || ''), viewers: viewersText,
+        board: { id: () => String(ctx.getOpenBoardId() || ''), viewers: viewersText, onOpenConversation: openBranch,
           hint: jt('board.team.convHint', 'Jenny can see this board from here. The host and the computer that runs the model can read it.') } });
       boardSeen = String(ctx.getOpenBoardId() || '');
       drawViewers();
@@ -203,7 +207,7 @@
     function drawEmpty() {
       const why = reason();
       body.insertAdjacentHTML('beforeend', '<p class="board-team-conv__empty"></p>' + inv().actionButton({ variant: 'secondary', size: 'sm', className: 'board-team-conv__new',
-        label: jt('board.team.newConversation', 'New conversation'), disabled: Boolean(why), title: why || jt('board.team.newConversation', 'New conversation'), dataset: { 'board-team-conv': 'new' } }));
+        label: jt('board.team.newConversation', 'New conversation'), disabled: creating || Boolean(why), title: why || jt('board.team.newConversation', 'New conversation'), dataset: { 'board-team-conv': 'new' } }));
       body.querySelector('.board-team-conv__empty').textContent = jt('board.team.noConversation', 'No conversation in this project yet.');
       emptyEl = body.querySelector('.board-team-conv__empty');
     }
@@ -245,7 +249,7 @@
       const title = id ? titleOf(rows, id) : jt('board.team.conversations', 'Conversations');
       if (label.textContent !== title) { label.textContent = title; trigger.setAttribute('title', title); }
       drawOpenTeamButton(project, id);
-      const stale = !id && emptyEl && emptyEl.nextElementSibling && emptyEl.nextElementSibling.disabled !== Boolean(reason());
+      const stale = !id && emptyEl && emptyEl.nextElementSibling && emptyEl.nextElementSibling.disabled !== (creating || Boolean(reason()));
       if (id !== session || (!id && !emptyEl) || stale) mountConversation(project, id);
       else if (conv && String(ctx.getOpenBoardId() || '') !== boardSeen) { boardSeen = String(ctx.getOpenBoardId() || ''); conv.update({ type: 'board', team_id: project.team.id }); }
     }
@@ -257,13 +261,30 @@
 
     async function create(project) {
       const store = data.projectStore();
-      if (!store) return;
-      const answer = await store.call('conversationCreate', { team_id: project.team.id, project_id: project.id });
+      if (!store || creating) return;
+      creating = true;
+      const button = aside && aside.querySelector('[data-board-team-conv="new"]');
+      if (button) button.disabled = true;
+      ctx.notify(jt('board.team.creating', 'Starting a conversation…'));
+      let answer;
+      try { answer = await store.call('conversationCreate', { team_id: project.team.id, project_id: project.id }); } finally { creating = false; }
       if (disposed || key !== `${project.team.id}|${project.id}`) return;
-      if (!answer.ok) { ctx.notify(data.ctxOf(project.team.id).errorText(answer.error), { tone: 'warning' }); return; }
+      if (!answer.ok) { ctx.notify(data.ctxOf(project.team.id).errorText(answer.error), { tone: 'warning' }); if (aside) draw(project); return; }
       fresh = answer.session.session_id;
       store.reread(project.team.id);
       choose(project, fresh);
+    }
+
+    // A branch the host just made (Branch from here in the conversation shown): the column shows it, before the list names it.
+    function openBranch(sessionId) {
+      const project = ctx.getProject();
+      const store = data.projectStore();
+      const id = typeof sessionId === 'string' ? sessionId : '';
+      if (disposed || !aside || !store || !id || !project || !project.team || key !== `${project.team.id}|${project.id}`) return false;
+      fresh = id;
+      store.reread(project.team.id);
+      choose(project, id);
+      return true;
     }
 
     // The caret goes to the message box, or to New conversation when there is no conversation, or to the picker.
@@ -281,7 +302,7 @@
       const current = currentOf(project.team.id, project.id, rows);
       const why = reason();
       const items = rows.map((row) => ({ label: titleOf(rows, row.session_id), value: `conv:${row.session_id}`, checked: row.session_id === current, action: () => choose(project, row.session_id) }));
-      items.push({ label: jt('board.team.newConversation', 'New conversation'), value: 'new', disabled: Boolean(why), description: why, action: () => create(project) });
+      items.push({ label: jt('board.team.newConversation', 'New conversation'), value: 'new', disabled: creating || Boolean(why), description: why, action: () => create(project) });
       pickerOpen = true;
       trigger.setAttribute('aria-expanded', 'true');
       menu.show({ rootEl: aside, anchorEl: trigger, placement: 'below', focusChecked: true, ariaLabel: jt('board.team.convMenuLabel', 'Conversations'), restoreFocusTo: trigger,

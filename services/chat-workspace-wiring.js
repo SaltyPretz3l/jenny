@@ -50,6 +50,8 @@ function createChatWorkspaceService({ backendService, emit = () => {}, log = () 
     getWorkspaceTestSource: () => backendService.workspaceTestRunnerService || null,
     // Backgrounded run_command jobs, running and finished (the tracker owns them).
     getBackgroundJobTracker: () => backendService.backgroundJobTracker || null,
+    // The Live tab's run (services/run-view): read-only, never builds the run service.
+    getRunView: () => backendService.runView || null,
     // Linked chat turns: the session runtime's work index (read-only; absent when the runtime is not composed).
     getRuntimeStore: () => backendService.sessionRuntime?.store || null,
     isActivityEnabled: () => backendService.featureFlags?.activity_monitor === true,

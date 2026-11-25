@@ -24,6 +24,7 @@ from sidecar.ai.engines.model_name import (
     canonical_model_token,
     extract_family_tokens,
     is_bonsai2_model,
+    is_inkling_model,
     is_ornith15_model,
     is_qwen38_model,
     model_token_matches,
@@ -744,8 +745,8 @@ def _stamp_thinking_ladder(
     """Offer the levels the served template takes (FG-010, automatic per model).
 
     /props answers for the one model the server holds, as with vision. A
-    family with a tuned ladder (the Qwen3.8 contract, Bonsai 2 included) keeps
-    it. A template that takes no level drops a name-based ladder (Ornith's
+    family with a tuned ladder (the Qwen3.8 contract, Bonsai 2 included, and
+    Inkling 2 Mini) keeps it. A template that takes no level drops a name-based ladder (Ornith's
     fallback included), so the picker never offers a level that sends nothing;
     an unknown verdict leaves the name-based row as it is.
     """
@@ -754,7 +755,7 @@ def _stamp_thinking_ladder(
     ladder = thinking_ladder(control)
     for index, model in enumerate(models):
         model_id = model if isinstance(model, str) else str(model.get("id") or "")
-        if uses_qwen38_chat_contract(model_id):
+        if uses_qwen38_chat_contract(model_id) or is_inkling_model(model_id):
             continue
         if ladder is None:
             capabilities = model.get("capabilities") if isinstance(model, dict) else None
@@ -851,7 +852,11 @@ def _parse_vllm_models_payload(
                 capabilities["vision"] = True
             if _is_likely_thinking_model(model_id) or (
                 openai_compatible_controls
-                and (uses_qwen38_chat_contract(model_id) or is_ornith15_model(model_id))
+                and (
+                    uses_qwen38_chat_contract(model_id)
+                    or is_ornith15_model(model_id)
+                    or is_inkling_model(model_id)
+                )
             ):
                 capabilities["thinking"] = True
                 if openai_compatible_controls:
@@ -875,6 +880,12 @@ def _openai_compatible_thinking_capabilities(model_name: str) -> dict[str, Any]:
         return {
             "reasoning_effort": True,
             "reasoning_efforts": ["none", "low", "medium", "xhigh"],
+            "default_reasoning_effort": "medium",
+        }
+    if is_inkling_model(model_name):
+        return {
+            "reasoning_effort": True,
+            "reasoning_efforts": ["none", "low", "medium", "high", "xhigh"],
             "default_reasoning_effort": "medium",
         }
     if is_ornith15_model(model_name):

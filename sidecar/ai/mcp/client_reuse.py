@@ -52,7 +52,6 @@ def reuse_key(
     config: MCPServerConfig,
     *,
     sse_enabled: bool,
-    resources_enabled: bool,
     allow_private_addresses: bool,
     allow_loopback: bool,
 ) -> str:
@@ -73,7 +72,6 @@ def reuse_key(
             "config": fields,
             "auth_sha256": None if auth is None else _sha256(dataclasses.asdict(auth)),
             "sse_enabled": bool(sse_enabled),
-            "resources_enabled": bool(resources_enabled),
             "allow_private_addresses": bool(allow_private_addresses),
             "allow_loopback": bool(allow_loopback),
         }
@@ -108,7 +106,6 @@ def connect_servers(
             key = reuse_key(
                 server,
                 sse_enabled=client._sse_enabled,
-                resources_enabled=client._resources_enabled,
                 allow_private_addresses=client._allow_private_addresses,
                 allow_loopback=client._allow_loopback,
             )
@@ -162,9 +159,6 @@ def _adopt(client: MCPClient, previous: MCPClient, name: str, key: str) -> bool:
             return False  # a fresh build reports the namespace collision
         previous._reuse.handed_off.append(transport)
         client._tools_by_name.update(descriptors)
-        client._resources_by_id.update(
-            {rid: res for rid, res in previous._resources_by_id.items() if res.server_name == name}
-        )
         client._failures.extend(row for row in previous._failures if row.name == name)
         from sidecar.ai.mcp.client import MCP_COOLDOWN_NAMESPACE as namespace
 

@@ -139,9 +139,6 @@ def build_system_prompt_for_statuses(
         "workspace_manifest_enabled": bool(
             getattr(kernel._config, "tools_workspace_manifest_enabled", False)
         ),
-        "task_capsule_enabled": bool(
-            getattr(kernel._config, "tools_task_capsule_enabled", False)
-        ),
         "defer_turn_context": trailing_turn_context_enabled(kernel._config),
     }
     # The request authority's root (None = explicitly unbound) governs every

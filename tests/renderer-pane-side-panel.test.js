@@ -183,26 +183,6 @@ test('opening an artifact from pane 1 switches the panel to pane 1\'s chat', asy
   assert.equal(ownerTitle(doc), 'Beta chat');
 });
 
-test('swapping the panes (the kicker drag) keeps the owner on the same chat', async (t) => {
-  const { window, doc, state } = await openTwoPanes(t);
-  await clickInPane(window, placeChip(doc.getElementById('chatTimeline'), 'art_session-a'));
-  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-a');
-  const kicker0 = doc.getElementById('chatPaneKicker');
-  kicker0.setPointerCapture = () => {};
-  kicker0.releasePointerCapture = () => {};
-  doc.querySelector('.chat-pane[data-pane-id="1"]').getBoundingClientRect = () => ({ left: 410, right: 800, top: 0, bottom: 600, width: 390, height: 600 });
-  const pointer = (target, type, init) => target.dispatchEvent(new window.PointerEvent(type, { button: 0, pointerId: 7, bubbles: true, ...init }));
-  pointer(kicker0.querySelector('.chat-pane-kicker-title'), 'pointerdown', { clientX: 50, clientY: 10 });
-  pointer(kicker0, 'pointermove', { clientX: 60, clientY: 10 });
-  pointer(kicker0, 'pointermove', { clientX: 600, clientY: 100 });
-  pointer(kicker0, 'pointerup', { clientX: 600, clientY: 100 });
-  await waitForUi(window, 120);
-  assert.deepEqual(Array.from(state.panes.panes, (pane) => pane.sessionId), ['session-b', 'session-a'], 'the sessions traded sides');
-  assert.equal(state.ui.sidePanelOwnerSessionId, 'session-a', 'the owner followed its chat, not its side');
-  assert.equal(state.artifacts.selectedSessionId, 'session-a');
-  assert.equal(ownerTitle(doc), 'Alpha chat');
-});
-
 test('closing the pane that owns the panel closes it without the per-chat dismissal', async (t) => {
   const { window, doc, composition, pane1, state } = await openTwoPanes(t);
   await clickInPane(window, placeChip(pane1.dom.chatTimeline, 'art_session-b'));
@@ -210,7 +190,7 @@ test('closing the pane that owns the panel closes it without the per-chat dismis
   const panel = doc.getElementById('artifactReviewPanel');
   assert.equal(panel.classList.contains('hidden'), false, 'precondition: the panel shows pane 1\'s artifact');
 
-  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
+  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close').click();
   await waitForState(window, () => composition.getPane(1) === null && panel.classList.contains('hidden') && state.ui.artifactReview.enabled === false
     && state.ui.sidePanelOwnerSessionId === '' && !doc.querySelector('.side-panel-owner-line'));
   // Some checks below are about what must NOT follow the close (a dismissal being recorded or
@@ -296,7 +276,7 @@ test('closing the pane whose monitor holds the panel restores what the monitor d
   await clickInPane(window, placeSubagentTrigger(pane1.dom.chatTimeline, 'sub_session-b'));
   assert.equal(state.ui.subagentMonitor.sessionId, 'session-b', 'precondition: pane 1\'s monitor took the panel');
 
-  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
+  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close').click();
   await waitForUi(window, 120);
   assert.equal(state.ui.subagentMonitor ?? null, null, 'the monitor closed with its pane');
   assert.equal(state.ui.artifactReview.mode, 'artifact');
@@ -322,7 +302,7 @@ test('closing the pane that owns an open Activity panel collapses it', async (t)
   await waitForState(window, () => !contextPanel.classList.contains('collapsed') && state.ui.sidePanelOwnerSessionId === 'session-b');
   assert.equal(contextPanel.classList.contains('collapsed'), false, 'precondition: Activity opened the panel');
   assert.equal(state.ui.sidePanelOwnerSessionId, 'session-b', 'the explicit open claimed the panel for the focused chat');
-  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-close').click();
+  doc.querySelector('.chat-pane[data-pane-id="1"] .chat-pane-row-close').click();
   await waitForState(window, () => contextPanel.classList.contains('collapsed'));
   assert.equal(contextPanel.classList.contains('collapsed'), true, 'the panel collapsed with its owner');
 });

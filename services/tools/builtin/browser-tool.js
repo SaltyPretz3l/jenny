@@ -7,14 +7,14 @@
  * browser service, and map the outcome to a result. The model reads the whole outline; only the
  * short step summary in `metadata` is ever saved (savedToolOutput in chat-stream-tool-payload-utils.js). */
 
-const { APPLICATION_TURN_AUTO_RESUME, isUnattendedApplicationTurn } = require('../../backend/application-turns');
 const { peekToolLookupMessages } = require('../../backend/chat-stream-tool-payload-utils');
 const { formatForModel, stepSummary } = require('../../browser-use/result-format');
 const { isPlainObject } = require('../../value-utils');
 const { checkLiveCall } = require('./propose-tool-support');
 const { manifestSchema } = require('./tool-result');
+const { isUnattendedTurn } = require('./unattended-turn');
 
-const ACTIONS = new Set(['navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'close', 'ad_block']);
+const ACTIONS = new Set(['navigate', 'read', 'find', 'click', 'type', 'select', 'scroll', 'press', 'screenshot', 'wait', 'close', 'ad_block']);
 const NAVIGATE_WORDS = new Set(['back', 'forward', 'reload']);
 const REF_PATTERN = /^\[?(r\d{1,6})\]?$/;
 // Steps the model can retry or move on from. A refusal closes one target only, and a request with
@@ -70,27 +70,6 @@ function latestUserText(context, sessionId) {
     }
   } catch (_error) { /* fall through */ }
   return '';
-}
-
-/**
- * Whether nobody typed the turn this call belongs to (a wake, a scheduled check, a digest). The
- * turn's anchor is the newest user row. Such a turn may close the chat's page and nothing else,
- * so a message from another chat can free a page but never drive one. A transcript that cannot
- * be read counts as unattended, which only leaves close.
- */
-function isUnattendedTurn(context, sessionId) {
-  try {
-    const messages = peekToolLookupMessages(context.backendService, sessionId);
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message?.role !== 'user' || message.kind) continue;
-      // A resume carries on the turn before it, so it is whatever that turn was.
-      if (message.application_turn !== APPLICATION_TURN_AUTO_RESUME) return isUnattendedApplicationTurn(message.application_turn);
-    }
-    return false;
-  } catch (_error) {
-    return true;
-  }
 }
 
 function toResult(outcome) {

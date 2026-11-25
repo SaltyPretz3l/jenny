@@ -1,0 +1,25 @@
+{
+ "default_generation_settings": {
+  "n_ctx": 49152,
+  "params": {
+   "n_predict": -1
+  }
+ },
+ "total_slots": 4,
+ "model_alias": "inkling-2-mini-sq-20",
+ "chat_template": "{#- trimmed for the fixture: only the served template's reasoning_effort lines are kept -#}\n    {%- set eff = reasoning_effort if reasoning_effort is defined and reasoning_effort is not none else 0.9 -%}\n            {{- raise_exception(\"Unknown reasoning_effort: \" ~ eff) -}}\n        {{- raise_exception(\"reasoning_effort must be in [0.0, 0.99]\") -}}",
+ "chat_template_caps": {
+  "supports_tools": true,
+  "supports_tool_calls": true,
+  "supports_system_role": true,
+  "supports_parallel_tool_calls": true,
+  "supports_preserve_reasoning": false
+ },
+ "modalities": {
+  "vision": true
+ },
+ "models_autoload": true,
+ "is_sleeping": false,
+ "model_path": "<STRATA_DATA>\\Strata-data\\models\\inkling-2-mini\\Inkling-2-Mini-SQ-20.strata",
+ "build_info": "Strata strata-inkling-0.1.67"
+}

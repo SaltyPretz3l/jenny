@@ -143,9 +143,13 @@ function teamModelEntries(service) {
   for (const team of engine.listTeams()) {
     for (const modelId of team.models) {
       const contextLength = team.contextLengths?.[modelId];
+      // The host's vision / thinking flags (team-engine.js keeps only true ones), so the picker and the vision gate
+      // treat a team model as they treat a local one.
+      const caps = team.capabilities?.[modelId];
       rows.push({ id: teamModelId(team.teamId, modelId), engine_type: ENGINE_TYPE, available: true,
         team_id: team.teamId, team_name: team.name || '',
-        ...(Number.isSafeInteger(contextLength) ? { context_length: contextLength } : {}) });
+        ...(Number.isSafeInteger(contextLength) ? { context_length: contextLength } : {}),
+        ...(caps ? { capabilities: { vision: caps.vision === true, thinking: caps.thinking === true } } : {}) });
     }
   }
   return rows;
@@ -163,7 +167,7 @@ function teamModelProfile(service) {
 
 // Part of the model-list cache key: a team that comes online or changes its models inside the TTL.
 function teamCatalogKey(rows) {
-  return rows.map((row) => `${row.id}:${row.team_name}:${row.context_length ?? ''}`).join('|');
+  return rows.map((row) => `${row.id}:${row.team_name}:${row.context_length ?? ''}:${row.capabilities?.vision ? 'v' : ''}${row.capabilities?.thinking ? 't' : ''}`).join('|');
 }
 
 module.exports = {

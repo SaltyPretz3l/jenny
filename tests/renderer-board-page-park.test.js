@@ -298,7 +298,7 @@ test('the module: parkBoardPage keeps the page for the next show, and a team pag
 
 test('park gives the dock element back to where it was; resume docks the chat again', async (t) => {
   const extra = `<section id="chatView"><div id="chatThreadStage"><div id="chatThreadScroll"><div id="chatTimeline"></div></div></div>
-    <div id="composerWrap"><textarea id="chatInput"></textarea></div><div id="artifactReviewResizer"></div></section>
+    <div id="composerWrap"><textarea id="chatInput"></textarea></div><aside id="artifactReviewPanel"></aside></section>
     <section id="ideView"><div id="ideShell"><div id="ideWorkspaceChatHost"></div><div id="ideStatusBar"></div>
     <aside id="ideChatDock" class="hidden"><header id="ideChatDockHeader"></header><div id="ideChatDockBody"></div></aside></div></section>`;
   const state = { ui: { activeView: 'board' }, features: { featureFlags: { project_boards: true, ide_chat_dock: true } }, sessions: [], currentSessionId: '' };

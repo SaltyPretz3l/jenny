@@ -52,6 +52,59 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* Row 190 Wave 4 (owner pick 3A): the dock's own header row is gone. The element stays as the picker's
+ * anchor at the top of the chat view, zero high; the Chat tab names the chat and opens the picker.
+ * Team board panels keep the .ide-chat-dock-header row above. */
+#ideChatDockHeader {
+  block-size: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+}
+
+#ideChatDockHeader .ide-chat-dock-session-trigger {
+  display: none;
+}
+
+.ide-chat-dock-session-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  margin-block-start: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-block-start: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: start;
+}
+
+.ide-chat-dock-session-new:hover,
+.ide-chat-dock-session-new:focus-visible {
+  color: var(--text-primary);
+}
+
+/* The shown Chat tab carries the chat's title: ellipsised, with a caret for the picker. */
+.wb-tab[data-wb-tab="chat"] .wb-tab-label {
+  display: inline-block;
+  max-inline-size: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.wb-tab[data-wb-tab="chat"][aria-selected="true"]::after {
+  content: "";
+  inline-size: 0;
+  block-size: 0;
+  border-inline: 3.5px solid transparent;
+  border-block-start: 4px solid currentColor;
+  opacity: 0.7;
+}
+
 .ide-chat-dock-header-actions {
   display: flex;
   align-items: center;
@@ -120,43 +173,6 @@
   grid-row: 3;
   min-width: 0;
   padding: 0 var(--space-4) var(--space-4);
-}
-
-/* ── Chat 2 (row 40 W6b): split view's second pane hosted whole in the Workspace.
- * Its root also carries .ide-chat-dock-body; its kicker (title, close) heads it. */
-.wb-view-host > .chat-pane[data-pane-hosted] {
-  block-size: 100%;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-}
-
-.wb-view-host > .chat-pane[data-pane-hosted] > .chat-pane-kicker {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.wb-view-host > .chat-pane[data-pane-hosted] > .hero-stage,
-.wb-view-host > .chat-pane[data-pane-hosted] > .chat-thread-stage,
-.wb-view-host > .chat-pane[data-pane-hosted] > .chat-timeline-utility-cluster {
-  grid-column: 1;
-  grid-row: 2;
-  min-height: 0;
-}
-
-.wb-view-host > .chat-pane[data-pane-hosted] > .composer-wrap {
-  grid-column: 1;
-  grid-row: 3;
-  min-width: 0;
-  padding: 0 var(--space-4) var(--space-4);
-}
-
-.wb-view-host > .chat-pane[data-pane-hosted].chat-active .hero-stack {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* The host scrolls nothing: the pane's own thread does. */
-.wb-view-host:has(> .chat-pane[data-pane-hosted]) {
-  overflow: hidden;
 }
 
 /* ── Simplified-dock suppression (plan §7 + §17.1) ─────────────────────────

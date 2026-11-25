@@ -34,6 +34,11 @@ function corrupt(cause, schemaRefusal = false) {
 const TRANSIENT_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'EMFILE', 'ENFILE', 'EIO', 'EAGAIN']);
 // An I/O error worth retrying: it never latches the store or breaks a channel.
 const isTransient = (error) => TRANSIENT_CODES.has(error?.code) || error?.message === 'metadata_changed_during_read';
+// H15: a file another process holds for a moment (a Windows scanner, indexer or backup). The one error that leaves a
+// store usable after earlier files of the same write landed: the store reloads the channel instead of latching.
+// Any other code there (EIO, ENOSPC, ...) is a real failure and still latches.
+const SHARING_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+const isSharingLock = (error) => SHARING_CODES.has(error?.code);
 
 // A read that failed for any other reason is corruption; the cause is a fixed
 // token (a parse error message can quote file content).
@@ -115,4 +120,4 @@ function createFileIo({ guard, ops, log }) {
   return io;
 }
 
-module.exports = { checked, corrupt, createFileIo, isTransient, logChannel, refuse };
+module.exports = { checked, corrupt, createFileIo, isSharingLock, isTransient, logChannel, refuse };

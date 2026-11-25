@@ -118,6 +118,26 @@ test('item 2: a project the measure cannot finish refuses only its own begins an
   assert.equal(s.counts.measure, 3, 'it is retried at its own begin');
 });
 
+test('item 2b: a project made after the first measure counts at the next check; a failed walk is retried a minute on', BOUNDED, async (t) => {
+  const failing = new Set();
+  const s = await setup(t, { files: { limits: { projectBytes: 100, allBytes: 150 }, wrapFolders: (folders) => ({ ...folders,
+    measure: async (id) => (failing.has(id) ? { ok: false, reason: 'team_project_root_unavailable' } : folders.measure(id)) }) } });
+  const { h, projectId } = s;
+  const sized = (project, size, folder) => h.send('carl', 'team.project.upload.begin', { project_id: project,
+    folder_name: folder, files: [{ path: 'x.bin', size, sha256: 'a'.repeat(64) }] });
+  const flaky = await h.sharedProject('Flaky');
+  failing.add(flaky);
+  assert.equal(await h.reason(sized(projectId, 51, 'one')), 'team_project_quota', 'a walk that failed counts as the project limit');
+  failing.delete(flaky);
+  assert.equal(await h.reason(sized(projectId, 51, 'two')), 'team_project_quota', 'not retried at once');
+  s.clock.now += 61_000;
+  await h.ok(s.op('carl', 'team.project.upload.discard', { upload_id: (await h.ok(sized(projectId, 51, 'three'))).upload_id }));
+  // A project an AI turn wrote into after the host started: measured at the next check, not skipped for ever.
+  const late = await h.sharedProject('Late');
+  fs.writeFileSync(path.join(s.folderOf(late), 'big.bin'), Buffer.alloc(100));
+  assert.equal(await h.reason(sized(projectId, 51, 'four')), 'team_project_quota', 'the late project counts as 100 of 150');
+});
+
 test('item 3: the install folder is outside every project and refused by every name rule; leftovers are swept', BOUNDED, async (t) => {
   const s = await setup(t);
   const { h, projectId } = s;

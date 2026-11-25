@@ -72,11 +72,11 @@ function boundFollowed(state, list) {
 }
 
 // The implicit members of a thread: the store's stats, or for a root with no reply yet, its author and mentions
-// (joined at the root's seq).
+// (joined at the root's seq). A deleted root (a tombstone) seeds no follower, as the channel's own load does.
 function implicitMembers(state, rootEntry, rootMessage) {
   const stats = state.threads.get(rootEntry.id);
   if (stats) return stats.members;
-  if (!rootMessage) return NO_MEMBERS;
+  if (!rootMessage || (rootMessage.deleted ?? null) !== null) return NO_MEMBERS;
   const members = new Map(rootMessage.mentions.filter((mention) => mention.startsWith('member_'))
     .map((mention) => [mention, rootEntry.seq]));
   if (typeof rootMessage.author.member_id === 'string') members.set(rootMessage.author.member_id, rootEntry.seq);

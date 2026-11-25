@@ -22,7 +22,7 @@ const INVALID = [
   ['type', { ref: 'r1', text: 'x'.repeat(MAX_TYPE_TEXT_LENGTH + 1) }], ['type', { ref: 'r1', text: 'a', submit: 'yes' }],
   ['select', { ref: 'bad', value: 'a' }], ['select', { ref: 'r1', value: 7 }],
   ['scroll', { direction: 'left' }], ['scroll', { ref: 'bad' }],
-  ['press', { key: 'F5' }], ['press', {}], ['press', { key: 'Enter; rm' }],
+  ['press', { key: 'F5' }], ['press', {}], ['press', { key: 'Enter; rm' }], ['press', { key: 'A' }], ['press', { key: '10' }],
 ];
 
 for (const [method, args] of INVALID) {
@@ -331,10 +331,10 @@ test('scroll defaults to down, settles, and mentions the end of the page', async
   assert.ok(!logNames(stale.log).includes('settler.waitForSettle'));
 });
 
-test('press sends keyDown, char and keyUp for Enter and Space, and no char for others', async () => {
+test('press sends keyDown, char and keyUp for Enter, Space and character keys, and no char for others', async () => {
   const expectations = [
     ['Enter', 'Enter', true], [' ', 'Space', true], ['Spacebar', 'Space', true],
-    ['Tab', 'Tab', false], ['ArrowUp', 'Up', false], ['Escape', 'Escape', false],
+    ['Tab', 'Tab', false], ['ArrowUp', 'Up', false], ['Escape', 'Escape', false], ['Backspace', 'Backspace', false], ['5', '5', true], ['k', 'k', true],
   ];
   for (const [key, keyCode, withChar] of expectations) {
     const h = harness();
@@ -364,7 +364,7 @@ test('press gives the gate null facts when nothing is focused, and the facts oth
 
 test('press in a secret field refuses everything except Tab and Escape', async () => {
   const facts = { status: 'ready', ref: 'r5', isSecret: true };
-  for (const key of ['Enter', 'Space', 'ArrowLeft']) {
+  for (const key of ['Enter', 'Space', 'ArrowLeft', 'a', '7', 'Backspace']) {
     const h = harness({ replies: { probeFocused: facts } });
     const result = await h.actions.press({ key });
     assert.equal(result.ok, false);

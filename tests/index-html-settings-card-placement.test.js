@@ -142,3 +142,24 @@ test('the PDF add-on block is a named group', () => {
   assert.equal(host.getAttribute('role'), 'group');
   assert.equal(host.getAttribute('aria-labelledby'), 'toolsPdfAddonHeading');
 });
+
+// Row 193: a page header is a title (and a live-status badge); an action sits on its group's heading bar.
+test('page headers hold no action buttons; Memory export, Limits reset and the Notifications note sit where the standard puts them', () => {
+  const doc = loadIndexDocument();
+  const card = (id) => doc.querySelector(`.settings-card[data-settings-section="${id}"]`);
+  for (const id of ['memories', 'advanced']) assert.equal(card(id).querySelector('.settings-card-header').querySelector('button, .settings-actions, #memoryHeaderActions'), null, id);
+  assert.equal(card('advanced').querySelector('h3').textContent.trim(), 'Limits');
+  const reset = card('advanced').querySelector('.settings-group #advancedTuningActions');
+  assert.equal(reset.closest('.settings-group').querySelector('.settings-group-heading').textContent.trim(), 'Reset');
+  assert.equal(card('advanced').lastElementChild, reset.closest('.settings-group'), 'the Reset group is at the bottom of the page');
+  const exportHost = card('memories').querySelector('.settings-group-bar #memoryHeaderActions');
+  assert.ok(exportHost, 'the export button has a place on the Your memories heading bar');
+  assert.equal(exportHost.closest('.settings-group').getAttribute('aria-labelledby'), exportHost.closest('.settings-group-bar').querySelector('.settings-group-heading').id);
+  assert.equal(card('readiness').querySelector('.settings-card-header + .settings-copy').textContent.trim(), 'Whether Jenny is ready to chat and use her tools on this PC.');
+  const groups = [...card('notifications').querySelectorAll(':scope > .settings-group')];
+  assert.equal(groups.length, 4);
+  assert.equal(card('notifications').querySelector('.settings-group--flush'), null, 'the old spacing class is gone');
+  const content = groups[2];
+  assert.equal(content.children[1].className, 'settings-group-copy', 'the Content note sits directly under its heading');
+  assert.equal(content.children[2].id, 'notificationsContentList');
+});

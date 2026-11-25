@@ -59,7 +59,6 @@ function setupDock(opts = {}) {
         <article class="chat-entry" data-message-id="m2"></article>
       </div></div><aside id="subagentInspector" hidden></aside></div>
       <div id="composerWrap"><textarea id="chatInput"></textarea></div>
-      <div id="artifactReviewResizer"></div>
       <aside id="artifactReviewPanel"></aside>
     </section>
     <section id="ideView">
@@ -153,7 +152,7 @@ test('reconcile moves the 2 chat nodes into the dock body in order and is idempo
   assert.equal(calls.layout, 1);
 });
 
-test('leaving Workspace restores the nodes into #chatView before #artifactReviewResizer', () => {
+test('leaving Workspace restores the nodes into #chatView before #artifactReviewPanel', () => {
   const { byId, state, dock, calls } = setupDock();
   dock.reconcile();
   state.ui.activeView = 'chat';
@@ -162,8 +161,8 @@ test('leaving Workspace restores the nodes into #chatView before #artifactReview
   const ids = [...chatView.children].map((el) => el.id);
   assert.deepEqual(
     ids,
-    ['chatThreadStage', 'composerWrap', 'artifactReviewResizer', 'artifactReviewPanel'],
-    'original order restored, anchored before the artifact-review resizer'
+    ['chatThreadStage', 'composerWrap', 'artifactReviewPanel'],
+    'original order restored, anchored before the side panel'
   );
   assert.deepEqual(calls.hostChanged, [true, false]);
   assert.equal(dock.reconcile(), false, 'restore is idempotent too');

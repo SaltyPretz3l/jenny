@@ -126,8 +126,9 @@
       if (!candidates.length) return '';
       let expectedProjectId = null;
       for (const session of rankReusableChats(state, candidates)) {
-        // A local draft materializes in the bare-create project by construction.
-        if (session.local_draft === true) return text(session.id);
+        // A local draft with no project materializes in the bare-create project by
+        // construction; one made for a named project is checked like any other chat.
+        if (session.local_draft === true && !text(session.project_id)) return text(session.id);
         if (expectedProjectId === null) expectedProjectId = await bareCreateProjectId();
         // Re-checked: the projects.list read may have awaited while the chat changed.
         if (expectedProjectId && (text(session.project_id) || GENERAL_PROJECT_ID) === expectedProjectId

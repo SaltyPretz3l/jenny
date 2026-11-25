@@ -203,25 +203,19 @@ function mirrorAgentStatusToActiveTurn(adapter, event) {
   });
 }
 
-function agentExecutorLifecycleEnabled(service) {
-  return service?.featureFlags?.agent_executor === true;
-}
-
 // Delegate child progress feeds the subagent monitor, which ships with
 // `delegate` itself (docs/operations/SUB_AGENT_DESIGN.md "Monitor and
-// telemetry contract"); only the executor's own lifecycle waits on the flag.
+// telemetry contract").
 const DELEGATE_PROGRESS_SOURCES = new Set(['delegate', 'subagent_run', 'subagent_batch']);
 
 function isDelegateChildProgress(event) {
   return event?.taskType === 'sub_agent' && DELEGATE_PROGRESS_SOURCES.has(event.source);
 }
 
-function isAgentStatusSurfaceEnabled(service, event) {
-  return agentExecutorLifecycleEnabled(service) || isDelegateChildProgress(event);
-}
-
-function coordinateWorkLifecycle(service, adapter, event) {
-  if (!event || !isAgentStatusSurfaceEnabled(service, event)) {
+// Mirrors a delegate child frame onto the active turn and returns it; any other
+// agent.progress frame is dropped (null).
+function coordinateWorkLifecycle(adapter, event) {
+  if (!isDelegateChildProgress(event)) {
     return null;
   }
   mirrorAgentStatusToActiveTurn(adapter, event);
@@ -229,9 +223,8 @@ function coordinateWorkLifecycle(service, adapter, event) {
 }
 
 module.exports = {
-  agentExecutorLifecycleEnabled,
   coordinateWorkLifecycle,
-  isAgentStatusSurfaceEnabled,
+  isDelegateChildProgress,
   mirrorAgentStatusToActiveTurn,
   normalizeAgentProgressNotification,
   normalizeAgentStatusEvent,

@@ -43,12 +43,11 @@
 // child and answers `team_host_stopped`.
 //
 // 6-7, row 123: hostModelRelay, hostFileTools (host-model-relay.js, host-file-tools.js); state model_relay, file_tools.
-const fs = require('node:fs');
-
+// Row 201 (OD-5): hostPoolContext (host-pool-context.js): the owner's cap on the pool's context length; state pool_context_cap.
 const { deriveTeamId, keyPairFromSeed } = require('../../../server/team/ids');
 const { HOST_METHODS, validatePayload } = require('../ipc-methods');
-const { TeamError, failureOf, invalidRequest, teamFailure } = require('../team-errors');
-const { parsePreservedCorruptName } = require('../../backend/corrupt-file-preserve');
+const { failureOf, invalidRequest, teamFailure } = require('../team-errors');
+const { createHostKeyState, lostHostKey } = require('./host-key-state');
 const { createHostKeyStore, createHostRelayTokenStore } = require('./host-key-store');
 const {
   buildHostConfig, hostWasDeployed, pickDirectPort: defaultPickDirectPort, prepareHostLayout,
@@ -63,6 +62,7 @@ const { createHostLifecycle } = require('./host-lifecycle');
 const { readAutostart } = require('./host-autostart');
 const { createHostModelRelay } = require('./host-model-relay');
 const { createHostFileTools } = require('./host-file-tools');
+const { createHostPoolContext } = require('./host-pool-context');
 const { readInternetDraft, removeInternetDraft } = require('./host-restore');
 const { forceLocalFailure } = require('../force-local-hold');
 const { createHostForceLocal } = require('./host-force-local');
@@ -77,9 +77,6 @@ const ROSTER_PUSH_MS = 250;
 const PORT_RETRIES = 5;
 const PORT_RETRY_MS = 200;
 const ACTIVE_STATES = new Set(['starting', 'running', 'stopping']);
-// The secure store's file is `<userData>/secure-state.json` (services/backend/backend-service.js); a damaged one
-// is set aside beside it under a name `parsePreservedCorruptName` reads.
-const SECURE_STORE_FILE = 'secure-state.json';
 
 const hostFailure = (reason) => teamFailure('HOST_UNAVAILABLE', reason);
 // What a half-done `hostInternet` changed, on its failure answer: some of 'token' and 'setting'.
@@ -91,15 +88,6 @@ const withChanged = (failure, changed) => ({ ...failure, changed: [...changed] }
 function platformSupported(platform, isPackaged) {
   if (platform === 'win32') return true;
   return platform === 'linux' && !isPackaged;
-}
-
-// The refusal for a deployed profile whose host key is gone.
-function lostHostKey(userDataPath) {
-  let setAside = false;
-  try {
-    setAside = fs.readdirSync(userDataPath).some((name) => parsePreservedCorruptName(name)?.baseName === SECURE_STORE_FILE);
-  } catch { /* none seen */ }
-  return new TeamError('DEVICE_KEY_UNAVAILABLE', setAside ? 'team_host_key_set_aside' : 'team_host_key_missing');
 }
 
 /**
@@ -119,40 +107,25 @@ function createHostController({
   const keys = hostKeys || createHostKeyStore({ getSecureStore });
   const tokens = relayTokens || createHostRelayTokenStore({ getSecureStore });
   const internetSetting = internet || savedInternetSetting;
-  // The team id of the stored host key, once read (slice 1g-1); only a derived id is kept, never the seed.
-  let storedTeamId = null;
-
-  // Read lazily, only for a deployed profile whose running host does not name its team; a failing
-  // store gives null and is asked again next time. The seed is zeroed as soon as the id is derived.
-  function teamIdOfStoredKey() {
-    if (storedTeamId) return storedTeamId;
-    let seed = null;
-    try {
-      seed = keys.load();
-      if (seed) storedTeamId = deriveTeamId(keyPairFromSeed(seed).publicKey);
-    } catch {
-      return null;
-    } finally {
-      seed?.fill(0);
-    }
-    return storedTeamId;
-  }
-  // Is the membership held here? The saved teams load first: a launch that has started none would hold nothing.
-  async function held(teamId) { const service = getTeamService(); await service?.startExisting?.(); return Boolean(service) && service.holds(teamId) === true; }
+  const storedKey = createHostKeyState({ userDataPath, keys });
+  // The team service with the saved teams loaded: a membership is looked for (held, removed) only after that.
+  async function loadedService() { const service = getTeamService(); await service?.startExisting?.(); return service; }
+  async function held(teamId) { const service = await loadedService(); return Boolean(service) && service.holds(teamId) === true; }
 
   // Slice 5-6: delete, start a new team, old teams, export and restore (host-lifecycle.js), with this controller's parts.
   const lifecycle = createHostLifecycle({ userDataPath, pick, now, bounds, say, lockPython: () => sourcePython(),
     host: {
-      keys, tokens, keyState, running: () => supervisor.snapshot().state === 'running',
-      notifyDeleting: () => supervisor.notifyDeleting(), stop: () => stopHost(), deploy: (value) => deploy(value),
+      keys, tokens, keyState: storedKey.state, running: () => supervisor.snapshot().state === 'running',
+      stop: () => stopHost(), deploy: (value) => deploy(value),
       // A restored team starts as a member of it when this Jenny still holds the membership, else through Recover.
       start: async (who) => {
+        storedKey.forget(); // the restore replaced the key: derive the team from it, not from the one read before
         const name = savedTeamName(readSavedHostConfig(userDataPath));
-        const teamId = teamIdOfStoredKey();
+        const teamId = storedKey.teamId();
         return (await held(teamId)) ? deploy({ name, ...who }) : recover(who);
       },
-      forgetMembership: (teamId) => getTeamService()?.handle('removeTeam', { team_id: teamId }) ?? null,
-      state: () => publicHostState(supervisor.snapshot()), push: () => { lastPush = null; pushState(); },
+      forgetMembership: async (teamId) => (await loadedService())?.handle('removeTeam', { team_id: teamId }) ?? null,
+      state: () => publicHostState(supervisor.snapshot()), push: () => pushState(),
     } });
   // The lifecycle call holding the lock, pushed with the state so every page shows it busy (review item 14).
   let lifecycleOperation = null;
@@ -174,12 +147,13 @@ function createHostController({
     if (learn) learnToken(saved);
     const deployed = savedTeamName(saved) !== null || configReason !== null; // X4b-F02: there and unreadable is deployed
     const internet = internetView(savedInternet(saved), () => tokenStored === true);
-    return { state: snapshot.state, team_id: snapshot.team_id || (deployed ? teamIdOfStoredKey() : null),
+    return { state: snapshot.state, team_id: snapshot.team_id || (deployed ? storedKey.teamId() : null),
       team_name: lifecycle.teamName(saved) || snapshot.team_name, deployed, reason: snapshot.reason || configReason, since: snapshot.since,
-      reach: snapshot.reach, direct_port: savedDirectPort(saved), internet,
+      reach: snapshot.reach, direct_port: savedDirectPort(saved), internet, desktop_hosting: platformSupported(platform, packaged()),
       internet_draft: deployed ? readInternetDraft(userDataPath) : null, autostart: deployed && readAutostart(userDataPath),
-      key: deployed ? keyState() : null, old_teams: lifecycle.oldTeams(), operation: lifecycleOperation,
+      key: deployed ? storedKey.state() : null, old_teams: lifecycle.oldTeams(), operation: lifecycleOperation,
       owner: deployed && snapshot.state !== 'running' ? lifecycle.ownerHere(snapshot.since) : null,
+      pool_context_cap: deployed ? poolContext.view() : null, // row 201 (OD-5): the owner's cap on the pool's context length, null is Auto
       ...(deployed ? { model_relay: modelRelay.view(saved, snapshot), file_tools: fileTools.view(saved, snapshot) } : {}), ...(gate?.held() === true ? { force_local: true } : {}) };
   }
 
@@ -191,25 +165,16 @@ function createHostController({
     try { tokenStored = tokens.load() !== null; } catch { tokenStored = false; }
   }
 
-  // Slice 5-6 (finding 4): the key's state without pressing Start. Null for a profile that never hosted a team;
-  // 'ok', 'missing', 'set_aside' (the secure store set a damaged file aside), or 'unknown' (the store cannot say).
-  function keyState() {
-    if (!hostWasDeployed(userDataPath)) return null;
-    if (storedTeamId) return 'ok';
-    try {
-      if (teamIdOfStoredKey()) return 'ok';
-      if (keys.load() !== null) return 'unknown';
-    } catch {
-      return 'unknown';
-    }
-    return lostHostKey(userDataPath).reason === 'team_host_key_set_aside' ? 'set_aside' : 'missing';
-  }
-
   const supervisor = createHostSupervisor({ fork, entryPath, env: environment, bounds, log: say });
-  const pushState = () => { try { sendState(publicHostState(supervisor.snapshot())); } catch { /* best effort */ } };
+  // The last pushed state and what it was made from: a push whose only news is the verdict reuses it. Any state
+  // written here (a hold, the autostart or relay setting) drops it, so the next quiet push is made from the state now.
+  let lastPush = null;
+  const pushState = () => { lastPush = null; try { sendState(publicHostState(supervisor.snapshot())); } catch { /* best effort */ } };
   const modelRelay = createHostModelRelay({ userDataPath, supervisor, writeConfig, hostState: () => publicHostState(supervisor.snapshot()), pushState, say });
   writeConfig = carryFileTools(modelRelay.carry(writeConfig), userDataPath); // a launch's fresh config keeps both settings
   const fileTools = createHostFileTools({ userDataPath, supervisor, platform, writeConfig, restart, generation: () => generation, hostState: () => publicHostState(supervisor.snapshot()), say });
+  const poolContext = createHostPoolContext({ userDataPath, hostState: () => publicHostState(supervisor.snapshot()), pushState, say,
+    running: () => supervisor.snapshot().state === 'running' });
   const forceLocal = createHostForceLocal({ held: () => gate?.held() === true, hostState: () => supervisor.snapshot().state,
     stop: () => stopHost(), push: pushState, say,
     restart: (owner) => {
@@ -217,10 +182,9 @@ function createHostController({
       return name ? exclusive(async () => { await lifecycle.sweep(); return deploy({ name, ...owner }); }) : hostFailure(notDeployedReason(userDataPath));
     },
     interruptStart: () => { generation += 1; dropRosterPush(); void supervisor.stop().catch(() => {}); } });
-  // The last pushed state and what it was made from: a push whose only news is the verdict reuses it.
-  let lastPush = null;
+  // The project files report (`files`) is part of the key: it follows `ready`, so a cached state would hide it.
   const pushKey = (snapshot) => JSON.stringify([snapshot.state, snapshot.reason, snapshot.team_id, snapshot.team_name,
-    snapshot.since]);
+    snapshot.since, snapshot.files]);
   const unsubscribe = supervisor.onState((snapshot) => {
     try {
       const key = pushKey(snapshot);
@@ -398,7 +362,7 @@ function createHostController({
       seed = hostWasDeployed(userDataPath) ? keys.load() : keys.create();
       if (!seed) throw lostHostKey(userDataPath);
       const teamId = deriveTeamId(keyPairFromSeed(seed).publicKey);
-      storedTeamId = teamId;
+      storedKey.note(teamId);
       const member = await held(teamId);
       return await launch({ startGeneration, seed, name, flag: member ? null : '--team-init',
         owner: { teamId, displayName, label, recover: false } });
@@ -422,7 +386,7 @@ function createHostController({
       }
       if (!seed) throw lostHostKey(userDataPath);
       const teamId = deriveTeamId(keyPairFromSeed(seed).publicKey);
-      storedTeamId = teamId;
+      storedKey.note(teamId);
       if (ACTIVE_STATES.has(supervisor.snapshot().state)) await supervisor.stop();
       return await launch({ startGeneration, seed, name, flag: '--team-recover',
         owner: { teamId, displayName, label, recover: true } });
@@ -550,7 +514,7 @@ function createHostController({
   async function handle(method, payload, context = {}) {
     if (!HOST_METHODS.includes(method)) return invalidRequest();
     const checked = validatePayload(method, payload);
-    if (!checked.ok) return invalidRequest();
+    if (!checked.ok) return invalidRequest(method === 'hostPoolContext' ? 'team_pool_context_invalid' : undefined);
     if (method === 'hostStatus') return { ok: true, host: publicHostState(supervisor.snapshot(), { learn: true }) };
     if (disposed) return hostFailure('team_host_shutting_down');
     let answer;
@@ -562,13 +526,14 @@ function createHostController({
       else if (method === 'hostReconnectCode') answer = reconnectCode();
       else if (method === 'hostModelRelay') answer = await exclusive(() => modelRelay.set(checked.value));
       else if (method === 'hostFileTools') answer = await exclusive(() => fileTools.set(checked.value));
+      else if (method === 'hostPoolContext') answer = await exclusive(() => poolContext.set(checked.value)); // row 201 (OD-5): applies at the next start
       else if (method === 'hostInternet') {
         answer = await exclusive(() => setInternet(checked.value));
         if (answer.ok && (checked.value.public_address || checked.value.relay_url)) removeInternetDraft(userDataPath);
       }
       else if (LIFECYCLE_METHODS.has(method)) {
         answer = await lifecycle.handle(method, checked.value, { exclusive: lifecycleExclusive(method), sender: context.sender ?? null });
-        storedTeamId = null; // the key and the token may be gone, new or restored: read again
+        storedKey.forget(); // the key and the token may be gone, new or restored: read again
         tokenStored = null;
       }
       else answer = invalidRequest(); // closed by default (defence): no host method falls through to Recover

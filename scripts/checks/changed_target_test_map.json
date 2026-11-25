@@ -12,6 +12,10 @@
     "server/"
   ],
   "rules": [
+    {"target_prefixes": ["services/strata-", "services/main/strata-", "services/backend/strata-"], "required_tests": ["tests/strata-install.test.js", "tests/strata-config.test.js", "tests/strata-lifecycle.test.js", "tests/strata-manager.test.js", "tests/strata-runtime-wiring.test.js", "tests/strata-ipc-registration.test.js", "tests/backend-runtime-strata-load.test.js", "tests/chat-gpu-handoff-strata.test.js", "tests/backend-managed-server-owner.test.js", "tests/ninfer-runtime-shutdown.test.js"]},
+    {"target_prefixes": ["renderer/shell/model-library/model-library-strata.js", "renderer/shell/renderer-model-tuning-strata.js"], "required_tests": ["tests/renderer-model-library-strata.test.js", "tests/renderer-model-tuning-strata.test.js"]},
+    {"target_prefixes": ["scripts/eval/strata_ab/run_ab_core.js", "scripts/eval/strata_ab/run_ab.js"], "required_tests": ["tests/strata-ab-run-core.test.js"]},
+    {"target_prefixes": ["services/backend/managed-server-facet.js"], "required_tests": ["tests/managed-server-facet.test.js", "tests/jenny-status-composer-resources.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-ide-outside-files.js"], "required_tests": ["tests/renderer-ide-outside-files.test.js", "tests/renderer-ide-outside-gates.test.js", "tests/renderer-ide-outside-surfaces.test.js"]},
     {"target_prefixes": ["renderer/shell/renderer-app-view-controller.js"], "required_tests": ["tests/renderer-outside-file-requests.test.js"]},
     {"target_prefixes": ["services/main/outside-files/outside-file-args.js", "services/main/outside-files/outside-file-launch-buffer.js"], "required_tests": ["tests/outside-file-args.test.js", "tests/main-boot-gate.test.js", "tests/single-instance.test.js"]},
@@ -19,6 +23,14 @@
     {"target_prefixes": ["services/main/outside-files/outside-file-service.js"], "required_tests": ["tests/outside-file-service.test.js", "tests/outside-files-ipc-contract.test.js"]},
     {"target_prefixes": ["services/main/outside-files/outside-file-ipc.js", "services/ipc-contract/descriptors-outside-files.js"], "required_tests": ["tests/outside-files-ipc-contract.test.js", "tests/ipc-contract.test.js"]},
     {"target_prefixes": ["services/performance/gpu-collector.js"], "required_tests": ["tests/gpu-collector.test.js"]},
+    {"target_prefixes": ["services/computer-helper/", "tests/fixtures/fake-computer-helper.js"], "required_tests": ["tests/computer-helper-protocol.test.js", "tests/computer-helper-host.test.js"]},
+    {"target_prefixes": ["services/run-view/"], "required_tests": ["tests/run-view-state.test.js", "tests/run-view-command-store.test.js", "tests/run-view-service.test.js", "tests/run-view-service-look.test.js", "tests/run-view-ipc.test.js", "tests/run-view-wiring.test.js", "tests/run-view-restart-after-changes.test.js"]},
+    {"target_prefixes": ["services/main/run-view-composition.js", "services/main/run-view-ipc-registration.js"], "required_tests": ["tests/run-view-wiring.test.js"]},
+    {"target_prefixes": ["services/computer-use/"], "required_tests": ["tests/computer-use-service.test.js", "tests/computer-use-owner-control.test.js", "tests/computer-use-policy.test.js", "tests/computer-use-finder.test.js", "tests/computer-use-ipc.test.js"]},
+    {"target_prefixes": ["services/main/computer-use-composition.js", "services/main/computer-use-ipc-registration.js", "services/main/computer-pill-preload.js", "renderer/computer-pill/", "services/backend/computer-use-tool-gate.js", "services/tools/builtin/computer-tool.js"], "required_tests": ["tests/computer-use-ipc.test.js", "tests/computer-use-wiring.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-computer-step-display.js"], "required_tests": ["tests/renderer-computer-step-display.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-computer-settings.js"], "required_tests": ["tests/renderer-computer-settings.test.js"]},
+    {"target_prefixes": ["services/main/display-capture-slot.js", "services/main/display-media-source-handler.js", "services/main/default-session-permission-guard.js"], "required_tests": ["tests/display-capture-slot.test.js", "tests/display-media-source-handler.test.js", "tests/default-session-permission-guard.test.js", "tests/renderer-display-media-picker.test.js", "tests/default-session-wiring.test.js"]},
     {"target_prefixes": ["services/performance/gpu-memory-win32.ps1"], "required_tests": ["tests/gpu-collector.test.js"]},
     {"target_prefixes": ["services/performance/gpu-warning-state.js"], "required_tests": ["tests/gpu-warning-state.test.js"]},
     {"target_prefixes": ["services/performance/gpu-sampler.js"], "required_tests": ["tests/gpu-sampler.test.js"]},
@@ -160,7 +172,7 @@
     },
     {
       "target_prefixes": ["renderer/shell/renderer-attention-inbox-model.js", "renderer/shell/renderer-attention-inbox.js", "renderer/shell/renderer-attention-inbox-flyout.js"],
-      "required_tests": ["tests/renderer-attention-inbox-model.test.js", "tests/renderer-attention-inbox.test.js", "tests/renderer-attention-inbox-view.test.js", "tests/renderer-attention-inbox-flyout.test.js", "tests/renderer-chats-strip.test.js", "tests/renderer-chats-strip-needs-you.test.js", "tests/renderer-controller-dispose.test.js"]
+      "required_tests": ["tests/renderer-attention-inbox-model.test.js", "tests/renderer-attention-inbox.test.js", "tests/renderer-attention-inbox-view.test.js", "tests/renderer-attention-inbox-flyout.test.js", "tests/renderer-controller-dispose.test.js"]
     },
     {
       "target_prefixes": ["renderer/shell/renderer-away-digest-model.js"],
@@ -806,10 +818,6 @@
       "required_tests": ["tests/renderer-session-rail-model.test.js", "tests/renderer-session-rail.test.js", "tests/renderer-session-rail-routing.test.js", "tests/renderer-session-rail-layout.test.js"]
     },
     {
-      "target_prefixes": ["renderer/chat/renderer-session-rail-motion.js"],
-      "required_tests": ["tests/renderer-session-rail-motion.test.js", "tests/renderer-session-rail-glide-layout.test.js", "tests/renderer-session-rail.test.js"]
-    },
-    {
       "target_prefixes": ["renderer/chat/renderer-session-bar.js", "styles/chat-session-bar.css"],
       "required_tests": ["tests/renderer-session-bar.test.js", "tests/renderer-session-bar-css.test.js", "tests/renderer-session-rail-layout.test.js"]
     },
@@ -844,10 +852,6 @@
     {
       "target_prefixes": ["sidecar/runtime/command_proposal.py", "sidecar/runtime/command_proposal_request.py", "sidecar/runtime/command_proposal_approval.py", "sidecar/runtime/command_proposal_outcome.py", "sidecar/runtime/command_proposal_run.py", "sidecar/runtime/command_proposal_terminal.py", "sidecar/runtime/command_proposal_worker.py"],
       "required_tests": ["tests/sidecar/runtime/test_command_proposal.py"]
-    },
-    {
-      "target_prefixes": ["renderer/features/renderer-side-panel-motion.js"],
-      "required_tests": ["tests/renderer-side-panel-motion.test.js", "tests/renderer-chat-reading-layout.test.js"]
     },
     {
       "target_prefixes": ["scripts/checks/check_test_coverage_map.py"],
@@ -1649,8 +1653,7 @@
         "renderer/chat/renderer-chat-shell-controller.js",
         "renderer/shell/renderer-session-lifecycle-utils.js",
         "renderer/shell/renderer-workspace-session-utils.js",
-        "renderer/shell/renderer-workspace-chrome-utils.js",
-        "renderer/shell/renderer-chats-strip.js"
+        "renderer/shell/renderer-workspace-chrome-utils.js"
       ],
       "required_tests": [
         "tests/renderer-session-status-transitions.test.js",
@@ -1669,7 +1672,16 @@
         "renderer/shell/renderer-pane-model.js"
       ],
       "required_tests": [
-        "tests/shell-config-pane-layout.test.js"
+        "tests/shell-config-pane-layout.test.js",
+        "tests/shell-config-tab-panes.test.js"
+      ]
+    },
+    {
+      "target_prefixes": [
+        "renderer/chat/renderer-chat-pane-rows.js"
+      ],
+      "required_tests": [
+        "tests/renderer-chat-pane-rows.test.js"
       ]
     },
     {
@@ -1977,6 +1989,7 @@
     {"target_prefixes": ["renderer/features/renderer-sketch-markup.js"], "required_tests": ["tests/renderer-sketch-markup.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-sketch-pin.js"], "required_tests": ["tests/renderer-sketch-pin.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-board-block-row.js"], "required_tests": ["tests/renderer-board-block-row.test.js", "tests/renderer-mermaid-runtime-loader.test.js"]},
+    {"target_prefixes": ["renderer/features/renderer-mockup-block.js", "styles/markdown-mockup.css"], "required_tests": ["tests/renderer-mockup-block.test.js", "tests/renderer-mermaid-runtime-loader.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-sketch-open.js", "services/sketch/", "services/main/sketch-ipc-registration.js"], "required_tests": ["tests/renderer-sketch-open.test.js", "tests/sketch-file-open.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-sketch-frame-host.js", "renderer/features/renderer-sketch-frame-messages.js", "renderer/features/renderer-sketch-frame-palette.js", "styles/markdown-sketch.css"], "required_tests": ["tests/renderer-sketch-frame-host.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-ide-terminal-set.js", "renderer/features/renderer-ide-pty-terminal-panel.js", "renderer/features/renderer-ide-pty-terminal-xterm.js", "renderer/features/renderer-ide-pty-terminal-io.js"], "required_tests": ["tests/renderer-ide-terminal-set.test.js", "tests/renderer-ide-pty-terminal-panel.test.js", "tests/renderer-ide-pty-terminal-panel-slots.test.js", "tests/renderer-ide-pty-terminal-panel-bugpass.test.js", "tests/renderer-ide-workbench-task-views.test.js", "tests/renderer-ide-terminal-profiles.test.js"]},
@@ -1989,8 +2002,7 @@
     {"target_prefixes": ["renderer/features/renderer-ide-test-output-panel.js", "renderer/features/renderer-ide-test-runner-wiring.js", "renderer/features/renderer-ide-test-runner-panel.js"], "required_tests": ["tests/renderer-ide-test-output-panel.test.js", "tests/renderer-ide-test-runner-abort.test.js", "tests/renderer-ide-test-runner-show-output.test.js", "tests/renderer-ide-test-runner-availability.test.js", "tests/renderer-ide-workbench-task-views.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-ide-source-control-panel.js"], "required_tests": ["tests/renderer-ide-source-control-jenny-marker.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-changes-view.js", "renderer/features/renderer-changes-view-render.js"], "required_tests": ["tests/renderer-changes-view-git-status.test.js"]},
-    {"target_prefixes": ["renderer/features/renderer-ide-git-feature.js", "renderer/features/renderer-ide-controller.js", "renderer/features/renderer-ide-controller-modules.js", "renderer/features/renderer-ide-controller-wiring.js", "renderer/features/renderer-ide-view-lifecycle.js"], "required_tests": ["tests/renderer-ide-git-jenny-link.test.js", "tests/renderer-ide-second-chat.test.js"]},
-    {"target_prefixes": ["renderer/features/renderer-ide-workspace-chats.js"], "required_tests": ["tests/renderer-ide-workspace-chats.test.js", "tests/renderer-ide-second-chat.test.js", "tests/renderer-ide-git-jenny-link.test.js"]},
+    {"target_prefixes": ["renderer/features/renderer-ide-git-feature.js", "renderer/features/renderer-ide-controller.js", "renderer/features/renderer-ide-controller-modules.js", "renderer/features/renderer-ide-controller-wiring.js", "renderer/features/renderer-ide-view-lifecycle.js"], "required_tests": ["tests/renderer-ide-git-jenny-link.test.js", "tests/renderer-ide-controller-parts.test.js"]},
     {"target_prefixes": ["renderer/app/renderer-app-pane-composition.js"], "required_tests": ["tests/renderer-pane-composition-host.test.js"]},
     {"target_prefixes": ["renderer/shared/workbench-layout-model.js", "renderer/shared/workbench-layout-ops.js"], "required_tests": ["tests/workbench-layout-chat-instances.test.js"]},
     {"target_prefixes": ["services/backend/session-message-envelope.js", "services/backend/session-mail-records.js", "services/backend/session-mail-store.js", "services/backend/session-message-store-helpers.js", "services/backend/coordination-receipts.js"], "required_tests": ["tests/session-message-envelope.test.js", "tests/session-mail-records.test.js", "tests/session-mail-store.test.js", "tests/session-store-insert-before.test.js", "tests/coordination-receipts.test.js"]},
@@ -2001,7 +2013,7 @@
     {"target_prefixes": ["renderer/chat/renderer-approval-block.js", "renderer/chat/renderer-turn-row-tool-render-utils.js", "renderer/chat/renderer-turn-reducer-approval-gap.js", "renderer/chat/renderer-turn-reducer-stream-event-utils.js", "renderer/chat/renderer-turn-row-projector-tools.js"], "required_tests": ["tests/renderer-session-message-approval.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-approval-block.js", "renderer/chat/renderer-turn-row-tool-render-utils.js", "services/backend/chat-stream-tool-approval.js"], "required_tests": ["tests/renderer-turn-row-tool-render-elapsed.test.js", "tests/renderer-turn-row-tool-render-utils-approval-gap.test.js"]},
     {"target_prefixes": ["renderer/chat/tool-call-status.js"], "required_tests": ["tests/tool-call-utils.test.js", "tests/renderer-tool-row-markup.test.js", "tests/renderer-chat-tool-split-modules.test.js"]},
-    {"target_prefixes": ["renderer/chat/tool-run-utils.js"], "required_tests": ["tests/tool-call-utils.test.js", "tests/renderer-tool-runs.test.js", "tests/renderer-chat-tool-split-modules.test.js"]},
+    {"target_prefixes": ["renderer/chat/tool-run-utils.js", "renderer/chat/renderer-turn-row-list-utils.js", "renderer/chat/renderer-chat-tool-row-toggles.js", "renderer/chat/renderer-stream-tool-patch-utils.js"], "required_tests": ["tests/tool-call-utils.test.js", "tests/renderer-tool-runs.test.js", "tests/renderer-work-ledger.test.js", "tests/renderer-chat-tool-split-modules.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-tool-row-expansion-state.js"], "required_tests": ["tests/renderer-turn-row-tool-render-utils.test.js", "tests/renderer-tool-row-lazy-expansion.test.js", "tests/renderer-chat-tool-split-modules.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-turn-row-mermaid-fallback.js"], "required_tests": ["tests/renderer-turn-row-tool-render-utils.test.js", "tests/renderer-live-tool-result-row.test.js", "tests/renderer-chat-tool-split-modules.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-turn-row-approval-gap-markup.js"], "required_tests": ["tests/renderer-turn-row-tool-render-utils.test.js", "tests/renderer-turn-row-tool-render-utils-approval-gap.test.js", "tests/renderer-chat-tool-split-modules.test.js"]},
@@ -2091,7 +2103,7 @@
     {"target_prefixes": ["renderer/features/renderer-ide-hunk-peek.js", "renderer/features/renderer-ide-inline-blame.js", "renderer/features/renderer-ide-gutter-decorations.js"], "required_tests": ["tests/renderer-ide-hunk-peek.test.js", "tests/renderer-ide-inline-blame.test.js", "tests/renderer-ide-gutter-hunks.test.js", "tests/renderer-ide-gutter-decorations.test.js", "tests/renderer-ide-gutter-decorations-head-cache.test.js"]},
     {"target_prefixes": ["services/main/settings-change-broadcast.js"], "required_tests": ["tests/settings-change-broadcast.test.js"]},
     {"target_prefixes": ["renderer/shell/renderer-settings-support.js", "renderer/shell/renderer-settings-editor-section.js", "renderer/app/renderer-app-lifecycle-preferences.js"], "required_tests": ["tests/renderer-settings-external-sync.test.js", "tests/renderer-transcript-view-controller.test.js", "tests/renderer-settings-team-first-open.test.js"]},
-    {"target_prefixes": ["renderer/shell/renderer-settings-web-search.js", "renderer/shell/renderer-settings-tool-config.js", "renderer/shell/renderer-settings-external-sync.js"], "required_tests": ["tests/renderer-settings-support.test.js", "tests/renderer-settings-web-search-section.test.js", "tests/renderer-settings-external-sync.test.js", "tests/renderer-composer-command-layout.test.js", "tests/renderer-artifact-review-narrow-layout.test.js", "tests/renderer-ide-chat-dock-composer-layout.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-settings-web-search.js", "renderer/shell/renderer-settings-tool-config.js", "renderer/shell/renderer-settings-external-sync.js"], "required_tests": ["tests/renderer-settings-support.test.js", "tests/renderer-settings-web-search-section.test.js", "tests/renderer-settings-external-sync.test.js", "tests/renderer-composer-command-layout.test.js", "tests/renderer-ide-chat-dock-composer-layout.test.js"]},
     {"target_prefixes": ["renderer/shell/renderer-lifecycle-navigation.js", "renderer/shell/renderer-lifecycle-session-actions.js"], "required_tests": ["tests/renderer-lifecycle-hidden-surface-activation-marks.test.js", "tests/renderer-lifecycle-utils-regressions.test.js", "tests/renderer-delete-all-session-teardown.test.js"]},
     {"target_prefixes": ["renderer/shell/renderer-shell-context-ring.js", "renderer/shell/renderer-shell-recovery-actions.js"], "required_tests": ["tests/renderer-context-ring.test.js", "tests/renderer-session-derived-state.test.js", "tests/renderer-runtime-artifact-actions.test.js"]},
     {"target_prefixes": ["services/main/appearance-relay.js"], "required_tests": ["tests/appearance-relay.test.js"]},
@@ -2113,14 +2125,14 @@
     {"target_prefixes": ["sidecar/ai/routing/chat_decision_preflight.py"], "required_tests": ["tests/sidecar/ai/routing/test_tool_routing_split_modules.py", "tests/sidecar/ai/routing/test_chat_decision.py", "tests/sidecar/ai/context/test_context_count_preflight.py", "tests/sidecar/ai/routing/test_tool_budget_filter_probe_parity.py"]},
     {"target_prefixes": ["sidecar/ai/routing/tool_call_prefilter.py", "sidecar/ai/routing/tool_call_settlement.py"], "required_tests": ["tests/sidecar/ai/routing/test_tool_routing_split_modules.py", "tests/sidecar/ai/routing/test_tool_call_execution.py", "tests/sidecar/ai/routing/test_tool_call_placeholder_guard.py", "tests/sidecar/ai/routing/test_turn_boundary.py", "tests/sidecar/ai/routing/test_read_only_command_grant.py"]},
     {"target_prefixes": ["sidecar/ai/routing/tool_loop_call_state.py", "sidecar/ai/routing/tool_loop_wind_down.py"], "required_tests": ["tests/sidecar/ai/routing/test_tool_routing_split_modules.py", "tests/sidecar/ai/routing/test_tool_loop_budget_endings.py", "tests/sidecar/ai/routing/test_tool_loop_winddown.py", "tests/sidecar/ai/routing/test_tool_loop_output_cap_stop.py", "tests/sidecar/ai/routing/test_tool_loop_cycle_recovery.py", "tests/sidecar/ai/routing/test_tool_loop_failure_nudge.py"]},
-    {"target_prefixes": ["renderer/app/renderer-app-pane-stack.js", "renderer/app/renderer-app-pane-placement.js", "renderer/app/renderer-app-pane-kickers.js"], "required_tests": ["tests/renderer-pane-composition.test.js", "tests/renderer-pane-streaming-isolation.test.js", "tests/renderer-ide-chat-dock-integration.test.js", "tests/renderer-pane-side-panel.test.js", "tests/renderer-workspace-tab-drag-utils.test.js", "tests/renderer-workspace-chrome-pane-drop.test.js", "tests/renderer-workspace-chrome-utils.test.js", "tests/renderer-pane-layout-controller.test.js", "tests/renderer-pane-composition-drop.test.js", "tests/renderer-pane-split-css.test.js", "tests/renderer-chat-event-utils-pane-bindings.test.js", "tests/renderer-pane-transcript-bindings.test.js", "tests/renderer-pane-attachments.test.js", "tests/renderer-composer-session-state-regressions.test.js", "tests/renderer-pane-composer-drafts.test.js", "tests/renderer-pane-notices.test.js", "tests/renderer-chat-selection-utils.test.js", "tests/renderer-composer-v2-status.test.js", "tests/renderer-pane-failed-send.test.js", "tests/renderer-pane-composition-host.test.js"]},
+    {"target_prefixes": ["renderer/app/renderer-app-pane-stack.js", "renderer/app/renderer-app-pane-placement.js"], "required_tests": ["tests/renderer-pane-composition.test.js", "tests/renderer-pane-streaming-isolation.test.js", "tests/renderer-ide-chat-dock-integration.test.js", "tests/renderer-pane-side-panel.test.js", "tests/renderer-workspace-tab-drag-utils.test.js", "tests/renderer-workspace-chrome-pane-drop.test.js", "tests/renderer-workspace-chrome-utils.test.js", "tests/renderer-pane-layout-controller.test.js", "tests/renderer-pane-composition-drop.test.js", "tests/renderer-pane-split-css.test.js", "tests/renderer-chat-event-utils-pane-bindings.test.js", "tests/renderer-pane-transcript-bindings.test.js", "tests/renderer-pane-attachments.test.js", "tests/renderer-composer-session-state-regressions.test.js", "tests/renderer-pane-composer-drafts.test.js", "tests/renderer-pane-notices.test.js", "tests/renderer-chat-selection-utils.test.js", "tests/renderer-composer-v2-status.test.js", "tests/renderer-pane-failed-send.test.js", "tests/renderer-pane-composition-host.test.js"]},
     {"target_prefixes": ["renderer/app/renderer-app-boot-preferences-composition.js", "renderer/app/renderer-app-shell-services-composition.js", "renderer/app/renderer-app-notices-composition.js", "renderer/app/renderer-app-navigation-composition.js"], "required_tests": ["tests/renderer-chat-pane-surface-controllers.test.js", "tests/renderer-controller-dispose.test.js", "tests/renderer-shell.test.js", "tests/renderer-chat-shell-controller.test.js", "tests/renderer-app-lifecycle-export-contract.test.js", "tests/renderer-app-split.test.js", "tests/renderer-shell-harness-parity.test.js", "tests/renderer-error-intake-controller.test.js", "tests/renderer-settings-chat-ui-fields.test.js", "tests/renderer-chat-pane-dom.test.js", "tests/renderer-top-nav-shell.test.js", "tests/renderer-workspace-shell.test.js"]},
     {"target_prefixes": ["renderer/app/renderer-app-settings-composition.js", "renderer/app/renderer-app-chat-shell-composition.js"], "required_tests": ["tests/renderer-app-split.test.js", "tests/renderer-shell.test.js", "tests/renderer-shell-settings.test.js", "tests/renderer-settings-composer-carriers.test.js", "tests/renderer-app-controller-composition-disposal.test.js", "tests/renderer-chat-shell-controller.test.js", "tests/renderer-shell-harness-parity.test.js"]},
     {"target_prefixes": ["renderer/app/renderer-app-split-view-composition.js", "renderer/app/renderer-app-shell-bindings-composition.js"], "required_tests": ["tests/renderer-pane-runtime.test.js", "tests/renderer-pane-render-memo-isolation.test.js", "tests/renderer-controller-dispose.test.js", "tests/renderer-app-split.test.js", "tests/renderer-render-pipeline-projection-cache.test.js", "tests/renderer-startup-script-budget.test.js", "tests/renderer-shell.test.js", "tests/renderer-workspace-tab-drag-utils.test.js", "tests/renderer-workspace-chrome-pane-drop.test.js", "tests/renderer-workspace-chrome-utils.test.js", "tests/renderer-pane-layout-controller.test.js", "tests/renderer-pane-composition.test.js", "tests/renderer-pane-composition-drop.test.js", "tests/renderer-pane-split-css.test.js", "tests/renderer-pane-composition-host.test.js", "tests/renderer-app-view-controller.test.js"]},
     {"target_prefixes": ["sidecar/ai/mcp/builtin_server_protocol.py", "sidecar/ai/mcp/builtin_server_outcome.py"], "required_tests": ["tests/sidecar/ai/mcp/test_builtin_server_unicode.py", "tests/sidecar/ai/mcp/test_builtin_server_artifacts.py", "tests/sidecar/ai/mcp/test_builtin_server_output_stream.py", "tests/sidecar/ai/mcp/test_builtin_server_phase_trace.py", "tests/sidecar/ai/mcp/test_circuit_breaker.py", "tests/sidecar/ai/mcp/test_builtin_error_paths.py", "tests/sidecar/ai/mcp/test_mcp_split_modules.py"]},
     {"target_prefixes": ["sidecar/ai/mcp/builtin_server_startup.py"], "required_tests": ["tests/sidecar/ai/mcp/test_builtin_server_diagnostics.py", "tests/sidecar/ai/tools/test_workspace_retention.py", "tests/sidecar/ai/mcp/test_mcp_split_modules.py"]},
     {"target_prefixes": ["sidecar/ai/mcp/transport_stdio_channel.py"], "required_tests": ["tests/sidecar/ai/mcp/test_transport_stdio.py", "tests/sidecar/ai/mcp/test_transport_stdio_cancel_settlement.py", "tests/sidecar/ai/mcp/test_transport_stdio_cleanup.py", "tests/sidecar/ai/mcp/test_transport_stdio_reader_budget.py", "tests/sidecar/ai/mcp/test_builtin_server_output_stream.py", "tests/sidecar/ai/mcp/test_mcp_split_modules.py"]},
-    {"target_prefixes": ["sidecar/ai/mcp/client_resources.py", "sidecar/ai/mcp/client_reconnect.py"], "required_tests": ["tests/sidecar/ai/mcp/test_client.py", "tests/sidecar/ai/mcp/test_client_resources.py", "tests/sidecar/ai/mcp/test_client_reuse.py", "tests/sidecar/ai/mcp/test_mcp_split_modules.py"]},
+    {"target_prefixes": ["sidecar/ai/mcp/client_reconnect.py"], "required_tests": ["tests/sidecar/ai/mcp/test_client.py", "tests/sidecar/ai/mcp/test_client_reuse.py", "tests/sidecar/ai/mcp/test_mcp_split_modules.py"]},
     {"target_prefixes": ["sidecar/ai/engines/vllm_engine_completion.py"], "required_tests": ["tests/sidecar/ai/engines/test_vllm_engine.py", "tests/sidecar/ai/engines/test_vllm_engine_generation.py", "tests/sidecar/ai/engines/test_openai_compatible_json_mode_fallback.py", "tests/sidecar/ai/engines/test_openai_compatible_json_schema.py", "tests/sidecar/ai/engines/test_vllm_engine_completion.py"]},
     {"target_prefixes": ["sidecar/ai/engines/request_route.py", "sidecar/ai/engines/openai_compatible.py", "sidecar/ai/engines/provider_http.py", "sidecar/ai/engines/vllm_engine_generation.py", "sidecar/ai/engines/vllm_engine_completion.py", "sidecar/runtime/request_dispatch_chat.py"], "required_tests": ["tests/sidecar/ai/engines/test_openai_compatible_route_token.py"]},
     {"target_prefixes": ["renderer/chat/renderer-approval-text.js", "renderer/chat/renderer-approval-receipts.js", "renderer/chat/renderer-approval-block-cards.js"], "required_tests": ["tests/renderer-approval-block.test.js", "tests/renderer-approval-receipt.test.js", "tests/renderer-session-message-approval.test.js", "tests/renderer-session-stop-approval.test.js", "tests/renderer-settings-change-approval.test.js", "tests/renderer-schedule-change-approval.test.js"]},
@@ -2141,8 +2153,11 @@
     {"target_prefixes": ["services/browser-use/page-host.js", "services/browser-use/input-watch.js"], "required_tests": ["tests/browser-use-page-host.test.js", "tests/browser-use-input-watch.test.js", "tests/browser-use-input-arming.test.js"]},
     {"target_prefixes": ["services/browser-use/browser-use-service.js", "services/browser-use/user-hold.js", "services/main/browser-use-composition.js"], "required_tests": ["tests/browser-use-user-hold.test.js", "tests/browser-use-service.test.js", "tests/browser-use-service-lifecycle.test.js", "tests/browser-use-service-panel.test.js", "tests/browser-use-shutdown.test.js", "tests/browser-use-default-off.test.js", "tests/browser-use-composition.test.js"]},
     {"target_prefixes": ["services/main/browser-use-ipc-registration.js"], "required_tests": ["tests/browser-use-ipc-registration.test.js"]},
-    {"target_prefixes": ["services/tools/builtin/browser-tool.js"], "required_tests": ["tests/browser-tool.test.js", "tests/browser-tool-consent.test.js", "tests/browser-tool-saved-output.test.js", "tests/browser-use-default-off.test.js"]},
+    {"target_prefixes": ["services/tools/builtin/browser-tool.js", "services/tools/builtin/unattended-turn.js"], "required_tests": ["tests/browser-tool.test.js", "tests/browser-tool-consent.test.js", "tests/browser-tool-saved-output.test.js", "tests/browser-use-default-off.test.js", "tests/run-view-tools.test.js"]},
+    {"target_prefixes": ["services/tools/builtin/run-view-look-tool.js", "services/tools/builtin/run-view-restart-tool.js", "services/tools/builtin/run-view-tool-support.js"], "required_tests": ["tests/run-view-tools.test.js"]},
+    {"target_prefixes": ["services/backend/run-view-tool-gate.js"], "required_tests": ["tests/run-view-tool-gate.test.js", "tests/run-view-tools.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-browser-use-panel.js"], "required_tests": ["tests/renderer-browser-use-panel.test.js", "tests/renderer-browser-use-rail-mode.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-live-run-panel.js", "renderer/chat/renderer-live-run-form.js", "renderer/chat/renderer-live-run-capture.js"], "required_tests": ["tests/renderer-live-run-panel.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-browser-use-status.js"], "required_tests": ["tests/renderer-browser-use-status.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-browser-use-bar.js"], "required_tests": ["tests/renderer-browser-use-bar.test.js"]},
     {"target_prefixes": ["services/browser-use/user-controls.js"], "required_tests": ["tests/browser-use-user-controls.test.js"]},
@@ -2166,6 +2181,7 @@
     {"target_prefixes": ["server/team/operation-registry.js", "server/team/authorize.js", "server/team/route-guard.js", "server/command-router-identity.js", "server/command-router.js", "server/asset-routes.js", "server/artifact-routes.js", "server/api-contract.js", "server/team/project-visibility.js", "server/command-router-session-list.js", "services/host/runtime-commands.js", "services/host/project-commands.js", "tests/server/helpers/team-directory-fixture.js"], "required_tests": ["tests/server/team-authorize-matrix.test.js", "tests/server/team-registry-complete.test.js", "tests/server/single-owner-parity.test.js", "tests/server/team-authorize-store.test.js", "tests/server/team-project-visibility.test.js", "tests/server/project-commands.test.js", "tests/server/team-host-visibility.test.js"]},
     {"target_prefixes": ["server/control-leases.js", "server/command-router-control.js", "server/command-router.js", "server/team/operation-registry.js", "server/team/authorize.js", "server/team/team-project-commands.js", "server/team/team-main.js", "tests/server/helpers/team-project-fixture.js", "tests/server/helpers/team-action-rows.js", "tests/helpers/command-router-fixture.js"], "required_tests": ["tests/server/team-control-leases.test.js", "tests/server/control-leases.test.js", "tests/server/command-router.test.js", "tests/server/single-owner-parity.test.js"]},
     {"target_prefixes": ["server/team/transport/reach.js"], "required_tests": ["tests/server/team-reach.test.js", "tests/team-host-supervisor.test.js"]},
+    {"target_prefixes": ["native/jenny-computer/", "scripts/packaging/build_computer_helper.py", "tests/sidecar/test_build_computer_helper.py"], "required_tests": ["tests/sidecar/test_build_computer_helper.py"]},
     {"target_prefixes": ["server/team/transport/", "services/team/transport/", "native/jenny-team-bridge/", "tests/fixtures/team-preamble-vectors.json"], "required_tests": ["tests/server/team-bridge-contract.test.js", "tests/server/team-bridge-supervisor.test.js", "tests/server/team-bridge-on-change.test.js", "tests/team-bridge-member.test.js", "tests/server/team-preamble-vectors.test.js", "tests/server/team-bridge-native.integration.test.js", "tests/server/team-transport-boundary.test.js", "tests/team-bulk-streams.test.js"]},
     {"target_prefixes": ["native/jenny-file-access/"], "required_tests": ["tests/sidecar/test_hosted_file_io_abi_contract.py", "tests/sidecar/test_hosted_file_io_win32_loader.py"]},
     {"target_prefixes": ["scripts/packaging/build_file_access.py"], "required_tests": ["tests/sidecar/test_build_file_access.py"]},

@@ -341,3 +341,14 @@ test('the group header is exported for in-place patches and is empty without a g
   assert.equal(head.dataset.proposalGroup, 'group_x');
   assert.equal(head.querySelector('[data-proposal-action="start-all"]'), null);
 });
+
+test('the Git tray names what was not checked, escaped, and adds nothing without the field', () => {
+  const base = gitProposal();
+  assert.equal(render('git', lookup(base)).doc.querySelector('.proposal-purpose'), null);
+  const shown = gitProposal({ display: { ...base.display, not_checked: ['start the <b>app</b>', 'look at the shot'] } });
+  const { doc, html } = render('git', lookup(shown));
+  const line = doc.querySelector('.proposal-purpose');
+  assert.equal(line.textContent, 'Not checked: start the <b>app</b>; look at the shot');
+  assert.doesNotMatch(html, /<b>app<\/b>/u, 'model text is escaped');
+  assert.equal(line.parentElement.classList.contains('proposal-card'), true, 'a direct line of the card, in the existing secondary-text class');
+});

@@ -15,9 +15,9 @@
       case 'approved': return jt('artifacts.plan.state.approved', 'Approved');
       case 'approved_auto': return jt('artifacts.plan.state.approvedAuto', 'Approved, auto mode');
       case 'accepted': return jt('artifacts.plan.state.accepted', 'Accepted · not built');
-      case 'rejected': return jt('artifacts.plan.state.rejected', 'Rejected');
-      case 'abandoned': return jt('artifacts.plan.state.abandoned', 'Abandoned');
-      case 'superseded': return jt('artifacts.plan.state.superseded', 'Superseded');
+      case 'rejected': return jt('artifacts.plan.state.rejected', 'Sent back with your changes');
+      case 'abandoned': return jt('artifacts.plan.state.abandoned', 'Stopped before you decided');
+      case 'superseded': return jt('artifacts.plan.state.superseded', 'Replaced below');
       default: return state.replace(/_/g, ' ');
     }
   }
@@ -133,21 +133,51 @@
       + '</div></details>';
   }
 
+  // An earlier version (superseded in its turn): one line with what the owner asked; opens like a receipt.
+  function versionLineMarkup(plan, version, options) {
+    const esc = options?.escapeHtml || escapeFallback;
+    const body = collapsedReceiptMarkup(plan, options);
+    const ask = plan.feedback && plan.feedback !== NO_FEEDBACK_PLACEHOLDER
+      ? `<span class="plan-version-line__ask" dir="auto">${esc(jt('artifacts.plan.youAsked', 'You asked: {feedback}', { feedback: plan.feedback }))}</span>` : '';
+    return `<details class="plan-document-receipt plan-version-line" data-plan-document="true" data-plan-state="superseded"><summary><span class="plan-version-line__name">${esc(jt('artifacts.plan.versionLine', 'Plan, version {number}', { number: version }))}</span>`
+      + `${ask}<span class="plan-document-receipt__meta"><span class="plan-document-receipt__state">${esc(stateLabel(plan.state))}</span></span></summary>`
+      + body.slice(body.indexOf('<div class="plan-document-receipt__body">'));
+  }
+
+  // options.version: place among the turn's plans; options.latest: the session's latest plan, which
+  // stays a full card with Build it (no editing) when its reply stopped before a decision.
   function fullDocumentMarkup(value, options) {
     const plan = normalizePlanDocument(value);
-    if (plan.state !== 'pending') return collapsedReceiptMarkup(plan, options);
+    const version = options?.version || 1;
+    if (plan.state === 'superseded') return versionLineMarkup(plan, version, options);
+    const edit = plan.state === 'pending';
+    if (!edit && !(plan.state === 'abandoned' && options?.latest && plan.plan_id)) return collapsedReceiptMarkup(plan, options);
     const escapeHtml = options?.escapeHtml || escapeFallback;
     const approvalRef = plan.approval_id || plan.tool_call_id;
-    return `<section class="plan-document" data-plan-document="true" data-plan-state="pending" data-approval-ref="${escapeHtml(approvalRef)}">`
-      + '<header class="plan-document__header"><span class="plan-document__eyebrow">' + escapeHtml(jt('artifacts.document.plan', 'Plan')) + '</span><span class="plan-document__rule" aria-hidden="true"></span>'
+    const editable = (label) => (edit ? ` role="button" tabindex="0" aria-label="${escapeHtml(label)}"` : '');
+    return `<section class="plan-document" data-plan-document="true" data-plan-state="${plan.state}" data-approval-ref="${escapeHtml(approvalRef)}">`
+      + '<header class="plan-document__header"><span class="plan-document__eyebrow">' + escapeHtml(version > 1 ? jt('artifacts.plan.eyebrowVersion', 'Plan · version {number}', { number: version }) : jt('artifacts.document.plan', 'Plan')) + '</span><span class="plan-document__rule" aria-hidden="true"></span>'
       + `<span class="plan-document__meta" data-plan-files-read-count="${plan.files_read.length}">${escapeHtml(jt('artifacts.plan.stepCount', '{count} steps', { count: plan.steps.length }))}${plan.files_read.length ? ` · ${escapeHtml(jt('artifacts.plan.filesRead', '{count} files read', { count: plan.files_read.length }))}` : ''}</span></header>`
-      + `<h3 class="plan-document__title" data-plan-title dir="auto" role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editTitleLabel', 'Edit plan title'))}">${escapeHtml(plan.title)}</h3>`
+      + `<h3 class="plan-document__title"${edit ? ' data-plan-title' : ''} dir="auto"${editable(jt('artifacts.plan.editTitleLabel', 'Edit plan title'))}>${escapeHtml(plan.title)}</h3>`
       + (plan.summary ? `<p class="plan-document__summary" dir="auto">${planInlineMarkup(plan.summary, escapeHtml)}</p>` : '')
-      + `<ol class="plan-document__steps">${plan.steps.map((step, index) => `<li draggable="true" data-plan-step-index="${index}"><span class="plan-document__step-text" data-plan-step-text data-plan-step-raw="${escapeHtml(step)}" dir="auto" role="button" tabindex="0" aria-label="${escapeHtml(jt('artifacts.plan.editStepLabel', 'Edit step {number}', { number: index + 1 }))}">${planStepInnerMarkup(step, escapeHtml)}</span><span class="plan-document__step-controls" data-plan-step-controls></span></li>`).join('')}</ol>`
-      + '<div class="plan-document__add-step" data-plan-add-step></div>'
+      + `<ol class="plan-document__steps">${plan.steps.map((step, index) => `<li${edit ? ` draggable="true" data-plan-step-index="${index}"` : ''}><span class="plan-document__step-text"${edit ? ` data-plan-step-text data-plan-step-raw="${escapeHtml(step)}"` : ''} dir="auto"${editable(jt('artifacts.plan.editStepLabel', 'Edit step {number}', { number: index + 1 }))}>${planStepInnerMarkup(step, escapeHtml)}</span>${edit ? '<span class="plan-document__step-controls" data-plan-step-controls></span>' : ''}</li>`).join('')}</ol>`
+      + (edit ? '<div class="plan-document__add-step" data-plan-add-step></div>' : '')
       + sectionsMarkup(plan, escapeHtml, options)
-      + '<div class="plan-document__decision" role="status" aria-live="polite"><span class="plan-document__edited-chip" data-plan-edited hidden>' + escapeHtml(jt('artifacts.plan.edited', 'Plan edited')) + '</span><div data-plan-actions></div></div>'
+      + (edit ? '<div class="plan-document__decision" role="status" aria-live="polite"><span class="plan-document__edited-chip" data-plan-edited hidden>' + escapeHtml(jt('artifacts.plan.edited', 'Plan edited')) + '</span><div data-plan-actions></div></div>'
+        : `<div class="plan-document__decision"><p class="plan-document__stopped-note" dir="auto">${escapeHtml(jt('artifacts.plan.stoppedNote', 'The reply stopped before you decided. The plan is kept: build it, or send a message to keep planning.'))}</p><span data-plan-build-accepted data-plan-id="${escapeHtml(plan.plan_id)}"></span></div>`)
       + '</section>';
+  }
+
+  const isLatestPlan = (planId, messages) => Boolean(planId)
+    && messages?.findLast?.((m) => m?.kind === 'plan_document' && m.plan_document)?.plan_document.plan_id === planId;
+  // A plan row's version among the turn's rows up to it, and whether it is the session's latest plan.
+  function describePlanRow(planId, rows, rowIndex, messages) {
+    return { version: rows?.slice(0, rowIndex + 1).filter((row) => row?.kind === 'plan_document').length || 1, latest: isLatestPlan(planId, messages) };
+  }
+
+  function hasStoppedLatestPlan(rows, messages) {
+    return (rows || []).some((row) => row?.kind === 'plan_document'
+      && normalizePlanDocument(row.payload).state === 'abandoned' && isLatestPlan(row.payload?.plan_id, messages));
   }
 
   function legacyPlanObjectMarkup(value, options) {
@@ -186,6 +216,8 @@
     coalesceTransitions,
     fullDocumentMarkup,
     collapsedReceiptMarkup,
+    describePlanRow,
+    hasStoppedLatestPlan,
     legacyPlanObjectMarkup,
     legacyPlanProposalMarkup,
   };

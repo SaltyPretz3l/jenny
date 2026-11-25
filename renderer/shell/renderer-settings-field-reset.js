@@ -1,9 +1,9 @@
 /**
  * renderer/shell/renderer-settings-field-reset.js
  *
- * The guarded two-step "Reset Appearance" section reset (arm, then confirm
- * within 5 s; one reset in flight). Per-field Revert belongs to the shared
- * Settings binding (renderer-settings-field-binding.js).
+ * The guarded "Reset Appearance" section reset: a confirm strip under the button
+ * (the Projects delete strip's shape; no timer; one reset in flight). Per-field
+ * Revert belongs to the shared Settings binding (renderer-settings-field-binding.js).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -15,7 +15,6 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var DEFAULT_ARM_TIMEOUT_MS = 5000;
 
   function noopLog() {}
 
@@ -38,29 +37,18 @@
       || null;
   }
 
-  function childElementsFromHtml(documentRef, html) {
-    if (!documentRef || !html || typeof documentRef.createElement !== 'function') {
-      return [];
-    }
-    var holder = documentRef.createElement('div');
-    holder.innerHTML = html;
-    return Array.prototype.slice.call(holder.children);
-  }
-
   /**
    * @param {object} deps
    * @param {Document} deps.documentRef
    * @param {{ appearance?: function }} [deps.resetActions] - the section-reset
    *   callbacks (each returns a value or a Promise). Confirm invokes
    *   `resetActions[key]()` verbatim.
-   * @param {object} [deps.confirmLabels] - the armed question per section key
+   * @param {object} [deps.confirmLabels] - the strip's question per section key
    *   (defaults to "Reset all?").
+   * @param {object} [deps.confirmDetails] - the sentence that says what is lost, per section key.
    * @param {function} [deps.onAfterReset] - called after a settled
    *   section-reset action.
    * @param {function} [deps.log]
-   * @param {number} [deps.armTimeoutMs] - test seam, defaults to 5000.
-   * @param {function} [deps.setTimeoutFn] - test seam (fake timers).
-   * @param {function} [deps.clearTimeoutFn] - test seam (fake timers).
    * @param {object} [deps.actionButton] - test seam; defaults to the shared
    *   renderer/inventory/action-button.js module.
    */
@@ -71,43 +59,22 @@
     var log = typeof d.log === 'function' ? d.log : noopLog;
     var resetActions = d.resetActions && typeof d.resetActions === 'object' ? d.resetActions : {};
     var confirmLabels = d.confirmLabels && typeof d.confirmLabels === 'object' ? d.confirmLabels : {};
-    var armTimeoutMs = typeof d.armTimeoutMs === 'number' && d.armTimeoutMs >= 0 ? d.armTimeoutMs : DEFAULT_ARM_TIMEOUT_MS;
-    var setTimeoutFn = typeof d.setTimeoutFn === 'function' ? d.setTimeoutFn : setTimeout;
-    var clearTimeoutFn = typeof d.clearTimeoutFn === 'function' ? d.clearTimeoutFn : clearTimeout;
+    var confirmDetails = d.confirmDetails && typeof d.confirmDetails === 'object' ? d.confirmDetails : {};
     var actionButton = resolveActionButton(d);
 
     var mounted = false;
     var sectionEntries = [];
 
-    // ── two-step inline section reset ───────────────────────────────────
-
-    function clearArmTimer(entry) {
-      if (entry.timer !== null) {
-        clearTimeoutFn(entry.timer);
-        entry.timer = null;
-      }
-    }
+    // ── section reset: the confirm strip ────────────────────────────────
 
     function disarm(entry) {
       if (!entry.armed) return;
       entry.armed = false;
-      clearArmTimer(entry);
-      // Focus inside the pair would fall to the page when the pair is removed; it goes back to the trigger.
+      // Focus inside the strip would fall to the page when it is removed; it goes back to the trigger.
       var active = documentRef && documentRef.activeElement;
-      var hadFocus = !!active && entry.confirmNodes.some(function (node) { return node === active || node.contains(active); });
-      if (entry._disposeConfirmButtons) {
-        entry._disposeConfirmButtons();
-        entry._disposeConfirmButtons = null;
-      }
-      entry.confirmNodes.forEach(function (node) {
-        if (node && node.parentNode === entry.container) {
-          entry.container.removeChild(node);
-        }
-      });
-      entry.confirmNodes = [];
-      entry.container.classList.remove('settings-reset-confirm');
-      entry.container.removeAttribute('data-armed');
-      entry.trigger.hidden = false;
+      var hadFocus = !!active && entry.strip.contains(active);
+      entry.strip.remove();
+      entry.strip = null;
       if (!hadFocus) return;
       // A confirmed reset leaves the trigger disabled (nothing left to reset): the page heading takes focus.
       var card = typeof entry.trigger.closest === 'function' ? entry.trigger.closest('.settings-card') : null;
@@ -139,7 +106,6 @@
 
     function confirmReset(entry) {
       if (entry.inFlight) return; // single in-flight guard
-      clearArmTimer(entry);
       entry.inFlight = true;
       var action = resetActions[entry.key];
       var result;
@@ -164,44 +130,34 @@
     function arm(entry) {
       if (entry.armed || entry.inFlight) return; // idempotent
       clearFailure(entry);
-      // Degenerate state: without the action-button builder there is nothing
-      // to render the Confirm/Cancel pair with -- arming would hide the
-      // trigger and strand the user until the timeout. Fall back to the
-      // pre-two-step behavior (direct reset on click) instead.
+      // Without the action-button builder there is nothing to draw the strip with: reset directly.
       if (!actionButton) {
         confirmReset(entry);
         return;
       }
-      var triggerHadFocus = !!documentRef && documentRef.activeElement === entry.trigger;
+      var escape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+      var strip = documentRef.createElement('div');
+      var title = confirmLabels[entry.key] || jt('settings.fieldReset.resetAll', 'Reset all?');
+      strip.className = 'projects-confirm';
+      strip.setAttribute('role', 'group');
+      strip.setAttribute('aria-label', title);
+      strip.innerHTML = '<p><strong>' + escape(title) + '</strong></p>'
+        + (confirmDetails[entry.key] ? '<p>' + escape(confirmDetails[entry.key]) + '</p>' : '')
+        + '<div class="settings-actions">'
+        + actionButton({ id: 'confirm', label: entry.trigger.textContent.trim(), variant: 'danger', size: 'sm' })
+        + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm' }) + '</div>';
+      entry.container.insertAdjacentElement('afterend', strip);
+      entry.strip = strip;
       entry.armed = true;
-      entry.container.classList.add('settings-reset-confirm');
-      entry.container.setAttribute('data-armed', 'true');
-      entry.trigger.hidden = true;
-      var html = '<span class="settings-reset-confirm-label">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(confirmLabels[entry.key] || jt('settings.fieldReset.resetAll', 'Reset all?')) + '</span>'
-        + actionButton({ id: 'confirm', label: jt('settings.fieldReset.confirm', 'Confirm'), variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
-        + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' });
-      entry.confirmNodes = childElementsFromHtml(documentRef, html);
-      entry.confirmNodes.forEach(function (node) { entry.container.appendChild(node); });
-      var confirmBtn = entry.container.querySelector('[data-action="confirm"]');
-      var cancelBtn = entry.container.querySelector('[data-action="cancel"]');
-      var onConfirm = function () { confirmReset(entry); };
-      var onCancel = function () { if (!entry.inFlight) disarm(entry); };
-      var onKeydown = function (event) {
-        if (!event || event.key !== 'Escape' || entry.inFlight) return;
+      strip.querySelector('[data-action="confirm"]').addEventListener('click', function () { confirmReset(entry); });
+      strip.querySelector('[data-action="cancel"]').addEventListener('click', function () { if (!entry.inFlight) disarm(entry); });
+      strip.addEventListener('keydown', function (event) {
+        if (event.key !== 'Escape' || entry.inFlight) return;
         event.stopPropagation();
         disarm(entry);
-      };
-      if (confirmBtn) confirmBtn.addEventListener('click', onConfirm);
-      if (cancelBtn) cancelBtn.addEventListener('click', onCancel);
-      entry.container.addEventListener('keydown', onKeydown);
-      entry._disposeConfirmButtons = function () {
-        if (confirmBtn) confirmBtn.removeEventListener('click', onConfirm);
-        if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
-        entry.container.removeEventListener('keydown', onKeydown);
-      };
-      // The trigger is hidden while armed. Its focus moves to Cancel, the safe answer.
-      if (triggerHadFocus && cancelBtn && typeof cancelBtn.focus === 'function') cancelBtn.focus();
-      entry.timer = setTimeoutFn(function () { disarm(entry); }, armTimeoutMs);
+      });
+      // The strip opens with focus on Cancel, the safe answer.
+      strip.querySelector('[data-action="cancel"]').focus();
     }
 
     function mountSectionEntry(key, triggerId) {
@@ -216,24 +172,15 @@
         container: container,
         armed: false,
         inFlight: false,
-        timer: null,
-        confirmNodes: [],
+        strip: null,
         errorNode: null,
       };
       var onTriggerClick = function () { arm(entry); };
-      var onDocumentClick = function (event) {
-        if (!entry.armed) return;
-        var target = event && event.target;
-        if (target && container.contains(target)) return;
-        disarm(entry);
-      };
       trigger.addEventListener('click', onTriggerClick);
-      documentRef.addEventListener('click', onDocumentClick, true);
       entry._dispose = function () {
         disarm(entry);
         clearFailure(entry);
         trigger.removeEventListener('click', onTriggerClick);
-        documentRef.removeEventListener('click', onDocumentClick, true);
       };
       return entry;
     }

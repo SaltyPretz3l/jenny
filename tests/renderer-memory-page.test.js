@@ -222,6 +222,8 @@ test('export reports a failed save, a canceled dialog stays quiet, and the files
   });
   const doc = window.document;
   const exportButton = () => doc.querySelector('#memoryHeaderActions [data-memory-page-action="export"]');
+  assert.ok(exportButton().closest('.settings-group-bar'), 'export sits on the Your memories heading bar');
+  assert.equal(doc.querySelector('#memorySettingsSection .settings-card-header [data-memory-page-action]'), null, 'the page header holds no action');
   exportButton().click();
   await waitForUi(window, 60);
   assert.deepEqual(plain(exports[0]), { projectId: null, title: 'Export memories' });

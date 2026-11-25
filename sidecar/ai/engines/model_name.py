@@ -52,6 +52,11 @@ BONSAI2_MODEL_PREFIXES = (
 # the catalog, and Ollama already advertises thinking for these tags. Ornith 1.0
 # ("ornith:9b-48k") is deliberately not matched, as in the app profile.
 ORNITH15_MODEL_PREFIXES = ("ornith-1.5", "ornith-1-5", "ornith15")
+# Inkling 2 Mini reasons natively with graded effort levels. Kept out of
+# THINKING_MODEL_PREFIXES for the same reason as Ornith 1.5. Only the Mini size
+# matches: the cloud ids "inkling", "inkling-small" and "thinkingmachines/inkling"
+# name a different model and must stay unclaimed.
+INKLING2_MODEL_PREFIXES = ("inkling-2-mini", "inkling2-mini")
 THINKING_MODEL_PREFIXES = (
     "qwen3.5",
     "qwen3.6",
@@ -116,6 +121,13 @@ def is_ornith15_model(name: str | None) -> bool:
 
     tokens = (canonical_model_token(name), canonicalize_model_name(name or ""))
     return any(token.startswith(ORNITH15_MODEL_PREFIXES) for token in tokens)
+
+
+def is_inkling_model(name: str | None) -> bool:
+    """Return whether ``name`` identifies an Inkling 2 Mini model variant."""
+
+    tokens = (canonical_model_token(name), canonicalize_model_name(name or ""))
+    return any(token.startswith(INKLING2_MODEL_PREFIXES) for token in tokens)
 
 
 def uses_qwen38_chat_contract(name: str | None) -> bool:

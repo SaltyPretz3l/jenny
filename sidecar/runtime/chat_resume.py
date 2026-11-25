@@ -27,6 +27,7 @@ from sidecar.ai.routing.iteration_limits import (
     effective_max_loop_wall_seconds,
     effective_max_tools_per_turn,
     turn_tool_call_limit,
+    widen_turn_tool_budget,
 )
 from sidecar.ai.routing.mutation_change_set_lifecycle import (
     bind_run_context,
@@ -255,7 +256,6 @@ def _build_live_approval_system_prompt(
         "workspace_manifest_enabled": getattr(
             stack.config, "tools_workspace_manifest_enabled", False
         ),
-        "task_capsule_enabled": getattr(stack.config, "tools_task_capsule_enabled", False),
         # The frozen tail already carries the turn's trailing turn-context row.
         "defer_turn_context": trailing_turn_context_enabled(stack.config),
     }
@@ -534,7 +534,6 @@ def _resume_decision_response(
         session_title=session_title,
         brain_container=brain_container,
         decision=decision,
-        progress_notifications=[],
         budget_messages=working_messages,
         stream_notifications=stream_notifications,
         notification_writer=notification_writer,
@@ -859,6 +858,7 @@ def resume_chat_send_response_from_approval_plan(
             )
             resumed_system_prompt = plan.system_prompt
             if was_plan_mode and not resumed_request_context.plan_mode:
+                widen_turn_tool_budget(effective_runtime, stack.config, refreshed_tool_contract)
                 resumed_system_prompt = _chat_hub._build_live_approval_system_prompt(
                     plan,
                     brain_container=brain_container,

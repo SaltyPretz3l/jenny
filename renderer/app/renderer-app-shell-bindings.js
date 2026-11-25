@@ -380,7 +380,6 @@
       callbacks: {
         openSession: (...a) => callbacks.activateWorkspaceSession?.(...a),
         setActiveView: (...a) => callbacks.setActiveView?.(...a),
-        setSidebarCollapsed: (...a) => callbacks.setSidebarCollapsed?.(...a),
         appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
         showComposerActionError: (...a) => callbacks.showComposerActionError?.(...a),
       },
@@ -430,6 +429,9 @@
     registerCleanup(() => disposeViewportController?.());
     chatWayfinderController?.bind?.();
     registerCleanup(() => chatWayfinderController?.dispose?.());
+    // Row 196 C7: the pause line (Resume, Stop) under the held computer step.
+    const computerPauseLine = root.rendererComputerStepDisplay?.mountComputerPauseLine?.({ document: documentRef, getCurrentSessionId: () => state.currentSessionId, shell: windowRef.jennyShell });
+    registerCleanup(() => computerPauseLine?.dispose?.());
     registerCleanup(() => {
       const frame = refs.thinkingIndicatorRenderFrame.get();
       if (frame) {

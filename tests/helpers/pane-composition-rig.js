@@ -21,11 +21,9 @@ function buildDom() {
   return new JSDOM(`<!doctype html><html><body>
     <section class="main-view chat-view" id="chatView" data-pane-count="1">
       <div class="chat-pane" id="chatPane0" data-pane-id="0" data-pane-focused="true">
-        <div class="chat-pane-kicker" id="chatPaneKicker" data-chat-node="chatPaneKicker" hidden></div>
         <div class="chat-thread-stage" id="chatThreadStage" data-chat-node="chatThreadStage"></div>
       </div>
-      <div class="chat-pane-resizer artifact-review-resizer hidden" id="chatPaneResizer" role="separator" tabindex="-1"></div>
-      <div class="artifact-review-resizer hidden" id="artifactReviewResizer"></div>
+      <div class="chat-pane-resizer hidden" id="chatPaneResizer" role="separator" tabindex="-1"></div>
       <aside class="artifact-review-panel" id="artifactReviewPanel"></aside>
       ${TEMPLATE_HTML}
     </section></body></html>`, { pretendToBeVisual: true });
@@ -149,10 +147,4 @@ function paneRoot(chatView, paneId) {
   return chatView.querySelector(`:scope > .chat-pane[data-pane-id="${paneId}"]`);
 }
 
-function kickerOf(rig, paneId) {
-  return paneId === 0
-    ? rig.doc.getElementById('chatPaneKicker')
-    : paneRoot(rig.chatView, paneId).querySelector('[data-chat-node="chatPaneKicker"]');
-}
-
-module.exports = { createRig, paneRoot, kickerOf, resolveChatPaneDom, CHAT_PANE_NODE_NAMES, getPaneComposition, paneModel };
+module.exports = { createRig, paneRoot, resolveChatPaneDom, CHAT_PANE_NODE_NAMES, getPaneComposition, paneModel };

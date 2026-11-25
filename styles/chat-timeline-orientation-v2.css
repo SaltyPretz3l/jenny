@@ -124,7 +124,8 @@
 
 /* The one jump control: a circle centered on the thread stage's bottom edge,
  * just above the composer row, shown only once the reader has scrolled up
- * (data-jump-state: unread or latest). Its words are the hover tooltip.
+ * (data-jump-state: unread or latest). Its name is the hover tooltip; row 192
+ * makes it a labelled pill (below).
  * While Jenny works the rail's activity dot takes the
  * arrow's place (renderer-sprite-morph.js builds it inside this button).
  * data-visible drives the fade so the exit animates too; the renderer sets
@@ -191,6 +192,22 @@
 /* The rail's J-glyph rule: the arrow yields whenever the dot has a form to show. */
 .chat-jump-latest > .chat-sprite-dot:not([data-activity="rest"]) ~ svg {
   opacity: 0;
+}
+
+/* Row 192 C13: the circle is a pill that says what is below ("Latest",
+ * "Latest · step 39 running", or the unread wording); the renderer adds the
+ * class and the label. The dot keeps the arrow's place at the pill's start. */
+.chat-jump-latest.chat-jump-latest--labeled {
+  width: fit-content; /* auto would fill the stage: both insets are set */
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--tl-font-meta);
+  white-space: nowrap;
+}
+
+.chat-jump-latest--labeled > .chat-sprite-dot {
+  inset-inline-start: calc(var(--space-4) + 7px);
 }
 
 .chat-view.chat-empty .chat-jump-latest {

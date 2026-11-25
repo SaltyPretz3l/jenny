@@ -255,6 +255,8 @@ test('the owner renames the team; the roster shows it, the audit log holds one e
   assert.equal((await f.send(alice, 'team.members.list')).team.name, 'Quiet Harbor');
   assert.equal(revOf(), before + 1);
   assert.deepEqual(events, []);
+  // Row 201: the new name goes to every active member's devices live, once.
+  assert.deepEqual(f.published.filter((row) => row.type === 'team_renamed').map((row) => row.payload), [{ name: 'Quiet Harbor' }]);
   const entries = f.store.audit.read({}).entries.filter((entry) => entry.kind === 'team_renamed');
   assert.deepEqual(entries.map((entry) => [entry.actor_member_id, entry.subject_member_id, entry.name, entry.detail,
     entry.store_rev, entry.applied]), [[owner.member_id, null, null, null, before + 1, true]]);
@@ -263,6 +265,7 @@ test('the owner renames the team; the roster shows it, the audit log holds one e
   assert.deepEqual(await f.send(owner, 'team.rename', { name: 'Quiet Harbor' }), { ok: true });
   assert.equal(revOf(), before + 1);
   assert.equal(f.store.audit.read({}).entries.filter((entry) => entry.kind === 'team_renamed').length, 1);
+  assert.equal(f.published.filter((row) => row.type === 'team_renamed').length, 1, 'an unchanged name announces nothing');
 });
 
 test('a member cannot rename; a name that is not clean text is team_name_invalid', async (t) => {

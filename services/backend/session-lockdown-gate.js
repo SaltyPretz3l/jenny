@@ -81,6 +81,11 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   complete_session_handoff: NETWORK_NONE,
   session_message: NETWORK_POSSIBLE,
   browser: NETWORK_POSSIBLE,
+  // Row 196: a program the computer tool drives can reach the network.
+  computer: NETWORK_POSSIBLE,
+  // Row 197: a picture of a local window through the helper; the restart runs a build and a program like run_command.
+  run_view_look: NETWORK_NONE,
+  run_view_restart: NETWORK_POSSIBLE,
   // Session directory (row 69): local session index, runtime store and transcript reads only.
   sessions_list: NETWORK_NONE,
   session_status: NETWORK_NONE,
@@ -213,8 +218,15 @@ function readConfigValue(service, getter, ...keys) {
   return keys.map((key) => state[key]).find((value) => value !== undefined);
 }
 
+// The OpenAI-compatible endpoint the sidecar really talks to, in the same order as
+// resolveOpenAICompatibleApiUrl (managed-sidecar-config-model.js): a hosted server's endpoint, a team
+// model, managed NInfer while it is ready (its own loopback origin, whatever URL is saved), then the saved URL.
 function openAiCompatibleUrlFromService(service) {
+  const hosted = require('./managed-sidecar-config-readers').getHostedModelEndpoint(service);
+  if (hosted?.engine === 'openai-compatible' && hosted.apiUrl) return String(hosted.apiUrl).trim();
   if (liveTeamSelection(service)) return TEAM_ENGINE_REMOTE_URL;
+  const ninfer = require('./managed-server-owner').ninferManagedOrigin(service);
+  if (ninfer) return ninfer;
   const engines = readConfigValue(service, 'getLocalEngines', 'localEngines', 'local_engines') || {};
   const settings = engines.openaiCompatible || engines.openai_compatible || {};
   return String(settings.apiUrl || settings.api_url || '').trim();

@@ -236,3 +236,36 @@ test('safeInvoke logs a diagnostic and isolates a throwing lazy-controller const
   assert.equal(initFailure.details.ensure, 'ensureSkillsController');
   assert.match(String(initFailure.details.message), /boom-skills-init/);
 });
+
+test('a setup change repaints Chat when its setup facts moved, and Home and Settings always', () => {
+  let controllerDeps = null;
+  const renders = { all: 0, settings: 0 };
+  const state = { ui: { activeView: 'chat' } };
+  const registry = createShellServiceRegistry({
+    state,
+    modules: {
+      setupServiceUtils: { createSetupService: () => ({}) },
+      setupControllerUtils: { createSetupController: (deps) => { controllerDeps = deps; return {}; } },
+    },
+    callbacks: {
+      renderAll() { renders.all += 1; },
+      renderSettings() { renders.settings += 1; },
+    },
+  });
+
+  registry.ensureSetupController();
+  const repaint = controllerDeps.callbacks.renderAfterSetupChange;
+  repaint();
+  assert.deepEqual(renders, { all: 0, settings: 0 }, 'the boot snapshot is rendered by boot itself');
+  repaint();
+  assert.deepEqual(renders, { all: 0, settings: 0 }, 'an unchanged snapshot does not repaint Chat');
+  state.setup = { setupComplete: true, steps: { localModel: 'done' } };
+  repaint();
+  assert.deepEqual(renders, { all: 1, settings: 0 });
+  state.ui.activeView = 'settings';
+  repaint();
+  assert.deepEqual(renders, { all: 1, settings: 1 });
+  state.ui.activeView = 'ide';
+  repaint();
+  assert.deepEqual(renders, { all: 1, settings: 1 });
+});

@@ -572,3 +572,48 @@ def test_question_snapshot_retains_unfrozen_pending_suffix():
     assert params["position"]["ordered_call_ids"] == ["question_1", "call_1"]
     assert params["position"]["tool_calls_consumed"] == 3
     assert params["frozen_input"]["call_id"] == "question_1"
+
+
+@pytest.mark.parametrize("limit", [531, 1000])
+def test_out_of_range_tool_call_limit_is_refused_and_logs_its_value(limit, caplog):
+    from sidecar.runtime import continuation_checkpoint as checkpoint
+
+    continuation = replace(_continuation(), tool_call_limit=limit)
+    with caplog.at_level("WARNING", logger=checkpoint.__name__):
+        with pytest.raises(ToolExecutionFailure, match="continuation_tool_call_limit_invalid"):
+            checkpoint._position(continuation)
+    record = next(r for r in caplog.records if "counter_invalid" in r.getMessage()
+                  or getattr(r, "event", "") == "runtime.continuation_checkpoint.counter_invalid")
+    text = record.getMessage() + repr(getattr(record, "__dict__", {}))
+    assert "tool_call_limit" in text and str(limit) in text
+
+
+def test_turn_budget_cap_covers_the_largest_setting_plus_browser_steps():
+    from types import SimpleNamespace
+
+    from sidecar.ai.config import parse_runtime_config
+    from sidecar.ai.routing import iteration_limits
+    from sidecar.runtime import continuation_checkpoint as checkpoint
+    from sidecar.runtime.continuation_codec_fields import (
+        MAX_CONTINUATION_TOOL_CALL_LIMIT,
+        MAX_CONTINUATION_TOOL_CALLS,
+    )
+
+    largest = 500  # the settings maximum; one more falls back to the default
+    assert parse_runtime_config({"max_tools_per_turn": largest}).max_tools_per_turn == largest
+    assert parse_runtime_config({"max_tools_per_turn": largest + 1}).max_tools_per_turn == 200
+    browsing = SimpleNamespace(executable_descriptor=lambda tool_id: object())
+    for engine_type in ("ollama", "api-provider"):
+        config = parse_runtime_config({
+            "engine_type": engine_type, "max_tools_per_turn": largest,
+            "cloud_max_tools_per_turn": largest,
+        })
+        assert iteration_limits.turn_tool_call_limit(config, browsing) == (
+            largest + iteration_limits.BROWSER_USE_TURN_STEPS
+        )
+    cap = largest + iteration_limits.BROWSER_USE_TURN_STEPS
+    assert checkpoint._MAX_TOOL_CALL_LIMIT == MAX_CONTINUATION_TOOL_CALL_LIMIT == cap
+    assert iteration_limits._MAX_CHECKPOINTED_TOOL_CALLS == cap
+    # One batch stays at 256 calls; only the turn's budget follows the setting.
+    assert checkpoint._MAX_TOOL_CALLS == MAX_CONTINUATION_TOOL_CALLS == 256
+    checkpoint._position(replace(_continuation(), tool_call_limit=cap))

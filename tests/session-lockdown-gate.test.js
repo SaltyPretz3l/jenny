@@ -25,7 +25,9 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 87);
+  assert.equal(manifestNames.length, 90);
+  // Row 196: a driven program can reach the network.
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.computer, 'possible');
   // Row 94 P4: the export and the terminal read touch no network; terminal_run types into a real shell.
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_export, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.terminal_read, 'none');
@@ -362,4 +364,24 @@ test('E71: with the team flag off a `team/` id is judged like any local id by a 
     () => resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: 'openai-compatible', requestedModel: 'team/llama3:8b' }, null),
     (error) => error?.code === LOCKDOWN_REMOTE_ENGINE, 'a remote endpoint is still refused by its URL, not by the prefix'
   );
+});
+
+test('row 197 review F2.2: the endpoint read for "is this engine local" is the one the sidecar uses', () => {
+  const { isLocalEngine, openAiCompatibleUrlFromService } = require('../services/backend/session-lockdown-gate');
+  let ninferState = 'ready';
+  const service = {
+    currentEngineType: 'openai-compatible',
+    featureFlags: {},
+    options: { getNinferManager: () => ({ getStatus: () => ({ state: ninferState }), getBaseUrl: () => 'http://127.0.0.1:39281/v1' }) },
+    configService: { getState: () => ({ localEngines: { openaiCompatible: { apiUrl: 'http://192.168.1.50:8000' } } }) },
+  };
+  assert.equal(openAiCompatibleUrlFromService(service), 'http://127.0.0.1:39281', 'managed NInfer wins over a saved LAN server');
+  assert.equal(isLocalEngine('openai-compatible', openAiCompatibleUrlFromService(service)), true);
+  ninferState = 'starting';
+  assert.equal(openAiCompatibleUrlFromService(service), 'http://192.168.1.50:8000', 'NInfer that is not ready is not the target');
+  assert.equal(isLocalEngine('openai-compatible', openAiCompatibleUrlFromService(service)), false);
+  ninferState = 'ready';
+  service.hostMode = 'server';
+  service.options.modelEndpoint = { engine: 'openai-compatible', apiUrl: 'https://models.example.net' };
+  assert.equal(openAiCompatibleUrlFromService(service), 'https://models.example.net', "a hosted server's endpoint comes first");
 });

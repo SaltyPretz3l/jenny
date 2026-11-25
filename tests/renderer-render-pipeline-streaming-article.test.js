@@ -15,7 +15,6 @@ function createPatcher({ articleOptions = [], effects = [], finds = { count: 0 }
   const document = dom.window.document;
   const chatTimeline = document.getElementById('timeline');
   const patcher = createStreamingArticlePatcher({
-    state: { features: { featureFlags: {} }, ui: { followLatest: false } },
     chatTimeline,
     uiRuntime: {},
     streamClientMetrics: { noteRowListMorph(_sessionId, morph) { morphs.push(morph.reason); } },

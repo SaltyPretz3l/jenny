@@ -25,7 +25,10 @@
  *   place in the selection (closing returns to the channel before) and is offered to the same members. A channel just
  *   created is shown by its name before its row arrives (`expect`), as a conversation just opened is.
  * - Slice 3-10: a project channel (`chan_<project id>`) is named by its project (`projectNameOf`, from the project
- *   store); `channelName` alone would show the id's remainder. */
+ *   store); `channelName` alone would show the id's remainder.
+ * - Team review fixes (OD-8): a project channel (`kind: 'project'`) is a first-class human channel. `channelName(id, teamId)`
+ *   is the one resolver every surface uses (a project's name from the project store, else what the id says); a project row
+ *   is `listed` for message links and `isShowable` with the custom ones and the conversations (the tab's `showElsewhere`). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('./renderer-team-chat-store'), require('./renderer-team-channel-menu'));
@@ -48,11 +51,28 @@
   const isDirect = (row) => Boolean(row) && row.kind === 'dm' && Array.isArray(row.participants);
   const isNew = (id) => id === NEW || id === NEW_CHANNEL;
   const isCustom = (row) => Boolean(row) && row.kind === 'channel';
+  const isProject = (row) => Boolean(row) && row.kind === 'project';
+  const isProjectId = (id) => typeof id === 'string' && id.startsWith('chan_project_');
+  // A row a link, a search hit or a chip may show: #team, a custom channel, a project channel or a conversation (never a page of the tab).
+  const isShowable = (row) => Boolean(row) && (row.kind === 'team' || isCustom(row) || isProject(row) || isDirect(row));
   const hints = new Map(); // channel id -> the name a channel just created was made with, until its row arrives
-  // A custom channel's name is its row's (the chat store knows every team's rows); a project's or a conversation's id gives the rest.
-  function channelName(id) {
+  const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+  const PROJECT_NAME_MAX = 80;
+  // A project channel's project name from the project store (loaded with the Team tab), or ''. Another member's text: direction
+  // marks out, clipped.
+  function projectName(teamId, id) {
+    if (!teamId || !isProjectId(id)) return '';
+    try {
+      const holder = globalThis.rendererTeamProjectStore || (typeof require === 'function' ? require('./renderer-team-project-store') : null);
+      const row = holder ? holder.getProjectStore().project(teamId, id.slice(5)) : null;
+      return row && typeof row.name === 'string' ? Array.from(row.name.replace(BIDI, '')).slice(0, PROJECT_NAME_MAX).join('').trim() : '';
+    } catch (_error) { return ''; }
+  }
+  // The one resolver for a channel's name (no `#`). A custom channel's name is its row's (the chat store knows every team's rows);
+  // a project channel's is its project's (give `teamId`); a conversation's id gives the rest.
+  function channelName(id, teamId = '') {
     if (id === CHANNEL) return 'team';
-    const named = hints.get(id) || (typeof chatStore.getChatStore === 'function' ? chatStore.getChatStore().nameOf(id) : '');
+    const named = hints.get(id) || projectName(teamId, id) || (typeof chatStore.getChatStore === 'function' ? chatStore.getChatStore().nameOf(id) : '');
     return named || String(id).replace(/^chan_(project_)?/, '');
   }
   const others = (row, me) => row.participants.filter((id) => id !== me);
@@ -72,7 +92,8 @@
     const state = joined && typeof chatStore.getChatStore === 'function' ? chatStore.getChatStore().team(teamId) : null;
     if (!state) return null;
     const rowOf = (id) => state.channels.find((c) => c && c.channel_id === id) || null;
-    return { name: joined.team_name || '', listed: (id) => id === CHANNEL || isCustom(rowOf(id)), channelName: (id) => (id === CHANNEL ? 'team' : String((rowOf(id) || {}).name || channelName(id))) };
+    return { name: joined.team_name || '', listed: (id) => id === CHANNEL || isCustom(rowOf(id)) || isProject(rowOf(id)),
+      channelName: (id) => (id === CHANNEL ? 'team' : String((rowOf(id) || {}).name || channelName(id, teamId))) };
   }
 
   const tag = () => globalThis.jennyI18n?.tag?.() || undefined;
@@ -248,11 +269,11 @@
       if (isDirect(row)) return others(row, me);
       return id === channelId && pending ? pending : null;
     };
-    const named = (id) => projectNameOf(id) || channelName(id);
+    const named = (id) => projectNameOf(id) || channelName(id, teamId);
     const titleOf = (id) => { const ids = othersOf(id); return ids ? namesText(ids.map(nameOf)) : (isDirectId(id) ? former : '#' + named(id)); };
     const direct = isDirectId(channelId);
     const base = { channelId, channelName: direct ? titleOf(channelId) : named(channelId), channelTitle: titleOf(channelId), channelTitleOf: titleOf,
-      channelNameOf: named, direct, othersOf, listed: (id) => id === CHANNEL || rows.some((r) => r && r.channel_id === id && isCustom(r)),
+      channelNameOf: named, direct, othersOf, listed: (id) => id === CHANNEL || rows.some((r) => r && r.channel_id === id && (isCustom(r) || isProject(r))),
       archived: Boolean(rules && shownRow.archived), unarchiveWhy: rules ? rules.unarchive : null };
     if (!team) {
       return { ...base, online: false, me: '', chatLoaded: false, soleOwner: false, nameOf: () => '', author: () => ({ name: '', initial: '' }),
@@ -282,6 +303,6 @@
     };
   }
 
-  return { CHANNEL, NEW, NEW_CHANNEL, OVERVIEW, MAX_OTHERS, asChannel, withAttrs, isDirect, isDirectId, isCustom, channelName, others, namesText, mentionText, select, expect, closeNew, closeAllNew, shownOf, awaited, resolve,
+  return { CHANNEL, NEW, NEW_CHANNEL, OVERVIEW, MAX_OTHERS, asChannel, withAttrs, isDirect, isDirectId, isCustom, isProject, isProjectId, isShowable, channelName, others, namesText, mentionText, select, expect, closeNew, closeAllNew, shownOf, awaited, resolve,
     takeConversation, rememberConversation, forgetConversation, listing, withPresence, existing, presenceText, frameContext };
 });

@@ -24,11 +24,15 @@
 //     offered; the same decision made again is answered by the board's journal as a duplicate while it holds the
 //     batch (200 batches), so nothing is applied a second time, and the list is written then.
 //
-// A `file` line in a proposal is refused on a team board for now (nothing here resolves a project file).
-// Logs carry a reason word only.
+// A `file` line in a proposal is a file card when project files are on (`projectRoot(projectId)` answers the project's
+// folder): the path is checked as the desktop checks one (services/boards/board-files.js: a relative path inside the
+// folder, real paths, no link followed, a file that exists) and the card keeps the relative path. With project files
+// off, or a path outside the folder, the line is refused with the reason word (`no_root`, `outside`, `not_found`...).
+// A decision and a list ask the caller's check before they read any proposal. Logs carry a reason word only.
 
 const { createHash } = require('node:crypto');
 
+const { createBoardFiles } = require('../../../services/boards/board-files');
 const { createBoardProposals } = require('../../../services/boards/board-proposals');
 const model = require('../../../services/boards/board-model');
 const { hostFailure } = require('../../api-contract');
@@ -44,6 +48,16 @@ const PROMPTER_ROOM = 256;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const closed = () => hostFailure('conflict', 'team_board_proposal_closed');
 const auditUnavailable = () => hostFailure('unavailable', 'team_audit_unavailable');
+
+// The caller's check as a refusal: null (or undefined) is "go on", a failure is answered as it is, and a throw or any other
+// value is unavailable.
+function verdictOf(recheck) {
+  if (typeof recheck !== 'function') return null;
+  let verdict;
+  try { verdict = recheck(); } catch { return answers.UNAVAILABLE(); }
+  if (verdict === null || verdict === undefined) return null;
+  return isObject(verdict) && verdict.ok === false ? verdict : answers.UNAVAILABLE();
+}
 
 function fits(list) {
   if (!Array.isArray(list) || list.length > model.LIMITS.proposals) return false;
@@ -88,10 +102,11 @@ function decisionBatchId(boardId, proposal, action, n) {
  * boards: the host board store. audit(entry): appends one project audit entry, answering { ok }.
  * batchRefusal(batch, { projectId, boardId, actor }): board-commands.js's rule, null or the refusal.
  * announce(projectId, boardId): tells the project's members that the board's proposals changed.
+ * projectRoot(projectId): the absolute folder of the project's files, or null when project files are off.
  * Answers { record, list, decide }.
  */
 function createHostProposals({ boards, audit, batchRefusal, announce = () => {}, clock = Date.now,
-  makeId = () => require('node:crypto').randomUUID(), logger = null } = {}) {
+  makeId = () => require('node:crypto').randomUUID(), logger = null, projectRoot = null } = {}) {
   if (!boards || typeof boards.readProposals !== 'function' || typeof boards.writeProposals !== 'function') {
     throw new TypeError('createHostProposals requires the board store.');
   }
@@ -153,7 +168,14 @@ function createHostProposals({ boards, audit, batchRefusal, announce = () => {},
       },
       emit: () => {},
     };
-    const local = createBoardProposals({ service, store, now: () => new Date(clock()), makeId });
+    // `file` lines: the project's folder from the host, checked as the desktop checks a file card's path.
+    const files = createBoardFiles({ getBoard: (id) => service.get({ boardId: id }),
+      captureProject: (id) => {
+        const root = typeof projectRoot === 'function' ? projectRoot(id) : null;
+        if (typeof root !== 'string' || !root) throw new Error('no_root');
+        return { root_path: root, project_id: id };
+      } });
+    const local = createBoardProposals({ service, store, getFiles: () => files, now: () => new Date(clock()), makeId });
     const result = await work(local, () => next);
     if (hostRefusal) return { refusal: hostRefusal };
     if (!result || result.ok !== true) return { refusal: refusalFor(result?.reason) };
@@ -196,10 +218,15 @@ function createHostProposals({ boards, audit, batchRefusal, announce = () => {},
     });
   }
 
-  /** { ok, proposals } newest first, as the desktop lists them, each with `prompterMemberId`. */
-  function list({ projectId, boardId } = {}) {
+  /**
+   * { ok, proposals } newest first, as the desktop lists them, each with `prompterMemberId`. `recheck` (the caller's
+   * check, optional) runs before anything is read, and again before any write the list makes.
+   */
+  function list({ projectId, boardId, recheck } = {}) {
     return inLine(projectId, boardId, async () => {
-      const ran = await runLocal({ projectId, boardId }, (local) => local.list({ boardId }));
+      const refused = verdictOf(recheck);
+      if (refused) return refused;
+      const ran = await runLocal({ projectId, boardId, recheck }, (local) => local.list({ boardId }));
       if (ran.refusal) return ran.refusal;
       return { ok: true, proposals: ran.result.proposals.map((proposal) => withPrompter(proposal, ran.stored)) };
     });
@@ -215,6 +242,9 @@ function createHostProposals({ boards, audit, batchRefusal, announce = () => {},
       || (action === 'accept_additions' && n !== undefined)) return Promise.resolve(answers.INVALID());
     if (!isId('member', actor) || typeof recheck !== 'function') return Promise.resolve(hostFailure('forbidden', 'role_forbidden'));
     return inLine(projectId, boardId, async () => {
+      // The caller's check first: what the store says of a board or a proposal is told to a member who may act, no one else.
+      const refused = verdictOf(recheck);
+      if (refused) return refused;
       const before = await boards.readProposals({ projectId, boardId });
       if (before?.ok !== true) return isObject(before?.error) ? before : answers.UNAVAILABLE();
       const stored = before.proposals.find((entry) => isObject(entry) && entry.id === proposalId);

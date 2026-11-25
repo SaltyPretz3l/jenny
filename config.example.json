@@ -36,7 +36,6 @@
   "crash_reporting_opt_in": false,
   "app_profile": "",
   "feature_flags": {
-    "agent_executor": false,
     "start_minimized_to_tray": false,
     "token_budget": true,
     "context_compaction": true

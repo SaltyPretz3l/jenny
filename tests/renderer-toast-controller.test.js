@@ -423,19 +423,19 @@ test('action handlers stay wired to the ids the click delegation looks up', (t) 
 });
 
 // Split view gate D14 (2026-09-26): with two panes on the chat view the stack starts below pane 1's
-// kicker, measured on render (the kicker's position follows the font scale); anywhere else the
+// header row, measured on render (the row's position follows the font scale); anywhere else the
 // CSS default holds (styles/toast.css reads --toast-split-top).
-test('two panes on the chat view: the toast stack is placed below pane 1\'s kicker', (t) => {
+test('two panes on the chat view: the toast stack is placed below pane 1\'s header row', (t) => {
   const ctx = mount();
   t.after(() => ctx.dispose());
   const doc = ctx.window.document;
   doc.documentElement.dataset.activeView = 'chat';
   doc.body.insertAdjacentHTML('afterbegin', '<main id="chatView" data-pane-count="2">'
-    + '<section class="chat-pane" data-pane-id="0"><div class="chat-pane-kicker"></div></section>'
-    + '<section class="chat-pane" data-pane-id="1"><div class="chat-pane-kicker"></div></section></main>');
-  doc.querySelector('.chat-pane[data-pane-id="1"] > .chat-pane-kicker').getBoundingClientRect = () => ({ bottom: 172.4 });
+    + '<section class="chat-pane" data-pane-id="0"><div class="chat-timeline-utility-cluster"></div></section>'
+    + '<section class="chat-pane" data-pane-id="1"><div class="chat-timeline-utility-cluster"></div></section></main>');
+  doc.querySelector('.chat-pane[data-pane-id="1"] > .chat-timeline-utility-cluster').getBoundingClientRect = () => ({ bottom: 172.4 });
   ctx.showToastMessage('Saved', { tone: 'info' });
-  assert.equal(ctx.toastViewport.style.getPropertyValue('--toast-split-top'), '181px', 'kicker bottom (ceil) + 8px');
+  assert.equal(ctx.toastViewport.style.getPropertyValue('--toast-split-top'), '181px', 'header row bottom (ceil) + 8px');
 
   doc.documentElement.dataset.activeView = 'ide';
   ctx.showToastMessage('Another', { tone: 'info' });

@@ -124,3 +124,32 @@ test('64 attached streams take 2,000 publishes of about 1 KiB within generous bo
   assert.equal(heapGrowthMiB < 128, true, `heap growth ${heapGrowthMiB} MiB`);
   events.dispose();
 });
+
+// H16: token deltas ride a tail-only lane. A burst of deltas in one conversation evicts neither another bucket's
+// durable events nor moves the floor a reconnect is checked against.
+test('5,000 chat_stream deltas leave durable replay intact and demand no resync', () => {
+  const events = new EventStream({ bootEpoch: 'boot' });
+  events.publish('team_board_changed', { board: 'b1' }, { bucket: 'project:p1' });
+  const before = events.cursor;
+  events.publish('chat_stream', { session_id: 's', stream_id: 'a', event: { type: 'started' } });
+  for (let index = 0; index < 5000; index += 1) {
+    events.publish('chat_stream', { session_id: 's', stream_id: 'a', event: { type: 'delta', content: `t${index} ` } });
+  }
+  events.publish('session_changed', { session_id: 'other' });
+  const response = new Response();
+  events.subscribe({ response, deviceId: 'owner', authorized: () => true, bootEpoch: 'boot', cursor: 0 });
+  assert.equal(response.frames.some((frame) => /resync_required/.test(frame)), false, 'no resync for a durable cursor');
+  assert.match(response.frames[0], /team_board_changed/);
+  assert.match(response.frames[1], /"type":"started"/);
+  assert.match(response.frames.at(-1), /session_changed/);
+  const cursors = response.frames.map((frame) => Number(/^id: boot:(\d+)/.exec(frame)[1]));
+  assert.equal(cursors.every((cursor, index) => index === 0 || cursor > cursors[index - 1]), true, 'replay in cursor order');
+  // The newest deltas are still replayed, in order, between the durable events.
+  assert.match(response.frames.at(-2), /t4999 /);
+  // A cursor after the board event replays from there without a resync either.
+  const later = new Response();
+  events.subscribe({ response: later, deviceId: 'later', authorized: () => true, bootEpoch: 'boot', cursor: before });
+  assert.equal(later.frames.some((frame) => /resync_required/.test(frame)), false);
+  assert.match(later.frames[0], /"type":"started"/);
+  events.dispose();
+});

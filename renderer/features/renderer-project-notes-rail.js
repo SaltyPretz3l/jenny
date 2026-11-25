@@ -1,11 +1,10 @@
 /**
  * renderer/features/renderer-project-notes-rail.js
  *
- * The Project Notes rail: the `notes` mode of the artifact review panel. Lazily
- * loaded; the shell artifact bridge builds one controller, lets `renderSplitDetail`
- * PULL its markup through `renderRailContent`, and publishes
- * `windowRef.rendererProjectNotesHost`. IPC is `jennyShell.projectNotes` (Electron
- * owns the note). Per project, in memory:
+ * The Project Notes rail: the `notes` mode of the artifact review panel. Lazily loaded;
+ * the shell artifact bridge builds one controller, lets `renderSplitDetail` PULL its markup
+ * through `renderRailContent`, and publishes `windowRef.rendererProjectNotesHost`.
+ * IPC is `jennyShell.projectNotes`. Per project, in memory:
  *   view   'preview' | 'editing' (a draft that failed to save resumes editing)
  *   lease  taken on entering edit; the 10 s heartbeat keeps it only while a change
  *          is unsaved or a keystroke is under 5 s old, releases it otherwise, and the
@@ -14,23 +13,25 @@
  *          and offers Save mine / Use Jenny's; other failures keep it with Retry
  *   strip  the latest Jenny write, its line diff measured against the text held
  *          before the change; Hide, a user edit or a project switch clear it
- * Note text is never logged.
+ * Note text is never logged. The head row is shared with the Tasks side.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('./renderer-project-notes-rail-render'),
       require('./renderer-dashboard-scratchpad-markdown'),
-      require('../inventory/action-button')
+      require('../inventory/action-button'),
+      require('./renderer-task-rail-render')
     );
     return;
   }
   root.rendererProjectNotesRail = factory(
     root.rendererProjectNotesRailRender,
     root.rendererDashboardScratchpadMarkdown,
-    root.inventoryActionButton
+    root.inventoryActionButton,
+    root.rendererTaskRailRender
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (renderModule, markdownModule, actionButtonModule) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (renderModule, markdownModule, actionButtonModule, taskRenderModule) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
@@ -58,6 +59,8 @@
     const rr = renderModule || globalRef.rendererProjectNotesRailRender || {};
     const markdown = markdownModule || globalRef.rendererDashboardScratchpadMarkdown || {};
     const actionButton = actionButtonModule || globalRef.inventoryActionButton;
+    const taskRender = taskRenderModule || globalRef.rendererTaskRailRender || {};
+    const storage = () => { try { return windowRef.localStorage || null; } catch (_error) { return null; } };
     const panelEl = d.dom?.artifactReviewPanel || windowRef?.document?.getElementById?.('artifactReviewPanel') || null;
     const escapeHtml = typeof d.escapeHtml === 'function' ? d.escapeHtml : fallbackEscapeHtml;
     const openArtifactRail = typeof d.openArtifactRail === 'function' ? d.openArtifactRail : noop;
@@ -111,18 +114,13 @@
       return isNotesMode() && prefs.enabled === true && prefs.collapsed !== true && !panelEl?.classList?.contains('hidden');
     }
 
-    const stripFor = (ps) => {
-      const strip = ps.note ? rr.buildChangeStrip(ps.note, {
-        now: now(), hiddenEntryId: ps.hiddenStripEntryId, userEditedAfter: ps.userEditedAt, diff: ps.diff,
-      }) : null;
-      // No Undo under an unsaved draft: it would rebase the draft on a note the user has not seen.
-      return strip && ps.dirty ? { ...strip, undoable: false } : strip;
-    };
+    const stripFor = (ps) => rr.stripForState(ps, now());
 
     function buildModel(pid, ps) {
       return {
         projectId: pid, projectName: projectName(pid), note: ps.note, loading: ps.loading && !ps.note, editing: ps.view === 'editing',
         draft: ps.draft, error: ps.error ? { kind: ps.error.kind } : null, changeStrip: stripFor(ps), highlightLines: ps.highlight,
+        openCount: rr.openCountFor ? rr.openCountFor(state, pid) : 0,
       };
     }
 
@@ -140,9 +138,7 @@
         const html = typeof rr.renderNotesRailSurface === 'function' ? rr.renderNotesRailSurface(buildModel(pid, ps), markdownHelpers()) : '';
         rr.paintSurface(host, html, { focusEditor: ps.focusEditor });
         ps.focusEditor = false;
-      } finally {
-        painting = false;
-      }
+      } finally { painting = false; }
     }
 
     // While the editor is live, a save or an error re-renders only the strip and
@@ -153,7 +149,7 @@
       if (!section?.querySelector('[data-notes-editor]') || pid !== projectId()) return false;
       const model = buildModel(pid, ps);
       const helpers = markdownHelpers();
-      rr.swapPart(section, '.notes-rail__strip', rr.renderStrip(model.changeStrip, helpers), section.querySelector('.notes-rail__header'), 'afterend');
+      rr.swapPart(section, '.notes-rail__strip', rr.renderStrip(model.changeStrip, helpers), section.querySelector('.project-tab-head'), 'afterend');
       rr.swapPart(section, '.notes-rail__error', rr.renderError(model.error, helpers), section.querySelector('.notes-rail__footer'), 'beforebegin');
       return true;
     }
@@ -166,11 +162,11 @@
       const pid = projectId();
       if (pid !== lastProjectId) handleProjectSwitch(pid);
       if (!pid) {
-        host.innerHTML = '<div class="notes-rail notes-rail--empty"><div class="notes-rail__empty">'
-          + escapeHtml(jt('projectNotes.noProject', 'Open a chat to see its project notes.')) + '</div></div>';
+        host.innerHTML = rr.renderNoProject({ escapeHtml });
         return true;
       }
       const ps = projectState(pid);
+      taskRender.rememberSide?.(pid, 'notes', storage());
       if (!ps.loaded && !ps.loading) void fetchNote(pid);
       // An unsaved draft (left mid-edit by a project switch) comes back as the editor.
       if (ps.dirty && ps.view === 'preview' && !ps.saving) { beginEditing(pid, ps); ps.focusEditor = true; }
@@ -194,10 +190,8 @@
 
     function ensureSubscribed() {
       if (unsubscribeChanged || disposed || typeof notesApi()?.onChanged !== 'function') return;
-      try {
-        const off = notesApi().onChanged(handleChanged);
-        unsubscribeChanged = typeof off === 'function' ? off : noop;
-      } catch (_error) { appendClientLog('WARN', 'project_notes.subscribe_failed', {}); }
+      try { const off = notesApi().onChanged(handleChanged); unsubscribeChanged = typeof off === 'function' ? off : noop; }
+      catch (_error) { appendClientLog('WARN', 'project_notes.subscribe_failed', {}); }
     }
 
     function applyFetched(ps, note, options) {
@@ -453,11 +447,7 @@
       repaint(pid);
       refocusRail(); // the decision buttons leave the DOM with the error line
     }
-    // Focus that would fall to <body> returns to the rail: the open editor, else the note.
-    function refocusRail() {
-      const active = windowRef?.document?.activeElement;
-      if (!active || active === windowRef.document.body || !active.isConnected) (panelEl?.querySelector?.('[data-notes-editor]') || panelEl?.querySelector?.('[data-action="notes-rail-edit"]'))?.focus?.();
-    }
+    const refocusRail = () => rr.focusRail(panelEl); // focus that would fall to <body> returns to the rail
 
     function retry(pid) {
       const ps = projectState(pid);
@@ -466,7 +456,18 @@
       repaint(pid);
     }
 
-    const switchToTasks = () => { leaveEditing(projectId()); openArtifactRail('tasks'); renderArtifactReviewPanel(); };
+    const switchToTasks = () => {
+      leaveEditing(projectId());
+      taskRender.rememberSide?.(projectId(), 'tasks', storage());
+      openArtifactRail('tasks');
+      renderArtifactReviewPanel();
+      taskRender.focusSide?.(panelEl, 'tasks'); // the chosen segment keeps focus after the swap
+    };
+
+    // The Tasks | Notes switch in the shared head row.
+    const handleSegmentedChange = (event) => {
+      if (!disposed && isNotesMode() && event.detail?.id === 'project-tab-side' && event.detail.value === 'tasks') switchToTasks();
+    };
 
     function handlePanelClick(event) {
       if (disposed || !isNotesMode()) return;
@@ -474,7 +475,6 @@
       const action = String(button?.dataset?.action || '');
       if (!action.startsWith('notes-rail-')) return;
       const pid = projectId();
-      if (action === 'notes-rail-switch-tasks') return switchToTasks();
       if (!pid) return;
       const handlers = {
         'notes-rail-edit': () => { if (!rr.previewClickIgnored(button, windowRef?.getSelection?.())) enterEdit(pid); },
@@ -543,7 +543,8 @@
     // keydown binds in the capture phase: the panel's own Escape (collapse / un-maximize)
     // listens on the same element and must see the editor's preventDefault first.
     const panelListeners = () => [['click', handlePanelClick], ['keydown', handlePanelKeydown, true],
-      ['input', handlePanelInput], ['compositionend', handleCompositionEnd], ['focusout', handlePanelFocusOut]];
+      ['input', handlePanelInput], ['compositionend', handleCompositionEnd], ['focusout', handlePanelFocusOut],
+      ['inv-segmented-change', handleSegmentedChange]];
 
     const refresh = () => (projectId() && !disposed ? fetchNote(projectId()) : Promise.resolve(null));
 
@@ -557,7 +558,6 @@
     }
 
     const close = () => { if (!disposed && isOpen()) toggleArtifactReview(); };
-
     const toggle = () => (isOpen() ? close() : open());
 
     function bind() {

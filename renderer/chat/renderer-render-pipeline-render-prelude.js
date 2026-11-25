@@ -75,22 +75,13 @@
       if (forceFullRender) {
         uiRuntime.threadRootMarkupCache?.clear();
       }
-      // Reflect shared display flags onto the root dataset so the pure row
-      // builders read them without threading state through the whole render
-      // pipeline. Per document only: per-pane state such as the transcript
-      // view travels through render options instead.
+      // Content-visibility paint skipping (Ht-D) is marked on the root dataset:
+      // the rule in chat-thread.css and the pure row builders read 'on' there.
+      // Per document only: per-pane state such as the transcript view travels
+      // through render options instead.
       if (typeof document !== 'undefined' && document.documentElement?.dataset) {
-        const featureFlags = state?.features?.featureFlags || state?.featureFlags || {};
-        // chat_render_content_visibility (Ht-D) rides the dataset channel, but
-        // OFF means the attribute is ABSENT (not 'false') so the CSS
-        // attribute-selector rule in chat-thread.css is inert and markup
-        // stays byte-identical pre-Ht-D — jsdom-pinnable per the design spec.
-        if (featureFlags.chat_render_content_visibility === true) {
-          if (document.documentElement.dataset.chatContentVisibility !== 'on') {
-            document.documentElement.dataset.chatContentVisibility = 'on';
-          }
-        } else if (document.documentElement.dataset.chatContentVisibility !== undefined) {
-          delete document.documentElement.dataset.chatContentVisibility;
+        if (document.documentElement.dataset.chatContentVisibility !== 'on') {
+          document.documentElement.dataset.chatContentVisibility = 'on';
         }
       }
     }

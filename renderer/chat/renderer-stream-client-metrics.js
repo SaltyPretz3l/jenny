@@ -158,7 +158,7 @@
         entry.noopRenders += 1;
         return;
       }
-      // Intra-patch header cost markers (chat_stream_paint_v2): a rewrite is
+      // Intra-patch header cost markers: a rewrite is
       // the destructive innerHTML replacement, a morph the in-place update.
       // Neither is a paint event of its own — the surrounding 'patch' already
       // counted — so they never advance firstPaintAtMs.

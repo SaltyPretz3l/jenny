@@ -172,7 +172,7 @@
     let chatDock = null;
     const bench = mod('rendererBoardPageWorkbench').createBoardPageWorkbench({
       workbenchUtils: mod('rendererIdeWorkbench'), layoutModel, store: layoutStore, rootEl, centreEl: views.element, listEl: list.element, jt,
-      onLayoutChange: () => { if (chatDock) chatDock.sync(); teamCall('sync'); },
+      onLayoutChange: () => { if (chatDock) chatDock.sync(); teamCall('sync'); scheduleRender(); }, // a column change moves the canvas width: the toolbar re-measures
     });
     // The chat beside the board (slice C1): the app's one chat dock, held here while the Board is on screen.
     const attachDock = () => mod('rendererBoardChatDock').attachBoardChatDock({
@@ -198,7 +198,7 @@
       if (teamSource()) { if (teamCall('openConversation', String(target && target.sessionId || '')) !== true) throw new Error('no such conversation'); return; }
       const actions = opts.state && opts.state.harness && opts.state.harness.agentActions;
       if (!actions || typeof actions.openSession !== 'function') throw new Error('no chat opener');
-      if (typeof actions.setActiveView === 'function') actions.setActiveView('chat');
+      if (!(chatDock && chatDock.openChat() === true) && typeof actions.setActiveView === 'function') actions.setActiveView('chat'); // a personal board stays on the Board when its chat column opens
       await actions.openSession(String(target && target.sessionId || ''));
     }
 
@@ -562,7 +562,7 @@
       void Promise.resolve().then(() => { if (!parked) syncChat(); }); // not inside the show: the chat render that asked for it moves the transcript
     }
 
-    return { dispose, park, resume, isParked: () => parked, started, container, isDisposed: () => disposed, checkProject, getProjectId: () => project.id, getOpenBoardId: () => openId, openBoard, getView: () => views.getView(), revealChanges: () => bench.revealChanges(),
+    return { dispose, park, resume, isParked: () => parked, started, container, isDisposed: () => disposed, checkProject, getProjectId: () => project.id, getOpenBoardId: () => openId, openBoard, getView: () => views.getView(), revealChanges: () => bench.revealChanges(), toggleBoardsList: () => !parked && bench.toggle('boards'), toggleChat: () => !parked && bench.toggle('chat'),
       getProject: () => project, getTeamSource: teamSource, pickProject: (next) => projectTracker.pick(next), reload: () => (source ? loadList({ doc: true }) : Promise.resolve()) };
   }
 
@@ -594,5 +594,7 @@
     return active && !active.isDisposed() && !active.isParked() ? active.revealChanges() : false;
   }
 
-  return { showBoardPage, hideBoardPage, parkBoardPage, createBoardPage, openBoard: openBoardOnPage, revealChanges: revealChangesOnPage };
+  const toggleOnPage = (name) => () => (active && !active.isDisposed() && !active.isParked() ? active[name]() : false); // the shell's panel toggles
+
+  return { showBoardPage, hideBoardPage, parkBoardPage, createBoardPage, openBoard: openBoardOnPage, revealChanges: revealChangesOnPage, toggleBoardsList: toggleOnPage('toggleBoardsList'), toggleChat: toggleOnPage('toggleChat') };
 });

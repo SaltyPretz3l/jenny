@@ -139,6 +139,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Adding a GGUF that is too large: the same bar, drawn over its end. */
+.model-library-add-fit .mm-legend {
+  font-size: var(--font-size-footnote);
+}
+
 /* Row 142: what Jenny found in a runtime folder, beside its path. */
 .model-library-folders-builds {
   color: var(--text-muted);

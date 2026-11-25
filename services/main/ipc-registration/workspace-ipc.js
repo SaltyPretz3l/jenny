@@ -56,6 +56,8 @@ function registerWorkspaceStateIpcHandlers(ipcMain, {
       || { ok: false, reason: 'unavailable' },
     'backgroundJobs.clearFinished': (_, sessionId) => backendService.backgroundJobTracker?.clearFinished?.(sessionId)
       || { ok: false, reason: 'unavailable' },
+    'backgroundJobs.restoreFinished': (_, sessionId, jobIds) => backendService.backgroundJobTracker?.restoreFinished?.(sessionId, jobIds)
+      || { ok: false, reason: 'unavailable' },
   }, workspaceAuthorization);
   // Row 181: the DOCX Pages view converts the pane's bytes with Word or LibreOffice;
   // desktop only (the hosted host never registers it), JENNY_ENABLE_DOCX_PAGE_VIEW=0 disables.

@@ -296,8 +296,8 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     contextPanelCss,
-    /\.artifact-review-resizer\s*\{[\s\S]*?grid-row:\s*1\s*\/\s*-1;/,
-    'artifact resizer should align to the top edge and span both chat rows'
+    /\.chat-pane-resizer\s*\{[\s\S]*?grid-row:\s*1\s*\/\s*-1;/,
+    'pane resizer should align to the top edge and span both chat rows'
   );
   assert.match(
     contextPanelCss,
@@ -334,11 +334,11 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /\.artifact-review-panel\[data-artifact-review-mode="tasks"\]\s*\{[\s\S]*?background:\s*var\(--bg-base\);[\s\S]*?border-inline-start:\s*1px solid var\(--line\);/,
     'tasks mode should use the flat chat-page surface grammar'
   );
-  assert.doesNotMatch(taskRailCss, /\.task-rail-(?:check|row)\b[^{]*\{[^}]*border-bottom/, 'task rows separate by whitespace, not dividers');
+  assert.doesNotMatch(taskRailCss, /\.task-rail-row\b[^{]*\{[^}]*border-bottom/, 'task rows separate by whitespace, not dividers');
+  assert.doesNotMatch(taskRailCss, /task-rail-check/, 'row 195: the checklist moved to Session and took no styles from here');
   assert.doesNotMatch(taskRailCss, /\.task-rail-row-actions\b/);
-  // Finished follow-ups and finished checklist steps are both marked off.
+  // Finished follow-ups are marked off.
   assert.match(taskRailCss, /\.task-rail-row--resolved \.task-rail-title \{[^}]*text-decoration: line-through/);
-  assert.match(taskRailCss, /\.task-rail-check\[data-check-status="completed"\] \.task-rail-check-text \{[^}]*text-decoration: line-through/);
   const timelineUtilityButtonRule = readCssRuleBlock(
     timelineOrientationCss,
     '.chat-timeline-utility-button'
@@ -381,7 +381,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   const jumpPill = readCssRuleBlock(timelineOrientationCss, '.chat-jump-latest');
   assert.match(jumpPill, /width:\s*30px;[\s\S]*?height:\s*30px;/, 'the one jump control is a 30px circle');
   assert.match(jumpPill, /border:\s*1px solid var\(--border-default\);[\s\S]*?border-radius:\s*var\(--radius-pill\);[\s\S]*?background:\s*var\(--bg-surface\);/, 'the circle uses the default border, pill radius and surface background');
-  assert.doesNotMatch(timelineOrientationCss, /chat-jump-latest-label/, 'the control has no label');
+  assert.match(readCssRuleBlock(timelineOrientationCss, '.chat-jump-latest.chat-jump-latest--labeled'), /width:\s*fit-content;/, 'row 192: the labelled control is a pill, not a stage-wide band');
   assert.doesNotMatch(timelineOrientationCss, /data-jump-state="prompt"/, 'Back to prompt lives in the More menu now');
   assert.doesNotMatch(timelineOrientationCss, /\.chat-jump-latest(?:\[[^\]]*\])?\s+svg\s*\{/, 'arrow rules are child-scoped so they never touch the dot\'s done check');
   assert.match(
@@ -402,18 +402,18 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   assert.match(sessionBarMenuCss, /\.chat-timeline-utility-button\.activity-open-button\s*\{\s*display:\s*none;/, 'Activity keeps its node but leaves the bar');
   assert.match(
     sessionBarMenuCss,
-    /\.chat-timeline-utility-cluster\[data-session-bar-compact\] > :is\(\[data-chat-node="artifactSplitViewToggle"\], #chatTimelineTasksToggle, #chatTimelineNotesToggle\)\s*\{\s*display:\s*none;/,
+    /\.chat-timeline-utility-cluster\[data-session-bar-compact\] > :is\(\[data-chat-node="artifactSplitViewToggle"\], #chatTimelineTasksToggle, #chatTimelineNotesToggle\)(?:,[^{]*)?\{\s*display:\s*none;/,
     'a compact bar hands Artifacts, Tasks and Notes to the More menu'
+  );
+  assert.match(
+    sessionBarMenuCss,
+    /\.chat-view\[data-pane-count="2"\] > [^{]*\.chat-timeline-utility-cluster > :is\(\[data-chat-node="artifactSplitViewToggle"\], #chatTimelineTasksToggle, #chatTimelineNotesToggle\)\s*\{\s*display:\s*none;/,
+    'split view lists Artifacts, Tasks and Notes in More too, so the first pane copies hide'
   );
   assert.doesNotMatch(
     timelineOrientationCss,
     /\.chat-view\.chat-empty \.chat-timeline-utility-cluster\s*\{[\s\S]*?display:\s*none;/,
     'artifact viewer toggle should remain reachable in an empty Chat view'
-  );
-  assert.match(
-    chatComposerCss,
-    /\.chat-view\.artifact-review-open\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+var\(--artifact-review-resizer-width,\s*10px\)\s+auto;/,
-    'split artifact review should expand the chat grid with a resizer column and right rail'
   );
   assert.match(
     chatThreadCss,
@@ -514,23 +514,6 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     `${chatThreadCss}\n${chatThreadPresetsCss}`,
     /\.is-streaming|data-sprite-state|data-sprite-holo|chat-sprite-holo|chat-assistant-sprite::(?:before|after)/,
     'no disc tint, streaming promotion or holo selector remains'
-  );
-  assert.match(
-    chatMediaQueriesCss,
-    /\.chat-view > \.artifact-review-resizer\s*\{[\s\S]*?display:\s*none;/,
-    '700px breakpoint should hide the artifact review resizer (no third grid column to resize)'
-  );
-  // UIUX-004: the opened artifact review must stay reachable at narrow
-  // widths — it becomes a right-edge fixed overlay (its own Collapse /
-  // Full View header controls are the route back) instead of display: none.
-  assert.match(
-    chatMediaQueriesCss,
-    /@media \(max-width:\s*700px\)\s*\{[\s\S]*?\.chat-view > \.artifact-review-panel\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?z-index:\s*var\(--z-dock\);/,
-    '700px breakpoint should present the opened artifact review as a fixed overlay, not hide it'
-  );
-  assert.ok(
-    !/@media \(max-width:\s*700px\)\s*\{[\s\S]{0,6000}?\.chat-view > \.artifact-review-panel[^{]*\{[^}]*display:\s*none;/.test(chatMediaQueriesCss),
-    '700px breakpoint must not display:none the artifact review panel (UIUX-004 route to hidden panels)'
   );
   // Ultra-wide no longer widens the composer on its own (row 59 checkpoint 1):
   // the composer shares the pane's measure at every viewport.
@@ -667,13 +650,13 @@ test('chat width tokens are a line-length cap resolved once; the measure is pane
 
   // The per-pane measure: min(cap, pane - 2 * gutter), gutter = 3% of the pane (16..40px), never
   // narrower than the avatar rail (the utilities sit in the session bar above the stage and reserve
-  // nothing); --chat-measure-lock replaces both tokens. The
+  // nothing). The
   // geometry itself is gated in headless Chromium by tests/renderer-chat-reading-layout.test.js.
   // Scoped off the Workspace-hosted pane (.chat-pane.ide-chat-dock-body), whose dock tokens must keep applying.
   const paneRule = readCssRuleBlock(panesCss, '.chat-pane:not(.ide-chat-dock-body)');
   for (const [token, whole, share] of [['--content-column-width', '100cqi', '3cqi'], ['--composer-width', '100%', '3%']]) {
     const value = (paneRule.match(new RegExp(`${token}:([^;]+);`))?.[1] || '').trim();
-    assert.match(value, /^var\(--chat-measure-lock,\s*min\(var\(--chat-measure-cap\),/, `${token} honours the lock and the cap`);
+    assert.match(value, /^min\(var\(--chat-measure-cap\),/, `${token} honours the cap`);
     assert.ok(value.includes(`calc(${whole} - 2 * max(clamp(var(--chat-gutter-min), ${share}, 40px), var(--chat-sprite-rail-offset))`), `${token} is pane-relative in ${whole}: ${value}`);
   }
   assert.match(paneRule, /--chat-gutter-min:\s*16px;/);

@@ -11,6 +11,7 @@
 const MANAGED_ENGINE_TYPE = 'openai-compatible';
 const { AI_ERROR_CODES } = require('./error-codes');
 const { buildLoadFailure, classifyLoadFailure } = require('./load-failure-classifier');
+const { liveRunOf, refusalMessageForStatus } = require('./vram-load-preflight');
 
 function ownsStoredLoad(lifecycle, load) {
   return Boolean(load)
@@ -69,11 +70,14 @@ function managedLoadPatch(service, managerStatus) {
   const lastError = String(managerStatus.lastError || '').trim();
   if (ownsStoredLoad(service._modelLifecycle, load) && !service._managedInitializeFlight
     && ['stopped', 'crashed', 'failed'].includes(state) && lastError) {
+    const refused = refusalMessageForStatus(service, managerStatus);
+    const live = refused ? liveRunOf(service, service.vramLoadPreflight?.getLastRefusal?.()) : null;
     return {
       state: 'unavailable', status: 'Model failed to load', error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
       failure: buildLoadFailure({
         cause: classifyLoadFailure(lastError, { timedOut: /readiness_timeout/.test(lastError) }),
-        message: lastError, engine: MANAGED_ENGINE_TYPE, model: model || load.model,
+        message: refused || lastError, engine: MANAGED_ENGINE_TYPE, model: model || load.model,
+        ...(live ? { live_run: live } : {}),
       }),
     };
   }

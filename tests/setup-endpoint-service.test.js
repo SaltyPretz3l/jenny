@@ -116,6 +116,103 @@ test('endpoint validation rejects catalogs with the wrong model-entry shape', as
   assert.equal((await service.validate({ engineType: 'vllm' })).code, 'empty_catalog');
 });
 
+// A server that lists no models while its engine starts reports `loaded: false` on /health.
+function loadingFetch(healthReply, { calls = [], models = { data: [] } } = {}) {
+  return async (url, init) => {
+    calls.push({ url, init });
+    if (new URL(url).pathname === '/health') {
+      if (healthReply instanceof Error) throw healthReply;
+      return healthReply;
+    }
+    return response(models);
+  };
+}
+
+test('an empty OpenAI-compatible catalog on a still-loading server says it is loading', async () => {
+  const calls = [];
+  const service = new SetupEndpointService({
+    fetchImpl: loadingFetch(response({ status: 'ok', loaded: false, service: 'strata' }), { calls }),
+  });
+  const result = await service.validate({ engineType: 'openai-compatible', apiUrl: 'http://127.0.0.1:8033/v1' });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'model_loading');
+  assert.equal(result.retryable, true);
+  assert.equal(result.error_code, 'CMP-SETUP-0001');
+  assert.equal(result.message, 'The server is still loading its model. Wait for it to finish, then validate again.');
+  assert.deepEqual(calls.map((call) => call.url), ['http://127.0.0.1:8033/v1/models', 'http://127.0.0.1:8033/health']);
+  assert.equal(calls[1].init.method, 'GET');
+  assert.equal(calls[1].init.redirect, 'error');
+  assert.ok(calls[1].init.signal, 'the health probe shares the validation abort signal');
+});
+
+test('an empty OpenAI-compatible catalog stays empty_catalog unless /health says loaded is false', async () => {
+  const replies = {
+    loaded: response({ loaded: true }),
+    absent: response({ status: 'ok' }),
+    notObject: response([{ loaded: false }]),
+    notFalse: response({ loaded: 0 }),
+    http404: response({ loaded: false }, { status: 404 }),
+    oversized: response({ loaded: false }, { contentLength: 64 * 1024 + 1 }),
+    nonJson: { ok: true, status: 200, headers: { get: () => null }, json: async () => { throw new SyntaxError('bad json'); } },
+    throws: new Error('connection refused'),
+  };
+  for (const [name, reply] of Object.entries(replies)) {
+    const service = new SetupEndpointService({ fetchImpl: loadingFetch(reply) });
+    const result = await service.validate({ engineType: 'openai-compatible' });
+    assert.equal(result.code, 'empty_catalog', name);
+    assert.equal(result.message, 'Endpoint returned no usable models.', name);
+  }
+});
+
+test('a /health probe that times out reports empty_catalog, not a timeout', async () => {
+  const service = new SetupEndpointService({
+    timeoutMs: 20,
+    fetchImpl: async (url, init) => {
+      if (new URL(url).pathname !== '/health') return response({ data: [] });
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      });
+    },
+  });
+  assert.equal((await service.validate({ engineType: 'openai-compatible' })).code, 'empty_catalog');
+});
+
+test('ollama and vllm empty catalogs and non-empty catalogs never request /health', async () => {
+  const calls = [];
+  const fetchImpl = loadingFetch(response({ loaded: false }), { calls });
+  const service = new SetupEndpointService({ fetchImpl });
+  assert.equal((await service.validate({ engineType: 'vllm' })).code, 'empty_catalog');
+  const ollama = new SetupEndpointService({ fetchImpl: loadingFetch(response({ loaded: false }), { calls, models: { models: [] } }) });
+  assert.equal((await ollama.validate({ engineType: 'ollama' })).code, 'empty_catalog');
+  const full = new SetupEndpointService({
+    fetchImpl: loadingFetch(response({ loaded: false }), { calls, models: { data: [{ id: 'm' }] } }),
+  });
+  assert.equal((await full.validate({ engineType: 'openai-compatible' })).ok, true);
+
+  assert.equal(calls.some((call) => new URL(call.url).pathname === '/health'), false);
+});
+
+test('the /health probe carries the managed key only for the managed server origin', async () => {
+  const calls = [];
+  const manager = { getApiKey: () => 'k3y', getBaseUrl: () => 'http://localhost:8033/v1' };
+  const service = new SetupEndpointService({
+    fetchImpl: loadingFetch(response({ loaded: false }), { calls }),
+    getLlamaServerManager: () => manager,
+  });
+
+  assert.equal((await service.validate({ engineType: 'openai-compatible' })).code, 'model_loading');
+  assert.equal((await service.validate({
+    engineType: 'openai-compatible', apiUrl: 'http://127.0.0.1:9000/v1',
+  })).code, 'model_loading');
+  const health = calls.filter((call) => new URL(call.url).pathname === '/health');
+  assert.deepEqual(health.map((call) => call.init.headers), [
+    { Accept: 'application/json', Authorization: 'Bearer k3y' },
+    { Accept: 'application/json' },
+  ]);
+  assert.deepEqual(health.map((call) => call.url), ['http://127.0.0.1:8033/health', 'http://127.0.0.1:9000/health']);
+});
+
 test('endpoint save revalidates and persists the matching engine settings once', async () => {
   const writes = [];
   const service = new SetupEndpointService({
@@ -165,4 +262,21 @@ test('readiness normalization preserves explicit canonical false and zero aliase
   assert.equal(normalized.local_model_count, 0);
   assert.equal(normalized.runtime_model_loaded, false);
   assert.equal(normalized.catalog_available, false);
+});
+
+test('endpoint validation carries the key of whichever managed server owns the origin (row 200)', async () => {
+  const seen = [];
+  const service = new SetupEndpointService({
+    fetchImpl: async (url, init) => { seen.push({ url, auth: init.headers.Authorization || '' }); return response({ data: [{ id: 'm' }] }); },
+    getLlamaServerManager: () => ({ getApiKey: () => 'llama', getBaseUrl: () => 'http://127.0.0.1:8033/v1' }),
+    getManagedServerManagers: () => [
+      null,
+      { getApiKey: () => 'strata', getBaseUrl: () => 'http://127.0.0.1:8035/v1' },
+      { getApiKey: () => { throw new Error('broken'); }, getBaseUrl: () => 'http://127.0.0.1:8034/v1' },
+    ],
+  });
+  for (const apiUrl of ['http://127.0.0.1:8035/v1', 'http://127.0.0.1:8033/v1', 'http://127.0.0.1:8034/v1', 'http://127.0.0.1:9000/v1']) {
+    assert.equal((await service.validate({ engineType: 'openai-compatible', apiUrl })).ok, true, apiUrl);
+  }
+  assert.deepEqual(seen.map((entry) => entry.auth), ['Bearer strata', 'Bearer llama', '', '']);
 });

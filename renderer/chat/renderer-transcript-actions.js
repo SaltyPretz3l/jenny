@@ -9,56 +9,19 @@
   function createTranscriptActionRenderer(deps) {
     const { buildMessageActionModel, escapeHtml } = deps || {};
 
+    // Icon bodies inside <svg viewBox="0 0 16 16" aria-hidden="true">; regenerate is the fallback.
+    const ACTION_ICON_PATHS = {
+      copy: '<rect x="5" y="3" width="8" height="10" rx="2"></rect><path d="M3 11V5a2 2 0 0 1 2-2"></path>',
+      elaborate: '<path d="M8 1.75 9.5 6.5 14.25 8 9.5 9.5 8 14.25 6.5 9.5 1.75 8 6.5 6.5Z"></path>',
+      pin: '<path d="M9.5 2.5 13.5 6.5 11.5 7.5 10 10 6 6 8.5 4.5Z"></path><path d="M6 10 2.5 13.5"></path>',
+      'post-to-team': '<path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5"></path>',
+      edit: '<path d="M11.5 2.5 13.5 4.5 5 13 2 13.5 2.5 10.5Z"></path><path d="M10 4 12 6"></path>',
+      branch: '<path d="M4 2v3.5a3.5 3.5 0 0 0 3.5 3.5H12"></path><path d="M8.5 5.5 12 9l-3.5 3.5"></path><path d="M4 14V2"></path>',
+      regenerate: '<path d="M13 8a5 5 0 1 1-1.43-3.49"></path><path d="M13 3v3.5H9.5"></path>',
+    };
     function renderMessageActionIcon(action) {
-      if (action === 'copy') {
-        return `
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <rect x="5" y="3" width="8" height="10" rx="2"></rect>
-            <path d="M3 11V5a2 2 0 0 1 2-2"></path>
-          </svg>
-        `;
-      }
-      if (action === 'elaborate') {
-        return `
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 1.75 9.5 6.5 14.25 8 9.5 9.5 8 14.25 6.5 9.5 1.75 8 6.5 6.5Z"></path>
-          </svg>
-        `;
-      }
-      if (action === 'pin') {
-        return `
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M9.5 2.5 13.5 6.5 11.5 7.5 10 10 6 6 8.5 4.5Z"></path>
-            <path d="M6 10 2.5 13.5"></path>
-          </svg>
-        `;
-      }
-      if (action === 'post-to-team') {
-        return '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5"></path></svg>';
-      }
-      if (action === 'edit') {
-        return `
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M11.5 2.5 13.5 4.5 5 13 2 13.5 2.5 10.5Z"></path>
-            <path d="M10 4 12 6"></path>
-          </svg>
-        `;
-      }
-      if (action === 'branch') {
-        return `
-          <svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4 2v3.5a3.5 3.5 0 0 0 3.5 3.5H12"></path>
-            <path d="M8.5 5.5 12 9l-3.5 3.5"></path>
-            <path d="M4 14V2"></path>
-          </svg>
-        `;
-      }
-      return `
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M13 8a5 5 0 1 1-1.43-3.49"></path>
-          <path d="M13 3v3.5H9.5"></path>
-        </svg>
-      `;
+      const paths = Object.prototype.hasOwnProperty.call(ACTION_ICON_PATHS, action) ? ACTION_ICON_PATHS[action] : ACTION_ICON_PATHS.regenerate;
+      return `<svg${action === 'branch' ? ' class="icon-mirror-rtl"' : ''} viewBox="0 0 16 16" aria-hidden="true">${paths}</svg>`;
     }
 
     function describeAction(action) {

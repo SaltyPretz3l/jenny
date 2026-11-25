@@ -116,6 +116,9 @@ class ChatRequestContext:
     # Child-only delegation contract body (empty on parent turns), rendered as a
     # runtime overlay: a system row in ``messages`` is dropped by the semantic gate.
     sub_agent_delegation_contract: str = ""
+    # Row 184 W3: a delegate child in write mode, working in its own worktree. It
+    # dispatches builtin tools only and never asks for approval (delegate_write.py).
+    sub_agent_write_mode: bool = False
     inference_performance: dict[str, Any] | None = None
     # Capability gate (desktop only), independent of the live-counter opt-in.
     # False suppresses both provider options and all performance notifications.
@@ -162,7 +165,7 @@ def inference_performance_from_params(params: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict) or set(value) != {"live", "provider_kind"}:
         return None
     if type(value["live"]) is not bool or value["provider_kind"] not in (
-        "ninfer", "llama-server", "ollama", "other",
+        "ninfer", "llama-server", "strata", "ollama", "other",
     ):
         return None
     return {"live": value["live"], "provider_kind": value["provider_kind"]}

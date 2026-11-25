@@ -17,10 +17,6 @@
     scheduledLayoutTasks: 1,
   });
 
-  function isLongThreadBoundsEnabled(featureFlags) {
-    return !featureFlags || featureFlags.chat_long_thread_bounds !== false;
-  }
-
   function pruneMapOldestFirst(map, cap, options = {}) {
     if (!(map instanceof Map)) return { evicted: [], remaining: 0 };
     const normalizedCap = Number.isFinite(cap) ? Math.max(0, Math.trunc(cap)) : 0;
@@ -426,10 +422,8 @@
         return;
       }
       fallbackSet.add(fallbackKey);
-      if (isLongThreadBoundsEnabled(state?.features?.featureFlags)) {
-        while (fallbackSet.size > LONG_THREAD_BUDGETS.diagnosticKeys) {
-          fallbackSet.delete(fallbackSet.values().next().value);
-        }
+      while (fallbackSet.size > LONG_THREAD_BUDGETS.diagnosticKeys) {
+        fallbackSet.delete(fallbackSet.values().next().value);
       }
       appendClientLog('WARN', 'renderer.tool_row_projection_fallback', {
         sessionId: normalizedSessionId,
@@ -449,10 +443,8 @@
         return;
       }
       failureSet.add(normalizedReason);
-      if (isLongThreadBoundsEnabled(state?.features?.featureFlags)) {
-        while (failureSet.size > LONG_THREAD_BUDGETS.diagnosticKeys) {
-          failureSet.delete(failureSet.values().next().value);
-        }
+      while (failureSet.size > LONG_THREAD_BUDGETS.diagnosticKeys) {
+        failureSet.delete(failureSet.values().next().value);
       }
       appendClientLog('WARN', 'renderer.tool_row_projection_failed', {
         sessionId: normalizedSessionId,
@@ -695,7 +687,6 @@
     resolveRetainedSessionIds,
     buildMessageIdIndex,
     collectPinnedTurnIds,
-    isLongThreadBoundsEnabled,
     pruneMapOldestFirst,
     refreshCanonicalMessageRefs,
     refreshCanonicalThreadTreeRefs,

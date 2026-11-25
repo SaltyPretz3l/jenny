@@ -208,47 +208,32 @@ test('choosing a quiet-hours time on the Notifications card writes that chatUi s
   assert.deepEqual(h.errors, []);
 });
 
-// Row 144: the "Jenny chat" group's two model rows (Jenny's model, Scheduled checks run on).
+// Row 194 (C6): Chat keeps one read-only row that points at Settings > Models > Model roles.
 const { renderJennyChatModels } = require('../renderer/shell/renderer-settings-lazy-renderers.js');
 
 const MODEL_LIST = [
   { id: 'qwen3:27b', engine_type: 'ollama', parameterSize: '27.8B' },
-  { id: 'qwen3:8b', engine_type: 'ollama', parameter_size: '8.2B' },
   { id: 'lfm3:2b', engine_type: 'ollama', parameterSize: '2.6B' },
-  { id: 'gemma4-e4b', engine_type: 'ollama' },
   { id: 'gpt-6', engine_type: 'chatgpt' },
 ];
 
-function modelsHarness({ snapshot = {}, models = MODEL_LIST, status = {}, sessions = [] } = {}) {
-  const dom = new JSDOM('<!doctype html><body><div id="jennyChatModelList"></div></body>', { url: 'http://localhost/' });
+function modelsHarness({ snapshot = {}, models = MODEL_LIST, sessions = [] } = {}) {
+  const dom = new JSDOM('<!doctype html><body><button id="settingsNav-models"></button><h4 id="modelRolesHeading" tabindex="-1"></h4>'
+    + '<div id="jennyChatModelList"></div></body>', { url: 'http://localhost/' });
   const snap = { status: 'ready', session_id: 'p', model: '', check_model: '', ...snapshot };
   let listener = null;
-  const calls = [];
-  const store = {
-    answer: { ok: true },
-    getSnapshot: () => ({ ...snap }),
-    subscribe: (fn) => { listener = fn; return () => { listener = null; }; },
-    async setModels(patch) { calls.push(patch); return store.answer; },
-  };
-  const state = { modelList: { data: models, active_model: 'lfm3:2b' }, status: { model: 'lfm3:2b' }, sessions, ...status };
+  const store = { getSnapshot: () => ({ ...snap }), subscribe: (fn) => { listener = fn; return () => { listener = null; }; } };
+  const state = { modelList: { data: models, active_model: 'lfm3:2b' }, status: { model: 'lfm3:2b' }, sessions };
   const list = dom.window.document.getElementById('jennyChatModelList');
   const previous = { window: global.window, document: global.document };
   global.window = dom.window;
   global.document = dom.window.document;
   const render = () => renderJennyChatModels(list, state, { store });
   render();
-  const q = (selector) => list.querySelector(selector);
   return {
-    dom, list, snap, state, store, calls, render, q,
+    dom, list, snap, state, render,
+    text: () => list.querySelector('.settings-field-help').textContent,
     emit: () => listener && listener(),
-    jenny: () => q('#primaryModelSelect'),
-    check: () => q('#checkModelSelect'),
-    line: (id) => q(`[data-settings-field="${id}"] .settings-field-effective`),
-    async change(select, value) {
-      select.value = value;
-      select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-      await settle();
-    },
     cleanup() {
       global.window = previous.window;
       global.document = previous.document;
@@ -256,133 +241,80 @@ function modelsHarness({ snapshot = {}, models = MODEL_LIST, status = {}, sessio
     },
   };
 }
-const optionValues = (select) => Array.from(select.options, (option) => option.value);
-const optionLabel = (select, value) => Array.from(select.options).find((option) => option.value === value);
 
-test('row 144: both model rows render with their first options and help', (t) => {
+test('row 194: Chat holds one read-only row, with no model select, that follows the picker', (t) => {
   const h = modelsHarness();
   t.after(() => h.cleanup());
-  assert.deepEqual(Array.from(h.list.querySelectorAll('.settings-field--row .settings-field-title'), (el) => el.textContent),
-    ["Jenny's model", 'Scheduled checks run on']);
-  assert.equal(h.jenny().options[0].textContent, "Follow the chat's picker");
-  assert.equal(h.check().options[0].textContent, "Same as Jenny's model");
-  assert.equal(h.jenny().options[0].value, '');
-  assert.deepEqual(optionValues(h.jenny()), ['', 'qwen3:27b', 'qwen3:8b', 'lfm3:2b', 'gemma4-e4b', 'gpt-6']);
-  assert.match(h.q('#primaryModelHelp').textContent, /always uses, whatever you load in other chats or the Model Library/);
-  assert.match(h.q('#checkModelHelp').textContent, /Models under 7B can't run checks/);
-  assert.equal(h.jenny().getAttribute('aria-describedby'), 'primaryModelHelp');
+  assert.equal(h.list.querySelectorAll('.settings-field').length, 1);
+  assert.equal(h.list.querySelectorAll('select').length, 0);
+  const row = h.list.querySelector('.roles-pointer');
+  assert.equal(row.querySelector('.settings-field-title').textContent, "Jenny's model");
+  assert.equal(h.text(), "Follows the chat's picker, now lfm3:2b. Scheduled checks run on lfm3:2b.");
+  assert.equal(row.querySelector('[data-open-model-roles]').textContent, 'Change in Models');
 });
 
-test('row 144: the check row disables models under 7B and of unknown size; cloud stays enabled; Jenny\'s row disables none', (t) => {
-  const h = modelsHarness();
-  t.after(() => h.cleanup());
-  const disabled = (select) => Array.from(select.options).filter((option) => option.disabled).map((option) => option.value);
-  assert.deepEqual(disabled(h.check()), ['lfm3:2b', 'gemma4-e4b']);
-  assert.deepEqual(disabled(h.jenny()), []);
-  assert.equal(optionLabel(h.check(), 'lfm3:2b').textContent, 'lfm3:2b · under 7B, too small for checks');
-  assert.equal(optionLabel(h.check(), 'gpt-6').disabled, false);
-  assert.equal(optionLabel(h.check(), 'qwen3:8b').textContent, 'qwen3:8b');
-});
-
-test('row 144: the effective lines name what runs; an unpinned Jenny shows the Library default', (t) => {
-  const h = modelsHarness();
-  t.after(() => h.cleanup());
-  assert.equal(h.line('primaryModelRow').textContent, 'Now: lfm3:2b, from the Model Library default.');
-  assert.equal(h.line('primaryModelRow').querySelector('strong').textContent, 'lfm3:2b');
+test('row 194: a pinned model and a separate checks model are named in the line', (t) => {
   const pinned = modelsHarness({ snapshot: { model: 'qwen3:27b' } });
   t.after(() => pinned.cleanup());
-  assert.equal(pinned.line('primaryModelRow').textContent,
-    'Every Jenny chat turn runs on qwen3:27b. The picker in the Jenny chat is locked while this is set.');
-  assert.equal(pinned.line('checkModelRow').textContent, 'Checks run on qwen3:27b.');
-  assert.equal(pinned.line('checkModelRow').classList.contains('settings-field-effective--warn'), false);
-  const separate = modelsHarness({ snapshot: { model: 'gpt-6', check_model: 'qwen3:8b' } });
+  assert.equal(pinned.text(), 'qwen3:27b. Scheduled checks run on qwen3:27b.');
+  const separate = modelsHarness({ snapshot: { model: 'gpt-6', check_model: 'qwen3:27b' } });
   t.after(() => separate.cleanup());
-  assert.equal(separate.line('checkModelRow').textContent, 'Checks run on qwen3:8b.');
+  assert.equal(separate.text(), 'gpt-6. Scheduled checks run on qwen3:27b.');
+  const own = modelsHarness({ sessions: [{ id: 'p', preferred_model: 'qwen3:27b' }] });
+  t.after(() => own.cleanup());
+  assert.equal(own.text(), "Follows the chat's picker, now qwen3:27b. Scheduled checks run on qwen3:27b.");
 });
 
-test('row 144: the check line turns amber when the model checks would use is under 7B', (t) => {
-  const small = modelsHarness({ snapshot: { model: 'lfm3:2b' } });
-  t.after(() => small.cleanup());
-  const line = small.line('checkModelRow');
-  assert.equal(line.textContent, 'Checks will wait: lfm3:2b is under 7B. Pick a bigger model here or above.');
-  assert.ok(line.classList.contains('settings-field-effective--warn'));
-  assert.equal(line.querySelector('strong').textContent, 'lfm3:2b is under 7B');
-  // Nothing pinned: the Library default (lfm3:2b here) is what checks would run on.
-  const unpinned = modelsHarness();
-  t.after(() => unpinned.cleanup());
-  assert.ok(unpinned.line('checkModelRow').classList.contains('settings-field-effective--warn'));
-  // The Jenny chat's own saved model counts before the Library default, as on the backend.
-  const saved = modelsHarness({ sessions: [{ id: 'p', preferred_model: 'qwen3:27b' }] });
-  t.after(() => saved.cleanup());
-  assert.equal(saved.line('checkModelRow').textContent, 'Checks run on qwen3:27b.');
-  const cloud = modelsHarness({ snapshot: { check_model: 'gpt-6' } });
-  t.after(() => cloud.cleanup());
-  assert.equal(cloud.line('checkModelRow').classList.contains('settings-field-effective--warn'), false);
-});
-
-test('row 144: choosing a model writes only that key through the store', async (t) => {
+test('row 194: the line repaints in place when the store changes', (t) => {
   const h = modelsHarness();
   t.after(() => h.cleanup());
-  await h.change(h.check(), 'qwen3:8b');
-  assert.deepEqual(h.calls, [{ check_model: 'qwen3:8b' }]);
-  await h.change(h.jenny(), 'qwen3:27b');
-  assert.deepEqual(h.calls, [{ check_model: 'qwen3:8b' }, { model: 'qwen3:27b' }]);
-  await h.change(h.check(), '');
-  assert.deepEqual(h.calls.at(-1), { check_model: '' }, 'the first option clears the key');
-  assert.equal(h.q('.settings-field-error[hidden]') !== null, true);
-});
-
-test('row 144: a refused write restores the previous value and shows the row error, never the reason token', async (t) => {
-  const h = modelsHarness({ snapshot: { check_model: 'qwen3:8b' } });
-  t.after(() => h.cleanup());
-  h.store.answer = { ok: false, reason: 'invalid_request' };
-  await h.change(h.check(), 'qwen3:27b');
-  assert.equal(h.check().value, 'qwen3:8b');
-  const row = h.q('[data-settings-field="checkModelRow"]');
-  const error = row.querySelector('.settings-field-error');
-  assert.equal(error.hidden, false);
-  assert.equal(error.textContent, 'Could not save this choice. Try again.');
-  assert.doesNotMatch(error.textContent, /invalid_request/);
-  assert.equal(h.q('[data-settings-field="primaryModelRow"] .settings-field-error').hidden, true);
-  h.store.answer = { ok: true };
-  await h.change(h.check(), 'qwen3:27b');
-  assert.equal(row.querySelector('.settings-field-error').hidden, true, 'a good write clears it');
-});
-
-test('row 144: the rows repaint in place when the store changes, keeping their nodes', (t) => {
-  const h = modelsHarness();
-  t.after(() => h.cleanup());
-  const jenny = h.jenny();
+  const row = h.list.querySelector('.roles-pointer');
   h.snap.model = 'qwen3:27b';
   h.emit();
-  assert.equal(h.jenny(), jenny);
-  assert.equal(jenny.value, 'qwen3:27b');
-  assert.match(h.line('primaryModelRow').textContent, /^Every Jenny chat turn runs on qwen3:27b/);
-  assert.equal(h.list.querySelectorAll('.settings-field--row').length, 2);
+  assert.match(h.text(), /^qwen3:27b\. /);
+  h.emit();
+  assert.equal(h.list.querySelectorAll('.roles-pointer').length, 1);
+  assert.notEqual(h.list.querySelector('.roles-pointer'), row, 'a changed line is redrawn');
 });
 
-test('row 144: a saved model missing from the list is kept as an option so the row never shows the wrong value', (t) => {
-  const h = modelsHarness({ snapshot: { model: 'old:70b', check_model: 'old:70b' } });
-  t.after(() => h.cleanup());
-  assert.equal(h.jenny().value, 'old:70b');
-  assert.equal(h.check().value, 'old:70b');
-  assert.equal(optionLabel(h.check(), 'old:70b').disabled, false);
-});
-
-test('row 144: with the Jenny chat unavailable the rows stay, greyed out, with a reason', (t) => {
+test('row 194: with the Jenny chat unavailable the row says why', (t) => {
   const h = modelsHarness({ snapshot: { status: 'unavailable' } });
   t.after(() => h.cleanup());
-  assert.equal(h.jenny().disabled, true);
-  assert.equal(h.check().disabled, true);
-  const row = h.q('[data-settings-field="primaryModelRow"]');
-  assert.ok(row.classList.contains('settings-field--unavailable'));
-  assert.match(row.textContent, /Available when the Jenny chat is on/);
+  assert.equal(h.text(), 'Available when the Jenny chat is on.');
 });
 
-test('row 144: with no store at all the rows still render, greyed out', (t) => {
+test('row 194: Change in Models opens Settings > Models and moves focus to the Model roles heading', async (t) => {
+  const h = modelsHarness();
+  t.after(() => h.cleanup());
+  const nav = h.dom.window.document.getElementById('settingsNav-models');
+  let opened = 0;
+  nav.addEventListener('click', () => { opened += 1; });
+  h.dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+  h.list.querySelector('[data-open-model-roles]').click();
+  await settle();
+  assert.equal(opened, 1);
+  assert.equal(h.dom.window.document.activeElement.id, 'modelRolesHeading');
+});
+
+test('row 194: on the first visit the link waits for the Model roles block to mount, then focuses its heading', async (t) => {
+  // Live-app check 2026-11-23: the block mounts after its module loads, so the heading is not there at once.
+  const h = modelsHarness();
+  t.after(() => h.cleanup());
+  const doc = h.dom.window.document;
+  doc.getElementById('modelRolesHeading').remove();
+  h.dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+  h.list.querySelector('[data-open-model-roles]').click();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  doc.body.insertAdjacentHTML('beforeend', '<h4 id="modelRolesHeading" tabindex="-1">Model roles</h4>');
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(doc.activeElement.id, 'modelRolesHeading');
+});
+
+test('row 194: with no store at all the row still renders', (t) => {
   const dom = new JSDOM('<!doctype html><body><div id="l"></div></body>', { url: 'http://localhost/' });
   t.after(() => dom.window.close());
   const list = dom.window.document.getElementById('l');
   assert.doesNotThrow(() => renderJennyChatModels(list, { modelList: { data: [] } }, { store: null }));
-  assert.equal(list.querySelector('#primaryModelSelect').disabled, true);
+  assert.equal(list.querySelectorAll('select').length, 0);
+  assert.equal(list.querySelectorAll('.roles-pointer').length, 1);
 });

@@ -121,6 +121,14 @@
   color: var(--text-secondary);
 }
 
+/* Row 192: the status line while a reply runs, built like the loading line with a leading status dot. */
+.composer-status-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .composer-loading-line-action {
   padding: 0;
   border: 0;

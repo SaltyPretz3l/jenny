@@ -329,9 +329,9 @@ test('Copy to a team project: success says so with Open, which shows the team pr
   await m.flush();
   const baseline = m.bridge.listeners(); // the project store is held from the first menu on
   await choose(m, 'jenny-site');
-  assert.deepEqual([m.toasts.map((x) => x.message), m.toasts[0].actions.map((a) => [a.label, a.kind]), m.bridge.listeners()], [[`Copied to ${iso('jenny-site')}.`], [['Open', 'primary']], baseline]);
+  assert.deepEqual([m.toasts.map((x) => x.message), m.toasts.at(-1).actions.map((a) => [a.label, a.kind]), m.bridge.listeners()], [[`Copying to ${iso('jenny-site')}…`, `Copied to ${iso('jenny-site')}.`], [['Open', 'primary']], baseline]);
   assert.equal(m.bridge.of('boardImport').length, 1);
-  m.toasts[0].actions[0].onClick();
+  m.toasts.at(-1).actions[0].onClick();
   await m.flush();
   await frame();
   await m.flush();
@@ -345,7 +345,7 @@ test('Copy to a team project: pictures that could not be sent are counted; a ref
   await m.flush();
   const baseline = m.bridge.listeners();
   await choose(m, 'jenny-site');
-  assert.deepEqual([m.toasts.map((x) => x.message), m.bridge.listeners()], [[`Copied to ${iso('jenny-site')}. 1 picture could not be sent.`], baseline]);
+  assert.deepEqual([m.toasts.map((x) => x.message).at(-1), m.bridge.listeners()], [`Copied to ${iso('jenny-site')}. 1 picture could not be sent.`, baseline]);
   assert.equal(copy.id, boardId(7));
   m.bridge.answers.boardImport = { ok: false, error: { reason: 'team_board_storage_limit' } };
   await openExport(m);
@@ -412,4 +412,53 @@ test('requestOpen with no page up waits for the next Board page that attaches th
   await m.again();
   assert.equal(await until(m, () => m.page.getProject().team && m.page.getOpenBoardId() === boardId(2)), true);
   assert.equal(m.page.getProject().team.id, TEAM);
+});
+
+// A promise the test settles by hand: a team that answers late, or a copy that is still on its way.
+const held = () => { const out = {}; out.promise = new Promise((resolve) => { out.release = resolve; }); return out; };
+
+test('the project menu with one team that never answers: the others show at once, the stalled one shows a pending row, and its projects arrive in place (H24)', async (t) => {
+  const SLOW = 'team_SSSSSSSSSSSSSSSSSSSSSS';
+  const late = held();
+  const m = await mount(t, { rows: [host.memberTeam(), host.memberTeam({ team_id: SLOW, team_name: 'Slow lab' })],
+    answers: { projectList: (payload) => (payload.team_id === SLOW ? late.promise : host.listAnswer()) } });
+  await openMenu(m);
+  assert.deepEqual([m.button().getAttribute('aria-expanded'), heads(m), items(m).map((el) => [el.textContent.trim(), el.disabled])],
+    ['true', ['My projects', `${iso('Dot lab')} team`, `${iso('Slow lab')} team`], [['Alpha', false], ['General', false], ['jenny-site', false], ['palette-tools', false], ['Loading projects…', true]]],
+    'the menu is up without waiting for the stalled team');
+  const checked = items(m).find((el) => el.getAttribute('aria-checked') === 'true');
+  assert.equal(m.doc.activeElement, checked, 'the focus is on the project shown');
+  items(m)[2].focus();
+  late.release(host.listAnswer());
+  await m.flush();
+  assert.deepEqual(items(m).map((el) => [el.textContent.trim(), el.disabled]), [['Alpha', false], ['General', false], ['jenny-site', false], ['palette-tools', false], ['jenny-site', false], ['palette-tools', false]],
+    'the answer fills the row in place');
+  assert.equal(m.doc.activeElement, items(m)[2], 'the row the keyboard was on keeps the focus through the redraw');
+  assert.equal(m.button().getAttribute('aria-expanded'), 'true');
+  m.doc.body.click();
+  m.doc.dispatchEvent(new m.window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(m.menu(), null);
+  assert.equal(m.button().getAttribute('aria-expanded'), 'false');
+});
+
+test('Copy to a team project: a choice made again while the first copy is on its way is ignored, and the copy says it is in progress (H24)', async (t) => {
+  const slow = held();
+  const { m, copy } = await withOwnBoard(t, { answers: { boardImport: () => slow.promise } });
+  await openExport(m);
+  copyItem(m).click();
+  await m.flush();
+  await choose(m, 'jenny-site');
+  await openExport(m);
+  copyItem(m).click();
+  await m.flush();
+  await choose(m, 'jenny-site');
+  assert.deepEqual([m.bridge.of('boardImport').length, m.toasts.map((x) => x.message)], [1, [`Copying to ${iso('jenny-site')}…`]]);
+  slow.release({ ok: true, board: row(copy), pictures: [] });
+  await m.flush();
+  assert.deepEqual(m.toasts.map((x) => x.message), [`Copying to ${iso('jenny-site')}…`, `Copied to ${iso('jenny-site')}.`]);
+  await openExport(m);
+  copyItem(m).click();
+  await m.flush();
+  await choose(m, 'jenny-site');
+  assert.equal(m.bridge.of('boardImport').length, 2, 'once the first one is done a new copy goes');
 });

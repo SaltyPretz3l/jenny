@@ -237,6 +237,48 @@ test('fatal inerting recurses around the exempt window-control branch and restor
   assert.equal(documentRef.querySelector('[data-startup-fatal-inert]'), null);
 });
 
+test('the first-run dialog cannot take focus or a keypress behind the curtain; it focuses once the curtain lifts', async (t) => {
+  const { createSetupController } = require('../renderer/features/renderer-setup-controller');
+  const { createSetupHub } = require('../renderer/features/renderer-setup-hub');
+  const { createScene: createAcknowledgementScene } = require('../renderer/features/setup-scenes/scene-acknowledgement');
+  const { normalizeSetupPayload } = require('../renderer/services/renderer-setup-service');
+  const dom = createCurtainDom('<main id="appShell"><button id="shellButton">Shell</button></main><script id="lateScript"></script>');
+  const documentRef = dom.window.document;
+  const curtain = createController(documentRef);
+  const overlay = documentRef.getElementById('startupOverlay');
+  const payload = { setup_complete: false, setup_state: { acknowledged_version: '', steps: {}, readiness: {} } };
+  const setup = createSetupController({
+    state: {},
+    documentRef,
+    setupService: { async getState() { return normalizeSetupPayload(payload); }, async updateState() { return null; } },
+    modules: {
+      setupHub: { createSetupHub },
+      scenes: { acknowledgement: createAcknowledgementScene, setupHub: () => ({ mount() {}, dispose() {} }) },
+      stepModal: require('../renderer/inventory/step-modal'),
+    },
+  });
+  t.after(() => { setup.dispose(); curtain.dispose(); dom.window.close(); });
+  const settle = () => new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+
+  assert.equal(documentRef.getElementById('lateScript').hasAttribute('data-startup-fatal-inert'), false, 'script tags are not inerted');
+  await setup.init();
+  await settle();
+  const modalRoot = documentRef.getElementById('homeSetupModalRoot');
+  const continueButton = modalRoot.querySelector('[data-step-modal-action="continue"]');
+  assert.ok(continueButton, 'the acknowledgement mounted behind the curtain');
+  assert.equal(modalRoot.inert, true, 'the late modal root joins the curtain isolation');
+  assert.notEqual(documentRef.activeElement, continueButton, 'the hidden dialog does not hold focus');
+
+  curtain.notifyBootViewReady();
+  curtain.notifyShellHydrated();
+  overlay.dispatchEvent(new dom.window.Event('transitionend'));
+  await settle();
+  assert.equal(modalRoot.inert, false);
+  assert.equal(documentRef.querySelector('[data-startup-fatal-inert]'), null);
+  assert.equal(documentRef.activeElement, continueButton, 'the dialog takes focus once the curtain is gone');
+  assert.equal(documentRef.getElementById('appShell').inert, true, 'the open dialog then owns the background');
+});
+
 test('backend failure offers Retry and View logs, and logs handoff dismisses the curtain', (t) => {
   const previousActionButton = global.inventoryActionButton;
   global.inventoryActionButton = actionButton;

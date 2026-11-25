@@ -14,9 +14,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createRig, paneRoot, kickerOf, resolveChatPaneDom, CHAT_PANE_NODE_NAMES, getPaneComposition, paneModel } = require('./helpers/pane-composition-rig');
+const { createRig, paneRoot, resolveChatPaneDom, CHAT_PANE_NODE_NAMES, getPaneComposition, paneModel } = require('./helpers/pane-composition-rig');
 
-test('mount: the clone sits right after the divider, resolves its 18 nodes through the seam and builds runtime -> surface -> pipeline -> shell', (t) => {
+test('mount: the clone sits right after the divider, resolves its 17 nodes through the seam and builds runtime -> surface -> pipeline -> shell', (t) => {
   const rig = createRig(t);
   rig.layoutController.openBeside('b');
   const root = paneRoot(rig.chatView, 1);
@@ -26,7 +26,7 @@ test('mount: the clone sits right after the divider, resolves its 18 nodes throu
   assert.equal(root.id, '', 'the clone carries no id');
   assert.ok(rig.resolved.includes(root), 'resolvePane is handed the pane ELEMENT');
   const paneDom = resolveChatPaneDom(rig.doc, root);
-  assert.equal(CHAT_PANE_NODE_NAMES.filter((name) => paneDom[name]).length, 19, 'exactly the 18 template nodes (W3-2 adds the subagent inspector; row 115 removes the wayfinder host; row 156 moves find into the session bar) and the attach button mount inserts (W2-2b) resolve');
+  assert.equal(CHAT_PANE_NODE_NAMES.filter((name) => paneDom[name]).length, 18, 'exactly the 17 template nodes (W3-2 adds the subagent inspector; row 115 removes the wayfinder host; row 156 moves find into the session bar; row 190 removes the pane kicker) and the attach button mount inserts (W2-2b) resolve');
   assert.equal(paneDom.composerAttachShortcut.closest('.composer-toolbar-left'), root.querySelector('.composer-toolbar-left'), 'the attach button sits in the left toolbar');
   assert.equal(rig.chatView.dataset.paneCount, '2');
   assert.equal(divider.classList.contains('hidden'), false, 'the divider shows');
@@ -63,71 +63,7 @@ test('unmount: disposes shell -> pipeline -> surface -> runtime and restores the
   assert.equal(divider.getAttribute('tabindex'), '-1');
   assert.equal(rig.chatView.style.getPropertyValue('--chat-pane-a'), '', 'split tracks cleared');
   assert.equal(rig.chatView.style.getPropertyValue('--chat-pane-b'), '');
-  const kicker = rig.doc.getElementById('chatPaneKicker');
-  assert.equal(kicker.hidden, true, 'one pane: the kicker is hidden');
-  assert.equal(kicker.childNodes.length, 0, 'and empty, as before split view');
   assert.equal(rig.state.currentSessionId, 'a');
-});
-
-test('kicker: titles only when both sessions share a project, "· project" after each title when they differ', (t) => {
-  const rig = createRig(t);
-  rig.layoutController.openBeside('b');
-  assert.equal(kickerOf(rig, 0).hidden, false);
-  assert.equal(kickerOf(rig, 0).textContent, 'Alpha');
-  assert.equal(kickerOf(rig, 1).textContent, 'Beta');
-  assert.equal(kickerOf(rig, 1).querySelector('.chat-pane-kicker-project'), null);
-
-  rig.layoutController.openBeside('c');
-  assert.equal(kickerOf(rig, 0).textContent, 'Alpha · General');
-  assert.equal(kickerOf(rig, 1).textContent, 'Gamma · Work');
-  assert.equal(kickerOf(rig, 1).querySelector('.chat-pane-kicker-project').textContent, ' · Work');
-});
-
-test('kicker: a rename or project move reaches it through the header/full-render sync, and an unchanged kicker is not rebuilt', (t) => {
-  const sessions = [
-    { id: 'a', title: 'Alpha', project_id: 'project_general' },
-    { id: 'b', title: 'Beta', project_id: 'project_general' },
-  ];
-  const rig = createRig(t, { sessions });
-  rig.layoutController.openBeside('b');
-  assert.equal(kickerOf(rig, 1).textContent, 'Beta');
-  const close1 = kickerOf(rig, 1).querySelector('.chat-pane-close');
-
-  rig.composition.syncPaneLayout('header');
-  assert.equal(kickerOf(rig, 1).querySelector('.chat-pane-close'), close1, 'nothing changed: the kicker keeps its nodes');
-
-  sessions[1].title = 'Beta renamed';
-  rig.composition.syncPaneLayout('messages');
-  assert.equal(kickerOf(rig, 1).textContent, 'Beta', 'a messages-only render leaves the kicker alone');
-  rig.composition.syncPaneLayout('header');
-  assert.equal(kickerOf(rig, 1).textContent, 'Beta renamed', 'the header sync picks up the new title');
-
-  sessions[0].project_id = 'proj_work';
-  rig.composition.syncPaneLayout('all');
-  assert.equal(kickerOf(rig, 0).textContent, 'Alpha · Work', 'a project move shows "· project" without a layout change');
-  assert.equal(kickerOf(rig, 1).textContent, 'Beta renamed · General');
-});
-
-test('kicker: an unknown project shows the title only, never the raw id', (t) => {
-  const rig = createRig(t, { sessions: [
-    { id: 'a', title: 'Alpha', project_id: 'proj_gone' },
-    { id: 'b', title: 'Beta', project_id: '' },
-  ] });
-  rig.layoutController.openBeside('b');
-  assert.equal(kickerOf(rig, 0).textContent, 'Alpha');
-  assert.equal(kickerOf(rig, 1).textContent, 'Beta · General');
-});
-
-test('close glyph: each kicker closes its own pane', (t) => {
-  const rig = createRig(t);
-  rig.layoutController.openBeside('b');
-  const close0 = kickerOf(rig, 0).querySelector('.chat-pane-close');
-  assert.ok(close0, 'pane 0 carries a close glyph with two panes');
-  assert.equal(close0.getAttribute('aria-label'), 'Close pane');
-  close0.click();
-  assert.equal(rig.layoutController.getPaneCount(), 1);
-  assert.equal(rig.state.currentSessionId, 'b', 'closing pane 0 keeps the other conversation on screen');
-  assert.equal(paneRoot(rig.chatView, 1), null);
 });
 
 test('focus: pointerdown or focusin inside a pane focuses it; syncFocus writes data-pane-focused on every root', (t) => {

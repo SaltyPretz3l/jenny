@@ -21,6 +21,11 @@
       || (typeof require === 'function' ? require('./model-library-runtime-builds') : null);
   }
 
+  function resolveFit() {
+    return (root && root.modelLibraryFit)
+      || (typeof require === 'function' ? require('./model-library-fit') : null);
+  }
+
   function resolveFormatUtils() {
     return (root && root.rendererModelLibraryFormatUtils)
       || (typeof require === 'function' ? require('../renderer-model-library-format-utils') : null);
@@ -38,6 +43,8 @@
   }
 
   // options: windowRef, documentRef, escapeHtml, actionButton, rerender(),
+  // fitFor(filePath, plan) -> {needMb, cardMb, ctx, smallNeedMb} or null (optional: no estimate, no warning),
+  // showFits() closes the drawer and filters the Library to models that fit (optional),
   // announce(message), writeModel(filePath, pickedDir) -> Promise<'added'|null>,
   // addRefusal(filePath) -> Promise<why it can't be added, or ''>,
   // tagFor(filePath) -> the library tag the file will be added as,
@@ -104,6 +111,32 @@
         + '</div>';
     }
 
+    function fitHtml(fit, plan, filePath) {
+      var gb = resolveFit().gbLabel;
+      var pct = Math.min(100, Math.round((fit.needMb / fit.cardMb) * 1000) / 10);
+      var ticks = [8, 16, 24].filter(function (t) { return t * 1024 < fit.cardMb; }).map(function (t) {
+        return '<i class="mm-tick" style="inset-inline-start:' + Math.round((t * 1024 / fit.cardMb) * 1000) / 10 + '%"><span>' + t + '</span></i>';
+      }).join('');
+      var small = fit.smallNeedMb > 0 ? (fit.smallNeedMb > fit.cardMb
+        ? jt('models.library.add.fitSmallerNo', 'A smaller context does not fix it: at 8K it still needs about {n}.', { n: gb(fit.smallNeedMb) })
+        : jt('models.library.add.fitSmallerYes', 'At an 8K context it needs about {n} and fits.', { n: gb(fit.smallNeedMb) })) : '';
+      return line(jt('models.library.add.fitLine', '{file} ({size}) is too large for your graphics card.', {
+        file: code(plan.file || lastSegment(filePath)), size: escapeHtml(size(fit.sizeBytes || plan.sizeBytes)),
+      }))
+        + '<div class="mm-bar" role="img" aria-label="' + escapeHtml(jt('models.library.add.fitAria', 'Graphics memory: this model needs about {n} of {total}', { n: gb(fit.needMb), total: gb(fit.cardMb) })) + '">'
+        + '<i class="mm-fill" style="width:0%"></i><i class="mm-ghost mm-ghost--over" style="width:' + pct + '%"></i>' + ticks + '</div>'
+        + '<div class="mm-legend"><span class="mm-preview mm-preview--over"><b>' + escapeHtml(jt('models.library.add.fitNeeds', 'Needs about {n}', { n: gb(fit.needMb) })) + '</b> '
+        + escapeHtml(jt('models.library.add.fitNeedsRest', 'at a {ctx} context · {m} more than this card has', { ctx: Math.round(fit.ctx / 1024) + 'K', m: gb(fit.needMb - fit.cardMb) }))
+        + '</span><span class="mm-free">' + escapeHtml(jt('models.library.add.fitCard', '{n} card', { n: gb(fit.cardMb) })) + '</span></div>'
+        + line(escapeHtml(jt('models.library.add.fitSlow', 'It will still run, but part of it sits in ordinary memory, so replies will be slow.') + (small ? ' ' + small : '')), 'model-library-add-sub')
+        + '<div class="model-library-add-actions">'
+        + button(jt('models.library.add.fitAnother', 'Choose another file'), 'another-file', 'primary')
+        + button(jt('models.library.add.fitAnyway', 'Add anyway'), 'add-anyway')
+        + button(jt('common.cancel', 'Cancel'), 'cancel', 'ghost')
+        + (typeof opts.showFits === 'function' ? link(jt('models.library.add.fitShow', 'Show models that fit'), 'show-fits') : '')
+        + '</div>';
+    }
+
     function progressText() {
       return jt('models.library.add.progress', '{done} of {total} · the original stays in {folder} until the copy is checked', {
         done: size(state.doneBytes) || '0 KB', total: size(state.plan.sizeBytes), folder: state.plan.sourceDirName,
@@ -122,7 +155,9 @@
     function html() {
       if (!state) return '';
       var body = '';
-      if (state.phase === 'confirm') body = confirmHtml(state.plan);
+      if (state.phase === 'confirm') {
+        body = (state.kept ? line(escapeHtml(jt('models.library.add.fitKept', 'Too large for this card: it will run slowly. You chose to add it anyway.')), 'model-library-add-sub') : '') + confirmHtml(state.plan);
+      } else if (state.phase === 'fit') body = fitHtml(state.fit, state.plan, state.filePath);
       else if (state.phase === 'moving') body = movingHtml();
       else if (state.phase === 'no-space' || state.phase === 'failed') {
         body = line(escapeHtml(state.message))
@@ -152,8 +187,8 @@
           + '</div>';
       }
       var statusRole = state.phase === 'moving' || state.phase === 'auto-build' || state.phase === 'no-reader' || state.phase === 'build-ready';
-      var role = statusRole ? ' role="status"' : (state.phase === 'confirm' ? ' role="group"' : '');
-      return '<div class="model-library-add"' + role + '>' + body + '</div>';
+      var role = statusRole ? ' role="status"' : (state.phase === 'confirm' || state.phase === 'fit' ? ' role="group"' : '');
+      return '<div class="model-library-add' + (state.phase === 'fit' ? ' model-library-add-fit' : '') + '"' + role + '>' + body + '</div>';
     }
 
     function noReaderHtml() {
@@ -452,20 +487,37 @@
           opts.announce(refusal);
           return null;
         }
-        if (!plan || plan.ok !== true || plan.inside || !plan.destDir) {
-          return Promise.resolve(opts.writeModel(filePath, pickedDir)).then(function (outcome) {
-            return afterAdd(outcome, plan && plan.ok ? plan : null, filePath);
-          }, function () {
-            return afterAdd(null, null, filePath);
+        return Promise.resolve().then(function () {
+          return plan && plan.ok === true && typeof opts.fitFor === 'function' ? opts.fitFor(filePath, plan) : null;
+        }).catch(function () { return null; }).then(function (fit) {
+          if (disposed) return null;
+          return new Promise(function (resolve) {
+            finish = resolve;
+            if (fit && fit.cardMb > 0 && fit.needMb > fit.cardMb) {
+              opts.announce('');
+              setState({ phase: 'fit', fit: fit, plan: plan, filePath: filePath, pickedDir: pickedDir });
+            } else {
+              void proceed(plan, filePath, pickedDir, false);
+            }
           });
-        }
-        return new Promise(function (resolve) {
-          finish = resolve;
-          // The last add's outcome would read as this question's.
-          opts.announce('');
-          setState({ phase: 'confirm', plan: plan, filePath: filePath, pickedDir: pickedDir });
         });
       });
+    }
+
+    // Past the fit step: add where it is, or ask where the file should live.
+    function proceed(plan, filePath, pickedDir, kept) {
+      if (!plan || plan.ok !== true || plan.inside || !plan.destDir) {
+        if (state && state.phase === 'fit') setState(null); // a second click on Add anyway finds no strip
+        return Promise.resolve(opts.writeModel(filePath, pickedDir)).then(function (outcome) {
+          return afterAdd(outcome, plan && plan.ok ? plan : null, filePath);
+        }, function () {
+          return afterAdd(null, null, filePath);
+        });
+      }
+      // The last add's outcome would read as this question's.
+      opts.announce('');
+      setState({ phase: 'confirm', plan: plan, filePath: filePath, pickedDir: pickedDir, kept: kept });
+      return null;
     }
 
     function handleClick(target) {
@@ -481,6 +533,12 @@
       } else if (action === 'cancel') {
         setState(null);
         done(null);
+      } else if (action === 'add-anyway' && state.phase === 'fit') void proceed(state.plan, state.filePath, state.pickedDir, true);
+      else if ((action === 'another-file' || action === 'show-fits') && state.phase === 'fit') {
+        setState(null);
+        done(null);
+        if (action === 'show-fits') opts.showFits();
+        else windowRef.setTimeout(function () { var add = documentRef && documentRef.querySelector('[data-model-library-folder-action="add-model"]'); if (add) add.click(); }, 0);
       } else if (action === 'open-tune') openTune();
       else if (action === 'add-runtime-folder') addRuntimeFolder();
       else if (action === 'get-build') getBuild();

@@ -105,7 +105,8 @@
 
     // Who the channel's audience is without you, or null where this PC is not told (a project row without one).
     function audienceOf(record, c) {
-      if (record && record.kind === 'team') return c.people.map((p) => p.member_id).filter((id) => id !== c.me);
+      // A custom channel has the team channel's audience: everyone on the team (row 173).
+      if (record && (record.kind === 'team' || record.kind === 'channel')) return c.people.map((p) => p.member_id).filter((id) => id !== c.me);
       // In the listed order, as the team channel: anyone the row names who is no longer listed is left out.
       if (record && record.kind === 'project' && Array.isArray(record.audience)) {
         return c.people.map((p) => p.member_id).filter((id) => id !== c.me && record.audience.includes(id));

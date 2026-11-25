@@ -83,6 +83,7 @@ async function executeResolvedTool(executor, call, context, {
         : executor._browserSessionService,
       // The executor may be a stub in session-runtime tests, so guard the lazy holder exactly.
       browserUseService: toolName === 'browser' && typeof executor._browserUse?.get === 'function' ? executor._browserUse.get() : null,
+      computerUseService: toolName === 'computer' && typeof executor._computerUse?.get === 'function' ? executor._computerUse.get() : null,
       workspaceTestRunnerService: scopedServices
         ? toolName === 'verify' && scopedServices.workspaceTestRunnerService
           ? createToolTestRunnerService({
@@ -155,8 +156,8 @@ async function executeResolvedTool(executor, call, context, {
         durationMs,
         metadata: executor._mergePolicyDecisionMetadata(result.metadata, policyDecision),
         // F27: an image_generate picture reaches a vision chat model like a preview_test screenshot.
-        ...((toolName === 'image_generate' || (toolName === 'preview_test' && input.screenshot === true)
-          || (toolName === 'browser' && input.action === 'screenshot'))
+        ...((toolName === 'image_generate' || toolName === 'run_view_look' || toolName === 'computer' || (toolName === 'preview_test' && input.screenshot === true)
+          || (toolName === 'browser' && (input.action === 'screenshot' || input.action === 'wait')))
           && tool.category === 'builtin' && !isError ? { previewImage: result.previewImage } : {}),
         errorCode,
       };

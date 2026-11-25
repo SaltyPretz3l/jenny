@@ -111,7 +111,7 @@ test('every conversation: one file, #team first, then the direct conversations b
   await exporter.start({ teamId: TEAM, scope: 'all' });
   assert.ok(lines.includes('Exporting: 1 of 2 conversations done, 6 messages so far'), lines.join('\n'));
   assert.deepEqual(JSON.parse(built(saved).json).conversations.map((c) => [c.name, c.kind]), [['#team', 'channel'], ['Maya', 'direct']]);
-  assert.match(saved.defaultName, /^Brendan’s team 2026-11-1\d\.md$/);
+  assert.match(saved.defaultName, /^Brendan’s team \d{4}-\d{2}-\d{2}\.md$/);
   assert.equal(exportModule.lineText(exporter.state()), 'Exported 7 messages from 2 conversations to D:\\x.json');
 }));
 
@@ -201,6 +201,20 @@ test('item 9: a deleted message with replies is one line in the app\'s words, it
   assert.equal(exporter.state().count, 2, 'a deleted message is not counted');
   const messages = JSON.parse(json).conversations[0].messages;
   assert.deepEqual(messages.map((m) => [m.id, m.deleted === true, m.text, m.replies.length]), [[id(1), true, '', 1], [id(3), false, 'later', 0]], 'a deleted one without replies is left out');
+}));
+
+test('C10.3: a project channel is named by its project in the export (the heading and the running line)', () => withLocale(async () => {
+  const saved = globalThis.rendererTeamProjectStore;
+  globalThis.rendererTeamProjectStore = { getProjectStore: () => ({ project: (teamId, projectId) => (teamId === TEAM && projectId === 'project_alpha' ? { name: 'Jenny site' } : null) }) };
+  try {
+    const bridge = fakeBridge();
+    const overview = bridge.answers.chatOverview;
+    bridge.answers.chatOverview = () => ({ ...overview(), channels: [{ channel_id: 'chan_team', kind: 'team' }, { channel_id: 'chan_project_alpha', kind: 'project' }] });
+    let doc = null;
+    const exporter = exportModule.createExporter({ call: bridge.call, teamOf: bridge.teamOf, saveFile: async (p) => { doc = built(p).doc; return { canceled: false, path: 'D:/x.md' }; } });
+    await exporter.start({ teamId: TEAM, scope: 'one', channelId: 'chan_project_alpha' });
+    assert.deepEqual(doc.conversations.map((c) => c.name), ['#Jenny site'], 'the project’s name, not the id’s remainder');
+  } finally { if (saved === undefined) delete globalThis.rendererTeamProjectStore; else globalThis.rendererTeamProjectStore = saved; }
 }));
 
 // Row 175 item 8 (D15): "This conversation…" of an open project conversation.

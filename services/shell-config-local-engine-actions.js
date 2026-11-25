@@ -41,6 +41,16 @@ const localEngineActionMethods = {
     return this._updateLocalEngineSlice('ninfer', { ...source, watchdog }, 'ninfer_settings_updated');
   },
 
+  // Strata (row 200): `watchdog` and `learnedFits` merge one level deeper so a
+  // toggle or a newly learned window cannot drop the rest.
+  updateStrataSettings(patch) {
+    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const current = this.getLocalEngines().strata;
+    const watchdog = { ...current.watchdog, ...(source.watchdog || {}) };
+    const learnedFits = { ...current.learnedFits, ...(source.learnedFits || {}) };
+    return this._updateLocalEngineSlice('strata', { ...source, watchdog, learnedFits }, 'strata_settings_updated');
+  },
+
   _updateLocalEngineSlice(key, patch, reason) {
     const current = this.getLocalEngines()[key];
     const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};

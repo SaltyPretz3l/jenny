@@ -16,7 +16,8 @@ const {
   buildPillMarkup,
   buildPopoverMarkup,
 } = require('../renderer/shell/renderer-health-pill-markup-utils');
-const { createHealthPillController } = require('../renderer/shell/renderer-health-pill-utils');
+const { createHealthPillController, combineHealthSignal } = require('../renderer/shell/renderer-health-pill-utils');
+const { nameSignal } = require('../renderer/shell/renderer-health-pill-gpu');
 
 const ROOT = path.resolve(__dirname, '..');
 const readCss = (name) => fs.readFileSync(path.join(ROOT, 'styles', name), 'utf8');
@@ -251,4 +252,36 @@ test('the popover reads machine load only while open, and the toggle asks Settin
   assert.equal(h.controller.isPopoverOpen(), false);
   assert.equal(h.statsListeners.size, 0, 'closing drops the subscription');
   assert.deepEqual(h.watches.at(-1), { source: 'popover', watched: false }, 'and releases the watch');
+});
+
+test('the control names the model beside the dot, with the hint in its tooltip', () => {
+  const named = fragment(buildPillMarkup({ tone: 'success', label: 'Ready', words: 'qwen3:14b', segments: [] }, { engine: 'ollama', model: 'qwen3:14b' }));
+  const pill = named.querySelector('#workbenchHealthPillButton');
+  assert.ok(pill.classList.contains('workbench-health-pill--named'));
+  assert.equal(pill.querySelector('.workbench-health-pill-label').textContent, 'qwen3:14b', 'a healthy dot carries the name');
+  assert.equal(pill.title, 'qwen3:14b. Click for the engine and graphics memory.');
+  assert.equal(pill.getAttribute('aria-label'), 'qwen3:14b');
+  const plain = fragment(buildPillMarkup(READY, {})).querySelector('#workbenchHealthPillButton');
+  assert.equal(plain.classList.contains('workbench-health-pill--named'), false, 'no words: the old control');
+  assert.equal(plain.querySelector('.workbench-health-pill-label[data-health-tone]'), plain.querySelector('.workbench-health-pill-label'));
+});
+
+test('warnings and errors keep priority over the model name', () => {
+  const snapshot = { runtime: { engine: 'ollama', model: 'qwen3:14b', model_loaded: true, lifecycle: { available: true, state: 'ready', model_state: 'ready' } } };
+  const named = nameSignal(combineHealthSignal(snapshot, {}), snapshot);
+  assert.equal(named.words, 'qwen3:14b');
+  for (const tone of ['warning', 'danger']) {
+    const signal = nameSignal(combineHealthSignal(snapshot, { deriveRuntimeHealthState: () => ({ tone, summary: 'x' }) }), snapshot);
+    assert.equal(signal.words, undefined, `${tone} derived state owns the words`);
+    assert.equal(signal.label, tone === 'warning' ? 'Degraded' : 'Blocked');
+  }
+  const other = { runtime: { ...snapshot.runtime, lifecycle: { available: true, state: 'starting' } } };
+  assert.equal(nameSignal(combineHealthSignal(other, {}), other).words, undefined, 'starting, stopped and the like keep their words');
+});
+
+test('the named control and the engine popover lift the approved rules', () => {
+  const css = readCss('workbench-health-pill.css');
+  assert.match(ruleBody(css, '.workbench-health-pill--named .workbench-health-pill-label'), /max-inline-size:\s*22ch;/);
+  assert.match(ruleBody(css, '.workbench-health-popover--engine'), /width:\s*340px;/);
+  assert.match(ruleBody(css, '.workbench-health-popover-tech > summary'), /cursor:\s*pointer;/);
 });

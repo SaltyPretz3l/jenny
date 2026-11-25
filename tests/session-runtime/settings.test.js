@@ -18,7 +18,7 @@ function profile(t, document) {
 
 test('v53 migration preserves sandbox and global preferences with independent local/cloud defaults', () => {
   const state = normalizeState({ version: 53, commandSandbox: { enabled: true }, uiLanguage: 'ja' });
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.deepEqual(state.sessionRuntime, DEFAULT_SESSION_RUNTIME);
   assert.equal(state.commandSandbox.enabled, true);
   assert.equal(state.uiLanguage, 'ja');

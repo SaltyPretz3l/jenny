@@ -53,6 +53,13 @@ const CPU_PLACEMENT_FLAGS = new Set([
 const NINFER_KV_BYTES_PER_TOKEN = Object.freeze({ bf16: 65536, fp8: 32768 });
 const NINFER_VISION_MB = 1024;
 const NINFER_LM_HEAD_DRAFT_MB = 370;
+// Strata Inkling 2 Mini (row 200, S0b on the RTX 5090): the trunk the engine
+// loads beside the experts (3.67 GB), the vision pack, and the KV cost per
+// token per slot by KV format, from the engine's own window sizing at four
+// slots (about 12.5 GB of free VRAM after the weights).
+const STRATA_TRUNK_MB = 3500;
+const STRATA_VISION_MB = 607;
+const STRATA_KV_MB_PER_TOKEN = Object.freeze({ auto: 0.0541, k8v8: 0.0274, k8v4: 0.0209 });
 const SHARD = /^(.*)-(\d{5})-of-(\d{5})\.gguf$/i;
 const OLLAMA_TIMEOUT_MS = 2000;
 
@@ -118,6 +125,27 @@ function estimateNinferMb(options = {}, fsImpl = fs) {
     + (options.mtp && options.lmHeadDraft !== false ? NINFER_LM_HEAD_DRAFT_MB : 0));
 }
 
+function strataArg(args, flag) {
+  const at = args.indexOf(flag);
+  return at >= 0 && at + 1 < args.length ? String(args[at + 1]) : '';
+}
+
+// The experts Setup placed on the card (--vram-experts-gb, GiB), else the whole
+// pack; plus the trunk, vision and the KV at the capped context for every slot.
+// The context is capped at the measured fit, so this is about what the engine
+// grows into, and a launch with less free VRAM would spill KV into system RAM.
+function estimateStrataMb(options = {}, fsImpl = fs) {
+  const args = Array.isArray(options.config?.args) ? options.config.args.map(String) : [];
+  const packMb = fileMb(strataArg(args, '--native'), fsImpl);
+  if (packMb <= 0) return 0;
+  const expertsGib = Number(strataArg(args, '--vram-experts-gb'));
+  const weights = Number.isFinite(expertsGib) && expertsGib > 0 ? expertsGib * 1024 + STRATA_TRUNK_MB : packMb;
+  const kv = STRATA_KV_MB_PER_TOKEN[strataArg(args, '--kv')] || STRATA_KV_MB_PER_TOKEN.auto;
+  const context = Number(strataArg(args, '--max-context')) || 0;
+  const slots = [1, 2, 4].includes(options.slots) ? options.slots : 1;
+  return Math.ceil(weights + (args.includes('--vision') ? STRATA_VISION_MB : 0) + context * slots * kv);
+}
+
 function gb(mb) {
   return (Math.max(Number(mb) || 0, 0) / 1024).toFixed(1);
 }
@@ -129,9 +157,36 @@ function refusalMessage(refusal) {
       '{model} needs about {need} GB of GPU memory, but only {free} GB is free. Close other programs that use the GPU, then load the model again.',
       params);
   }
-  return t('error.gpu.vramInUse',
+  const named = (holder) => holder.name || `PID ${holder.pid}`;
+  const message = t('error.gpu.vramInUse',
     '{model} needs about {need} GB of GPU memory, but only {free} GB is free. Using it now: {holders}. Close them, then load the model again.',
-    { ...params, holders: refusal.holders.map((holder) => `${holder.name || `PID ${holder.pid}`} (${gb(holder.mb)} GB)`).join(', ') });
+    { ...params, holders: refusal.holders.map((holder) => `${named(holder)} (${gb(holder.mb)} GB)`).join(', ') });
+  const live = refusal.holders.find((holder) => holder.liveRun);
+  if (!live) return message;
+  return `${message} ${t('error.gpu.vramInUseLiveRun',
+    '{program} was started from the Live tab: stop it there to free its memory.', { program: named(live) })}`;
+}
+
+// A holder as the refusal names it; `liveRun` (and the `liveRunPid` that matched) when a program the Live tab
+// started is it or its parent.
+function namedHolder({ pid, name, mb, chain }, liveRunPids) {
+  let live = [];
+  try { live = Array.isArray(liveRunPids()) ? liveRunPids() : []; } catch (_error) { /* unnamed */ }
+  const match = live.length > 0 ? (Array.isArray(chain) ? chain : [{ pid }]).find((link) => live.includes(link.pid)) : null;
+  return match ? { pid, name, mb, liveRun: true, liveRunPid: match.pid } : { pid, name, mb };
+}
+
+/** The Live-tab program a refusal blames, `{ project_id, program }`, or null (none, unknown project, or garbage). */
+function liveRunOf(service, refusal) {
+  try {
+    const holder = (Array.isArray(refusal?.holders) ? refusal.holders : []).find((entry) => entry?.liveRun);
+    if (!holder) return null;
+    const projectId = String(service?.runView?.projectForPid?.(holder.liveRunPid) || '').trim();
+    if (!projectId || projectId.length > 200) return null;
+    return { project_id: projectId, program: String(holder.name || `PID ${holder.pid}`).trim().slice(0, 200) };
+  } catch (_error) {
+    return null;
+  }
 }
 
 function createVramLoadPreflight({
@@ -142,6 +197,7 @@ function createVramLoadPreflight({
   now = Date.now,
   settleTimeoutMs = SETTLE_TIMEOUT_MS,
   log = () => {},
+  liveRunPids = () => [],
 } = {}) {
   let lastRefusal = null;
 
@@ -203,7 +259,7 @@ function createVramLoadPreflight({
         freeMb: Math.max(device.totalMb - device.usedMb, 0) + credit,
         totalMb: device.totalMb,
         holders: holders.filter((holder) => !reclaimed(holder)).sort((a, b) => b.mb - a.mb)
-          .slice(0, MAX_NAMED_HOLDERS).map(({ pid, name, mb }) => ({ pid, name, mb })),
+          .slice(0, MAX_NAMED_HOLDERS).map((holder) => namedHolder(holder, liveRunPids)),
       };
       refusal.message = refusalMessage(refusal);
       lastRefusal = refusal;
@@ -319,6 +375,8 @@ module.exports = {
   createVramLoadPreflight,
   estimateLlamaServerMb,
   estimateNinferMb,
+  estimateStrataMb,
+  liveRunOf,
   refusalMessageForStatus,
   vramRefusalError,
   withVramPreflight,

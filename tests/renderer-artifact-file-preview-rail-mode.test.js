@@ -18,6 +18,7 @@ const { JSDOM } = require('jsdom');
 const artifactsUtils = require('../renderer/features/renderer-artifacts-utils');
 const reviewPrefs = require('../renderer/features/renderer-artifact-review-prefs');
 const { createShellArtifactBridge } = require('../renderer/shell/renderer-shell-artifact-bridge');
+const { createPanelHostStub } = require('./helpers/artifact-panel-host-stub');
 
 const STORAGE_KEY = 'jenny.artifactReview.v1';
 
@@ -69,6 +70,7 @@ function makeState() {
 function makeManager(t, state, dom, extraCallbacks) {
   const doc = dom.window.document;
   const byId = (id) => doc.getElementById(id);
+  const host = createPanelHostStub();
   const manager = artifactsUtils.createArtifactManager({
     state,
     dom: {
@@ -96,6 +98,7 @@ function makeManager(t, state, dom, extraCallbacks) {
       toErrorMessage: (error) => String(error?.message || error || ''),
       updateComposerSafeOffset: () => {},
       renderAll: () => {},
+      getLayoutHost: () => host,
     }, extraCallbacks || {}),
   });
   t.after(() => manager.dispose());

@@ -30,6 +30,12 @@
   color: inherit;
 }
 
+/* Mid-turn text leading into a question or a plan to approve is written to
+ * the owner (renderer-turn-row-list-utils.js leadsIntoDecision): full emphasis. */
+.chat-row[data-assistant-lead-in="true"] .chat-bubble-markdown {
+  color: inherit;
+}
+
 /*
  * The commentary kicker is a screen-reader-only affordance (its child carries
  * .sr-only); the visible signal is the dimmed bubble text above. It never

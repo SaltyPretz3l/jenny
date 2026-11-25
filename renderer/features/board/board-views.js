@@ -48,7 +48,10 @@
       const home = current === 'outline'
         ? outline.element.querySelector('.board-outline__bar')
         : canvas.element.querySelector('[data-board-toolbar-slot]');
-      if (home && viewSwitch.element.parentNode !== home) home.appendChild(viewSwitch.element);
+      if (!home || viewSwitch.element.parentNode === home) return;
+      home.appendChild(viewSwitch.element);
+      // The slot's width changed, so the toolbar re-measures what fits.
+      if (current === 'canvas' && typeof canvas.layoutToolbar === 'function') canvas.layoutToolbar();
     }
 
     // `byPerson`: the switch was used, so focus follows into the view that opened.

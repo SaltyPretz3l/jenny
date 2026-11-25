@@ -4,13 +4,13 @@
  * Track F1 + E6, row 156: in-conversation find (Ctrl+F).
  * The find field lives in the pane's session bar (the utility cluster,
  * styles/chat-session-bar.css): closed, a magnifier button (CSS order 50,
- * before the Session button); open (`data-find-open` on the cluster), the
- * field takes the chat title's place at the bar's start. One surface, no
+ * after the pane's tabs); open (`data-find-open` on the cluster), the field
+ * takes the room the tabs leave. One surface, no
  * border inside a border, nothing floating over the text. The highlight
  * pseudo-elements are painted via the CSS Custom Highlight API.
  *
  * This sheet loads before chat-session-bar.css, so every bar rule here repeats
- * the bar's own selector prefix to outrank its `> *` and title rules.
+ * the bar's own selector prefix to outrank its `> *` rule.
  */
 
 /* ── Placement in the bar ── */
@@ -32,11 +32,6 @@
   order: 50;
 }
 
-/* Open: the field takes the title's place. */
-.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-find-open] > .session-bar-title {
-  display: none;
-}
-
 /* Open in a narrow bar, the group keeps a floor so the field holds about ten characters next to its
    counter and buttons, and in a compact bar the diff control steps aside until find closes; its
    numbers never truncate, so squeezed it spilled over the find toggle (gate sitting 2026-11-14). */
@@ -48,21 +43,14 @@
   display: none;
 }
 
-/* Split view: the cluster shares the kicker's cell at its end; open, it
-   stretches over the kicker's title (the close glyph keeps its room). */
+/* Split view: open, the find group stretches across the pane's header row. */
 .chat-view[data-pane-count="2"] > .chat-pane > .chat-timeline-utility-cluster[data-find-open] {
   justify-self: stretch;
   margin-inline-start: var(--space-4);
 }
 
-.chat-view[data-pane-count="2"] > .chat-pane:has(> .chat-timeline-utility-cluster[data-find-open]) > .chat-pane-kicker > :not(.chat-pane-close) {
-  visibility: hidden;
-}
-
-/* The IDE dock and a Workspace-hosted pane keep the floating column, and
-   Monaco owns Ctrl+F there: no find. */
-.chat-pane.ide-chat-dock-body > .chat-timeline-utility-cluster > :is(.chat-find, .chat-find-toggle),
-.chat-pane[data-pane-hosted] > .chat-timeline-utility-cluster > :is(.chat-find, .chat-find-toggle) {
+/* The IDE dock keeps the floating column, and Monaco owns Ctrl+F there: no find. */
+.chat-pane.ide-chat-dock-body > .chat-timeline-utility-cluster > :is(.chat-find, .chat-find-toggle) {
   display: none;
 }
 

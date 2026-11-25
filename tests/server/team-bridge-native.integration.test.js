@@ -396,3 +396,23 @@ test('6-6: the host says it reads bulk streams, and the ordinary and the bulk po
   await host.bridge.stop();
   assert.equal(h.children.some(alive), false, 'no bridge process left');
 });
+
+// Team review fixes (row 201, H11 and C3). Fault: a key the host now admits (an invite was just redeemed for it)
+// stays in the real bridge's cooldown, because nothing tells the binary; the known-keys line ends it.
+test('a key the host now names as known leaves the real bridge cooldown and connects', OPTIONS, async (t) => {
+  const h = harness(t);
+  const server = await createLoopbackServer(t);
+  const memberSeed = seedOf(41);
+  const allowed = new Set();
+  const host = await startHost(t, h, { server, seed: seedOf(42), admit: (key) => (allowed.has(hex(key)) ? 'device' : null) });
+  const first = await startMember(h, { host, seed: memberSeed });
+  await waitFor(() => first.bridge.state().state === 'offline', { timeoutMs: 15_000 });
+  assert.deepEqual(first.bridge.state(), { state: 'offline', reason: 'host_refused' });
+  await first.bridge.stop();
+  allowed.add(hex(publicKeyOf(memberSeed)));
+  host.bridge.setKnownKeys([publicKeyOf(memberSeed)]);
+  const second = await startMember(h, { host, seed: memberSeed });
+  await waitFor(() => second.bridge.state().state !== 'connecting', { timeoutMs: 15_000 });
+  assert.equal(second.bridge.state().state, 'online', JSON.stringify(second.bridge.state()));
+  assert.deepEqual(host.downs, [], 'the binary read the line and stayed up');
+});

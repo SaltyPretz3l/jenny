@@ -148,7 +148,6 @@ def _write_valid_fixture(repo_root: Path) -> None:
         "tests/sidecar/runtime/test_capabilities.py",
         "sidecar/ai/container.py",
         "sidecar/ai/routing/router.py",
-        "sidecar/ai/routing/agent_executor.py",
         "sidecar/ai/context/builder.py",
         "sidecar/ai/engines/factory.py",
         "sidecar/ai/tools/executor.py",

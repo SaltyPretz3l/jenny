@@ -24,7 +24,7 @@ const CATALOG = [
 ];
 
 function harness(t, { pin = 'qwen3:27b', sessionId = 'p', storeSession = 'p', status = 'ready', preferred = 'qwen3:27b', catalog = CATALOG, getSessionId,
-  backend = 'qwen3:27b', efforts = [['default', 'Use default'], ['high', 'High']] } = {}) {
+  backend = 'qwen3:27b', engine = '', efforts = [['default', 'Use default'], ['high', 'High']] } = {}) {
   const dom = new JSDOM(`<!doctype html><html><body>
     <button id="composerModelPill" class="inv-chip composer-model-pill" aria-expanded="false"><span class="inv-chip-label">Model</span></button>
     <div class="inv-popover composer-model-popover" id="composerModelPopover" data-inv-popover="composer-model" role="dialog" hidden>
@@ -50,7 +50,7 @@ function harness(t, { pin = 'qwen3:27b', sessionId = 'p', storeSession = 'p', st
     subscribe: (fn) => { listener = fn; return () => { listener = null; }; },
     openSettings: (target) => opened.push(target),
   };
-  const state = { currentSessionId: sessionId, status: { model: backend }, modelList: { data: catalog, active_model: backend } };
+  const state = { currentSessionId: sessionId, status: { model: backend, ...(engine ? { engine } : {}) }, modelList: { data: catalog, active_model: backend } };
   const picker = createComposerModelPicker({ state, documentRef: document, inventory, utils, formatUtils, primaryChatStore: store, getSessionId });
   picker.bind();
   t.after(() => { picker.dispose(); dom.window.close(); });
@@ -193,4 +193,53 @@ test('an API model shows its plain name on the Default row and Min for its lowes
     [...h.host.querySelectorAll('[data-picker-effort]')].map((segment) => segment.textContent),
     ['Default', 'Min', 'Max'],
   );
+});
+
+// Row 192 C14 (not a pin case: the main picker test file is at its line cap). A cloud engine is marked on the pill.
+const OPENROUTER = 'api-provider/openrouter/qwen3.8-72b';
+const CLOUD_CATALOG = [
+  { id: OPENROUTER, engine_type: 'api-provider', provider: 'OpenRouter', apiProviderInstanceId: 'openrouter', apiProviderModelId: 'qwen3.8-72b' },
+  { id: 'qwen3:27b', engine_type: 'ollama' },
+  { id: 'team/team_abc/qwen3:8b', engine_type: 'openai-compatible', team_id: 'team_abc', team_name: 'Studio' },
+];
+const cloudOf = (h) => ({
+  cloud: h.pill.classList.contains('composer-model-pill--cloud'),
+  icon: Boolean(h.pill.querySelector('.inv-chip-icon svg')),
+  label: h.pill.querySelector('.inv-chip-label').textContent,
+  title: h.pill.getAttribute('title'),
+});
+const CLOUD_TITLE = (provider) => `Cloud model. Your messages leave this computer and go to ${provider}.`;
+
+test('a cloud model gets the cloud class, icon, "Provider · model" label and the leaves-this-computer title', (t) => {
+  const h = harness(t, { pin: '', sessionId: 'other', preferred: OPENROUTER, catalog: CLOUD_CATALOG, backend: 'qwen3:27b' });
+  h.picker.syncPill();
+  assert.deepEqual(cloudOf(h), { cloud: true, icon: true, label: 'OpenRouter · qwen3.8-72b', title: CLOUD_TITLE('OpenRouter') });
+  assert.match(h.pill.getAttribute('aria-label'), /Model: qwen3\.8-72b.*Cloud model\./, 'the name keeps the model and adds the warning');
+  assert.equal(h.pill.querySelectorAll('.inv-chip-icon').length, 1, 'one icon however often the pill syncs');
+  h.picker.syncPill();
+  assert.equal(h.pill.querySelectorAll('.inv-chip-icon').length, 1);
+  h.modelSelect.value = 'qwen3:27b';
+  h.picker.syncPill();
+  assert.deepEqual(cloudOf(h), { cloud: false, icon: false, label: 'qwen3 · 27b', title: 'Model: qwen3:27b. Thinking: Default' });
+  assert.ok(h.pill.querySelector('.composer-model-pill-dot.status-dot--ok'), 'a local model keeps its loaded dot');
+});
+
+test('a Default chat that resolves to a cloud model is marked the same way', (t) => {
+  const h = harness(t, { pin: '', sessionId: 'other', preferred: '', backend: 'gpt-5.1', engine: 'chatgpt', catalog: [{ id: 'gpt-5.1', engine_type: 'chatgpt' }] });
+  h.picker.syncPill();
+  assert.deepEqual(cloudOf(h), { cloud: true, icon: true, label: 'ChatGPT · Default · gpt-5.1', title: CLOUD_TITLE('ChatGPT') });
+  assert.equal(h.pill.querySelector('.composer-model-pill-dot'), null, 'the cloud icon takes the dot\'s place');
+  const unlisted = require('../renderer/chat/renderer-composer-model-picker-utils').describeCloudPill({ preferredModel: 'gpt-5.1' }, { modelList: { data: CLOUD_CATALOG } });
+  assert.match(unlisted.title, /go to ChatGPT\.$/, 'a ChatGPT model the catalog does not list is still marked');
+});
+
+test('a pinned cloud model is marked and keeps its Pinned badge; a team model is not a cloud engine', (t) => {
+  const pinned = harness(t, { pin: 'codex-cli/gpt-5.1-codex', preferred: '', catalog: [{ id: 'codex-cli/gpt-5.1-codex', engine_type: 'codex-cli' }] });
+  pinned.picker.syncPill();
+  assert.deepEqual(cloudOf(pinned), { cloud: true, icon: true, label: 'Codex CLI · gpt-5.1-codex', title: CLOUD_TITLE('Codex CLI') });
+  assert.ok(pinned.pill.querySelector('.composer-model-pill-pin'));
+  const team = harness(t, { pin: '', sessionId: 'other', preferred: 'team/team_abc/qwen3:8b', catalog: CLOUD_CATALOG });
+  team.picker.syncPill();
+  assert.equal(cloudOf(team).cloud, false);
+  assert.equal(cloudOf(team).icon, false);
 });

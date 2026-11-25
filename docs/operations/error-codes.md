@@ -167,7 +167,7 @@ an Electron result envelope, not a chat/tool terminal event.
 
 ---
 
-## TOOL — `CMP-TOOL-NNNN` (45 codes, 0 dead)
+## TOOL — `CMP-TOOL-NNNN` (46 codes, 0 dead)
 
 Tool-execution failures: approval denials, workspace policy violations, IO errors, validation failures from built-in tools.
 
@@ -219,6 +219,7 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_PAUSED_UNATTENDED` | `CMP-TOOL-0046` | Auto run changed to prompt after the batch approval scan, so a side-effecting call was paused before dispatch | Yes | `runtime_error` | "Tool '{tool_id}' was not executed: auto run was paused because the user stepped away. Re-issue the call; it will ask for approval." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 | `CMP_TOOL_PDF_ADDON_MISSING` | `CMP-TOOL-0047` | Optional PDF reading add-on is not installed or could not be loaded | No | `unavailable` | "PDF reading needs the optional PDF reading add-on, which is not installed. Tell the user they can install it in Settings › Tools › PDF reading add-on. Do not retry this PDF until they say it is installed." | [sidecar/ai/tools/builtins/filesystem_content.py](../../sidecar/ai/tools/builtins/filesystem_content.py) |
 | `CMP_TOOL_REVIEW_FINDINGS_INVALID` | `CMP-TOOL-0048` | `report_findings` got no list of findings with at least one usable title | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/review_findings.py](../../sidecar/ai/tools/builtins/review_findings.py) |
+| `CMP_TOOL_COMPUTER_LOOK_FIRST` | `CMP-TOOL-0049` | A model message held more than one `computer` call that changes something; the first ran and the rest were settled before dispatch, because they were aimed at a screen the model had not seen (row 196) | Yes | `runtime_error` | "Tool 'computer' was not executed: look at the new picture before acting again. Send one changing step at a time." | [sidecar/ai/routing/tool_call_prefilter.py](../../sidecar/ai/routing/tool_call_prefilter.py) |
 
 ## MEM — `CMP-MEM-NNNN` (16 active codes, 1 retired number)
 
@@ -264,9 +265,9 @@ External MCP server integration.
 | `CMP_MCP_TOOL_NOT_FOUND` | `CMP-MCP-0003` | MCP tool not advertised | No | `runtime_error` | "MCP tool not found: {name}." | [sidecar/ai/mcp/client.py:152](../../sidecar/ai/mcp/client.py#L152) |
 | `CMP_MCP_SERVER_FAILED` | `CMP-MCP-0004` | MCP server returned error | Conditional | `runtime_error` | "MCP server error: {detail}." | [sidecar/ai/mcp/builtin_server.py:216](../../sidecar/ai/mcp/builtin_server.py#L216) |
 | `CMP_MCP_PROTOCOL_FAILED` | `CMP-MCP-0005` | MCP protocol violation | No | `runtime_error` | "MCP protocol error." | [sidecar/ai/mcp/builtin_server.py:180](../../sidecar/ai/mcp/builtin_server.py#L180) |
-| `CMP_MCP_RESOURCE_UNSUPPORTED` | `CMP-MCP-0006` | MCP resource cannot be returned inline | No | `runtime_error` | "MCP resource is unsupported." | [sidecar/ai/mcp/client.py:795](../../sidecar/ai/mcp/client.py#L795) |
-| `CMP_MCP_RESOURCE_NOT_FOUND` | `CMP-MCP-0007` | MCP resource id is unknown for this server | No | `runtime_error` | "MCP resource not found." | [sidecar/ai/mcp/client.py:775](../../sidecar/ai/mcp/client.py#L775) |
-| `CMP_MCP_RESOURCE_INVALID` | `CMP-MCP-0008` | MCP resource request is malformed | No | `runtime_error` | "MCP resource request is invalid." | [sidecar/ai/mcp/client.py:742](../../sidecar/ai/mcp/client.py#L742) |
+| `CMP_MCP_RESOURCE_UNSUPPORTED` | `CMP-MCP-0006` | MCP resource cannot be returned inline | No | `runtime_error` | "MCP resource is unsupported." | retired with the MCP resource tools (deleted 2026-11-22; never enabled in a release); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_MCP_RESOURCE_NOT_FOUND` | `CMP-MCP-0007` | MCP resource id is unknown for this server | No | `runtime_error` | "MCP resource not found." | retired with the MCP resource tools (deleted 2026-11-22; never enabled in a release); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
+| `CMP_MCP_RESOURCE_INVALID` | `CMP-MCP-0008` | MCP resource request is malformed | No | `runtime_error` | "MCP resource request is invalid." | retired with the MCP resource tools (deleted 2026-11-22; never enabled in a release); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_MCP_TOOL_SURFACE_CHANGED` | `CMP-MCP-0009` | Approved MCP server advertised a materially different tool surface | No | `runtime_error` | "MCP tool review is stale; review this connection again." | [sidecar/ai/mcp/client.py](../../sidecar/ai/mcp/client.py) |
 
 ## CTX — `CMP-CTX-NNNN` (2 codes, 0 dead)

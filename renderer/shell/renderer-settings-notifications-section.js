@@ -64,8 +64,8 @@
 
   /* `container` is the card; the three lists are found inside it so the
    * markup keeps its headings in index.html with data-i18n like every card.
-   * Every dependent switch is disabled while the master switch is off, and
-   * the reply preview also while neither replies, Jenny's own turns nor (in a team) team messages notify. */
+   * Every dependent switch is disabled while the master switch is off (the reason is written once, on the master row),
+   * and the reply preview also while neither replies, Jenny's own turns nor (in a team) team messages notify (its own reason). */
   function renderNotificationsSection({ container, state } = {}) {
     if (!container || typeof container.querySelector !== 'function') return;
     const toggleSwitch = globalThis.inventory?.toggleSwitch || globalThis.inventoryToggleSwitch?.toggleSwitch;
@@ -76,16 +76,20 @@
     const lists = { '#notificationsGeneralList': [], '#notificationsCategoryList': [], '#notificationsContentList': [] };
     // The preview governs reply, Jenny and team toasts; team counts only while its row can be used.
     const previewUnused = settings.categories.replies !== true && settings.categories.jenny !== true && !(settings.categories.team === true && conditionHolds('team', state));
+    const label = (id) => binding.resolveSettingCopy(descriptors.getSettingDescriptor(id)).label;
+    const previewReason = !off && previewUnused ? jt('settings.notifications.previewReason', 'Turn on "{a}" or "{b}" to use this.', { a: label('notificationsCategoryRepliesToggle'), b: label('notificationsCategoryJennyToggle') }) : '';
     descriptors.listSettingDescriptors({ adapterId: ADAPTER_ID }).forEach((descriptor) => {
       const reply = descriptor.key === 'replyPreview';
       const list = descriptor.key.startsWith('categories.') ? '#notificationsCategoryList' : (reply ? '#notificationsContentList' : '#notificationsGeneralList');
       if (descriptor.enabledWhen && !conditionHolds(descriptor.enabledWhen, state)) { lists[list].push(unavailableRow(binding, descriptor, toggleSwitch, state)); return; }
       const disabled = descriptor.key !== 'enabled' && (off || (reply && previewUnused));
-      lists[list].push(binding.renderSettingRow(descriptor, binding.getPath(settings, descriptor.key), { inventory: { toggleSwitch }, disabled }));
+      lists[list].push(binding.renderSettingRow(descriptor, binding.getPath(settings, descriptor.key), { inventory: { toggleSwitch }, disabled, disabledReason: reply ? previewReason : '' }));
     });
     Object.keys(lists).forEach((selector) => {
       surfaces.paintSlot(container.querySelector(selector), lists[selector].join(''));
     });
+    const master = container.querySelector('[data-settings-field="notificationsEnabledToggle"]');
+    binding.applyGroupOffReason(master, Array.from(container.querySelectorAll(Object.keys(lists).map((selector) => selector + ' .settings-field').join(','))).filter((row) => row !== master), { off });
   }
 
   function windowUiApi() { return (typeof window !== 'undefined' && window.jennyShell?.windowUi) || null; }

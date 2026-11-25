@@ -155,21 +155,17 @@ test('footer health reports complete and Finish setup calls the completion servi
   assert.equal(h.state.setup.setupComplete, true);
 });
 
-test('degraded finish gate names the workspace consequence, opens the fix, and Finish anyway stays incomplete', async (t) => {
+test('finish gate with nothing set names the model, never the folder, and Finish anyway stays incomplete', async (t) => {
   const h = buildHarness(t);
   await h.controller.init();
   assert.match(h.root.querySelector('.setup-hub-health').textContent, /Choose a model route to start chatting \u00b7 file tools need a folder/);
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
   await settle();
-  assert.match(h.root.querySelector('.setup-hub-finish-warning').textContent,
-    /No workspace root set — file tools will be off until you set one\./);
-  h.root.querySelector('[data-action="fixRequired"]').click();
-  assert.deepEqual(h.mounts, ['workspaceRoot']);
-  h.sceneDeps.workspaceRoot.closeModal();
-
-  h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
-  await settle();
+  const warning = h.root.querySelector('.setup-hub-finish-warning');
+  assert.match(warning.textContent, /No model configured — chats can't run locally\./);
+  assert.doesNotMatch(warning.textContent, /workspace|folder/i);
+  assert.notEqual(warning.querySelector('[data-action="fixRequired"]').dataset.stepId, 'workspaceRoot');
   h.root.querySelector('[data-action="finishAnyway"]').click();
   await settle();
   assert.ok(h.patches.some((patch) => patch.firstRunCompleted === true));
@@ -215,7 +211,7 @@ test('resumeSetup is idempotent while the hub is active', async (t) => {
   h.controller.resumeSetup();
 
   assert.equal(h.root.querySelector('[data-step-modal="setup-hub"]'), firstHub);
-  assert.deepEqual(h.views, ['home', 'home']);
+  assert.deepEqual(h.views, [], 'setup opens over the current view, never on Home');
 });
 
 test('stale empty readiness does not block the backend-authoritative finish attempt', async (t) => {
@@ -232,7 +228,7 @@ test('stale empty readiness does not block the backend-authoritative finish atte
 
   assert.equal(h.completeCalls, 1, 'the backend completion service is authoritative');
   assert.equal(h.root.querySelector('[data-step-modal="setup-hub"]'), null, 'the setup hub closes');
-  assert.equal(h.views.at(-1), 'home', 'the app returns home');
+  assert.deepEqual(h.views, [], 'finishing keeps the user on the view they were on');
   assert.equal(h.state.setup.setupComplete, true);
 });
 

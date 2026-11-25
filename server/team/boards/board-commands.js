@@ -190,7 +190,7 @@ function operationsFor({ batchRefusal, presence, proposals, presenceOperations }
         skipped: reverted.skipped.length } : reverted;
     } },
     ...(proposals ? {
-      'team.board.proposal.list': { limit: 'read', run: ({ params }) => proposals.list(boardOf(params)) },
+      'team.board.proposal.list': { limit: 'read', run: ({ params, recheck }) => proposals.list({ ...boardOf(params), recheck }) },
       'team.board.proposal.accept': decide('accept'),
       'team.board.proposal.reject': decide('reject'),
     } : {}),

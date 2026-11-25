@@ -139,6 +139,23 @@ function registerMainIpcHandlers({
     workspaceAuthorization,
   });
   const { workspaceRootCoordinator } = workspace;
+  // Row 197: the chat's Live tab. Its capture is armed through the display-media handler (lane A1).
+  backendService.runView?.setCaptureSource?.(() => (getDisplayMediaSourceHandler ? getDisplayMediaSourceHandler() : null));
+  const runViewIpc = require('./run-view-ipc-registration');
+  const runViewGates = {
+    getHolder: () => backendService.runView || null,
+    isEnabled: () => backendService.featureFlags?.live_run_view !== false,
+    isHostedServer: () => backendService.hostMode === 'server',
+    isSandboxOnly: () => backendService.commandSandbox?.enabled === true,
+  };
+  backendService.runView?.setStartGate?.(runViewIpc.startGateFor(runViewGates)); // a turn's end restarts under the same rules
+  runViewIpc.registerRunViewIpc(ipcMain, { ...runViewGates, authorization: workspaceAuthorization });
+  // Row 196: the computer tool's owner controls (Tools menu, Settings, the chat's pause line).
+  require('./computer-use-ipc-registration').registerComputerUseIpc(ipcMain, {
+    getHolder: () => backendService.toolExecutor?.computerUse || null, getBackendService: () => backendService,
+    dialog, getMainWindow, sendBridgeEvent, authorization: workspaceAuthorization,
+    isHostedServer: () => backendService.hostMode === 'server',
+  });
   // Row 137: files opened from outside the Workspace. The launch buffer holds
   // what arrived before now (cold launch, macOS open-file, second launches).
   const outsideFiles = require('./outside-files/outside-file-ipc').registerOutsideFileIpc(ipcMain, {

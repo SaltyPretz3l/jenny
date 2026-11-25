@@ -115,33 +115,62 @@ test('a per-field reset sends null for that key only', () => {
   assert.deepEqual(calls[0], { method: 'update', payload: { key: 'maxToolsPerTurn', value: null } });
 });
 
-test('section reset is two-step: arming does not mutate anything', () => {
+test('section reset opens the shared confirm strip: arming does not mutate anything', () => {
   const { sectionDom, documentRef, window, calls } = createHarness({ values: { maxToolsPerTurn: 7 } });
   const armButton = sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="arm"]');
   assert.ok(armButton, 'a pane with overrides offers a reset-all');
   assert.equal(armButton.textContent, 'Reset this page');
+  assert.equal(sectionDom.advancedTuningActions.querySelector('.projects-confirm'), null, 'no strip until asked');
   fire(documentRef, window, armButton, 'click');
   assert.deepEqual(calls, [], 'arming must not reset anything');
-  const confirmButton = sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]');
-  assert.ok(confirmButton, 'arming swaps in a confirm control');
-  assert.match(confirmButton.textContent, /^Confirm: reset every limit/);
+  const strip = sectionDom.advancedTuningActions.querySelector('.projects-confirm');
+  assert.ok(strip, 'arming draws the strip Projects uses for Delete');
+  assert.match(strip.textContent, /Your changed values are lost/, 'it says what is lost');
+  const confirmButton = strip.querySelector('[data-tuning-reset-all="confirm"]');
+  assert.ok(confirmButton.classList.contains('btn--danger'));
+  assert.equal(confirmButton.textContent, 'Reset limits');
+  assert.equal(strip.querySelector('[data-tuning-reset-all="cancel"]').textContent, 'Cancel');
   fire(documentRef, window, confirmButton, 'click');
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], { method: 'reset', payload: undefined });
 });
 
-test('reset-all is hidden when nothing on the pane is modified', () => {
+test('the confirm strip has no timer, Cancel and Escape close it, and focus returns to the button that opened it', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { sectionDom, documentRef, window, calls } = createHarness({ values: { maxToolsPerTurn: 7 } });
+  const actions = sectionDom.advancedTuningActions;
+  const armButton = () => actions.querySelector('[data-tuning-reset-all="arm"]');
+  armButton().focus();
+  armButton().click();
+  assert.equal(documentRef.activeElement, actions.querySelector('[data-tuning-reset-all="cancel"]'), 'focus moves into the strip, on Cancel');
+  t.mock.timers.tick(60000);
+  assert.ok(actions.querySelector('.projects-confirm'), 'the strip never times out');
+  fire(documentRef, window, actions.querySelector('[data-tuning-reset-all="cancel"]'), 'click');
+  assert.equal(actions.querySelector('.projects-confirm'), null);
+  assert.equal(documentRef.activeElement, armButton(), 'Cancel hands focus back to the opener');
+  armButton().click();
+  const escape = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  actions.querySelector('[data-tuning-reset-all="confirm"]').dispatchEvent(escape);
+  assert.equal(actions.querySelector('.projects-confirm'), null, 'Escape cancels');
+  assert.equal(documentRef.activeElement, armButton(), 'Escape hands focus back to the opener');
+  assert.deepEqual(calls, [], 'nothing was reset');
+});
+
+test('with nothing modified the Reset group says so and the button is disabled, not hidden', () => {
   const { sectionDom } = createHarness();
-  assert.equal(sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]'), null);
+  const button = sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]');
+  assert.ok(button);
+  assert.equal(button.disabled, true);
+  assert.match(sectionDom.advancedTuningActions.textContent, /Every limit is already at its default\./);
 });
 
 test('one confirmed reset invokes limits first, then engine reset without scope', async () => {
   const order = [];
   const bridge = { reset: async (...args) => { order.push(['engine', args]); return { status: 'applied', state: { values: {} } }; } };
   const h = createHarness({ values: { cloudMaxToolsPerTurn: 7 }, bridge, resetLimitsToDefaults: async () => { order.push(['limits']); return true; } });
-  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
+  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="arm"]').click();
   assert.deepEqual(order, []);
-  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
+  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(order, [['limits'], ['engine', []]]);
 });
@@ -293,10 +322,10 @@ test('the reset describes the whole page and the fold counts modified rows', () 
   assert.equal(sectionDom.advancedTuningFields.querySelector('.settings-fold-count').textContent, '1 modified');
 });
 
-test('binding uses four delegated listeners, not one per field', () => {
+test('binding uses five delegated listeners, not one per field', () => {
   const { listeners, sectionDom } = createHarness();
   const rowCount = sectionDom.advancedTuningFields.querySelectorAll('.settings-field--stack').length;
-  assert.equal(listeners.length, 4);
+  assert.equal(listeners.length, 5);
   assert.ok(rowCount > 4, 'the point only holds when there are many more rows than listeners');
 });
 
@@ -379,7 +408,7 @@ test('dispose fences a slow refresh: the late getState result must not repaint (
   );
 });
 
-test('dispose clears an armed reset so the disarm timer and confirm control die with the binding (hyg-W4-54-F01)', () => {
+test('dispose clears an armed reset so the confirm strip dies with the binding (hyg-W4-54-F01)', () => {
   const { documentRef, window, sectionDom, section, calls } = createHarness({
     values: { maxToolsPerTurn: 9 },
   });
@@ -388,14 +417,14 @@ test('dispose clears an armed reset so the disarm timer and confirm control die 
   fire(documentRef, window, armButton, 'click');
   assert.ok(
     sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]'),
-    'arming swaps in a confirm control'
+    'arming draws the confirm strip'
   );
   section.dispose();
   section.render(sectionDom);
   assert.equal(
     sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]'),
     null,
-    'dispose disarms the pending reset (and cancels its disarm timer)'
+    'dispose disarms the pending reset'
   );
   assert.deepEqual(calls, [], 'nothing was reset');
 });
@@ -458,7 +487,9 @@ test('a limits update that changes nothing keeps the reset button, and arming ke
   button.click();
   const confirm = h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]');
   assert.ok(confirm);
-  assert.equal(h.documentRef.activeElement, confirm, 'the confirm step is reachable from the keyboard');
+  assert.equal(h.documentRef.activeElement, h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="cancel"]'),
+    'the strip is reachable from the keyboard, on Cancel');
+  assert.ok(h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="arm"]'), 'the opener stays under the strip');
 });
 
 test('a refused edit gives the field its acknowledged value back', () => {
@@ -475,8 +506,8 @@ test('a page reset whose limits half was not saved says so, whatever the engine 
   for (const [limitsAnswer, engineAnswer] of [[false, { status: 'applied' }], [false, { status: 'applied', reason: 'deferred' }], [undefined, { status: 'applied' }]]) {
     const bridge = { reset: async () => ({ ...engineAnswer, state: { values: {} } }) };
     const h = createHarness({ values: { cloudMaxToolsPerTurn: 7 }, bridge, resetLimitsToDefaults: async () => limitsAnswer });
-    h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
-    h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
+    h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="arm"]').click();
+    h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]').click();
     await new Promise(resolve => setImmediate(resolve));
     await new Promise(resolve => setImmediate(resolve));
     assert.match(h.sectionDom.advancedTuningStatus.textContent, /Limits weren't saved/, JSON.stringify([limitsAnswer, engineAnswer]));
@@ -551,7 +582,7 @@ test('the page reset is not offered for an override in a hidden row, and a reset
     const row = page.sectionDom.advancedTuningFields.querySelector('[data-settings-field="limitsRow-ollamaRequest"]');
     assert.equal(row.hidden, !offered);
     assert.ok(row.querySelector('[data-setting-revert]'), 'the override is there either way');
-    assert.equal(Boolean(page.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]')), offered, engine);
+    assert.equal(page.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').disabled, !offered, engine);
   }
 
   const h = createHarness({ values: { maxToolsPerTurn: 40 } });
@@ -559,8 +590,8 @@ test('the page reset is not offered for an override in a hidden row, and a reset
   input.value = '9999';
   fire(h.documentRef, h.window, input, 'change');
   assert.equal(input.closest('.settings-field').getAttribute('data-state'), 'error');
-  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
-  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all]').click();
+  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="arm"]').click();
+  h.sectionDom.advancedTuningActions.querySelector('[data-tuning-reset-all="confirm"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(input.closest('.settings-field').hasAttribute('data-state'), false);
 });

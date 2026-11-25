@@ -152,7 +152,7 @@ test('the header shows View full screen and Copy image for an available generate
   assert.equal(viewer.open[0].contextNode, fullscreen);
 });
 
-test('More lists Save as, Show in folder and Open externally for an image, and Copy image when narrow', async (t) => {
+test('More lists Save as, Show in folder and Open externally for an image', async (t) => {
   const viewer = installViewer(t);
   const h = setup(t);
   h.manager.renderArtifactReviewPanel();
@@ -161,7 +161,7 @@ test('More lists Save as, Show in folder and Open externally for an image, and C
   const labels = h.menuLabels();
   for (const label of ['Save as…', 'Show in folder', 'Open externally']) assert.ok(labels.includes(label), `${label} in ${labels}`);
   assert.equal(labels.includes('Delete artifact'), false);
-  assert.equal(labels.includes('Copy image'), false, 'the header shows Copy while wide');
+  assert.equal(labels.includes('Copy image'), false, 'the header carries Copy, not More');
   for (const label of ['Save as…', 'Show in folder', 'Open externally']) {
     if (!h.menuItem(label)) h.q('[data-artifact-panel-overflow]').click();
     h.menuItem(label).click();
@@ -169,12 +169,6 @@ test('More lists Save as, Show in folder and Open externally for an image, and C
   }
   const target = { kind: 'artifact', id: 'img-a', sessionId: 's' };
   assert.deepEqual(viewer.run, [['save-as', target], ['reveal', target], ['open', target]]);
-
-  h.panelEl.dataset.panelNarrow = 'true';
-  h.q('[data-artifact-panel-overflow]').click();
-  h.menuItem('Copy image').click();
-  await settle();
-  assert.deepEqual(viewer.run.at(-1), ['copy', target]);
 });
 
 test('an image that failed to load gets no image actions, and a text artifact keeps the text copy', async (t) => {

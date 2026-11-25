@@ -9,10 +9,11 @@ const { JSDOM } = require('jsdom');
 
 const composerChrome = require('../renderer/chat/renderer-render-pipeline-chrome-composer');
 
-function build(t, { chatWayfinder = null, following: followingStart = true, messages = [{ id: 'u1' }], paneSessionId = 'session-a' } = {}) {
+function build(t, { chatWayfinder = null, following: followingStart = true, messages = [{ id: 'u1' }], paneSessionId = 'session-a', streaming = false, timelineHtml = '' } = {}) {
   const { window } = new JSDOM(`<!doctype html><body>
     <div class="composer-jump-tools hidden"><button id="top"></button></div>
     <button id="bottom" class="chat-jump-latest" data-visible="false" inert aria-label="Jump to bottom of chat"><svg></svg></button>
+    <div id="timeline">${timelineHtml}</div>
     <textarea id="input"></textarea></body>`);
   t.after(() => window.close());
   const doc = window.document;
@@ -27,9 +28,11 @@ function build(t, { chatWayfinder = null, following: followingStart = true, mess
       chatInput: doc.getElementById('input'),
       jumpToTopButton: doc.getElementById('top'),
       jumpToBottomButton: doc.getElementById('bottom'),
+      chatTimeline: doc.getElementById('timeline'),
     },
     callbacks: {
       getVisibleSessionMessages: () => messages,
+      isSessionStreaming: () => streaming,
     },
   });
   return { state, doc, following, button: doc.getElementById('bottom'), tools: doc.querySelector('.composer-jump-tools'), render: chrome.renderComposerJumpControls };
@@ -45,11 +48,13 @@ test('at the live end the control stays hidden, whatever the wayfinder names', (
   assert.equal(tools.classList.contains('hidden'), true);
 });
 
-test('once the reader scrolls up, first unread takes the control and names itself only in the tooltip', (t) => {
+const label = (button) => button.querySelector(':scope > .chat-jump-latest-label')?.textContent;
+
+test('once the reader scrolls up, first unread takes the control and says so on the pill', (t) => {
   const { button, tools, render } = build(t, { following: false, chatWayfinder: { visible: true, state: 'unread', label: 'Jump to first unread', messageId: 'a1', sessionId: 'session-a' } });
   render();
-  assert.equal(button.textContent.trim(), '', 'the control has no words of its own');
-  assert.equal(button.querySelector('.chat-jump-latest-label'), null);
+  assert.equal(label(button), 'Jump to first unread', 'row 192 C13: the pill shows the unread wording');
+  assert.equal(button.classList.contains('chat-jump-latest--labeled'), true);
   assert.equal(button.dataset.jumpState, 'unread');
   assert.equal(button.dataset.visible, 'true');
   assert.equal(button.hasAttribute('inert'), false);
@@ -67,6 +72,40 @@ test('with no wayfinder pick the control is "Latest" while away from the live en
   assert.equal(button.dataset.visible, 'true');
   assert.equal(button.getAttribute('aria-label'), 'Return to latest');
   assert.equal(tools.classList.contains('hidden'), false, 'the top button stays available when only Latest is offered');
+  assert.equal(label(button), 'Latest', 'row 192 C13: a pill labelled Latest');
+  assert.equal(button.firstElementChild.tagName.toLowerCase(), 'svg', 'the arrow stays first, the label follows it');
+});
+
+const LIVE_TURN = '<div class="turn-row-list" data-turn-live="true">'
+  + '<div class="chat-row" data-row-kind="tool_call"><div class="tool-call-row" data-tool-status="completed"></div></div>'
+  + '<div class="chat-row" data-row-kind="approval_gap"></div>'
+  + '<div class="chat-row" data-row-kind="tool_call"><div class="tool-call-row" data-tool-status="running"><span class="tool-call-name">Run command</span></div></div>'
+  + '</div>';
+
+test('while a turn runs and its running step is known, the pill names the step; otherwise it says Latest', (t) => {
+  const { button, render } = build(t, { following: false, streaming: true, timelineHtml: LIVE_TURN });
+  render();
+  assert.equal(label(button), 'Latest · step 2 running');
+  assert.equal(button.getAttribute('aria-label'), 'Latest · step 2 running', 'the spoken name carries the words on the pill');
+  const idle = build(t, { following: false, streaming: false, timelineHtml: LIVE_TURN });
+  idle.render();
+  assert.equal(label(idle.button), 'Latest', 'no running turn, no step');
+  const between = build(t, { following: false, streaming: true, timelineHtml: LIVE_TURN.replace('"running"', '"completed"') });
+  between.render();
+  assert.equal(label(between.button), 'Latest', 'no step in flight');
+});
+
+test('the status line names a running step once when its summary already leads with the tool name', (t) => {
+  // Live-app check 2026-11-23: a running Bash step read "Step 1 · Bash Bash ping -n 6 127.0.0.1".
+  const { readLiveStep } = require('../renderer/chat/renderer-composer-v2-render');
+  const dom = new JSDOM('<div class="turn-row-list">'
+    + '<div class="chat-row" data-row-kind="tool_call"><div class="tool-call-row" data-tool-status="running">'
+    + '<span class="tool-call-name">Bash</span><span class="tool-call-summary">Bash ping -n 6 127.0.0.1</span></div></div></div>');
+  t.after(() => dom.window.close());
+  const list = dom.window.document.querySelector('.turn-row-list');
+  assert.deepEqual(readLiveStep(list), { step: 1, doing: 'Bash ping -n 6 127.0.0.1' });
+  list.querySelector('.tool-call-summary').textContent = 'Run ping -n 6 127.0.0.1';
+  assert.deepEqual(readLiveStep(list), { step: 1, doing: 'Bash Run ping -n 6 127.0.0.1' }, 'a different summary keeps the name');
 });
 
 test('the wayfinder publishing "latest" itself still leaves the top button available', (t) => {

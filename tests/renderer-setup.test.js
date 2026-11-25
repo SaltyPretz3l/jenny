@@ -239,7 +239,7 @@ test('factory reset scene fails closed when factoryReset bridge is unavailable',
       },
     },
     closeModal: () => events.push('close'),
-    showHome: () => events.push('home'),
+    reopenFirstRun: () => events.push('reopen'),
     showToastMessage: () => events.push('toast'),
     showShellErrorToast: (message) => events.push(['error', message]),
     appendClientLog: (_level, eventName) => events.push(['log', eventName]),
@@ -251,7 +251,7 @@ test('factory reset scene fails closed when factoryReset bridge is unavailable',
 
   assert.equal(events.includes('reset'), false);
   assert.equal(events.includes('toast'), false);
-  assert.equal(events.includes('home'), false);
+  assert.equal(events.includes('reopen'), false);
   assert.ok(events.some((entry) => Array.isArray(entry) && entry[0] === 'error'));
   scene.dispose();
 });
@@ -268,8 +268,8 @@ test('reset onboarding invokes one backend transaction and reports success only 
         },
       },
       applySnapshot: () => events.push('snapshot'),
-      showHome: () => events.push('home'),
-      showToastMessage: () => events.push('toast'),
+      reopenFirstRun: () => events.push('reopen'),
+      showToastMessage: (message) => events.push(['toast', message]),
       closeModal: () => events.push('close'),
     });
 
@@ -277,8 +277,9 @@ test('reset onboarding invokes one backend transaction and reports success only 
     rootEl.querySelector('[data-step-modal-action="confirm"]').click();
     await new Promise((resolve) => setImmediate(resolve));
 
+    // First run reopens in place after the reset scene closes: no trip to Home.
     assert.deepEqual(events, [
-      'factory-reset', 'snapshot', 'home', 'toast', 'close',
+      'factory-reset', 'snapshot', ['toast', 'Onboarding reset. Setup has reopened.'], 'close', 'reopen',
     ]);
     scene.dispose();
     dom.window.close();
@@ -815,7 +816,7 @@ test('controller refreshes when backend readiness changes without updatedAt chan
 test('computeSetupHealth: all pending -> pending, nothing required resolved', () => {
   const health = computeSetupHealth({ steps: {} });
   assert.equal(health.state, 'pending');
-  assert.deepEqual(health.pendingSteps.sort(), ['model', 'workspaceRoot']);
+  assert.deepEqual(health.pendingSteps, ['model']);
   assert.deepEqual(health.skippedSteps, []);
 });
 
@@ -826,6 +827,12 @@ test('computeSetupHealth: workspaceRoot + localModel done -> complete regardless
   assert.equal(health.state, 'complete');
   assert.deepEqual(health.pendingSteps, []);
   assert.deepEqual(health.skippedSteps, []);
+});
+
+test('computeSetupHealth: D1 a model route alone completes setup; a pending workspace folder does not hold it back', () => {
+  const health = computeSetupHealth({ steps: { workspaceRoot: 'pending', localModel: 'done', endpoint: 'pending' } });
+  assert.equal(health.state, 'complete');
+  assert.deepEqual(health.pendingSteps, []);
 });
 
 test('computeSetupHealth: workspaceRoot + endpoint done (no localModel) -> complete', () => {
@@ -841,7 +848,7 @@ test('computeSetupHealth: a skip-through (workspaceRoot + both model paths skipp
   });
   assert.equal(health.state, 'degraded');
   assert.deepEqual(health.pendingSteps, []);
-  assert.deepEqual(health.skippedSteps, ['workspaceRoot', 'model']);
+  assert.deepEqual(health.skippedSteps, ['model']);
 });
 
 test('computeSetupHealth: workspaceRoot done, model still pending (only one path skipped) -> pending, not degraded', () => {
@@ -852,12 +859,12 @@ test('computeSetupHealth: workspaceRoot done, model still pending (only one path
   assert.deepEqual(health.pendingSteps, ['model']);
 });
 
-test('computeSetupHealth: an error status on the only unresolved required step counts as pending, not a crash', () => {
+test('computeSetupHealth: an error status on the model route counts as pending, and a folder error holds nothing back', () => {
   const health = computeSetupHealth({
-    steps: { workspaceRoot: 'error', localModel: 'pending', endpoint: 'pending' },
+    steps: { workspaceRoot: 'error', localModel: 'error', endpoint: 'pending' },
   });
   assert.equal(health.state, 'pending');
-  assert.ok(health.pendingSteps.includes('workspaceRoot'));
+  assert.deepEqual(health.pendingSteps, ['model']);
 });
 
 test('computeSetupHealth: malformed/missing steps map does not crash and reports pending', () => {

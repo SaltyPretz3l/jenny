@@ -36,6 +36,7 @@ function buildDeps({
     gpuMemoryReset: [],
     bridgeEvents: [],
     gpuMemorySamples: [],
+    gpuRefreshes: [],
   };
   const screen = {
     on() {},
@@ -72,7 +73,10 @@ function buildDeps({
     },
     log: () => {},
     getCurrentSystemStatsPayload: () => ({ cpu: 0 }),
-    refreshGpuMemorySample: async () => null,
+    refreshGpuMemorySample: async (options) => {
+      calls.gpuRefreshes.push(options || {});
+      return null;
+    },
     createUnavailableGpuMemorySample: (opts) => {
       const sample = { src: opts };
       calls.gpuMemorySamples.push(sample);
@@ -331,7 +335,7 @@ test('the stats monitor pauses while the window is hidden or minimised and resum
   assert.equal(services.skillsService._windowVisible, true);
 });
 
-test('the stats tick runs at 2 s only while a renderer watcher shows the numbers, else 15 s', (t) => {
+test('the CPU/RAM tick runs at 2 s only while a renderer watcher shows the numbers, else 15 s', (t) => {
   const { services, calls } = makeContext(t);
   const stats = services.systemStats;
   const cadence = stats.watchCadence;
@@ -356,9 +360,77 @@ test('the stats tick runs at 2 s only while a renderer watcher shows the numbers
 
   stats.stop();
   stats.visibilityPause.setVisible(false);
+  const reads = calls.gpuRefreshes.length;
   cadence.setWatched('titlebar', true);
   assert.equal(stats.timer, null, 'a watcher never restarts a stopped or hidden monitor');
   assert.equal(ticks(), before + 1, 'and emits nothing while it is not running');
+  assert.equal(calls.gpuRefreshes.length, reads, 'nor reads the card');
+});
+
+// Row 194 C12 (owner decision 2026-11-23): the card is read only while someone looks or a local model writes.
+test('no watcher, no generation: the tick never reads the graphics card', (t) => {
+  const { services, calls } = makeContext(t);
+  const stats = services.systemStats;
+  stats.start();
+  const ticks = () => calls.bridgeEvents.filter(([event]) => event === 'system.onStats').length;
+  const before = ticks();
+  stats.emit('stats', stats.sample());
+  stats.emit('stats', stats.sample());
+  assert.equal(ticks(), before + 2, 'CPU and RAM still reach the title bar on the slow tick');
+  assert.deepEqual(calls.gpuRefreshes, [], 'the card is not read');
+});
+
+test('a watcher arrives: one read at once, then the tick reads while watched and stops when the last leaves', (t) => {
+  const { services, calls } = makeContext(t);
+  const stats = services.systemStats;
+  const cadence = stats.watchCadence;
+  stats.start();
+  cadence.setWatched('popover', true);
+  assert.deepEqual(calls.gpuRefreshes, [{ force: true }], 'one forced read when the first watcher arrives');
+  cadence.setWatched('titlebar', true);
+  assert.equal(calls.gpuRefreshes.length, 1, 'a second watcher adds no read');
+  stats.emit('stats', stats.sample());
+  assert.deepEqual(calls.gpuRefreshes[1], {}, 'the watched tick takes the throttled read');
+  cadence.setWatched('popover', false);
+  cadence.setWatched('titlebar', false);
+  stats.emit('stats', stats.sample());
+  assert.equal(calls.gpuRefreshes.length, 2, 'last watcher gone: no more reads');
+});
+
+test('a local generation starts: one read at once; it ends, a cloud engine and a stopped chat read nothing', (t) => {
+  const { EventEmitter } = require('events');
+  const { deps, calls, tmpDir } = buildDeps();
+  const backend = Object.assign(new EventEmitter(), { activeStreams: new Map(), currentEngineType: 'openai-compatible' });
+  const services = createRuntimeServicesWithDeps({ ...deps, getBackendService: () => backend });
+  const stats = services.systemStats;
+  t.after(() => { stats.stop(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  stats.start();
+  stats.emit('stats', stats.sample()); // the first tick finds the backend and listens to its chat stream
+  assert.deepEqual(calls.gpuRefreshes, []);
+
+  backend.activeStreams.set('s1', {});
+  backend.emit('chat-stream', { type: 'started' });
+  assert.deepEqual(calls.gpuRefreshes, [{ force: true }], 'one forced read when generation starts');
+  backend.emit('chat-stream', { type: 'delta' });
+  assert.equal(calls.gpuRefreshes.length, 1, 'later events of the same generation add none');
+  stats.emit('stats', stats.sample());
+  assert.equal(calls.gpuRefreshes.length, 2, 'the slow tick reads the card while it writes');
+
+  backend.activeStreams.delete('s1');
+  backend.emit('chat-stream', { type: 'done' });
+  stats.emit('stats', stats.sample());
+  assert.equal(calls.gpuRefreshes.length, 2, 'generation ended: no more reads');
+
+  backend.currentEngineType = 'api-provider';
+  backend.activeStreams.set('s2', {});
+  backend.emit('chat-stream', { type: 'started' });
+  stats.emit('stats', stats.sample());
+  assert.equal(calls.gpuRefreshes.length, 2, 'a cloud generation does not wake the card');
+  backend.activeStreams.set('s3', { engineType: 'openai-compatible' });
+  backend.emit('chat-stream', { type: 'started' });
+  assert.equal(calls.gpuRefreshes.length, 3, 'a Default chat on a local engine wakes the card under a cloud engine');
+  backend.activeStreams.delete('s3');
+  backend.emit('chat-stream', { type: 'done' });
 });
 
 test('createStatsWatchCadence re-times a bare monitor without a pause wrapper', () => {
@@ -369,8 +441,14 @@ test('createStatsWatchCadence re-times a bare monitor without a pause wrapper', 
   monitor.timer = {};
   cadence.setWatched('titlebar', true);
   assert.equal(monitor.intervalMs, 2000);
-  assert.deepEqual(emitted, [['stats', { cpuPercent: 1 }]]);
+  assert.deepEqual(emitted, [['stats', { cpuPercent: 1 }, { resume: true }]]);
   assert.deepEqual(cadence.sources(), ['titlebar']);
+  assert.equal(cadence.isWanted(), true);
+  cadence.setWatched('titlebar', false);
+  assert.equal(cadence.isWanted(), false);
+  cadence.setGenerating(true);
+  assert.equal(cadence.isWanted(), true, 'a local generation wants the card without a watcher');
+  assert.equal(monitor.intervalMs, 15000, 'but keeps the slow CPU/RAM interval');
 });
 
 // Row 100 P2: the session directory reads `waiting_for` from the session runtime's wait notices,

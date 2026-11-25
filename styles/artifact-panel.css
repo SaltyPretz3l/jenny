@@ -172,9 +172,8 @@
   display: none;
 }
 
-/* V3 Canvas chrome. The narrow-stage overlay keeps its own position: absolute
-   (context-panel.css); relative here would drop the drawer into the chat grid (F6). */
-.artifact-review-panel.artifact-panel-v3:not(.artifact-review-overlay) { position: relative; }
+/* V3 Canvas chrome. */
+.artifact-review-panel.artifact-panel-v3 { position: relative; }
 
 /* One 36px header row, the tab rail's height. The end edge trades part of the
    gutter for the icon buttons' internal padding so the glyphs (not the hit
@@ -260,9 +259,8 @@
   padding: 6.5px;
 }
 
-/* Pressed Wrap and Restore read as pressed by more than a colour shift. */
-.artifact-panel-wrap[aria-pressed="true"],
-.artifact-panel-maximize[aria-pressed="true"] {
+/* Pressed Wrap reads as pressed by more than a colour shift. */
+.artifact-panel-wrap[aria-pressed="true"] {
   background: var(--widget-action-bg);
   color: var(--text-primary);
 }
@@ -676,37 +674,6 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   font-family: var(--font-family-body);
   font-size: var(--font-size-caption);
   color: var(--text-muted);
-}
-
-.artifact-review-panel[data-panel-narrow="true"] .artifact-panel-copy { display: none; }
-
-.artifact-review-panel.artifact-review-overlay .artifact-panel-maximize { display: none; }
-
-.chat-view.artifact-review-maximized {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* Pane 0's children sit inside div.chat-pane (display: contents with one
-   pane), so they are hidden through it; the utility cluster stays, as before.
-   The two bare thread-stage/composer selectors cover the IDE dock's restore,
-   which re-inserts those two into #chatView itself until W1-4 retargets it to
-   the pane root. Two panes: styles/chat-panes.css. */
-.chat-view.artifact-review-maximized > .chat-pane > .hero-stage,
-.chat-view.artifact-review-maximized > .chat-pane > .chat-thread-stage,
-.chat-view.artifact-review-maximized > .chat-pane > .composer-wrap,
-.chat-view.artifact-review-maximized > .chat-thread-stage,
-.chat-view.artifact-review-maximized > .composer-wrap,
-.chat-view.artifact-review-maximized > .artifact-review-resizer,
-.chat-view.artifact-review-maximized > .chat-pane-resizer {
-  display: none;
-}
-
-.chat-view.artifact-review-maximized > .artifact-review-panel {
-  grid-column: 1 / -1;
-  width: 100% !important;
-  min-width: 0;
-  max-width: none;
-  border-inline-start: none;
 }
 
 /* ══════════════════════════════════════════════════════════════════════

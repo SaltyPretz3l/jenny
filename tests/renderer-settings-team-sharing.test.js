@@ -267,6 +267,143 @@ test('two teams: a team picker; the other team while one shares is refused with 
   assert.match(h.text(), /This PC already shares its GPU with another team\. Turn that off first\./);
 });
 
+// ------------------------------------------------------------------ OD-4: the Ollama share set (row 201)
+
+const OLLAMA_TITLE = 'Models to share from Ollama';
+const OLLAMA_DEFAULT = 'Only the models you check are offered to the team. With none checked, Jenny offers the model you are using now.';
+const OLLAMA_OFF = 'Ollama is not running on this PC, so there is nothing to choose.';
+const tag = (id) => ({ id, engine_type: 'ollama' });
+const TAGS = ['qwen3:8b', 'llama3.2:3b', 'gemma3:12b'];
+
+// The page with this PC's installed Ollama tags (the bridge `models.listOllamaTags`), shown after the stub is in place.
+function ollamaPage(t, { tags = { available: true, data: TAGS.map(tag) }, answers = {}, teams = [member()] } = {}) {
+  const h = harness({ teams, answers, show: false });
+  t.after(h.restore);
+  globalThis.inventory.checkbox = require('../renderer/inventory/checkbox').checkbox; // the harness's inventory has no checkbox
+  const reads = [];
+  h.window.jennyShell.models = { listOllamaTags: () => { reads.push(1); return Promise.resolve(typeof tags === 'function' ? tags() : tags); } };
+  h.section.showTeamSection({ container: h.container });
+  h.reads = reads;
+  return h;
+}
+const boxes = (h) => h.qa('[data-team-ollama] input[type="checkbox"]');
+const ticked = (h) => boxes(h).filter((box) => box.checked).map((box) => box.dataset.ollamaName);
+const saveButton = (h) => h.q('[data-team-action="ollama-save"]');
+
+test('OD-4: Ollama in use: the installed models are a checkable list, none checked means the current model, and the page says so', async (t) => {
+  const h = ollamaPage(t);
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama', models: ['qwen3:8b'] }), pools: {} });
+  assert.equal(text(h.q('#teamOllamaTitle')), OLLAMA_TITLE);
+  assert.equal(text(h.q('#teamOllamaHelp')), OLLAMA_DEFAULT);
+  assert.deepEqual(boxes(h).map((box) => box.dataset.ollamaName), TAGS);
+  assert.deepEqual(ticked(h), [], 'nothing checked: the default');
+  assert.equal(boxes(h).some((box) => box.disabled), false);
+  assert.equal(saveButton(h).disabled, true, 'nothing to save yet');
+  assert.deepEqual(h.sent('shareOllamaModels').map((c) => c.payload), [{ team_id: OTHER }], 'the saved set is read once');
+  assert.equal(h.reads.length, 1, 'the installed models are read once');
+});
+
+test('OD-4: checking models and saving sends the names; the saved set comes back checked; none checked saves the default (null)', async (t) => {
+  const answers = { shareOllamaModels: (p) => ({ ok: true, ollama_models: p.names === undefined ? ['gemma3:12b'] : p.names }) };
+  const h = ollamaPage(t, { answers });
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama' }), pools: {} });
+  assert.deepEqual(ticked(h), ['gemma3:12b'], 'the saved set, read with ollamaModels');
+  assert.equal(saveButton(h).disabled, true);
+  boxes(h)[0].click();
+  await flush();
+  assert.deepEqual(ticked(h), ['qwen3:8b', 'gemma3:12b']);
+  assert.equal(saveButton(h).disabled, false, 'a change can be saved');
+  saveButton(h).click();
+  await flush();
+  assert.deepEqual(h.sent('shareOllamaModels').at(-1).payload, { team_id: OTHER, names: ['qwen3:8b', 'gemma3:12b'] });
+  assert.deepEqual(ticked(h), ['qwen3:8b', 'gemma3:12b'], 'saved: still checked');
+  assert.equal(saveButton(h).disabled, true, 'saved: nothing left to save');
+  boxes(h)[0].click();
+  boxes(h).find((box) => box.dataset.ollamaName === 'gemma3:12b').click();
+  await flush();
+  assert.deepEqual(ticked(h), []);
+  saveButton(h).click();
+  await flush();
+  assert.deepEqual(h.sent('shareOllamaModels').at(-1).payload, { team_id: OTHER, names: null }, 'nothing checked returns to the default');
+});
+
+test('OD-4: a saved name that is no longer installed stays in the list so it can be unchecked', async (t) => {
+  const h = ollamaPage(t, { answers: { shareOllamaModels: { ok: true, ollama_models: ['old-model:7b'] } } });
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama' }), pools: {} });
+  assert.deepEqual(boxes(h).map((box) => box.dataset.ollamaName), ['old-model:7b', ...TAGS]);
+  assert.deepEqual(ticked(h), ['old-model:7b']);
+});
+
+test('OD-4: not Ollama: the list is disabled with its reason, and nothing can be saved', async (t) => {
+  const h = ollamaPage(t);
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'llama-server' }), pools: {} });
+  assert.equal(text(h.q('#teamOllamaTitle')), OLLAMA_TITLE, 'never hidden');
+  assert.equal(text(h.q('#teamOllamaHelp')), 'This list applies when this PC shares through Ollama. It shares through llama-server now.');
+  assert.equal(boxes(h).length, TAGS.length);
+  assert.equal(boxes(h).every((box) => box.disabled), true);
+  assert.equal(saveButton(h).disabled, true);
+});
+
+test('OD-4: Ollama not running: the row says so and no saved set is read', async (t) => {
+  const h = ollamaPage(t, { tags: { available: false, data: [] } });
+  await flush();
+  await push(h, { teams: [member()], sharing: null, pools: {} });
+  assert.equal(text(h.q('#teamOllamaTitle')), OLLAMA_TITLE);
+  assert.equal(text(h.q('#teamOllamaHelp')), OLLAMA_OFF);
+  assert.equal(boxes(h).length, 0);
+  assert.equal(h.sent('shareOllamaModels').length, 0);
+  const none = ollamaPage(t, { tags: { available: true, data: [] } });
+  await flush();
+  assert.equal(text(none.q('#teamOllamaHelp')), 'Ollama has no models installed on this PC.');
+});
+
+test('OD-4: a saved set that cannot be read leaves the list out, with its sentence, so a save cannot overwrite what was not seen', async (t) => {
+  const h = ollamaPage(t, { answers: { shareOllamaModels: { ok: false, error: { code: 'invalid_request', reason: 'team_sharing_invalid' } } } });
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama' }), pools: {} });
+  assert.equal(text(h.q('#teamOllamaHelp')), 'Jenny could not read the models this PC shares. Try again later.');
+  assert.equal(boxes(h).length, 0);
+  assert.equal(saveButton(h), null);
+});
+
+test('OD-4: a save that fails shows its sentence and keeps the choice; a read-only member has no row', async (t) => {
+  const h = ollamaPage(t, { answers: { shareOllamaModels: (p) => (p.names === undefined ? { ok: true, ollama_models: null }
+    : { ok: false, error: { code: 'invalid_request', reason: 'team_sharing_invalid' } }) } });
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama' }), pools: {} });
+  boxes(h)[1].click();
+  await flush();
+  saveButton(h).click();
+  await flush();
+  assert.deepEqual(ticked(h), ['llama3.2:3b'], 'the choice stays');
+  assert.equal(saveButton(h).disabled, false, 'and can be tried again');
+  assert.match(text(h.q('[data-team-group="share"] .team-set-note')), /could not save/i);
+  const readOnly = ollamaPage(t, { teams: [member({ role: 'read_only' })] });
+  await flush();
+  assert.equal(readOnly.q('#teamOllamaTitle'), null);
+  assert.equal(readOnly.sent('shareOllamaModels').length, 0);
+});
+
+test('OD-4: model names are drawn as text; at 64 checked the others are disabled; names the share set would refuse are not listed', async (t) => {
+  const many = Array.from({ length: 66 }, (_v, i) => `m${String(i).padStart(2, '0')}:7b`);
+  const h = ollamaPage(t, { tags: { available: true, data: [tag('<img src=x onerror=alert(1)>'), tag('bad\u0007name'), tag(''), { id: 7 }, ...many.map(tag)] } });
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama' }), pools: {} });
+  const row = h.q('[data-team-ollama]');
+  assert.equal(row.querySelector('img'), null);
+  assert.match(text(row), /<img src=x onerror=alert\(1\)>/);
+  assert.equal(boxes(h).some((box) => box.dataset.ollamaName === 'bad\u0007name'), false);
+  for (let i = 0; i < 64; i += 1) boxes(h)[i].click(); // each click redraws: look the box up again
+  await flush();
+  assert.equal(ticked(h).length, 64);
+  assert.equal(boxes(h).filter((box) => !box.checked).every((box) => box.disabled), true, 'no 65th model');
+  assert.equal(boxes(h).filter((box) => box.checked).some((box) => box.disabled), false, 'a checked one can still be unchecked');
+});
+
 // ------------------------------------------------------------------ owner
 
 const USAGE = {

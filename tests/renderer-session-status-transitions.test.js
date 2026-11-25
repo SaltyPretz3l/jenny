@@ -12,7 +12,7 @@ function session(id) {
     context_preferences: { history_scope: 'session', include_personality: true, include_memory: true } };
 }
 
-test('request events refresh list, compact strip and tabs through waiting, resume and terminal transitions', async (t) => {
+test('request events refresh list and tabs through waiting, resume and terminal transitions', async (t) => {
   const sessionId = 'status-session';
   const streamId = 'status-stream';
   const app = await loadRendererApp({ shell: { chat: {
@@ -43,24 +43,17 @@ test('request events refresh list, compact strip and tabs through waiting, resum
   doc.querySelector(`[data-session-open="${sessionId}"]`).click();
   await waitForUi(window, 70);
   window.rendererMultiStreamController.registerStream('background-session', 'background-stream');
-  doc.getElementById('chatsPanelCollapseToggle').click();
-  await waitForUi(window, 50);
-  const chip = doc.querySelector(`[data-strip-session-id="${sessionId}"]`);
-  assert.ok(chip);
-  chip.focus();
-  await waitForUi(window, 20);
 
   function check(kind, label, id = sessionId) {
     const row = doc.querySelector(`#conversationGroups .conversation-item[data-session-id="${id}"]`);
     const tab = doc.querySelector(`[data-workspace-session-id="${id}"]`)
       || [...doc.querySelectorAll('.workspace-rail-tab')].find((node) => node.querySelector(`[data-workspace-activate="${id}"]`));
-    const currentChip = doc.querySelector(`[data-strip-session-id="${id}"]`);
     assert.ok(row, 'session row exists');
     assert.ok(tab, 'session tab exists');
-    for (const node of [row, tab, currentChip]) assert.equal(node.dataset.sessionDominantState, kind);
+    for (const node of [row, tab]) assert.equal(node.dataset.sessionDominantState, kind);
     assert.equal(tab.querySelector('.workspace-rail-state-dot').dataset.sessionDominantState, kind);
     assert.equal(tab.querySelector('.workspace-rail-tab-button').title, label ? `${label} · ${id}` : id);
-    for (const node of [row.querySelector('[data-session-open]'), tab.querySelector('.workspace-rail-tab-button'), currentChip]) {
+    for (const node of [row.querySelector('[data-session-open]'), tab.querySelector('.workspace-rail-tab-button')]) {
       if (label) assert.ok(node.getAttribute('aria-label').includes(label), node.getAttribute('aria-label'));
       if (['approval', 'plan_review', 'input_needed'].includes(kind)) assert.ok(!node.getAttribute('aria-label').includes('Streaming'));
     }
@@ -81,9 +74,6 @@ test('request events refresh list, compact strip and tabs through waiting, resum
     check('streaming', 'Streaming', 'background-session');
     assert.equal(window.rendererMultiStreamController.isSessionSendBusy(sessionId), true);
     assert.equal(doc.querySelector(`[data-workspace-close="${sessionId}"]`), null, 'a busy tab renders no close button');
-    doc.querySelector(`[data-strip-session-id="${sessionId}"]`).focus();
-    await waitForUi(window, 20);
-    assert.equal(doc.getElementById('chatsStripPeekState').textContent, label);
     await emit({ type: 'tool_result', callId, approvalId: callId, toolName, content: 'Done',
       ...(toolName === 'exit_plan_mode' ? { metadata: { result_kind: 'plan_mode_transition', plan_decision: 'approved' } } : {}),
     });
@@ -131,12 +121,11 @@ test('attention follows resolution, stale questions and terminal cleanup without
 });
 
 test('all waiting indicators select amber rules and only streaming selects pulse rules', (t) => {
-  const dom = new JSDOM('<div class="session-row"><span class="session-row__dot"></span></div><div class="workspace-rail-tab"><span class="workspace-rail-state-dot"></span></div><button class="chats-strip__chip"></button>');
+  const dom = new JSDOM('<div class="session-row"><span class="session-row__dot"></span></div><div class="workspace-rail-tab"><span class="workspace-rail-state-dot"></span></div>');
   t.after(() => dom.window.close());
   for (const [file, selector, property] of [
     ['chats-panel.css', '.session-row', 'background'],
     ['workspace-rail.css', '.workspace-rail-tab', 'background'],
-    ['chats-panel-collapsed.css', '.chats-strip__chip', 'background'],
   ]) {
     const css = readFileSync(require.resolve(`../styles/${file}`), 'utf8');
     const node = dom.window.document.querySelector(selector);

@@ -96,3 +96,12 @@ test('a sandbox Run bound to the other mode keeps Copy only; bindings validate t
     binding: { ...synced.binding, command: { ...synced.binding.command, backend: 'native', shell: 'cmd.exe', workspace: 'copy' } } });
   assert.equal(native.ok, false, 'only Docker bindings name a mode');
 });
+
+test('a command that keeps running (a server or watcher) keeps Copy only, after the earlier gates', () => {
+  const ctx = { now: NOW, commandRunSupported: true };
+  assert.deepEqual(R.projectProposal(makeCommand(1, 'python -m http.server 8766'), ctx).actions.run,
+    { available: false, reason: 'long_running' });
+  assert.equal(R.projectProposal(makeCommand(2, 'npm test'), ctx).actions.run.available, true);
+  assert.deepEqual(R.projectProposal(makeCommand(3, 'npm run dev'), { ...ctx, readOnly: true }).actions.run,
+    { available: false, reason: 'read_only' }, 'earlier gates keep precedence');
+});

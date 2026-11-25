@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeText: normalizeString } = require('../shared/normalize');
+const { contextBudgetFor } = require('./live-context-usage');
 
 function normalizeFiniteNumber(value) {
   const numeric = Number(value);
@@ -161,7 +162,8 @@ function deriveStatus(items) {
   return 'ok';
 }
 
-function buildResourceBudgetFacet(payload = {}) {
+// `context` is how full the calling chat's window is (live-context-usage.js), or null.
+function buildResourceBudgetFacet(payload = {}, { service = null, sessionId = '' } = {}) {
   const items = [];
   appendResourcePressure(items, payload.resources);
   appendToolPressure(items, payload.tool_observability);
@@ -189,6 +191,7 @@ function buildResourceBudgetFacet(payload = {}) {
       tools: collectToolPercentiles(payload.tool_observability),
       phases: collectPhasePercentiles(payload.phase_percentiles),
     },
+    context: contextBudgetFor(service, sessionId),
   };
 }
 

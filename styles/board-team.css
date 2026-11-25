@@ -126,14 +126,29 @@
   pointer-events: none;
 }
 
+/* A pointer is placed and counter-scaled by `transform` from board-team-presence.js; its hue is one of eight by `data-hue`, from theme tokens. */
 .board-team-cursor {
+  --board-team-hue: var(--accent);
   position: absolute;
+  left: 0; /* rtl:physical: board coordinates; the pointer is placed by transform from the canvas's left edge */
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
   display: flex;
   align-items: flex-start;
   gap: 2px;
   pointer-events: none;
-  color: var(--accent);
+  color: var(--board-team-hue);
 }
+
+.board-team-cursor[data-hue="0"] { --board-team-hue: var(--accent); }
+.board-team-cursor[data-hue="1"] { --board-team-hue: var(--accent-cyan); }
+.board-team-cursor[data-hue="2"] { --board-team-hue: var(--accent-amber); }
+.board-team-cursor[data-hue="3"] { --board-team-hue: var(--state-success); }
+.board-team-cursor[data-hue="4"] { --board-team-hue: var(--state-danger); }
+.board-team-cursor[data-hue="5"] { --board-team-hue: color-mix(in srgb, var(--accent) 55%, var(--state-danger)); }
+.board-team-cursor[data-hue="6"] { --board-team-hue: color-mix(in srgb, var(--state-success) 55%, var(--accent-amber)); }
+.board-team-cursor[data-hue="7"] { --board-team-hue: color-mix(in srgb, var(--accent-amber) 55%, var(--state-danger)); }
 
 .board-team-cursor svg {
   width: 16px;
@@ -147,7 +162,7 @@
   margin-block-start: 12px;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
-  background: var(--accent);
+  background: var(--board-team-hue);
   color: var(--bg-base);
   font-size: var(--font-size-caption);
   font-weight: 600;
@@ -326,6 +341,14 @@
   grid-row: 1 / span 2;
   align-self: center;
   margin-inline-start: 0;
+}
+
+.board-team-deleted__error {
+  margin: var(--space-2) 0 var(--space-1);
+  padding-inline: var(--space-4);
+  color: var(--text-danger-soft);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
 }
 
 .board-team-deleted__note {

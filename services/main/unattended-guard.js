@@ -9,6 +9,9 @@ function createUnattendedGuard({
   isEnabled,
   sendBridgeEvent,
   log,
+  // Row 196: how long ago the owner last really used the keyboard or mouse (ms), or null. Windows' idle
+  // time counts the input a computer turn injects, so while one runs this is the owner's real idle time.
+  getRealInputAgeMs = null,
   intervalMs = 30000,
   now = Date.now,
   setIntervalFn = setInterval,
@@ -19,6 +22,24 @@ function createUnattendedGuard({
   let timer = null;
   let unavailable = false;
   let unavailableLogged = false;
+  let realInput = null; // { ageMs, at }: read on the last tick (the read is asynchronous)
+
+  function refreshRealInput() {
+    if (typeof getRealInputAgeMs !== 'function') return;
+    let pending;
+    try { pending = getRealInputAgeMs(); } catch (_error) { realInput = null; return; }
+    Promise.resolve(pending).then((ageMs) => {
+      realInput = Number.isFinite(ageMs) && ageMs >= 0 ? { ageMs, at: now() } : null;
+    }, () => { realInput = null; });
+  }
+
+  /** The idle seconds to judge by: the owner's real idle time while a computer turn's watch answers. */
+  function idleSecondsNow() {
+    const system = powerMonitor.getSystemIdleTime();
+    const fresh = realInput && now() - realInput.at <= intervalMs * 2 ? realInput.ageMs / 1000 : null;
+    refreshRealInput();
+    return Number.isFinite(fresh) && Number.isFinite(system) ? Math.max(system, fresh) : system;
+  }
 
   // A throw counts as not armed: an unreadable Full auto state keeps the pause.
   function isArmed(sessionId) {
@@ -36,7 +57,7 @@ function createUnattendedGuard({
       if (!Number.isFinite(thresholdMinutes) || thresholdMinutes < 1) return;
 
       const backend = getBackendService();
-      const idleSeconds = powerMonitor.getSystemIdleTime();
+      const idleSeconds = idleSecondsNow();
       if (!Number.isFinite(idleSeconds) || idleSeconds < thresholdMinutes * 60) return;
 
       const store = backend?.sessionStore;

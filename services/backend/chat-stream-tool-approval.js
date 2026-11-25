@@ -13,6 +13,7 @@ const {
   peekToolLookupMessages,
 } = require('./chat-stream-tool-payload-utils');
 const planDocuments = require('./plan-document-events');
+const { computerApprovalFields } = require('./computer-use-chat-fields');
 const { SESSION_STOP_SCOPE, TOOL_NAME: SESSION_STOP_TOOL, sessionStopApprovalFields } = require('./session-stop-approval');
 const { SETTINGS_CHANGE_SCOPE, TOOL_NAME: SETTINGS_CHANGE_TOOL, settingsChangeApprovalFields } = require('./settings-change-approval');
 const { SCHEDULE_CHANGE_SCOPE, TOOL_NAME: SCHEDULE_CHANGE_TOOL, scheduleChangeApprovalFields } = require('./schedule-change-approval');
@@ -38,11 +39,11 @@ const _setTimeout = setTimeout;
 const _clearTimeout = clearTimeout;
 // Only a tool's own consent executes it. A plan decision token (`accepted`,
 // `rejected`) consents to a plan, never to another tool; a message send is
-// consented only by an explicit `approved` (so is a browser step); `exit_plan_mode` takes any plan
+// consented only by an explicit `approved` (so is a browser step and a computer grant); `exit_plan_mode` takes any plan
 // decision (resolvePlanApprovalState already fails unknown tokens closed).
 const EXECUTING_APPROVAL_STATES = new Set(['approved', 'approved_auto']);
 function approvalExecutes(toolName, state) {
-  if (toolName === 'session_message' || toolName === 'browser') return state === 'approved';
+  if (toolName === 'session_message' || toolName === 'browser' || toolName === 'computer') return state === 'approved';
   if (toolName === 'exit_plan_mode') return state !== 'denied';
   return EXECUTING_APPROVAL_STATES.has(state);
 }
@@ -147,7 +148,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     });
     return appRefused(projectRefusal);
   }
-  const messageFields = { ...sessionMessageApprovalFields(params), ...browserApprovalFields(params) };
+  const messageFields = { ...sessionMessageApprovalFields(params), ...browserApprovalFields(params), ...computerApprovalFields(params) };
   // Only a stop, a settings change and a scheduled-check change await here (every other approval registers synchronously); read
   // before the duplicate check below, which stays synchronous with the waiter's registration. The
   // settings card's rows are the app's own reading (row 88 D3), remembered by the port under this call.
@@ -157,6 +158,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
   // Missing exact-content presentation must fail closed; never ask over a clipped preview.
   if (toolName === 'session_message' && !messageFields.session_message_approval) return false;
   if (toolName === 'browser' && !messageFields.browser_approval) return false;
+  if (toolName === 'computer' && !messageFields.computer_approval) return false;
   const rememberOffer = toolName === 'session_message' ? linkedChildrenOffer(service, sessionId, turnEventCollector?.turnId || streamId, messageFields) : '';
 
   if (planDocuments.denyUnrenderablePlan(planApproval, persistTerminalApprovalResult, {

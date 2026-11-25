@@ -14,24 +14,21 @@ const {
   makeRoot,
 } = require('./helpers/renderer-chat-timeline-virtualizer-helpers');
 
-test('render strategies are mutually exclusive across the feature-flag matrix', (t) => {
+test('render strategies are mutually exclusive: over the threshold windows, at or under it skips paint', (t) => {
   const env = buildEnvironment();
   t.after(() => env.restore());
   const cases = [
-    { count: 81, boundsEnabled: true, contentVisibilityEnabled: true, expected: 'dom-window' },
-    { count: 80, boundsEnabled: true, contentVisibilityEnabled: true, expected: 'content-visibility' },
-    { count: 81, boundsEnabled: false, contentVisibilityEnabled: true, expected: 'content-visibility' },
-    { count: 81, boundsEnabled: false, contentVisibilityEnabled: false, expected: 'none' },
+    { count: 81, expected: 'dom-window' },
+    { count: 80, expected: 'content-visibility' },
   ];
   for (const scenario of cases) {
-    const v = createTimelineVirtualizer({
-      chatTimeline: makeChatTimeline(bulkEntries(scenario.count)),
-      document: makeFakeDocument(),
-      boundsEnabled: scenario.boundsEnabled,
-      contentVisibilityEnabled: scenario.contentVisibilityEnabled,
-    });
+    const chatTimeline = makeChatTimeline(bulkEntries(scenario.count));
+    const attributes = {};
+    chatTimeline.setAttribute = (name, value) => { attributes[name] = value; };
+    const v = createTimelineVirtualizer({ chatTimeline, document: makeFakeDocument() });
     v.rebuild();
     assert.equal(v._internals.getStrategy(), scenario.expected, JSON.stringify(scenario));
+    assert.equal(attributes['data-timeline-render-strategy'], scenario.expected);
     v.dispose();
   }
 });

@@ -55,7 +55,10 @@
       value: viewState.apiUrl,
       placeholder: ENGINE_DEFAULT_URLS[viewState.engineType] || ENGINE_DEFAULT_URLS.ollama,
       disabled: disabled,
-      hint: jt('setup.endpoint.apiUrlHint', 'Use a localhost or private-network URL. http(s):// only.'),
+      hint: jt('setup.endpoint.apiUrlHint', 'Use a localhost or private-network URL. http(s):// only.')
+        + (viewState.engineType === 'openai-compatible'
+          ? ' ' + jt('setup.endpoint.strataHint', 'Running Strata? Start it with --no-api-key --parallel 4, so background requests keep their own slots.')
+          : ''),
     }) : '';
     var actionsHtml = '';
     if (actionButton) {

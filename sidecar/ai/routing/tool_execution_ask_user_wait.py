@@ -1,8 +1,10 @@
 """Human-interaction wait credit for ``tool_execution.execute_tool``.
 
-``ask_user`` and Electron's ``session_message.send`` can wait on a human; that wait
-must not burn the turn's working-time budget (mirrors approval-wait crediting
-in ``sidecar.runtime.request_dispatch_chat._credit_approval_wait``). The pair
+``ask_user`` and Electron's ``session_message.send`` can wait on a human, and Electron's
+``run_view_restart`` waits on the Live tab's build and window (row 197: the turn's clocks stop
+while it runs, as Electron's own idle watchdog does); that wait must not burn the turn's
+working-time budget (mirrors approval-wait crediting in
+``sidecar.runtime.request_dispatch_chat._credit_approval_wait``). The pair
 below measures the wait and, once dispatch settles -- answered, declined, or
 errored -- pushes ``runtime.wall_clock_deadline`` forward by the elapsed
 amount. ``StopController`` reads that field live (``loop_stop._check_wall_clock``),
@@ -14,7 +16,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from sidecar.ai.routing.iteration_limits import BROWSER_USE_TOOL_ID
+from sidecar.ai.routing.iteration_limits import (
+    BROWSER_USE_TOOL_ID,
+    COMPUTER_USE_TOOL_ID,
+    RUN_VIEW_RESTART_TOOL_ID,
+)
 from sidecar.ai.tools.models import ToolCallRequest
 
 # Electron's consent guard can extend a pending answer to 4 hours at most.
@@ -24,12 +30,14 @@ _MAX_BROWSER_CONSENT_WAIT_SECONDS = 4 * 60 * 60.0
 def ask_user_wait_started_at(
     runtime: Any | None, call: ToolCallRequest, descriptor: Any = None,
 ) -> float | None:
-    """Measure only an answer or a trusted exact-content message consent."""
+    """Measure only an answer, a trusted exact-content message consent, or a trusted Live tab
+    restart."""
+    from_bridge = getattr(descriptor, "server_name", "") == "electron_tool_bridge"
     message_consent = (
-        call.tool_id == "session_message" and call.arguments.get("action") == "send"
-        and getattr(descriptor, "server_name", "") == "electron_tool_bridge"
+        call.tool_id == "session_message" and call.arguments.get("action") == "send" and from_bridge
     )
-    if runtime is None or (call.tool_id != "ask_user" and not message_consent):
+    live_restart = call.tool_id == RUN_VIEW_RESTART_TOOL_ID and from_bridge
+    if runtime is None or (call.tool_id != "ask_user" and not message_consent and not live_restart):
         return None
     return runtime.clock()
 
@@ -52,7 +60,7 @@ def credit_ask_user_wait(runtime: Any | None, wait_started_at: float | None) -> 
 def credit_browser_consent_wait(
     runtime: Any | None, call: ToolCallRequest, descriptor: Any, outcome: Any,
 ) -> None:
-    """Credit the human consent wait the Electron browser tool reports in its result.
+    """Credit the human consent wait the Electron browser or computer tool reports in its result.
 
     A whole-dispatch measurement would also credit page loads, so the browser
     tool reports ``human_wait_ms`` in its result metadata and only that is
@@ -63,7 +71,7 @@ def credit_browser_consent_wait(
     try:
         if (
             runtime is None
-            or call.tool_id != BROWSER_USE_TOOL_ID
+            or call.tool_id not in (BROWSER_USE_TOOL_ID, COMPUTER_USE_TOOL_ID)
             or getattr(descriptor, "server_name", "") != "electron_tool_bridge"
         ):
             return

@@ -53,22 +53,35 @@ function render(overrides, extraHelpers) {
   return notesRender.renderNotesRailSurface(model(overrides), { ...helpers, ...extraHelpers });
 }
 
-test('header names the project and offers Tasks and a pressed Notes button', () => {
-  const doc = dom(render());
-  assert.equal(doc.querySelector('.notes-rail__header b').textContent, 'Alpha');
-  const tasks = doc.querySelector('[data-action="notes-rail-switch-tasks"]');
-  assert.ok(tasks);
-  assert.equal(tasks.getAttribute('aria-label'), 'Tasks');
-  const pressed = doc.querySelector('.notes-rail__mode [aria-pressed="true"]');
-  assert.ok(pressed);
-  assert.equal(pressed.getAttribute('aria-label'), 'Notes');
-  assert.equal(doc.querySelector('.notes-rail__mode').querySelectorAll('button').length, 2);
+test('the Notes content starts with the shared head row: the project name and a Tasks | Notes switch with Notes checked', () => {
+  const doc = dom(render({ openCount: 2 }));
+  const section = doc.querySelector('.notes-rail');
+  assert.equal(section.firstElementChild.className, 'project-tab-head', 'the head row is the first thing in the content');
+  assert.equal(doc.querySelectorAll('.project-tab-head').length, 1);
+  assert.equal(doc.querySelector('.project-tab-name').textContent, 'Alpha');
+  assert.equal(doc.querySelector('.project-tab-name').getAttribute('title'), 'Alpha');
+  const group = doc.querySelector('.project-tab-head [role="radiogroup"]');
+  assert.equal(group.getAttribute('aria-label'), 'Show tasks or notes');
+  const radios = [...group.querySelectorAll('[role="radio"]')];
+  assert.deepEqual(radios.map((radio) => radio.textContent), ['Tasks 2', 'Notes']);
+  assert.deepEqual(radios.map((radio) => radio.getAttribute('aria-checked')), ['false', 'true']);
+  // The old header row and its leftover icon pair are gone.
+  assert.equal(doc.querySelector('.notes-rail__header'), null);
+  assert.equal(doc.querySelector('.notes-rail__mode'), null);
+  assert.equal(doc.querySelector('[data-action="notes-rail-switch-tasks"]'), null);
+  assert.equal(doc.querySelector('.project-tab-head').querySelectorAll('button').length, 2, 'only the two segments');
+});
+
+test('with no project the head row says so', () => {
+  const doc = dom(notesRender.renderNoProject({ escapeHtml }));
+  assert.equal(doc.querySelector('.project-tab-name').textContent, 'No project');
+  assert.match(doc.querySelector('.notes-rail__empty').textContent, /Open a chat to see its project notes\./);
 });
 
 test('the project name is escaped', () => {
   const doc = dom(render({ projectName: '<img src=x onerror=alert(1)>' }));
   assert.equal(doc.querySelector('img'), null);
-  assert.match(doc.querySelector('.notes-rail__header b').textContent, /<img/);
+  assert.match(doc.querySelector('.project-tab-name').textContent, /<img/);
 });
 
 test('preview renders markdown line by line inside a keyboard-reachable edit target', () => {
@@ -106,10 +119,10 @@ test('blank lines render as spacing, not as the empty-preview message', () => {
   assert.equal(doc.body.textContent.includes('Nothing to preview'), false);
 });
 
-test('an empty note shows the project-named empty copy inside the edit target', () => {
+test('an empty note says what would appear and how to get it, inside the edit target', () => {
   const doc = dom(render({ note: note({ text: '' }) }));
   const preview = doc.querySelector('.notes-rail__preview');
-  assert.match(preview.textContent, /No notes for Alpha yet\. Jenny keeps status and decisions here as she works, and you can write here too\./);
+  assert.match(preview.textContent, /No notes for Alpha yet\. Ask Jenny to note something, or click here to write one\./);
   assert.equal(preview.dataset.action, 'notes-rail-edit');
 });
 

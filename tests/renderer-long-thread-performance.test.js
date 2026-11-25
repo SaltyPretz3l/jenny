@@ -91,8 +91,8 @@ test('R2 long streaming tail stays within the focused projection budget', () => 
   assert.ok(elapsedMs < PERF_BUDGET_MS * 4, `100 streaming projections took ${elapsedMs.toFixed(1)}ms`);
 });
 
-function buildHydratedProjection(messages, enabled) {
-  const state = { features: { featureFlags: { chat_long_thread_bounds: enabled } }, pendingStreams: new Map(), ui: {} };
+function buildHydratedProjection(messages) {
+  const state = { features: { featureFlags: {} }, pendingStreams: new Map(), ui: {} };
   const hydration = createHydrationPipeline({
     state,
     callbacks: {
@@ -117,7 +117,7 @@ function buildHydratedProjection(messages, enabled) {
 
 test('R2 retains identical full projection while capping only rebuildable turn cache', () => {
   const messages = buildCorpus(220, 'tool');
-  const bounded = buildHydratedProjection(messages, true);
+  const bounded = buildHydratedProjection(messages);
   assert.equal(bounded.projection.turnTree.turns.length, 220);
   assert.equal(bounded.projection.rowsByTurnId.size, 220);
   assert.equal(bounded.cache.size, BUDGETS.projectedTurns);
@@ -125,15 +125,10 @@ test('R2 retains identical full projection while capping only rebuildable turn c
   assert.equal(bounded.stats.projectedTurnCacheEntries, BUDGETS.projectedTurns);
   assert.equal(bounded.stats.projectedTurns, 220);
   assert.ok(Number.isFinite(bounded.stats.projectionMs));
-
-  const rollback = buildHydratedProjection(messages, false);
-  assert.equal(rollback.projection.turnTree.turns.length, bounded.projection.turnTree.turns.length);
-  assert.equal(rollback.projection.rowsByTurnId.size, bounded.projection.rowsByTurnId.size);
-  assert.ok(rollback.cache.size > BUDGETS.projectedTurns, 'rollback restores the prior full cache');
 });
 
 function createCountingHydration() {
-  const state = { features: { featureFlags: { chat_long_thread_bounds: true } }, pendingStreams: new Map(), ui: {} };
+  const state = { features: { featureFlags: {} }, pendingStreams: new Map(), ui: {} };
   const counter = { projectTurn: 0 };
   const hydration = createHydrationPipeline({
     state,

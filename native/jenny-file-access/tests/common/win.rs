@@ -278,6 +278,8 @@ pub struct Injected {
     pub self_check: Option<SysError>,
     /// How many times the root was opened through this probe.
     pub opens: Cell<u32>,
+    /// How many times the self-check ran through this probe.
+    pub self_checks: Cell<u32>,
 }
 
 impl Injected {
@@ -290,6 +292,7 @@ impl Injected {
             volume: None,
             self_check: None,
             opens: Cell::new(0),
+            self_checks: Cell::new(0),
         }
     }
 }
@@ -316,6 +319,7 @@ impl SystemProbe for Injected {
     }
 
     fn self_check(&self, root: &OwnedHandle) -> Result<(), SysError> {
+        self.self_checks.set(self.self_checks.get() + 1);
         match self.self_check {
             Some(error) => Err(error),
             None => RealProbe.self_check(root),

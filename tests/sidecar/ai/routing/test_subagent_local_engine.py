@@ -315,3 +315,21 @@ def test_guidance_offers_the_local_alias_only_to_a_cloud_parent_with_a_helper() 
         "engine_type": "openai-compatible", "model": "qwen3.8-27b",
         "local_subagent_engine": _raw(), "local_subagent_api_key": "k"})
     assert "Local engine" not in render_subagent_model_guidance(local_parent)
+
+
+def test_a_local_helper_under_a_cloud_parent_keeps_the_local_step_budget() -> None:
+    from sidecar.ai.routing.delegate_contracts import DelegateTask
+    from sidecar.ai.routing.subagent_model_routing import SubagentModelRoute, invoke_routed_task
+
+    seen: dict[str, Any] = {}
+
+    def invoke(**kwargs: Any) -> str:
+        seen.update(kwargs)
+        return "done"
+
+    route = SubagentModelRoute("ninfer", "qwen3.8-27b", None, 32768, local=True)
+    invoke_routed_task(
+        router=_router(_routed_parent()), parent_context=_context(),
+        task=DelegateTask(1, "x", model="local"), identity=None, invoke=invoke,
+        invocation_kwargs={"iteration_budget_override": 60}, route=route, local_step_budget=10)
+    assert seen["iteration_budget_override"] == 10

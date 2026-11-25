@@ -48,8 +48,6 @@ const { notDeployedReason, readSavedHostConfig, savedDirectPort, savedInternet, 
 
 // The most entries the server page's size walks; a larger folder shows no size rather than holding the main process.
 const SUMMARY_WALK_LIMIT = 200_000;
-// The time the running server gets to carry "deleted by its owner" to connected members before it stops.
-const NOTICE_MS = 1500;
 // What the owner types to delete an old team whose name could not be read.
 const OLD_CONFIRM_WORD = 'delete';
 const fail = (reason) => teamFailure('HOST_UNAVAILABLE', reason);
@@ -60,13 +58,12 @@ const hostStopped = (answer) => answer?.ok === true && ['stopped', 'failed'].inc
   && answer.host?.reason !== 'team_host_exit_unconfirmed';
 
 /**
- * `host`: the controller's parts — { keys, tokens, keyState(), running(), notifyDeleting(), stop(), deploy(payload),
+ * `host`: the controller's parts — { keys, tokens, keyState(), running(), stop(), deploy(payload),
  * start({ display_name, label }), forgetMembership(teamId), state() }. `pick`: { folder(), file(), open(path) }
  * (Electron's dialogs and shell, or test doubles).
  */
 function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () => null, bounds = {}, now = Date.now, say = () => {} }) {
   const root = path.join(userDataPath, 'team-host');
-  const noticeMs = Number.isSafeInteger(bounds.noticeMs) ? bounds.noticeMs : NOTICE_MS;
   // The backup file each window picked for Restore, by sender id; paths in main only, never answered.
   const picked = new Map();
   // The windows already watched for their close: one listener a window, however often it picks (X3d-F01).
@@ -123,7 +120,7 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     return { ok: true, inventory: await readInventory(real, { running: host.running(), now: now() }) };
   }
 
-  // Everything that can refuse comes before the members are told: the root, the owner, the name, a link anywhere.
+  // Everything that can refuse comes before the server stops: the root, the owner, the name, a link anywhere.
   async function remove({ name }) {
     if (teamHostRoot(userDataPath) === 'link') return fail('team_delete_link');
     await sweep();
@@ -134,10 +131,9 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     const checked = await checkDeletable(userDataPath);
     if (!checked.ok) return { ...fail(checked.reason), ...(checked.project_id ? { project_id: checked.project_id } : {}) };
     const teamId = savedMembers(realRoot()).teamId || teamIdOfKey(host.keys);
-    if (host.running()) {
-      host.notifyDeleting();
-      await new Promise((resolve) => { setTimeout(resolve, noticeMs); });
-    }
+    // OD-6, as the headless team-delete: the server stops and the files are committed first. No member is told while a
+    // locked file can still roll the delete back (a permanent notice could not be taken back); the members of a
+    // server that is gone see it unreachable, as after a headless delete.
     if (!(await stopHost())) return invalidRequest('team_host_busy');
     const files = await removeTeamFiles(userDataPath);
     say('INFO', 'team.host.delete', { ok: files.ok, ...(files.ok ? {} : { reason: files.reason }) });
@@ -187,11 +183,13 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     return opened === false ? fail('team_open_failed') : { ok: true };
   }
 
-  // Start with Jenny: the saved setting, then every window is told. No lock: one small file, written whole.
+  // Start with Jenny: the saved setting, then every window is told. The owner's (as every whole-team call) and
+  // under the lock a manual start holds.
   function autostart({ enabled }) {
     if (teamHostRoot(userDataPath) === 'link') return fail('team_host_link');
     const real = realRoot();
     if (!real || !savedTeamName(readSavedHostConfig(userDataPath))) return fail(notDeployedReason(userDataPath));
+    if (!ownerOrKeyLost().ok) return invalidRequest('team_owner_only');
     try { writeAutostart(real, enabled); } catch { return fail('team_autostart_write_failed'); }
     host.push();
     return { ok: true, host: host.state() };
@@ -325,7 +323,7 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
   async function handle(method, value, { exclusive, sender = null }) {
     if (method === 'hostRestorePick') return restorePick(sender);
     if (method === 'hostOldShow') return oldShow(value);
-    if (method === 'hostAutostart') return autostart(value);
+    if (method === 'hostAutostart') return exclusive(() => autostart(value));
     if (method === 'hostSummary') return summary();
     if (method === 'hostOpenFolder') return openFolder();
     if (method === 'hostExport') {

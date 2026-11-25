@@ -18,6 +18,7 @@ const {
   DEFAULT_SPLIT_RATIO,
   deriveCurrentSessionId,
   normalizePaneLayout,
+  normalizeTabPanes,
   resolvePaneForSession,
 } = require('../renderer/shell/renderer-pane-model');
 
@@ -381,7 +382,19 @@ function normalizeWorkspaceState(value = {}, validSessionIds = null) {
     activeSessionId: deriveCurrentSessionId(layout) || activeSessionId,
     openSessionIds,
     ...layout,
+    ...tabPanesField(normalizeTabPanes(source.tabPanes, { openSessionIds, panes: layout.panes })),
   };
+}
+
+// `tabPanes` (v60: which pane each open tab belongs to, sessionId -> 1) is
+// stored only while it names a tab, so a one-pane workspace keeps its shape.
+function tabPanesField(tabPanes) {
+  return tabPanes && Object.keys(tabPanes).length ? { tabPanes: { ...tabPanes } } : {};
+}
+
+/** The `{ tabPanes }` slice of a stored workspace as a fresh copy, or `{}` while empty. */
+function copyTabPanes(workspace) {
+  return tabPanesField(workspace && workspace.tabPanes);
 }
 
 const PANE_FOCUS_PATCH_KEYS = ['panes', 'focusedPaneId', 'pane_layout', 'focused_pane_id'];
@@ -394,6 +407,10 @@ const PANE_FOCUS_PATCH_KEYS = ['panes', 'focusedPaneId', 'pane_layout', 'focused
  * already showing that session, otherwise show it in the focused pane.
  */
 function mergeWorkspacePatch(current = {}, patch = {}) {
+  return withTabPanes(mergeWorkspaceLayout(current, patch));
+}
+
+function mergeWorkspaceLayout(current, patch) {
   const merged = { ...current, ...patch };
   const railOnly = Object.prototype.hasOwnProperty.call(patch, 'activeSessionId')
     && !PANE_FOCUS_PATCH_KEYS.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
@@ -406,6 +423,19 @@ function mergeWorkspacePatch(current = {}, patch = {}) {
     ...merged,
     panes: layout.panes.map((pane) => (pane.paneId === layout.focusedPaneId ? activeSessionId : pane.sessionId)),
     focusedPaneId: layout.focusedPaneId,
+  };
+}
+
+// A merged workspace that carries tabPanes has it re-normalized against the
+// merged open tabs and panes, so a closed tab never keeps its entry.
+function withTabPanes(merged) {
+  if (!Object.prototype.hasOwnProperty.call(merged, 'tabPanes')) return merged;
+  return {
+    ...merged,
+    tabPanes: normalizeTabPanes(merged.tabPanes, {
+      openSessionIds: normalizeWorkspaceSessionIdList(merged.openSessionIds || merged.open_session_ids, null),
+      panes: merged.panes,
+    }),
   };
 }
 
@@ -422,7 +452,8 @@ function workspaceStateView(workspace = {}) {
   };
   const layout = toPlainPaneLayout(normalizePaneLayout(workspace));
   const seeded = normalizeWorkspacePaneLayout({}, workspace.activeSessionId, workspace.openSessionIds, null);
-  return JSON.stringify(layout) === JSON.stringify(seeded) ? view : { ...view, ...layout };
+  const withLayout = JSON.stringify(layout) === JSON.stringify(seeded) ? view : { ...view, ...layout };
+  return { ...withLayout, ...copyTabPanes(workspace) };
 }
 
 module.exports = {
@@ -441,6 +472,7 @@ module.exports = {
   UNATTENDED_GUARD_MINUTES_DEFAULT,
   UNATTENDED_GUARD_MINUTES_MAX,
   cloneFeatureOverrides,
+  copyTabPanes,
   hasOwnConfigField,
   isToolsWorktreeEnabled,
   mergeWorkspacePatch,

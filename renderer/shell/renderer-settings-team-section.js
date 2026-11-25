@@ -88,57 +88,32 @@
     return roster.some((member) => member.state === 'active' && member.member_id !== hosted.member_id);
   }
 
-  function statusOf(host, seats) {
-    if (!host) return null;
-    // E64: while Force local is on the Server line is the state line, deployed or not, the hold's stop included; a
-    // deployed team's Start stays, greyed with it (view.button).
-    if (host.force_local === true) {
-      return { tone: 'blocked', value: words.forceLocalText(), action: host.deployed && host.team_name ? 'start' : null };
-    }
-    if (lifecycle.keyLost(host)) return lifecycle.status(host); // slice 5-6: a lost key cannot start
-    const startable = Boolean(host.team_name);
-    switch (host.state) {
-      case 'running':
-        return { tone: 'ready', value: jt('settings.team.status.running', 'Running on this PC'), action: 'stop',
-          note: seats === null ? '' : jt('settings.team.status.seats', '{count} of {max} seats', { count: seats, max: teamStore.MAX_MEMBERS }) };
-      case 'starting': return { tone: '', value: jt('settings.team.status.starting', 'Starting…') };
-      case 'stopping': return { tone: '', value: jt('settings.team.status.stopping', 'Stopping…') };
-      case 'failed':
-        return { tone: 'blocked', value: jt('settings.team.status.failed', 'Stopped with a problem'),
-          note: words.errorText({ code: 'CMP-TEAM-0006', reason: host.reason }),
-          action: startable && host.reason !== 'team_host_platform_unavailable' ? 'start' : null,
-          actionDisabled: host.reason === 'team_host_exit_unconfirmed' };
-      case 'stopped':
-        if (!host.deployed) return null;
-        return { tone: 'blocked', value: jt('settings.team.status.stopped', 'Stopped'), action: startable ? 'start' : null,
-          note: jt('settings.team.status.stoppedNote', 'Nobody can connect until you start it. Nothing was deleted.'),
-          notes: host.reason && host.reason !== 'team_host_stopped' ? [words.errorText({ code: 'CMP-TEAM-0006', reason: host.reason })] : [] };
-      default: return { tone: '', value: jt('settings.team.status.unknown', 'Unavailable') };
-    }
-  }
-
   function viewModel() {
     const { host, teams, lists: allLists } = data();
     const hosted = store().hostedTeam();
     const lists = hosted ? allLists[hosted.team_id] || {} : {};
     const hosting = Boolean(host && host.state === 'running' && hosted);
     const online = hosting && hosted.state === 'online';
+    // H20: this PC's own place in the team it runs was revoked: the owner can reclaim it here, and the team is listed to remove.
+    const revokedHostedId = hosted && hosted.state === 'revoked' ? hosted.team_id : '';
     const reuse = reusedNames();
     const draft = live.drafts;
     // The Remove confirm of a needs_repair row lasts only while that row still needs repair.
     if (live.confirm.startsWith('remove-team:')
       && !teams.some((team) => live.confirm === 'remove-team:' + team.team_id && team.state === 'needs_repair')) live.confirm = '';
     return {
-      host, hosting, online, status: statusOf(host, online && lists.roster ? lists.roster.length : null), forceLocal: store().forceLocal(),
+      host, hosting, online, revokedHostedId, status: lifecycle.hostStatus(host, online && lists.roster ? lists.roster.length : null, teamStore.MAX_MEMBERS), forceLocal: store().forceLocal(),
       hosted: hosting ? { team: hosted, owner: online && hosted.role === 'owner', roster: lists.roster || null, invites: lists.invites,
         devices: lists.devices, audit: lists.audit } : null,
-      joined: teams.filter((team) => team.state === 'needs_repair' || !(host && host.deployed && team.team_id === host.team_id)),
+      joined: teams.filter((team) => team.state === 'needs_repair' || team.team_id === revokedHostedId || !(host && host.deployed && team.team_id === host.team_id)),
       teamCount: teams.length, maxTeams: teamStore.MAX_TEAMS, maxMembers: teamStore.MAX_MEMBERS,
       needNames: !(reuse.displayName && reuse.label),
       names: { displayName: draft.displayName ?? reuse.displayName, label: draft.label ?? reuse.label },
       showHost: Boolean(host && !host.deployed && !ACTIVE_HOST.has(host.state)),
       stoppedHere: Boolean(host && host.deployed && !hosting),
-      reclaim: Boolean(host && host.state === 'running' && host.team_id && !hosted),
+      reclaim: Boolean(host && host.state === 'running' && host.team_id && (!hosted || revokedHostedId)),
+      // OD-7: Deploy cannot work on this platform, as the host state says (`desktop_hosting`, or the platform reason).
+      platformBlocked: Boolean(host && (host.desktop_hosting === false || host.reason === 'team_host_platform_unavailable')),
       drafts: draft, errors: live.errors, confirm: live.confirm, reveal: live.reveal, copied: live.copied, activity: live.activity,
       isBusy: (key) => live.busy.has(key),
       leaveExport: exporter() && exporter().state().origin === 'leave' ? exporter().state() : null, exportBusy: Boolean(exporter() && exporter().running()),
@@ -167,10 +142,10 @@
     let html = view.statusLine(vm) + summary + lifecycle.banner();
     if (vm.reclaim) html += view.reclaimGroup(vm);
     if (vm.needNames) html += view.youGroup(vm);
-    html += lifecycle.lostKeyGroup(vm, data()) + server.groupHtml(vm) + server.profileHtml(vm, data());
+    html += lifecycle.lostKeyGroup(vm, data()) + server.groupHtml(vm) + server.profileHtml(vm, data()) + (vm.teamCount ? densityHtml() : '');
     if (vm.hosting && vm.online) {
       html += ownerView.hostedGroups(vm, vm.hosted, net + share + (owner ? view.foldLast('use', gpu.ownerGroups(vm, data(), vm.hosted), isOpen) + models.hostGroup(vm, data(), vm.hosted) + files.hostGroup(vm, data(), vm.hosted) : ''), fold);
-    } else if ((vm.hosting || vm.stoppedHere) && !lost) {
+    } else if ((vm.hosting || vm.stoppedHere) && !lost && !vm.revokedHostedId) {
       html += view.group('people', jt('settings.team.people.heading', 'People'), {
         copy: vm.hosting ? jt('settings.team.people.connecting', 'People are listed once this Jenny is connected to the server.')
           : jt('settings.team.people.whileRunning', 'Members and invites are listed while the server runs.') });
@@ -187,6 +162,15 @@
     return html + fold('delete', lifecycle.deleteGroup(vm, data(), Boolean(vm.host && vm.host.deployed && (lost || owner || (vm.stoppedHere && vm.host.owner === true)))));
   }
 
+  // Row 193 C14: Team chat density (saved with Appearance, bound by the Settings view); it shows the density applied to the page.
+  function densityHtml() {
+    const binding = globalThis.rendererSettingsFieldBinding || require('./renderer-settings-field-binding');
+    const descriptors = globalThis.rendererSettingsFieldDescriptors || require('./renderer-settings-field-descriptors');
+    const descriptor = descriptors.getSettingDescriptor('appearanceTeamDensitySelect');
+    const applied = globalThis.document && globalThis.document.documentElement.dataset.teamDensity;
+    return '<div class="settings-group team-set-group" data-team-group="density">' + binding.renderSettingRow(descriptor, descriptors.normalizeSettingValue(descriptor, applied), {}) + '</div>';
+  }
+
   // Writes the page only when its markup changed, so an idle push keeps an open select and the focus.
   function render() {
     const target = body();
@@ -197,19 +181,13 @@
     server.ensure(render);
     if (html === lastHtml) return;
     const doc = target.ownerDocument;
-    const active = doc && doc.activeElement && target.contains(doc.activeElement) ? doc.activeElement : null;
-    const focusId = active && active.id;
-    const selection = active && typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    const refocus = view.keepFocus(target);
     // A secret field's text (a password, the relay token, a pasted code) is kept by the field only, across the rewrite.
     const secrets = Array.from(target.querySelectorAll('[data-team-secret]'), (el) => [el.id, el.value]).filter((pair) => pair[1]);
     target.innerHTML = html;
     for (const [id, value] of secrets) { const el = doc.getElementById(id); if (el) el.value = value; }
     lastHtml = html;
-    const again = focusId ? doc.getElementById(focusId) : null;
-    if (again && typeof again.focus === 'function') {
-      again.focus({ preventScroll: true });
-      if (selection && typeof again.setSelectionRange === 'function') { try { again.setSelectionRange(selection[0], selection[1]); } catch (_error) { /* not a text field */ } }
-    }
+    refocus();
   }
 
   // ----------------------------------------------------------------- reads
@@ -381,12 +359,28 @@
       ] });
   }
 
-  // Removing this PC, or the last device, asks first; any other device goes at once.
-  function revokeDevice(teamId, deviceId) {
-    const team = data().teams.find((t) => t.team_id === teamId);
-    const own = view.ownDevicesOf(team, data().lists[teamId]?.devices);
-    if (own.length <= 1 || (team && deviceId === team.device_id)) { live.confirm = 'device:' + deviceId; render(); return; }
-    void command('device-revoke:' + deviceId, 'devices', 'deviceRevoke', { team_id: teamId, device_id: deviceId });
+  // A removed device cannot be brought back from here (it needs a new code), so every removal asks first.
+  function revokeDevice(deviceId) {
+    live.confirm = 'device:' + deviceId;
+    live.opener = '[data-team-action="device-revoke"][data-device-id="' + deviceId + '"]';
+    render();
+  }
+
+  // Cancel or Escape: the strip closes and focus goes back to the button that opened it.
+  function cancelConfirm() {
+    stopLeaveExport(); live.confirm = ''; render();
+    const opener = live.opener && body().querySelector(live.opener);
+    live.opener = '';
+    if (opener) opener.focus({ preventScroll: true });
+  }
+  // Enter presses a form's own button; Escape closes the export form, else the confirm strip it is in.
+  function onKeydown(event) {
+    if (view.submitOnEnter(event)) return;
+    if (event.key !== 'Escape' || !event.target.closest) return;
+    if (lifecycle.onEscape(event, gpuContext)) { event.stopPropagation(); return; }
+    if (!live.confirm || !event.target.closest('.team-set-confirm')) return;
+    event.stopPropagation();
+    cancelConfirm();
   }
 
   function copyCode() {
@@ -433,7 +427,7 @@
     if (server.action(action, { render, target: button })) return;
     const hosted = store().hostedTeam();
     const hostedId = hosted && hosted.team_id;
-    const done = (_answer, s) => { s.confirm = ''; };
+    const done = (_answer, s) => { s.confirm = ''; s.opener = ''; };
     switch (action) {
       case 'deploy':
         if (!okText(live.drafts.teamName)) { live.errors.host = words.errorText({ reason: 'team_name_invalid' }); render(); return; }
@@ -454,11 +448,11 @@
       case 'admit': void command('admit:' + memberId, 'people', 'memberAdmit', { team_id: hostedId, member_id: memberId }); return;
       case 'decline': void command('decline:' + memberId, 'people', 'memberRevoke', { team_id: hostedId, member_id: memberId }); return;
       case 'more': openMore(button, memberId); return;
-      case 'confirm-cancel': stopLeaveExport(); live.confirm = ''; render(); return;
+      case 'confirm-cancel': cancelConfirm(); return;
       case 'confirm-remove': void command('remove:' + memberId, 'people', 'memberRevoke', { team_id: hostedId, member_id: memberId }, { after: done }); return;
       case 'confirm-owner': void command('owner:' + memberId, 'people', 'ownerTransfer', { team_id: hostedId, member_id: memberId }, { after: done }); return;
       case 'device-invite': void deviceInvite(teamId, teamId === hostedId ? 'devices' : 'joined'); return;
-      case 'device-revoke': revokeDevice(teamId, deviceId); return;
+      case 'device-revoke': revokeDevice(deviceId); return;
       case 'confirm-device': void command('device-revoke:' + deviceId, 'devices', 'deviceRevoke', { team_id: teamId, device_id: deviceId }, { after: done }); return;
       case 'leave': live.confirm = 'leave:' + teamId; render(); return;
       case 'leave-export': if (exporter()) void exporter().start({ teamId, scope: 'all', origin: 'leave' }); return;
@@ -529,7 +523,7 @@
     if (container) leaveTeamSection();
     container = next;
     lastHtml = null;
-    for (const [type, handler, capture] of [['click', onClick], ['input', onInput], ['change', onChange], ['toggle', onToggle, true]]) {
+    for (const [type, handler, capture] of [['click', onClick], ['input', onInput], ['change', onChange], ['keydown', onKeydown], ['toggle', onToggle, true]]) {
       container.addEventListener(type, handler, capture === true);
       removeListeners.push(() => next.removeEventListener(type, handler, capture === true));
     }

@@ -19,7 +19,7 @@ const {
 } = require('../../../server/team/transport/control-channel');
 const {
   KEY_BYTES,
-  MAX_PREAMBLE_SOCKETS,
+  MEMBER_MAX_PREAMBLE_SOCKETS,
   PREAMBLE_TIMEOUT_MS,
   SECRET_BYTES,
   requireBytes,
@@ -37,7 +37,7 @@ const REASONS = Object.freeze([
   'team_bridge_unavailable',
 ]);
 const DEFAULT_LIMITS = Object.freeze({
-  maxPreambleSockets: MAX_PREAMBLE_SOCKETS,
+  maxPreambleSockets: MEMBER_MAX_PREAMBLE_SOCKETS,
   maxStreams: 16,
   preambleTimeoutMs: PREAMBLE_TIMEOUT_MS,
   connectTimeoutMs: 10_000,

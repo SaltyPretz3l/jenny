@@ -9,6 +9,7 @@ never echoed: an in-band error surfaces only its charset-gated type.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Generator, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -479,11 +480,90 @@ def run_messages_stream(  # noqa: PLR0913 - transport and diagnostic callback co
         raise GenerationError(f"{label} streaming failed: {type(error).__name__}") from error
 
 
+# -- the reply fitted to the room its prompt leaves (row 183 W1) ------------------------------
+#
+# The Messages API refuses a request whose prompt plus ``max_tokens`` is over the window. With
+# the reply fitted here, budgeting holds back only the answer floor and the compaction trigger
+# can sit near 90% of the window. A misjudged fit costs one refused request: api_provider_http
+# keeps the error's three numbers and routing/retry.py resends with ``max_tokens`` lowered to the
+# room they show. A refused request runs nothing, so erring high is cheaper than truncating the
+# reply. The prompt is counted at chars/4 over the request and scaled by the provider-to-estimate
+# ratio of the last answered request on the engine.
+
+_CHARS_PER_TOKEN = 4
+# Claude's tokenizer and the request framing put a provider count above chars/4; a cold
+# request assumes this much until the first answer teaches the real ratio.
+COLD_SCALE = 1.5
+_SCALE_BAND = (1.0, 4.0)
+# Headroom for the estimate's error: the learned ratio comes from the last request, whose mix
+# of prose, code and JSON differs. At least this much, or a fiftieth of the prompt.
+MARGIN_TOKENS = 2_048
+_MARGIN_SHARE = 50
+# A reply is never fitted below this; the provider retry or the overflow compaction takes over.
+MIN_REPLY_TOKENS = 4_096
+# An image block is billed at roughly this many tokens; its base64 says nothing useful.
+_IMAGE_TOKENS = 1_600
+
+
+def estimate_payload_tokens(payload: Any) -> int:
+    """chars/4 over every string in the request, with a flat charge per image block."""
+    chars = 0
+    images = 0
+    stack = [payload]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            chars += len(item)
+        elif isinstance(item, dict):
+            if item.get("type") == "image":
+                images += 1
+                continue
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return chars // _CHARS_PER_TOKEN + images * _IMAGE_TOKENS
+
+
+class OutputFit:
+    """Per-engine fit state: the last request's estimate and the learned ratio."""
+
+    def __init__(self) -> None:
+        self.scale: float | None = None
+        self._pending_estimate = 0
+
+    def fit(self, payload: dict[str, Any], window: int | None) -> int:
+        """Clamp ``payload['max_tokens']`` to the room the prompt leaves; return the value sent."""
+        requested = int(payload.get("max_tokens") or 0)
+        estimate = estimate_payload_tokens({k: v for k, v in payload.items() if k != "max_tokens"})
+        self._pending_estimate = estimate
+        if not window or window <= 0 or requested <= 0:
+            return requested
+        prompt = math.ceil(estimate * (self.scale or COLD_SCALE))
+        room = int(window) - prompt - max(MARGIN_TOKENS, prompt // _MARGIN_SHARE)
+        fitted = min(requested, max(room, MIN_REPLY_TOKENS))
+        payload["max_tokens"] = fitted
+        return fitted
+
+    def learn(self, provider_prompt_tokens: Any) -> None:
+        """Take the provider's whole-prompt count for the request just fitted."""
+        estimate, self._pending_estimate = self._pending_estimate, 0
+        try:
+            provider = int(provider_prompt_tokens or 0)
+        except (TypeError, ValueError):
+            return
+        if provider <= 0 or estimate <= 0:
+            return
+        low, high = _SCALE_BAND
+        self.scale = min(max(provider / estimate, low), high)
+
+
 __all__ = [
     "PROVIDER_LABEL",
     "AnthropicHttpService",
     "FoldOutcome",
     "MessageFolder",
+    "OutputFit",
     "check_cancelled",
+    "estimate_payload_tokens",
     "run_messages_stream",
 ]

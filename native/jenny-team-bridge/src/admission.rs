@@ -5,7 +5,7 @@
 //! The two tables have no timers: an entry ages out when the table is next used, and a full
 //! table evicts its oldest entry. The caller passes the clock, so tests control time.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -27,6 +27,9 @@ pub const MAX_SOURCES: usize = 4096;
 /// fresh allowances: at most this many times the per-source rate per window come through the
 /// relay, and direct sources are never touched.
 pub const MAX_RELAYED_SOURCES: usize = 64;
+/// The most keys the parent may name as known (review C3): its admitted devices and live
+/// invites, far fewer than this on a team of eight.
+pub const MAX_KNOWN_KEYS: usize = 128;
 /// The most refused keys the cooldown table remembers.
 pub const MAX_COOLED_KEYS: usize = 4096;
 /// How often the summary line may be written.
@@ -167,6 +170,11 @@ pub struct Admission {
     rates: Aged<Source, Window>,
     /// Relayed sources, apart from `rates` so they can never evict a direct source.
     relayed_rates: Aged<Source, Window>,
+    /// The keys the parent named as known (review C3): a relayed connection claiming one is
+    /// counted here, apart from `relayed_rates`, so strangers filling that table cannot lock a
+    /// member out. Each keeps its own rate, and its cooldown.
+    known: HashSet<[u8; 32]>,
+    known_rates: Aged<Source, Window>,
     cooled: Aged<[u8; 32], Instant>,
     counts: Counts,
 }
@@ -185,17 +193,45 @@ impl Admission {
             cooldown,
             rates: Aged::new(MAX_SOURCES),
             relayed_rates: Aged::new(MAX_RELAYED_SOURCES),
+            known: HashSet::new(),
+            known_rates: Aged::new(MAX_KNOWN_KEYS),
             cooled: Aged::new(MAX_COOLED_KEYS),
             counts: Counts::default(),
         }
     }
 
-    /// Counts one handshake from `source`. False when the source is over its rate, or is a
-    /// relayed source the full relayed table has no room for: the caller ignores the
-    /// connection (no packet back, so a member never reads it as a refusal).
+    /// Replaces the known keys wholesale with at most [`MAX_KNOWN_KEYS`] of `keys`. A key that
+    /// leaves the set loses its known window; a key new to it has its cooldown cleared, since
+    /// the parent now admits it (an invite was just redeemed for it).
+    pub fn set_known(&mut self, keys: impl IntoIterator<Item = [u8; 32]>) {
+        let next: HashSet<[u8; 32]> = keys.into_iter().take(MAX_KNOWN_KEYS).collect();
+        for key in self.known.difference(&next) {
+            self.known_rates.remove(&Source::Relayed(*key));
+        }
+        for key in next.difference(&self.known) {
+            self.cooled.remove(key);
+        }
+        self.known = next;
+    }
+
+    /// True when a relayed connection claims a key the parent named as known.
+    pub fn is_known_relayed(&self, remote: &IncomingAddr) -> bool {
+        match remote {
+            IncomingAddr::Relay { endpoint_id, .. } => self.known.contains(endpoint_id.as_bytes()),
+            _ => false,
+        }
+    }
+
+    /// Counts one handshake from `source`. False when the source is over its rate, or is an
+    /// unknown relayed source the full relayed table has no room for: the caller ignores the
+    /// connection (no packet back, so a member never reads it as a refusal). A relayed source
+    /// claiming a known key is counted in its own table, which only known keys enter.
     pub fn allow_handshake(&mut self, source: Source, now: Instant) -> bool {
         let per_source = self.per_source;
         let (table, when_full) = match source {
+            Source::Relayed(key) if self.known.contains(&key) => {
+                (&mut self.known_rates, WhenFull::EvictOldest)
+            }
             Source::Relayed(_) => (&mut self.relayed_rates, WhenFull::Refuse),
             Source::V4(_) | Source::V6Net(_) => (&mut self.rates, WhenFull::EvictOldest),
         };
@@ -367,5 +403,82 @@ pub(crate) async fn summary_loop(shared: Arc<Shared>, mut stop: watch::Receiver<
             _ = stopping(&mut stop) => return,
             _ = tick.tick() => flush_summary(&shared).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(index: u32) -> [u8; 32] {
+        let mut key = [0u8; 32];
+        key[..4].copy_from_slice(&index.to_be_bytes());
+        key
+    }
+
+    // Review C3: strangers filling the relayed table with fresh claimed ids lock no member out.
+    #[test]
+    fn a_full_relayed_table_still_lets_a_known_key_in_on_its_own_rate() {
+        let now = Instant::now();
+        let mut admission = Admission::new(8, Duration::from_secs(60));
+        let member = [0xee; 32];
+        admission.set_known([member]);
+        for index in 0..MAX_RELAYED_SOURCES as u32 {
+            assert!(admission.allow_handshake(Source::Relayed(key(index)), now));
+        }
+        assert!(
+            !admission.allow_handshake(Source::Relayed(key(99_999)), now),
+            "an unknown newcomer is refused as before"
+        );
+        for _ in 0..8 {
+            assert!(
+                admission.allow_handshake(Source::Relayed(member), now),
+                "a known key is still let in"
+            );
+        }
+        assert!(
+            !admission.allow_handshake(Source::Relayed(member), now),
+            "a known key keeps its own rate"
+        );
+        assert_eq!(
+            admission.relayed_sources(),
+            MAX_RELAYED_SOURCES,
+            "the known key took no stranger's slot"
+        );
+    }
+
+    #[test]
+    fn a_known_key_keeps_its_cooldown_until_it_becomes_newly_known() {
+        let now = Instant::now();
+        let mut admission = Admission::new(8, Duration::from_secs(60));
+        let device = [0xdd; 32];
+        admission.set_known([[0x01; 32]]);
+        admission.refused(device, now);
+        admission.set_known([[0x01; 32], device]);
+        assert!(
+            !admission.is_cooling(&device, now),
+            "a redeem made the key known: its cooldown is cleared"
+        );
+        admission.refused(device, now);
+        admission.set_known([[0x01; 32], device]);
+        assert!(
+            admission.is_cooling(&device, now),
+            "a key already known keeps its cooldown"
+        );
+        admission.set_known([[0x02; 32]]);
+        for index in 0..MAX_RELAYED_SOURCES as u32 {
+            admission.allow_handshake(Source::Relayed(key(index)), now);
+        }
+        assert!(
+            !admission.allow_handshake(Source::Relayed([0x01; 32]), now),
+            "a key that left the set is a stranger again"
+        );
+    }
+
+    #[test]
+    fn at_most_max_known_keys_are_kept() {
+        let mut admission = Admission::new(8, Duration::from_secs(60));
+        admission.set_known((0..(MAX_KNOWN_KEYS as u32 + 50)).map(key));
+        assert_eq!(admission.known.len(), MAX_KNOWN_KEYS);
     }
 }

@@ -106,3 +106,42 @@
   min-width: 0;
   flex: 1 1 260px;
 }
+
+/* Row 200: the Strata block (Settings > Models > Engines and providers > Strata) and its Tune section. */
+/* Copyable set-up steps (not installed, no setup, blocked by Windows). */
+.strata-steps {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+.strata-steps b { color: var(--text-primary); font-weight: 600; }
+
+/* The one command, on its own line, with Copy beside it. */
+.strata-command {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.strata-command code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+}
+.strata-copied { color: var(--text-muted); font-size: var(--font-size-xs); align-self: center; }
+.strata-lease b { color: var(--text-primary); font-weight: 600; }
+
+/* The line under "Chats at once" and "Memory format" that says what the pair gives. */
+.strata-fit-line { margin-top: calc(-1 * var(--space-1)); }
+.strata-fit-line b { color: var(--text-primary); font-weight: 600; }

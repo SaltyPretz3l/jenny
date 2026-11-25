@@ -19,6 +19,11 @@ async function refreshStatusSnapshot(service) {
 async function unloadModel(service, { stopManagedServer = false } = {}) {
     // Jenny's own llama-server holds the model and VRAM; the sidecar unload below
     // only clears Python bookkeeping for it. A reused (external) server is never ours to stop.
+    const strataManager = stopManagedServer ? service.options?.getStrataManager?.() : null;
+    if (['ready', 'starting'].includes(strataManager?.getStatus?.()?.state) || strataManager?.cleanupUnconfirmed?.()) {
+      await stopManagedServerOrAbort(service, strataManager, 'strata', 'unload');
+      service._emitServiceLog?.('INFO', 'backend.model_unload_stopped_strata', {});
+    }
     const ninferManager = stopManagedServer ? service.options?.getNinferManager?.() : null;
     // A stop whose exit was never confirmed is retried here, so an unload
     // never reports success while ninfer-serve may still hold the GPU.

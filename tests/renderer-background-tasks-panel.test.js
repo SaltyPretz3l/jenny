@@ -55,20 +55,20 @@ test('render: running first, the fold, finished newest first, each fact and dot'
   assert.equal(rr.formatClock(3_723_000), '1:02:03');
 });
 
-test('render: the three filters, their empty states, Clear only with a finished command and the method', () => {
+test('render: the filters, their empty states, Clear only with a finished command and the method', () => {
   const tasks = rr.buildTasks({ jobs: JOBS, sessionId: 's1', items: [chat('kid1', 'running')] });
   const commands = parse(rr.listHtml({ tasks, filter: 'commands', foldOpen: true, clearable: true }));
   assert.equal(commands.querySelector('[data-bgt-open^="chat:"]'), null);
   assert.equal(commands.querySelector('[aria-checked="true"]').textContent, 'Commands');
-  const chats = parse(rr.listHtml({ tasks, filter: 'chats', foldOpen: true, clearable: true }));
-  assert.deepEqual(facts(chats).map(([id]) => id), ['chat:kid1']);
+  const chats = parse(rr.listHtml({ tasks, filter: 'helpers', foldOpen: true, clearable: true }));
+  assert.deepEqual(facts(chats).map(([id]) => id), [], 'a linked chat shows under All only');
   assert.equal(chats.querySelector('[data-bgt-clear]'), null);
   assert.ok(commands.querySelector('[data-bgt-clear]'));
   assert.equal(parse(rr.listHtml({ tasks, filter: 'all', foldOpen: true, clearable: false })).querySelector('[data-bgt-clear]'), null, 'no method, no Clear');
   const folded = parse(rr.listHtml({ tasks, filter: 'all', foldOpen: false, clearable: true }));
   assert.equal(folded.querySelector('[data-bgt-fold]').getAttribute('aria-expanded'), 'false');
   assert.equal(folded.querySelector('[data-bgt-open="job:dddddddddddd"]'), null);
-  for (const [filter, words] of [['all', 'Nothing has run in the background in this chat yet.'], ['commands', 'No background commands in this chat yet.'], ['chats', 'No linked chats yet.']]) {
+  for (const [filter, words] of [['all', 'Nothing has run in this chat yet. Servers, commands and helpers Jenny starts show up here.'], ['commands', 'No background commands yet. A command Jenny runs in the background shows up here.'], ['helpers', 'No helpers yet. Jenny starts one when a job is big enough to split.']]) {
     const doc = parse(`<div id="r">${rr.listHtml({ tasks: [], filter, foldOpen: true, clearable: true })}</div>`);
     const root = doc.getElementById('r');
     assert.equal(root.children.length, 2, `${filter}: the toolbar and one sentence`);
@@ -162,7 +162,7 @@ test('owner: opens on a task id; an unknown id lands on the list; Back and Escap
   assert.equal(h.state.ui.artifactReview.mode, 'background_tasks');
   assert.equal(h.$('[data-bgt-detail]').getAttribute('data-bgt-detail'), 'job:dddddddddddd');
   assert.equal(h.$('.background-tasks-command').textContent, 'cmd dddddddddddd');
-  assert.equal(h.$('[data-bgt-back]').getAttribute('aria-label'), 'Back to background tasks');
+  assert.equal(h.$('[data-bgt-back]').getAttribute('aria-label'), 'Back to Runs');
   assert.equal(h.doc.activeElement, h.$('[data-bgt-back]'));
   h.$('[data-bgt-back]').click();
   assert.equal(h.$('[data-bgt-detail]'), null);
@@ -492,7 +492,7 @@ const serving = (jobId, extra = {}) => job(jobId, 'running', { serving: { url: '
 test('Servers filter: lists only serving jobs, by address in mono; empty it says nothing is serving', async () => {
   const h = harness({ jobs: [serving('aaaaaaaaaaaa'), job('bbbbbbbbbbbb', 'running'), serving('cccccccccccc', { state: 'completed', endedAtMs: NOW - 1000 })] });
   await h.panel.open({ sessionId: 's1' });
-  assert.deepEqual([...h.panelEl.querySelectorAll('[data-value]')].map((node) => node.getAttribute('data-value')), ['all', 'commands', 'chats', 'servers']);
+  assert.deepEqual([...h.panelEl.querySelectorAll('[data-value]')].map((node) => node.getAttribute('data-value')), ['all', 'servers', 'commands', 'helpers']);
   assert.equal(h.$('[data-value="servers"]').textContent, 'Servers');
   const row = h.$('[data-bgt-open="job:aaaaaaaaaaaa"]');
   assert.equal(row.querySelector('.session-rail-ellip').textContent, 'localhost:5173');
@@ -503,7 +503,7 @@ test('Servers filter: lists only serving jobs, by address in mono; empty it says
   assert.deepEqual([...h.panelEl.querySelectorAll('[data-bgt-open]')].map((node) => node.getAttribute('data-bgt-open')), ['job:aaaaaaaaaaaa'],
     'a stopped server is no longer serving');
   h.push([job('bbbbbbbbbbbb', 'running')]);
-  assert.equal(h.$('.background-tasks-empty').textContent, 'Nothing this chat started is still serving.');
+  assert.equal(h.$('.background-tasks-empty').textContent, 'No servers are running. A server Jenny starts, such as a dev server, shows up here.');
   h.close();
 });
 

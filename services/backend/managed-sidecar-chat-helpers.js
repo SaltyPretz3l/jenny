@@ -19,6 +19,8 @@ const { buildResumePayload } = require('../session-recovery-service');
 const { requestToolPreferences } = require('./backend-service-utils');
 const { withDirectoryToolGate } = require('./session-directory-tool-gate');
 const { withPrimarySettingsToolGate } = require('./primary-settings-tool-gate');
+const { withRunViewToolGate } = require('./run-view-tool-gate');
+const { withComputerToolGate } = require('./computer-use-tool-gate');
 const { APPLICATION_TURN_DIGEST, narrowDigestToolPreferences } = require('./application-turns');
 const { admitSessionHandoffForTurn } = require('./session-handoff-context');
 const { admitSessionMailForTurn } = require('./session-mail-admission');
@@ -466,7 +468,8 @@ const sameWireKinds = (a, b) => a.sessionMessages === b.sessionMessages && a.ses
 // complete_session_handoff by its own path: a stored or requested preference can neither widen nor
 // narrow it, and requestToolPreferences (whose normalizer drops enabled_tools) is not involved.
 // With a `service`, any other turn also gets the session-directory tool gate (primary and linked chats only)
-// and the settings tool gate (primary chat only). A row 86 digest turn is then narrowed to the digest's read tools
+// and the settings tool gate (primary chat only), and the Live tab's tools only with a confirmed run command (row 197;
+// its engine check runs after the model is resolved, in managed-sidecar-chat.js). A row 86 digest turn is then narrowed to the digest's read tools
 // (never an empty list, which the sidecar reads as "no restriction"); the execution authority enforces the same
 // allowlist at call time.
 function managedToolPreferenceInput(toolPreferences, {
@@ -475,7 +478,8 @@ function managedToolPreferenceInput(toolPreferences, {
   if (handoffPreparation) return { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] };
   const normalized = requestToolPreferences(toolPreferences, { catalog, session, applicationTurn });
   const target = { sessionId, session };
-  const gated = service ? withPrimarySettingsToolGate(service, target, withDirectoryToolGate(service, target, normalized)) : normalized;
+  const gated = service ? withComputerToolGate(service, withRunViewToolGate(service, target,
+    withPrimarySettingsToolGate(service, target, withDirectoryToolGate(service, target, normalized)), { engine: false })) : normalized;
   return applicationTurn === APPLICATION_TURN_DIGEST ? narrowDigestToolPreferences(gated) : gated;
 }
 

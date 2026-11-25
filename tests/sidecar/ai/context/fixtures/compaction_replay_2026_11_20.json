@@ -1,0 +1,19 @@
+{
+  "source": "Owner chat 2026-11-20 (Anthropic API, Claude Opus 5.5, 350k window, 44 tools), diagnostics stream_3563c54c: provider_calls[n].prefix_reuse.server.prompt_tokens. Two of the session's three mid-turn compactions show here as the drops between calls 10-11 and 24-25 (the third came after call 31); growth_deltas are the per-request prompt growth with those drops left out.",
+  "context_window": 350000,
+  "num_tools": 44,
+  "start_prompt_tokens": 192272,
+  "stable_prefix_tokens": 27352,
+  "recorded_prompt_tokens": [
+    192272, 193092, 195551, 198675, 205411, 216070, 228309, 232043, 238634, 240587, 241954,
+    194376, 197235, 200655, 202713, 205727, 210905, 213294, 216331, 218958, 224268, 225970,
+    230790, 232811, 241135,
+    201577, 204325, 204771, 211331, 214918, 216760, 220277
+  ],
+  "growth_deltas": [
+    820, 2459, 3124, 6736, 10659, 12239, 3734, 6591, 1953, 1367,
+    2859, 3420, 2058, 3014, 5178, 2389, 3037, 2627, 5310, 1702, 4820, 2021, 8324,
+    2748, 446, 6560, 3587, 1842, 3517
+  ],
+  "recorded_mid_turn_compactions": 3
+}

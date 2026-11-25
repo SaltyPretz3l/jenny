@@ -374,3 +374,15 @@ test('a full terminal report keeps every child answer and is never marked unavai
   assert.equal(monitor.terminal, true);
   assert.deepEqual(monitor.children.map((child) => child.answer), ['Answer from A.', 'Answer from B.']);
 });
+
+test('a write child carries its worktree; a read child has none', () => {
+  const build = (worktree) => modelUtils.buildMonitorViewModel({ terminal: { kind: 'single', report: {
+    task_id: 'w', status: 'completed', summary: 'S', worktree,
+  } } }).children[0].worktree;
+  assert.deepEqual(build({ branch: 'jenny-helper/x', path: 'C:/wt/x', kept: true, files_changed: 1, insertions: 2, deletions: 0, commits: 0 }), {
+    branch: 'jenny-helper/x', path: 'C:/wt/x', kept: true, filesChanged: 1, insertions: 2, deletions: 0, commits: 0,
+  });
+  assert.equal(build({ branch: 'b', path: 'p', kept: false, files_changed: null }).filesChanged, null);
+  assert.equal(build(undefined), null);
+  assert.equal(build({ branch: 'b', kept: 'yes' }), null);
+});

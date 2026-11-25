@@ -123,3 +123,13 @@ test('the field is omitted (and nothing is marked) when the protocol was not neg
   broken.configService = { getState: () => { throw new Error('config unreadable'); } };
   assert.deepEqual(inferencePerformanceRequestField(broken, args), {});
 });
+
+test('a ready managed Strata is provider kind strata and never live-capable (row 200 F10)', () => {
+  const strata = { getBaseUrl: () => 'http://127.0.0.1:8035/v1', getStatus: () => ({ state: 'ready', runtimeLabel: '0.1.67' }) };
+  const service = { options: { getStrataManager: () => strata, getNinferManager: () => null, getLlamaServerManager: () => null } };
+  assert.deepEqual(resolveProviderIdentity({ service, apiUrl: 'http://127.0.0.1:8035', engineType: 'openai-compatible' }),
+    { provider_kind: 'strata', live_capable: false });
+  const { LIVE_PROVIDER_KINDS, PROVIDER_KINDS } = require('../services/performance/performance-contract');
+  assert.ok(PROVIDER_KINDS.includes('strata'));
+  assert.equal(LIVE_PROVIDER_KINDS.has('strata'), false);
+});

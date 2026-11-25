@@ -41,6 +41,10 @@ function initializeSessionExecutionAuthority(service) {
     resolveProjectWorkspaceServices: service.resolveProjectWorkspaceServices,
     // Row 102: live read of the host flag; the same key reaches the sidecar as feature_flags.read_only_commands.
     isReadOnlyCommandsEnabled: () => service.featureFlags?.read_only_commands !== false,
+    // Row 184 W3: writing helpers get desktop worktrees only; a hosted or Team server has none.
+    resolveWorktreeService: () => (service.hostMode === 'server' || service.featureFlags?.helper_worktrees === false
+      ? null : service.worktreeService || null),
+    logger: (level, event, details) => service._emitServiceLog?.(level, event, details),
     resolveSessionDisabledTools: (sessionId) => resolveSessionToolDenyList(
       typeof service.sessionStore.getSessionSummary === 'function'
         ? service.sessionStore.getSessionSummary(sessionId)
@@ -88,6 +92,8 @@ function initializeSessionExecutionAuthority(service) {
         // Row 150 D13: its boards move to General. The move is queued behind each board's work and settles
         // after this returns; it logs its own failures and never rejects. Absent while project_boards is off.
         boards: () => { void service.getBoardService?.()?.moveProjectBoards?.(projectId); },
+        // Row 197: a live run of the project stops and its saved run command goes. Settles after this returns.
+        runView: () => { void service.runView?.onProjectDeleted?.(projectId); },
       };
       for (const [step, run] of Object.entries(steps)) {
         try {

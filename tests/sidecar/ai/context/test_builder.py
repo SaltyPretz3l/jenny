@@ -385,46 +385,6 @@ def test_context_builder_skips_workspace_manifest_block_by_default(tmp_path) -> 
     assert "## Workspace Manifest" not in prompt
 
 
-def test_context_builder_includes_task_capsule_for_coding_prompt(tmp_path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True)
-    (workspace / "AGENTS.md").write_text("Use narrow diffs.", encoding="utf-8")
-    (workspace / "INVENTORY.md").write_text("Sidecar runtime map.", encoding="utf-8")
-    (workspace / "WORKSPACE_MANIFEST.md").write_text("Runtime routes.", encoding="utf-8")
-    (workspace / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-
-    prompt = ContextBuilder(workspace).build_system_prompt(
-        "Base system prompt.",
-        latest_user_content="Find the sidecar context builder and add a feature.",
-        task_capsule_enabled=True,
-        tool_statuses=[
-            RuntimeToolStatus(
-                name="grep_search",
-                display_name="Grep Search",
-                available=True,
-                tool_family="filesystem",
-            )
-        ],
-    )
-
-    assert "## Coding Task Capsule" in prompt
-    assert "Likely ownership route: sidecar runtime" in prompt
-    assert "Available navigation tools: grep_search" in prompt
-
-
-def test_context_builder_skips_task_capsule_for_non_code_prompt(tmp_path) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir(parents=True)
-
-    prompt = ContextBuilder(workspace).build_system_prompt(
-        "Base system prompt.",
-        latest_user_content="Help me plan dinner.",
-        task_capsule_enabled=True,
-    )
-
-    assert "## Coding Task Capsule" not in prompt
-
-
 def test_context_builder_inserts_runtime_overlays_before_first_user_message() -> None:
     builder = ContextBuilder(None)
     recall_message = builder.build_memory_recall_system_message(

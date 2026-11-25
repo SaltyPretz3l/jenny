@@ -91,6 +91,10 @@ class _VLLMCompletionMixin:
         # -- methods owned by the host (VLLMEngine / BaseEngine) --
         def _assert_ready(self) -> None: ...
 
+        def _post_completion_json_mode_aware(
+            self, payload: dict[str, Any], *, cancel_handle: Any
+        ) -> Any: ...
+
         def _request_id(self) -> str: ...
 
         def _reasoning_output_enabled(self) -> bool: ...
@@ -238,14 +242,7 @@ class _VLLMCompletionMixin:
         finalizer = ProviderCallFinalizer(self)
         try:
             # The pooled client is never closed (see stream_with_tools).
-            try:
-                body = self._post_completion(payload, cancel_handle=cancel_handle)
-            except Exception as error:  # noqa: BLE001 - narrowed below
-                if "response_format" not in payload or not _is_response_format_rejection(error):
-                    raise
-                self._disable_json_response_format()
-                payload.pop("response_format", None)
-                body = self._post_completion(payload, cancel_handle=cancel_handle)
+            body = self._post_completion_json_mode_aware(payload, cancel_handle=cancel_handle)
             observe_nonstream_body(body)
             self._record_first_chunk()
             self._record_provider_usage(body)
@@ -361,15 +358,19 @@ class _VLLMCompletionMixin:
             payload[penalty_key] = effective_repeat_penalty
         if isinstance(reasoning_effort, str) and reasoning_effort.strip():
             payload["reasoning_effort"] = reasoning_effort.strip().lower()
-        if (
-            response_format is not None
-            and getattr(response_format, "is_json", False)
-            and not getattr(self, "_json_response_format_unsupported", False)
-        ):
+        if self._json_mode_requested(response_format):
             payload["response_format"] = self._json_response_format(response_format)
         mark_history_boundary(self, payload)
         configure_metrics_request(self, payload)
         return payload
+
+    def _json_mode_requested(self, response_format: Any) -> bool:
+        """True when a request with this ``response_format`` carries JSON mode on the wire."""
+        return (
+            response_format is not None
+            and getattr(response_format, "is_json", False)
+            and not getattr(self, "_json_response_format_unsupported", False)
+        )
 
     def _disable_json_response_format(self) -> None:
         """Remember that this server rejects JSON mode (NInfer serves text only).

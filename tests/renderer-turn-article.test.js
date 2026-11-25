@@ -710,8 +710,8 @@ test('legacy rows hand the hover row a short label next to the full one', () => 
     assert.match(user.innerHtml, /data-short-meta-label="clock 2026-09-08T09:00:00Z · 2 tokens"/);
     assert.match(user.innerHtml, /data-meta-label="@2026-09-08T09:00:00Z · ~2 tokens est\. · ~2 cumulative text tokens est\."/);
     const assistant = pipeline.buildMessageInnerMarkup(messages[1], messages, '', 'assistant_short', '', null, null);
-    assert.match(assistant.innerHtml, /data-short-meta-label="clock 2026-09-08T09:02:00Z · m · 3 tokens"/);
-    assert.match(assistant.innerHtml, /data-meta-label="Completed @2026-09-08T09:02:00Z · m · ~3 tokens est\. · ~5 cumulative text tokens est\."/);
+    assert.match(assistant.innerHtml, /data-short-meta-label="m · 1m 00s · 3 tokens · clock 2026-09-08T09:02:00Z"/);
+    assert.match(assistant.innerHtml, /data-meta-label="Completed @2026-09-08T09:02:00Z · m · took 1m 00s · ~3 tokens est\. · ~5 cumulative text tokens est\."/);
     const noStamp = pipeline.buildMessageInnerMarkup({ ...messages[0], timestamp: 'invalid' }, messages, '', 'assistant_short', '', null, null);
     assert.match(noStamp.innerHtml, /data-short-meta-label="2 tokens"/);
   } finally {

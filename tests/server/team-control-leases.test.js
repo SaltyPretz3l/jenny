@@ -458,7 +458,7 @@ test('a revocation callback that throws never reaches the store, and the announc
   const calls = { announce: 0, revoke: 0 };
   const logs = [];
   let listener = null;
-  const store = { onProjectChange(fn) { listener = fn; return () => {}; } };
+  const store = { onProjectChange(fn) { listener = fn; return () => {}; }, onMembershipChange: () => () => {} };
   subscribeProjectChanges({ store, announce: () => { calls.announce += 1; }, logger: { log: (...args) => logs.push(args) },
     revokeLeases: () => { calls.revoke += 1; throw new Error('Carl in Apollo'); } });
   for (const reason of ['members', 'deleting', 'deleted']) {

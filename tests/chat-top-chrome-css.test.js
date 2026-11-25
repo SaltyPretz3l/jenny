@@ -11,7 +11,7 @@ function readRepoFile(relativePath) {
 
 // These are presentation contracts that only exist in the cascade: jsdom parses
 // the DOM but never applies author stylesheets, so the only place to assert them
-// is the CSS text itself. Same approach as chats-panel-toggle-hidden-css.test.js.
+// is the CSS text itself.
 
 test('the session tab band collapses below two open tabs', () => {
   const css = readRepoFile('styles/workspace-rail.css');

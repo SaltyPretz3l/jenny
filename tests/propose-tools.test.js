@@ -201,6 +201,16 @@ test('a native proposal keeps the plain Copy or Run result', async () => {
   assert.equal(/sandbox/.test(result.content), false);
 });
 
+test('a command that keeps running records, says Copy only and points at a background run_command', async () => {
+  const { context, calls } = makeHarness();
+  const result = await proposeCommandTool.execute({ ...COMMAND_ARGS, command: 'python -m http.server 8766' }, context);
+  assert.equal(result.isError, false);
+  assert.equal(calls.published.length, 1);
+  assert.match(result.content, /keeps running until stopped/);
+  assert.match(result.content, /run_in_background: true/);
+  assert.equal(/Copy or Run/.test(result.content), false);
+});
+
 test('a docker timeout above the sandbox limit and a multi-line cmd.exe command return validator errors', async () => {
   const docker = makeHarness();
   docker.deps.binding.captureCommandProposalBinding = async () => ({
@@ -349,4 +359,58 @@ test('the tools run through the executor in Plan Mode and read-only sessions and
   assert.equal(result.metadata.result_kind, 'command_proposal');
   assert.equal(proposeCommandTool.summarize(COMMAND_ARGS).includes('do-not-echo'), false);
   assert.match(proposeGitActionTool.summarize(GIT_ARGS), /2 changed files/);
+});
+
+// A plan_document message as the plan flow stores it; `turn_id` is the logical turn of the call.
+function planMessage({ turn = 'turn_1', state = 'approved', verification = 'Build the client and watch the bar grow.' } = {}) {
+  return { turn_id: turn, kind: 'plan_document', plan_document: { plan_id: 'plan_1', state, title: 'T', steps: ['s'], verification } };
+}
+
+async function gitResultWith(messages, { throws = false } = {}) {
+  const { context, backendService } = makeHarness();
+  backendService.sessionStore.peekSessionMessages = () => {
+    if (throws) throw new Error('store down');
+    return messages;
+  };
+  return proposeGitActionTool.execute(GIT_ARGS, context);
+}
+
+test('propose_git_action repeats the verification of a plan approved in this turn', async () => {
+  for (const state of ['approved', 'approved_auto', 'accepted']) {
+    const result = await gitResultWith([planMessage({ state, verification: 'Build   the client\n and watch the bar grow.' })]);
+    assert.equal(result.isError, false);
+    assert.match(result.content, /Continue your answer\. The plan you were approved said to check: "Build the client and watch the bar grow\."\. If any part of that did not run, tell the user in your answer\.$/u, state);
+  }
+  const long = await gitResultWith([planMessage({ verification: 'v'.repeat(900) })]);
+  const quoted = /said to check: "(.*)"\. If any part/u.exec(long.content)[1];
+  assert.equal(quoted.length, 400);
+  assert.ok(quoted.endsWith('…'));
+});
+
+test('no plan sentence for an earlier turn, an undecided plan, an empty verification or a failing lookup', async () => {
+  const plain = await gitResultWith([]);
+  assert.doesNotMatch(plain.content, /plan you were approved/u);
+  for (const messages of [
+    [planMessage({ turn: 'turn_0' })],
+    [planMessage({ state: 'pending' })],
+    [planMessage({ state: 'rejected' })],
+    [planMessage({ verification: '   ' })],
+    [planMessage({ verification: null })],
+  ]) {
+    const result = await gitResultWith(messages);
+    assert.equal(result.isError, false);
+    assert.equal(result.content, plain.content);
+  }
+  const broken = await gitResultWith([], { throws: true });
+  assert.equal(broken.isError, false);
+  assert.equal(broken.content, plain.content);
+});
+
+test('the manifest offers not_checked as up to three short strings and says to use it', () => {
+  const entry = toolManifest.tools.find((tool) => tool.name === 'propose_git_action');
+  assert.deepEqual(entry.parameters.properties.not_checked.items, { type: 'string', minLength: 1, maxLength: 160 });
+  assert.equal(entry.parameters.properties.not_checked.maxItems, 3);
+  assert.equal(entry.parameters.required.includes('not_checked'), false);
+  assert.match(entry.description, /list it in not_checked; the card shows it\./u);
+  assert.match(entry.description, /offer a new one: it replaces an earlier card that names any of the same files\.$/u);
 });

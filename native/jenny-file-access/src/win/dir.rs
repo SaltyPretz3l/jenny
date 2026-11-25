@@ -8,7 +8,8 @@
 use std::mem::offset_of;
 
 use windows_sys::Win32::Foundation::{
-    ERROR_FILE_NOT_FOUND, ERROR_INVALID_DATA, STATUS_DELETE_PENDING,
+    ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_DATA, STATUS_ACCESS_DENIED,
+    STATUS_DELETE_PENDING,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_BOTH_DIR_INFO,
@@ -223,12 +224,33 @@ fn vanished(refusal: &Refusal) -> bool {
         || refusal.system == ERROR_FILE_NOT_FOUND
 }
 
+/// An entry the opener's own access list refuses (a file or folder the owner
+/// locked, or one another program made private). The check proves the library
+/// works on this root, not that every entry is open to it, so such an entry
+/// says nothing about the root: it is passed over like a vanished one.
+fn denied(refusal: &Refusal) -> bool {
+    refusal.system == STATUS_ACCESS_DENIED as u32 || refusal.system == ERROR_ACCESS_DENIED
+}
+
+/// Runs `attempt`, and once more when it failed: an entry swapped for a link
+/// or another kind of file while the check ran fails that attempt, and the
+/// second one settles it. A second failure is the answer, for this call only;
+/// nothing is remembered.
+fn retry_once<T, E>(mut attempt: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    attempt().or_else(|_| attempt())
+}
+
 /// The root's read-only self-check: list the root from a handle of its own,
 /// then open and close, through the walk, the first entry that is a plain
 /// file or directory with a valid name and is still there. An entry that
-/// vanished between the listing and the open is passed over for the next
-/// one. A root with no such entry passes.
+/// vanished between the listing and the open, or that its access list denies,
+/// is passed over for the next one. A root with no such entry passes. A
+/// failure is tried once more before it is reported.
 pub fn self_check(root: &OwnedHandle) -> Result<(), SysError> {
+    retry_once(|| self_check_once(root))
+}
+
+fn self_check_once(root: &OwnedHandle) -> Result<(), SysError> {
     let failed = |refusal: Refusal| SysError(refusal.system);
     let directory = walk::reopen_directory(root).map_err(failed)?;
     let mut opened = Ok(());
@@ -249,7 +271,7 @@ pub fn self_check(root: &OwnedHandle) -> Result<(), SysError> {
         )
         .map(drop);
         match &opened {
-            Err(refusal) if vanished(refusal) => {
+            Err(refusal) if vanished(refusal) || denied(refusal) => {
                 opened = Ok(());
                 Ok(true)
             }
@@ -264,7 +286,9 @@ pub fn self_check(root: &OwnedHandle) -> Result<(), SysError> {
 mod tests {
     use windows_sys::Win32::Foundation::{STATUS_ACCESS_DENIED, STATUS_INVALID_PARAMETER};
 
-    use super::{io, vanished, SysError, ERROR_FILE_NOT_FOUND, STATUS_DELETE_PENDING};
+    use super::{
+        denied, io, retry_once, vanished, SysError, ERROR_FILE_NOT_FOUND, STATUS_DELETE_PENDING,
+    };
     use crate::abi::{Reason, Refusal, Status};
 
     /// An entry that came and went is passed over; a refused open flag, a
@@ -279,5 +303,48 @@ mod tests {
         assert!(!vanished(&io(SysError(STATUS_ACCESS_DENIED as u32))));
         assert!(!vanished(&Refusal::path(Reason::ReparsePoint)));
         assert!(!vanished(&Refusal::path(Reason::NotRegular)));
+    }
+
+    /// Only an access-denied open is passed over for being denied: a refused
+    /// open flag, a link at the name or another kind of file still fails.
+    #[test]
+    fn only_an_access_denied_entry_is_passed_over_as_denied() {
+        assert!(denied(&io(SysError(STATUS_ACCESS_DENIED as u32))));
+        assert!(denied(&io(SysError(5))));
+        assert!(!denied(&io(SysError(STATUS_INVALID_PARAMETER as u32))));
+        assert!(!denied(&Refusal::path(Reason::ReparsePoint)));
+        assert!(!denied(&Refusal::path(Reason::NotRegular)));
+        assert!(!denied(&Refusal::of(Status::NotFound)));
+    }
+
+    /// A swapped entry fails the first attempt and the second settles it; a
+    /// second failure is reported after exactly two attempts, never a third.
+    #[test]
+    fn a_failed_check_is_tried_once_more_and_no_further() {
+        let mut calls = 0;
+        let settled = retry_once(|| {
+            calls += 1;
+            if calls == 1 {
+                Err("swapped")
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!((settled, calls), (Ok(()), 2));
+        let mut calls = 0;
+        let failed: Result<(), &str> = retry_once(|| {
+            calls += 1;
+            Err("still swapped")
+        });
+        assert_eq!((failed, calls), (Err("still swapped"), 2));
+        let mut calls = 0;
+        assert_eq!(
+            retry_once(|| {
+                calls += 1;
+                Ok::<_, ()>(())
+            }),
+            Ok(())
+        );
+        assert_eq!(calls, 1);
     }
 }

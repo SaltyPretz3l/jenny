@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR
 from sidecar.ai.routing.router import ChatDecision
 from sidecar.runtime.chat import ChatRequestError, build_chat_send_response
 from tests.sidecar.runtime.test_chat import _build_brain_container
@@ -47,14 +46,12 @@ def test_required_budget_without_authority_is_refused(tmp_path):
     assert container.stack.router.last_kwargs == {}
 
 
-# Every turn, a streamed mode "chat" one with the executor off included, goes
-# through the admitted router (the unadmitted live-stream path is deleted).
-@pytest.mark.parametrize("executor", [True, False])
+# Every turn, a streamed mode "chat" one included, goes through the admitted
+# router (the unadmitted live-stream path is deleted).
 @pytest.mark.parametrize("streaming", [False, True])
-def test_real_router_preserves_required_budget_callback(tmp_path, streaming, executor):
+def test_real_router_preserves_required_budget_callback(tmp_path, streaming):
     container, params = _fixture(tmp_path)
     params["mode"] = "chat"
-    container.stack.config.feature_flags = {FEATURE_AGENT_EXECUTOR: executor}
     _send(container, params, streaming=streaming)
     runtime = container.stack.router.last_kwargs["runtime"]
     assert runtime.request_context.inference_budget_required is True

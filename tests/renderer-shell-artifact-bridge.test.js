@@ -148,18 +148,21 @@ describe('renderer-shell-artifact-bridge owner line (row 59 checkpoint 2)', () =
   }
   const line = (panel) => panel.querySelector(':scope > .side-panel-owner-line');
 
-  test('Changes and Activity name their owner with one pane; the artifact and context modes stay split-only', () => {
-    const { bridge, panel } = ownerBridge(['sess_a']);
-    bridge.sidePanel.syncOwnerLine(panel, 'artifact');
-    assert.equal(line(panel), null, 'artifact: no line with one pane');
-    bridge.sidePanel.syncOwnerLine(panel, 'context');
-    assert.equal(line(panel), null, 'context: no line with one pane');
-    bridge.sidePanel.syncOwnerLine(panel, 'code_review');
-    assert.equal(line(panel).querySelector('.side-panel-owner-title').textContent, 'Alpha chat');
-    bridge.sidePanel.syncOwnerLine(panel, 'artifact');
-    assert.equal(line(panel), null, 'leaving Changes removes the line');
-    bridge.sidePanel.syncOwnerLine(panel, 'activity');
-    assert.equal(line(panel).querySelector('.side-panel-owner-title').textContent, 'Alpha chat');
+  test('row 195: with one pane no tab names its chat; with two every chat tab does and Project never does', () => {
+    const one = ownerBridge(['sess_a']);
+    for (const mode of ['artifact', 'context', 'code_review', 'activity', 'background_tasks', 'subagents', 'terminal', 'file_preview', 'browser', 'tasks', 'notes']) {
+      one.bridge.sidePanel.syncOwnerLine(one.panel, mode);
+      assert.equal(line(one.panel), null, `${mode}: no line with one pane`);
+    }
+    const two = ownerBridge(['sess_a', 'sess_b']);
+    for (const mode of ['background_tasks', 'subagents', 'terminal', 'file_preview', 'browser', 'code_review']) {
+      two.bridge.sidePanel.syncOwnerLine(two.panel, mode);
+      assert.equal(line(two.panel).querySelector('.side-panel-owner-title').textContent, 'Alpha chat', mode);
+    }
+    for (const mode of ['tasks', 'notes']) {
+      two.bridge.sidePanel.syncOwnerLine(two.panel, mode);
+      assert.equal(line(two.panel), null, `${mode}: Project belongs to the project`);
+    }
   });
 
   test('with two panes every panel names the explicit owner, not the focused chat', () => {

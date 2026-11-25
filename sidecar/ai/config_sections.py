@@ -287,10 +287,6 @@ def parse_tool_fields(raw_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PL
     )
     tools_worktree_enabled = _as_bool(raw_config.get("tools_worktree_enabled"), default=False)
     tools_subagents_enabled = _as_bool(raw_config.get("tools_subagents_enabled"), default=True)
-    tools_mcp_resources_enabled = _as_bool(
-        raw_config.get("tools_mcp_resources_enabled"),
-        default=False,
-    )
     tools_automations_enabled = _as_bool(
         raw_config.get("tools_automations_enabled"),
         default=False,
@@ -305,6 +301,14 @@ def parse_tool_fields(raw_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PL
     )
     tools_browser_use_enabled = _as_bool(
         raw_config.get("tools_browser_use_enabled"),
+        default=False,
+    )
+    tools_run_view_enabled = _as_bool(
+        raw_config.get("tools_run_view_enabled"),
+        default=False,
+    )
+    tools_computer_use_enabled = _as_bool(
+        raw_config.get("tools_computer_use_enabled"),
         default=False,
     )
     tools_verify_enabled = _as_bool(
@@ -425,10 +429,6 @@ def parse_tool_fields(raw_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PL
         raw_config.get("interrupted_turn_receipts_overlay_enabled"),
         default=True,
     )
-    tools_task_capsule_enabled = _as_bool(
-        raw_config.get("tools_task_capsule_enabled"),
-        default=False,
-    )
     tools_python_runtime_enabled = _as_bool(
         raw_config.get("tools_python_runtime_enabled"),
         default=False,
@@ -518,11 +518,12 @@ def parse_tool_fields(raw_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PL
         electron_tool_bridge_enabled=electron_tool_bridge_enabled,
         tools_worktree_enabled=tools_worktree_enabled,
         tools_subagents_enabled=tools_subagents_enabled,
-        tools_mcp_resources_enabled=tools_mcp_resources_enabled,
         tools_automations_enabled=tools_automations_enabled,
         tools_workspace_present_enabled=tools_workspace_present_enabled,
         tools_preview_test_enabled=tools_preview_test_enabled,
         tools_browser_use_enabled=tools_browser_use_enabled,
+        tools_run_view_enabled=tools_run_view_enabled,
+        tools_computer_use_enabled=tools_computer_use_enabled,
         tools_verify_enabled=tools_verify_enabled,
         tools_image_generate_enabled=tools_image_generate_enabled,
         tools_home_enabled=tools_home_enabled,
@@ -557,7 +558,6 @@ def parse_tool_fields(raw_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PL
         session_environment_overlay_enabled=session_environment_overlay_enabled,
         tool_result_envelope_enabled=tool_result_envelope_enabled,
         interrupted_turn_receipts_overlay_enabled=interrupted_turn_receipts_overlay_enabled,
-        tools_task_capsule_enabled=tools_task_capsule_enabled,
         tools_python_runtime_enabled=tools_python_runtime_enabled,
         tools_python_runtime_interpreter=tools_python_runtime_interpreter,
         tools_python_runtime_root=tools_python_runtime_root,

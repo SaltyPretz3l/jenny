@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -215,3 +216,79 @@ def test_multiline_prevalidation_follows_the_launching_shell(
     assert (outcome is not None) is refused
     if refused:
         assert outcome["error_code"] == CMP_TOOL_COMMAND_BLOCKED
+
+
+def test_a_writing_helper_never_suspends_for_approval(tmp_path: Path) -> None:
+    """Row 184 W3: the call that would need a card fails, and the helper carries on."""
+    import hashlib
+
+    from sidecar.ai.routing.tool_loop_recovery import HELPER_APPROVAL_REFUSAL
+    from sidecar.runtime.chat_models import ChatRequestContext
+    from sidecar.runtime.execution_context import execution_context_from_params
+
+    root = tmp_path.resolve()
+    identity = str(root).lower() if os.name == "nt" else str(root)
+    worktree_context = execution_context_from_params({"execution_context": {
+        "schema_version": 1, "authority_revision": "rev", "project_id": "project_alpha",
+        "root_path": str(root), "root_revision": 1, "device_id": None, "inode": None,
+        "root_id": "root_" + hashlib.sha256(identity.encode()).hexdigest()[:24],
+        "tool_policy_snapshot": {"version": 1}, "knowledge_roots": [],
+    }})
+
+    descriptor = MCPToolDescriptor(
+        name="delete_file",
+        description="Delete a file",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+        side_effecting=True,
+        server_name="tools",
+    )
+    engine = _ToolLoopEngine(
+        plans=[
+            _ToolPlan(
+                result=GenerationResult(
+                    content="Deleting.",
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCallRequest(
+                            tool_id="delete_file",
+                            arguments={"path": "old.txt"},
+                            call_id="call-helper-delete",
+                        ),
+                    ),
+                )
+            ),
+            _ToolPlan(result=GenerationResult(content="I could not delete old.txt.")),
+        ]
+    )
+    router = _build_router(
+        engine=engine,
+        mcp_client=_StubMCPClient((descriptor,)),
+        extra_snapshot_tools=("delete_file",),
+    )
+    decision = router.build_chat_decision(
+        request_id="req_helper_no_card",
+        messages=[{"role": "user", "content": "Delete old.txt."}],
+        latest_user_content="Delete old.txt.",
+        mode="assist",
+        approvals_pre_granted=False,
+        request_context=ChatRequestContext(
+            request_id="req_helper_no_card",
+            trace_id=None,
+            session_id=None,
+            mode="assist",
+            approvals_pre_granted=False,
+            execution_context=worktree_context,
+            workspace_root_present=True,
+            sub_agent_write_mode=True,
+        ),
+    )
+
+    assert decision.approval_request is None
+    assert [outcome.call_id for outcome in decision.tool_results] == ["call-helper-delete"]
+    assert decision.tool_results[0].success is False
+    assert HELPER_APPROVAL_REFUSAL in decision.tool_results[0].output
+    assert decision.response_text == "I could not delete old.txt."

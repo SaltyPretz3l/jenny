@@ -92,6 +92,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'projects.json',
   'QuotaManager',
   'QuotaManager-journal',
+  'run-commands.json', // run-view/run-command-store.js (row 197)
+  'run-gpu-memory.json', // run-view/run-gpu-memory.js (row 197)
   'secure-state.json',
   'session-runtime',
   'session-runtime-budgets',
@@ -114,6 +116,9 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'SingletonCookie',
   'SingletonLock',
   'SingletonSocket',
+  // Managed Strata runtime (row 200): run config, ready files, server log, pack receipts (strata-lifecycle.js, strata-config.js).
+  'strata',
+  'strata-serve.pid', // strata-lifecycle.js
   'terminal-repairs.json',
   'todo-lists',
   'tool-permissions.json',

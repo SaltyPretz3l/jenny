@@ -1,12 +1,14 @@
-//! A per-key share of the host's slots (review X3-F03): one key holds at most two connections
-//! and sixteen streams, so one device cannot lock every member out.
+//! A per-key share of the host's slots (review X3-F03): one key holds at most two admitted
+//! connections, two waiting for their answer and sixteen streams, so one device cannot lock
+//! every member out.
 
 use std::collections::HashMap;
 
 use crate::host::{ConnEntry, ConnSignal};
 
-/// Connections one key may hold, waiting or admitted: a member device needs one, and a second
-/// covers a reconnect while the old connection is still open.
+/// Admitted connections one key may hold: a member device needs one, and a second covers a
+/// reconnect while the old connection is still open. A key may also have as many waiting for
+/// their answer; only an admitted connection ever takes an admitted one's slot (review H11).
 const MAX_CONNECTIONS_PER_KEY: usize = 2;
 /// Streams one key may hold across its connections: one member device's connection of 16.
 const MAX_STREAMS_PER_KEY: u32 = 16;
@@ -14,12 +16,14 @@ const MAX_STREAMS_PER_KEY: u32 = 16;
 /// What a new connection of a key finds.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Share {
-    /// Under its share: the new connection is registered as usual.
+    /// Under its waiting share: the new connection is registered and asked.
     Room,
-    /// At its share: the key's oldest admitted connection gives its slot to the new one.
-    Replace(u64),
-    /// At its share with nothing admitted: the new connection is closed as the waiting cap
-    /// closes one, and nothing of the key's is touched.
+    /// As `Room`, and the key holds its share of admitted connections with none waiting: once
+    /// admitted, the new one takes the oldest one's slot ([`displaced`]), so its registration
+    /// may count that slot as freed.
+    Replaces,
+    /// Its waiting share is held: the new connection is closed as the waiting cap closes one,
+    /// and nothing of the key's is touched.
     Full,
 }
 
@@ -31,24 +35,48 @@ fn holds_share(entry: &ConnEntry) -> bool {
     )
 }
 
-/// Connection ids only grow, so the smallest admitted id is the oldest admitted connection.
+fn is_admitted(entry: &ConnEntry) -> bool {
+    matches!(*entry.signal.borrow(), ConnSignal::Admit(_))
+}
+
+/// The connections that hold a connection slot: waiting or admitted, never one leaving
+/// (closing, refused or draining), whose own task ends it within its bound (review H11).
+pub(crate) fn live_connections(conns: &HashMap<u64, ConnEntry>) -> usize {
+    conns.values().filter(|entry| holds_share(entry)).count()
+}
+
 pub(crate) fn share(conns: &HashMap<u64, ConnEntry>, key: &[u8; 32]) -> Share {
-    let mut held = 0;
-    let mut oldest_admitted: Option<u64> = None;
-    for (id, entry) in conns.iter() {
-        if entry.key != *key || !holds_share(entry) {
-            continue;
-        }
-        held += 1;
-        let admitted = matches!(*entry.signal.borrow(), ConnSignal::Admit(_));
-        if admitted && oldest_admitted.is_none_or(|old| *id < old) {
-            oldest_admitted = Some(*id);
+    let (mut waiting, mut admitted) = (0, 0);
+    for entry in conns.values().filter(|entry| entry.key == *key) {
+        match *entry.signal.borrow() {
+            ConnSignal::Waiting => waiting += 1,
+            ConnSignal::Admit(_) => admitted += 1,
+            _ => {}
         }
     }
-    if held < MAX_CONNECTIONS_PER_KEY {
-        Share::Room
+    if waiting >= MAX_CONNECTIONS_PER_KEY {
+        Share::Full
+    } else if waiting == 0 && admitted >= MAX_CONNECTIONS_PER_KEY {
+        Share::Replaces
     } else {
-        oldest_admitted.map_or(Share::Full, Share::Replace)
+        Share::Room
+    }
+}
+
+/// Once connection `id` of `key` is admitted: the key's oldest other admitted connection when
+/// the key now holds more than its share of admitted ones, which gives its slot to `id`. A
+/// connection still waiting never displaces one (review H11). Connection ids only grow, so the
+/// smallest is the oldest.
+pub(crate) fn displaced(conns: &HashMap<u64, ConnEntry>, key: &[u8; 32], id: u64) -> Option<u64> {
+    let others: Vec<u64> = conns
+        .iter()
+        .filter(|(other, entry)| **other != id && entry.key == *key && is_admitted(entry))
+        .map(|(other, _)| *other)
+        .collect();
+    if others.len() >= MAX_CONNECTIONS_PER_KEY {
+        others.into_iter().min()
+    } else {
+        None
     }
 }
 
@@ -102,6 +130,18 @@ mod tests {
         assert!(stream_room(&conns, &[8; 32]), "another key is not counted");
     }
 
+    // Review H11: a reconnect that is still waiting for its answer never pushes out the key's
+    // live admitted link; only waiting connections count toward the waiting share.
+    #[test]
+    fn a_waiting_reconnect_never_displaces_an_admitted_link() {
+        let key = [7; 32];
+        let one_each = table(vec![
+            (1, entry(7, ADMIT, 0)),
+            (2, entry(7, ConnSignal::Waiting, 0)),
+        ]);
+        assert_eq!(share(&one_each, &key), Share::Room);
+    }
+
     #[test]
     fn only_an_admitted_connection_is_replaced_and_the_oldest_one() {
         let key = [7; 32];
@@ -120,6 +160,26 @@ mod tests {
             (5, entry(7, ADMIT, 0)),
             (9, entry(7, ADMIT, 0)),
         ]);
-        assert_eq!(share(&mixed, &key), Share::Replace(5));
+        assert_eq!(share(&mixed, &key), Share::Room, "one is already waiting");
+        assert_eq!(displaced(&mixed, &key, 3), Some(5), "once 3 is admitted");
+        let both = table(vec![(5, entry(7, ADMIT, 0)), (9, entry(7, ADMIT, 0))]);
+        assert_eq!(share(&both, &key), Share::Replaces);
+        assert_eq!(displaced(&both, &key, 12), Some(5));
+        assert_eq!(displaced(&both, &key, 9), None, "9 and 5 are its share");
+    }
+
+    #[test]
+    fn only_waiting_and_admitted_connections_hold_a_slot() {
+        let conns = table(vec![
+            (1, entry(7, ADMIT, 0)),
+            (2, entry(8, ConnSignal::Waiting, 0)),
+            (3, entry(9, ConnSignal::Close, 0)),
+            (4, entry(9, ConnSignal::Refuse, 0)),
+            (
+                5,
+                entry(9, ConnSignal::Drain(tokio::time::Instant::now()), 0),
+            ),
+        ]);
+        assert_eq!(live_connections(&conns), 2);
     }
 }

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const model = require('../renderer/shared/workbench-layout-model');
+const ops = require('../renderer/shared/workbench-layout-ops');
 const fx = require('./helpers/workbench-layout-fixtures');
 
 const {
@@ -406,7 +407,7 @@ test('board profile: normalizing never gains a Workspace view and drops any it i
     root: spl('split-1', 'row',
       ch(stk('stack-1', ['boards', 'explorer', 'terminal-2'], { active: 'explorer' }), 260),
       ch(editor(), null),
-      ch(stk('stack-2', ['chat', 'chat-2', 'changes', 'outline'], { active: 'chat-2', collapsed: true }), 400)),
+      ch(stk('stack-2', ['chat', 'changes', 'outline'], { active: 'chat', collapsed: true }), 400)),
     bind: { chat: 'editor-1' },
   };
   const out = normalizeLayout(raw, 'board');
@@ -449,4 +450,85 @@ test('board profile: the solver sizes the three columns and honours a collapsed 
   assert.equal(open.sizes[chat.id], sizeEntry(layout, chat.id).size);
   const folded = model.solveLayout(model.setCollapsed(layout, chat.id, true), { width: 1400, height: 800 });
   assert.equal(folded.sizes[chat.id], model.STRIP_SIZE);
+});
+
+/* ---------- Chat profile (row 190): the Chat room's workbench ---------- */
+
+const CHAT_RIGHT = ['session', 'artifacts', 'changes', 'project'];
+
+test('chat profile: the default layout is chats | panes | the right stack open on Session', () => {
+  const layout = createDefaultLayout('chat');
+  assert.equal(layout.profile, 'chat');
+  assert.equal(shape(layout.root), `row(chats,E,${CHAT_RIGHT.join('+')})`);
+  assert.equal(stackOf(layout, 'session').active, 'session');
+  assert.equal(stackOf(layout, 'session').collapsed, false, 'a fresh profile starts with the right stack open');
+  assert.equal(sizeEntry(layout, stackOf(layout, 'session').id).size, 340);
+  assert.equal(layout.bind, undefined);
+  assert.deepEqual(normalizeLayout(layout, 'chat'), layout, 'normalize is idempotent');
+});
+
+test('chat profile: never admits a Workspace or Board view, keeps its optional views, one centre only', () => {
+  const raw = {
+    v: 1,
+    root: spl('split-1', 'row',
+      ch(stk('stack-1', ['chats', 'explorer', 'boards'], { active: 'explorer' }), 300),
+      ch(editor('editor-1'), null),
+      ch(editor('editor-2'), 300),
+      ch(stk('stack-2', ['session', 'chat', 'terminal', 'browser', 'outline', 'terminal-2'], { active: 'browser' }), 360)),
+    bind: { terminal: 'editor-1' },
+  };
+  const out = normalizeLayout(raw, 'chat');
+  assert.equal(out.profile, 'chat');
+  assert.equal(collectNodes(out.root).filter((n) => n.kind === 'editor').length, 1);
+  assert.deepEqual(model.listViews(out), ['chats', 'session', 'terminal', 'browser', 'artifacts', 'changes', 'project']);
+  assert.equal(stackOf(out, 'session').active, 'browser', 'an optional view keeps its place and its active state');
+  assert.equal(stackOf(out, 'chats').active, 'chats');
+  assert.equal(out.bind, undefined);
+  ['explorer', 'boards', 'chat', 'outline', 'terminal-2'].forEach((id) => assert.equal(findView(out, id), null, id));
+});
+
+test('chat profile: the Workspace and Board normalizers never admit a Chat-only view', () => {
+  // Artifacts, Project and Runs are side panel views in the Workspace and the Board too (Wave 4, row 195).
+  const chatOnly = ['chats', 'session', 'preview', 'browser', 'live-view'];
+  const smuggled = JSON.parse(JSON.stringify(createDefaultLayout('chat')));
+  const ws = normalizeLayout(smuggled);
+  const board = normalizeLayout(smuggled, 'board');
+  assert.equal(ws.profile, undefined);
+  assert.equal(board.profile, 'board');
+  chatOnly.forEach((id) => {
+    assert.equal(findView(ws, id), null, `workspace: ${id}`);
+    assert.equal(findView(board, id), null, `board: ${id}`);
+  });
+  ['tasks', 'notes'].forEach((id) => assert.equal(findView(board, id), null, `board: ${id}`));
+  assert.deepEqual(model.CHAT_VIEW_IDS, ['chats', ...CHAT_RIGHT]);
+  assert.deepEqual(model.CHAT_OPTIONAL_VIEW_IDS, ['preview', 'browser', 'live-view', 'terminal', 'runs', 'activity']);
+});
+
+test('chat profile: a lost fixed view is re-homed into the right stack; an optional one is not', () => {
+  const out = normalizeLayout({
+    v: 1,
+    root: spl('split-1', 'row', ch(stk('stack-1', ['chats']), 320), ch(editor(), null), ch(stk('stack-2', ['project']), 340)),
+  }, 'chat');
+  assert.equal(shape(out.root), 'row(chats,E,project+session+artifacts+changes)');
+  // Row 195: the tabs Project and Runs replaced are no longer views of the room.
+  ['tasks', 'notes', 'helpers', 'background'].forEach((id) => assert.equal(findView(normalizeLayout({ v: 1, root: spl('split-1', 'row', ch(stk('stack-1', ['chats']), 320), ch(editor(), null), ch(stk('stack-2', ['session', id]), 340)) }, 'chat'), id), null, id));
+  assert.equal(findView(out, 'browser'), null);
+  const noLeft = normalizeLayout({ v: 1, root: editor() }, 'chat');
+  assert.equal(shape(noLeft.root), `row(chats,E,${CHAT_RIGHT.join('+')}!)`, 'a bare centre regains both stacks');
+});
+
+test('row 190 Wave 4: side panel views are optional in the Workspace and the Board: kept where stored, never re-homed, closable', () => {
+  const ws = createDefaultLayout();
+  assert.equal(findView(ws, 'artifacts'), null, 'the default Workspace has none');
+  const withArtifacts = ops.addView(ws, 'artifacts', 'chat');
+  const stored = normalizeLayout(JSON.parse(JSON.stringify(withArtifacts)));
+  assert.ok(findView(stored, 'artifacts'), 'a stored Artifacts tab survives');
+  assert.equal(findView(ops.removeView(stored, 'artifacts'), 'artifacts'), null, 'and its Close takes it out');
+  assert.ok(findView(ops.addView(stored, 'project', 'artifacts'), 'project'));
+  assert.equal(findView(ops.addView(stored, 'notes', 'artifacts'), 'notes'), null, 'row 195: Notes is inside Project');
+  const board = createDefaultLayout('board');
+  const boardArtifacts = normalizeLayout(JSON.parse(JSON.stringify(ops.addView(board, 'artifacts', 'chat'))), 'board');
+  assert.ok(findView(boardArtifacts, 'artifacts'));
+  assert.equal(findView(normalizeLayout(ops.addView(boardArtifacts, 'tasks', 'artifacts'), 'board'), 'tasks'), null, 'the Board has no Tasks view');
+  assert.ok(findView(normalizeLayout(JSON.parse(JSON.stringify(ops.addView(boardArtifacts, 'runs', 'artifacts'))), 'board'), 'runs'), 'row 195: Runs opens beside a board');
 });

@@ -16,7 +16,6 @@
     const {
       searchInput,
       chatsOverflowButton,
-      sidebarResizer,
       conversationGroups,
       sessionActionButton,
       localProfileSettingsMount,
@@ -30,12 +29,7 @@
 
     const {
       renderSessions,
-      resetSidebarWidth,
       setRovingChatSession,
-      handleSidebarResizeStart,
-      handleSidebarResizeMove,
-      finishSidebarResize,
-      handleSidebarResizeKeydown,
       renderAll,
       showToastMessage,
       appendClientLog,
@@ -328,14 +322,6 @@
           trigger: chatsOverflowButton,
         });
       }, listenerOptions);
-      registerListener(sidebarResizer, 'pointerdown', handleSidebarResizeStart, listenerOptions);
-      registerListener(sidebarResizer, 'pointermove', handleSidebarResizeMove, listenerOptions);
-      registerListener(sidebarResizer, 'pointerup', finishSidebarResize, listenerOptions);
-      registerListener(sidebarResizer, 'pointercancel', finishSidebarResize, listenerOptions);
-      registerListener(sidebarResizer, 'dblclick', () => {
-        resetSidebarWidth();
-      }, listenerOptions);
-      registerListener(sidebarResizer, 'keydown', handleSidebarResizeKeydown, listenerOptions);
       registerListener(window, 'keydown', handleWorkspaceShortcut, listenerOptions);
       // keyup feeds the same handler so it can commit the Alt+Tab MRU cycle when
       // the Ctrl modifier is released (it branches on event.type internally).

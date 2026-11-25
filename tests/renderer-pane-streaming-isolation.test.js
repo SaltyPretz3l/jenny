@@ -220,9 +220,6 @@ test('B1: two panes from the tab menu: pane 1 shows its own transcript, pane 0 k
   assert.doesNotMatch(doc.getElementById('chatTimeline').textContent, /pane one/);
   assert.match(pane1.dom.chatTimeline.textContent, /Answer from pane one/);
   assert.doesNotMatch(pane1.dom.chatTimeline.textContent, /pane zero/);
-  assert.equal(doc.getElementById('chatPaneKicker').hidden, false);
-  assert.match(doc.getElementById('chatPaneKicker').textContent, /Alpha/);
-  assert.match(pane1.dom.chatPaneKicker.textContent, /Beta/);
 });
 
 test('B2 (LOAD-BEARING): a stream into pane 1 while pane 0 is focused leaves pane 0 byte-identical, one render per delta', async (t) => {
@@ -281,7 +278,7 @@ test('B2 (LOAD-BEARING): a stream into pane 1 while pane 0 is focused leaves pan
   assert.equal(pane1.stopButton.classList.contains('hidden'), false, "pane 1's Stop shows while its session streams");
 });
 
-test('B3: closing pane 1 from its kicker returns the chat view to the exact one-pane DOM', async (t) => {
+test('B3: closing pane 1 returns the chat view to the exact one-pane DOM', async (t) => {
   const app = await loadRendererApp({ shell: {
     sessions: [buildSummary('session-a', 'Alpha'), buildSummary('session-b', 'Beta')],
     workspaceState: { activeSessionId: 'session-a', openSessionIds: ['session-a', 'session-b'] },
@@ -293,18 +290,17 @@ test('B3: closing pane 1 from its kicker returns the chat view to the exact one-
   await waitForUi(window, 150);
   const chatView = doc.getElementById('chatView');
   const shape = () => [...chatView.children].map((child) => [child.tagName, child.id, child.className, child.getAttribute('data-pane-focused'), child.hidden]);
-  const oneAttrs = () => [chatView.dataset.paneCount, chatView.style.getPropertyValue('--chat-pane-a'), doc.getElementById('chatPaneKicker').hidden, doc.getElementById('chatPaneKicker').innerHTML];
+  const oneAttrs = () => [chatView.dataset.paneCount, chatView.style.getPropertyValue('--chat-pane-a')];
   const before = { shape: shape(), attrs: oneAttrs() };
 
   const composition = window.rendererAppPaneComposition.getPaneComposition();
   assert.equal(composition.toggleSplit(), true, 'the chord opens the most recent other tab beside');
   await waitForUi(window, 100);
   assert.equal(chatView.dataset.paneCount, '2');
-  const close = composition.getPane(1).dom.chatPaneKicker.querySelector('.chat-pane-close');
-  close.click();
+  assert.equal(composition.toggleSplit(), true, 'the chord closes the non-focused pane 1');
   await waitForUi(window, 100);
   assert.deepEqual(shape(), before.shape, '#chatView children are exactly the one-pane set again');
-  assert.deepEqual(oneAttrs(), before.attrs, 'pane count, split tracks and the kicker are back to one-pane values');
+  assert.deepEqual(oneAttrs(), before.attrs, 'pane count, split tracks are back to one-pane values');
   assert.equal(window.__rendererState.currentSessionId, 'session-a');
   assert.match(doc.getElementById('chatTimeline').textContent, /Answer from pane zero/);
 });

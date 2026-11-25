@@ -47,11 +47,11 @@ async function createToolPreferenceService(title, tempPrefix) {
   markManagedSidecarReady(service);
   // These pins cover the composer toggles only. The row 69 session-directory gate adds its own
   // deny-list entries for an unlinked chat (tests/session-directory-tool-gate.test.js); its kill
-  // switch keeps it out of the payloads asserted here. So do the row 88 settings-tool gate's, the row 94 chat, placement, app-view, export and terminal gates', the row 85 schedule-tool gate's and the row 136 priority-tool gate's.
+  // switch keeps it out of the payloads asserted here. So do the row 88 settings-tool gate's, the row 94 chat, placement, app-view, export and terminal gates', the row 85 schedule-tool gate's, the row 136 priority-tool gate's and the row 197 run-view gate's.
   service.featureFlags = {
     ...service.featureFlags, session_directory_tool_gate: false, primary_settings_writes: false, primary_chat_manage: false,
     primary_chat_placement: false, primary_app_view: false, primary_chat_export: false, terminal_tools: false,
-    primary_scheduled_checks: false, tools_session_directory_enabled: false,
+    primary_scheduled_checks: false, tools_session_directory_enabled: false, tools_run_view_enabled: false,
   };
   const created = await service.createSession({
     title,
@@ -108,7 +108,7 @@ test('backend service sends only the default-off tools when toolPreferences are 
 
   const chatSendRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.ok(chatSendRequest);
-  assert.deepEqual(chatSendRequest.params.tool_preferences, { disabled_tools: ['browser'] });
+  assert.deepEqual(chatSendRequest.params.tool_preferences, { disabled_tools: ['browser', 'computer'] });
 });
 
 test('backend service forwards known false toolPreferences toggles and ignores unknown keys', async () => {
@@ -132,7 +132,7 @@ test('backend service forwards known false toolPreferences toggles and ignores u
   assert.ok(chatSendRequest);
   // Composer Chat panel (2026-09-30): per-chat switches travel as a deny-list only.
   assert.deepEqual(chatSendRequest.params.tool_preferences, {
-    disabled_tools: ['browser', 'fetch_url', 'web_search'], // row 114: browser is off until a chat switches it on
+    disabled_tools: ['browser', 'computer', 'fetch_url', 'web_search'], // rows 114 and 196: browser and computer are off until a chat switches them on
   });
 });
 
@@ -155,5 +155,5 @@ test('backend service sends only the default-off browser deny when toolPreferenc
 
   const chatSendRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.ok(chatSendRequest);
-  assert.deepEqual(chatSendRequest.params.tool_preferences, { disabled_tools: ['browser'] });
+  assert.deepEqual(chatSendRequest.params.tool_preferences, { disabled_tools: ['browser', 'computer'] });
 });

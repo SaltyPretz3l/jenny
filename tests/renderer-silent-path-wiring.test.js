@@ -109,5 +109,5 @@ test('health pill controller is wired with the flag-gated intake route', () => {
     composition.indexOf('createHealthPillController'),
     composition.indexOf('headerController')
   );
-  assert.match(healthPillBlock, /reportError: \(\.\.\.a\) => reportErrorWhenActive\(\.\.\.a\)/);
+  assert.match(healthPillBlock, /reportError: \(\.\.\.a\) => ctx\.reportErrorWhenActive\(\.\.\.a\)/);
 });

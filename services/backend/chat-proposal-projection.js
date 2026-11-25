@@ -6,6 +6,7 @@
 
 const R = require('./chat-proposal-records');
 const S = require('./chat-proposal-session-records');
+const { looksLongRunning } = require('./long-running-command');
 
 const { isDue } = R.primitives;
 
@@ -45,7 +46,10 @@ function confirmRestoredAction(record, state) {
 function displayFor(record) {
   const input = record.normalized_input;
   if (record.kind === 'git') {
-    return { summary: input.summary, question: input.question, paths: [...input.paths], path_count: input.paths.length };
+    return {
+      summary: input.summary, question: input.question, paths: [...input.paths], path_count: input.paths.length,
+      ...(input.not_checked ? { not_checked: [...input.not_checked] } : {}),
+    };
   }
   if (record.kind === 'session') {
     const info = record.binding.session;
@@ -90,6 +94,10 @@ function legacyActions(record, state, ctx) {
     if (actions.run.available && record.binding.command.backend === 'docker' && ctx.commandSandboxWorkspace
       && (record.binding.command.workspace || 'copy') !== ctx.commandSandboxWorkspace) {
       actions.run = availability(false, 'sandbox_mode_changed');
+    }
+    // Run waits for the command to end, so a server or watcher would hold the turn until its timeout.
+    if (actions.run.available && looksLongRunning(record.normalized_input.command)) {
+      actions.run = availability(false, 'long_running');
     }
   }
   actions.dismiss = state === 'pending' ? availability(true) : availability(false, state);

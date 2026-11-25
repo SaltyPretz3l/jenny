@@ -81,10 +81,10 @@ test('hero delegation dispatches download, browse, cancel and every recovery; cl
     page.window.document.querySelector('span').click();
     await new Promise((resolve) => setImmediate(resolve));
   }
-  // `cloud` is the no-model hint's "sign in with ChatGPT": the ChatGPT row lives
-  // in Settings › Models (Engines and providers), registry id `models`.
-  for (const action of ['download', 'browse', 'cancel-download', 'cloud', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails']) await click(action);
-  assert.deepEqual(calls, [['start', 'fit'], ['settings', 'models'], ['cancel', 'fit'], ['settings', 'models'], ['load', load],
+  // `api-key` and `cloud` are the no-model hint's "add an API key" and "sign in with ChatGPT":
+  // the Add provider and ChatGPT rows live in Settings › Models (Engines and providers), registry id `models`.
+  for (const action of ['download', 'browse', 'cancel-download', 'api-key', 'cloud', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails']) await click(action);
+  assert.deepEqual(calls, [['start', 'fit'], ['settings', 'models'], ['cancel', 'fit'], ['settings', 'models'], ['settings', 'models'], ['load', load],
     ['persist', { modelId: 'large', contextLength: 32768 }], ['load', load], ['settings', 'models'], ['logs'],
     ['copy', reader.failureDetails(reader.readModelLoadFailure(state.backend))]]);
   applied = false;
@@ -96,6 +96,45 @@ test('hero delegation dispatches download, browse, cancel and every recovery; cl
   const count = calls.length;
   await click('download');
   assert.equal(calls.length, count);
+});
+
+test('the hero Stop asks the Live tab program to close and does not retry the load (row 197)', async (t) => {
+  const page = new JSDOM('<body></body>');
+  t.after(() => page.window.close());
+  const failure = { cause: 'out_of_memory', model: 'large', engine: 'openai-compatible', message: 'x', live_run: { project_id: 'p1', program: 'game.exe' } };
+  const calls = [];
+  const shellStops = [];
+  page.window.jennyShell = { runView: { stop: async (request) => { shellStops.push(request); return { ok: true }; } } };
+  const bind = (extra) => bindHeroActions({ documentRef: page.window.document, windowRef: page.window,
+    state: { backend: { phase: 'model_unavailable', model_lifecycle: { failure } } }, reader, registerCleanup: () => {},
+    loadModel: (...args) => calls.push(['load', ...args]), ...extra });
+  bind({ stopLiveRun: async (request) => { calls.push(['stop', request]); return { ok: false }; } });
+  page.window.document.body.innerHTML = '<button data-hero-action="stopLiveRun" data-hero-model="large">Stop</button>';
+  page.window.document.querySelector('button').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [['stop', { projectId: 'p1', mode: 'ask' }]], 'a refused stop changes nothing and loads nothing');
+  const other = new JSDOM('<body></body>');
+  t.after(() => other.window.close());
+  other.window.jennyShell = page.window.jennyShell;
+  bindHeroActions({ documentRef: other.window.document, windowRef: other.window, reader, registerCleanup: () => {},
+    state: { backend: { phase: 'model_unavailable', model_lifecycle: { failure } } } });
+  other.window.document.body.innerHTML = '<button data-hero-action="stopLiveRun" data-hero-model="large">Stop</button>';
+  other.window.document.querySelector('button').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(shellStops, [{ projectId: 'p1', mode: 'ask' }], 'with no injected stop it uses the bridge');
+});
+
+test('an unclassified model_unavailable hero still retries the model its button names', async (t) => {
+  const page = new JSDOM('<body></body>');
+  t.after(() => page.window.close());
+  const calls = [];
+  bindHeroActions({ documentRef: page.window.document, windowRef: page.window, reader,
+    state: { backend: { phase: 'model_unavailable' } }, registerCleanup() {},
+    loadModel: (payload) => { calls.push(['load', payload]); } });
+  page.window.document.body.innerHTML = '<button data-hero-action="retry" data-hero-model="qwen3:8b">Retry</button>';
+  page.window.document.querySelector('button').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [['load', 'qwen3:8b']]);
 });
 
 test('pull notifications publish snapshots, numeric bytes and start time before the state event', async (t) => {

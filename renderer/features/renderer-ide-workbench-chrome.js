@@ -31,16 +31,18 @@
   }
 
   // The accessible name carries what the badge shows ("Git (5)", "Chat (new messages)").
-  function nameWithCount(jt, label, count, unread) {
+  // unreadLabel (row 195): what a view's dot means when it is not messages ("a note changed").
+  function nameWithCount(jt, label, count, unread, unreadLabel) {
     const n = Number(count);
     if (typeof jt !== 'function') return String(label);
     if (Number.isFinite(n) && n > 0) return jt('ide.workbench.withCount', '{name} ({count})', { name: label, count: Math.floor(n) });
-    return unread === true ? jt('ide.workbench.withUnread', '{name} (new messages)', { name: label }) : String(label);
+    if (unread !== true) return String(label);
+    return unreadLabel ? jt('ide.workbench.withNote', '{name} ({note})', { name: label, note: unreadLabel }) : jt('ide.workbench.withUnread', '{name} (new messages)', { name: label });
   }
 
   // tab = { id, label, count, active }
   function tabMarkup(actionButton, tab, jt, idPrefix) {
-    const name = nameWithCount(jt, tab.label, tab.count, tab.unread);
+    const name = nameWithCount(jt, tab.label, tab.count, tab.unread, tab.unreadLabel);
     return actionButton({
       plain: true,
       ariaLabel: name,
@@ -91,6 +93,40 @@
       + '<div class="wb-stack-actions">' + actions.join('') + '</div>';
   }
 
+  /* Row 195: a strip narrower than its tabs. With `reveal` the open tab is scrolled into view; the More
+     button then carries a dot and names the tabs past the edge that have a count or a dot of their own,
+     so nothing new is out of sight. Returns false while the header has no size yet (nothing was done). */
+  function syncTabOverflow(headerEl, jt, reveal) {
+    const tabsEl = headerEl && headerEl.querySelector('.wb-tabs');
+    const more = headerEl && headerEl.querySelector('[data-wb-action="more"]');
+    if (!tabsEl || !more || typeof tabsEl.getBoundingClientRect !== 'function') return false;
+    let box = tabsEl.getBoundingClientRect();
+    if (!(box.width > 0)) return false;
+    const active = reveal ? tabsEl.querySelector('.wb-tab--active') : null;
+    if (active) {
+      const at = active.getBoundingClientRect();
+      if (at.left < box.left) tabsEl.scrollLeft -= box.left - at.left;
+      else if (at.right > box.right) tabsEl.scrollLeft += at.right - box.right;
+      box = tabsEl.getBoundingClientRect();
+    }
+    const names = [];
+    Array.prototype.forEach.call(tabsEl.querySelectorAll('[data-wb-tab]'), function (tab) {
+      const at = tab.getBoundingClientRect();
+      const past = at.left < box.left - 1 || at.right > box.right + 1;
+      if (past && tab.querySelector('.wb-count, .wb-unread')) names.push(tab.getAttribute('aria-label') || '');
+    });
+    const label = names.length
+      ? jt('ide.workbench.moreWith', 'More: {names}', { names: names.join(', ') })
+      : jt('ide.workbench.more', 'More actions');
+    if (more.getAttribute('aria-label') === label) return true;
+    more.setAttribute('aria-label', label);
+    more.setAttribute('title', label);
+    const dot = more.querySelector('.wb-unread');
+    if (names.length && !dot) more.insertAdjacentHTML('beforeend', '<span class="wb-unread" aria-hidden="true"></span>');
+    else if (!names.length && dot) dot.remove();
+    return true;
+  }
+
   // W7c: the view a stack's badge speaks for: the active view when bound, else the first bound
   // view in tab order (null = unbound). The badge's click opens that view's menu.
   function boundView(ops, layout, stack) {
@@ -107,11 +143,15 @@
     return n > 0 ? { n: n, label: jt('ide.groups.boundBadge', 'Bound to editor group {n}', { n: n }) } : null;
   }
 
-  // o = { actionButton, jt, views: [{ id, label, icon, count }] }. Returns the strip's inner HTML.
+  // o = { actionButton, jt, views: [{ id, label, icon, count }], actions?: [{ name, label, icon }] }.
+  // Returns the strip's inner HTML; actions run as the stack's active view's own actions.
   function stripMarkup(o) {
+    const actions = (o.actions || []).map(function (a) {
+      return iconButton(o.actionButton, 'view:' + a.name, a.label, a.icon, { className: 'wb-action wb-strip-btn' });
+    }).join('');
     return o.views.map(function (view) {
       const fallback = escapeHtml(String(view.label || view.id).charAt(0).toUpperCase());
-      const name = nameWithCount(o.jt, view.label, view.count, view.unread);
+      const name = nameWithCount(o.jt, view.label, view.count, view.unread, view.unreadLabel);
       return o.actionButton({
         plain: true,
         className: 'wb-strip-btn',
@@ -120,7 +160,7 @@
         dataset: { 'wb-strip': view.id },
         trustedHtml: (typeof view.icon === 'string' && view.icon ? view.icon : fallback) + countMarkup(view.count, view.unread),
       });
-    }).join('');
+    }).join('') + actions;
   }
 
   function emptyStateMarkup(o) {
@@ -208,16 +248,24 @@
     } catch (_error) {
       unread = false;
     }
-    return { count: viewCount(views, id), unread: unread };
+    let unreadLabel = '';
+    try {
+      if (unread && typeof views[id].unreadLabel === 'function') unreadLabel = String(views[id].unreadLabel() || '');
+    } catch (_error) {
+      unreadLabel = '';
+    }
+    return unreadLabel ? { count: viewCount(views, id), unread: unread, unreadLabel: unreadLabel } : { count: viewCount(views, id), unread: unread };
   }
 
   // The active view's own header actions (e.g. New Terminal): views[id].actions()
   // -> [{ name, label, icon }]; icons are the registry's trusted markup.
   const ACTION_NAME_RE = /^[a-z][a-z-]{0,31}$/;
 
-  function viewActions(views, id) {
+  // which: 'actions' (the header, default) or 'stripActions' (a folded stack's strip, row 190).
+  function viewActions(views, id, which) {
+    const key = which === 'stripActions' ? 'stripActions' : 'actions';
     try {
-      const list = views[id] && typeof views[id].actions === 'function' ? views[id].actions() : [];
+      const list = views[id] && typeof views[id][key] === 'function' ? views[id][key]() : [];
       return (Array.isArray(list) ? list : []).filter(function (a) {
         return a && ACTION_NAME_RE.test(String(a.name)) && typeof a.icon === 'string';
       }).map(function (a) { return { name: String(a.name), label: String(a.label || a.name), icon: a.icon }; });
@@ -241,6 +289,8 @@
     viewLabel: viewLabel,
     viewBadge: viewBadge,
     countMarkup: countMarkup,
+    nameWithCount: nameWithCount,
+    syncTabOverflow: syncTabOverflow,
     headerMarkup: headerMarkup,
     boundBadge: boundBadge,
     boundView: boundView,

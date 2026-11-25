@@ -1,7 +1,7 @@
 /* renderer/shell/renderer-sidebar-utils.js
  *
  * Sidebar-adjacent composer utilities. Chats history and panel layout have
- * dedicated owners: renderer-chats-panel.js and renderer-view-panel-registry.js.
+ * dedicated owners: renderer-chats-panel.js and renderer-top-nav-shell.js.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {

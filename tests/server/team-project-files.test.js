@@ -469,7 +469,8 @@ test('R15-F03: a turn started during the commit\'s measure or the install\'s bui
   running = false;
   await h.ok(s.op('carl', 'team.project.upload.commit', { upload_id: first }));
   assert.equal(fs.readFileSync(path.join(s.folderOf(projectId), 'During-measure', 'a.txt'), 'utf8'), 'a');
-  // The build: the staged files are already taken, so the upload ends; nothing reaches the project folder.
+  // The build: the staged files are linked into the install folder, so the upload ends (deliberately: it answers busy,
+  // and a second commit is stale); nothing reaches the project folder.
   const second = await s.upload('carl', 'During-build', [['b.txt', Buffer.from('b')]]);
   arm.install = true;
   assert.equal(await h.reason(s.op('carl', 'team.project.upload.commit', { upload_id: second })), 'team_project_busy');
@@ -479,6 +480,21 @@ test('R15-F03: a turn started during the commit\'s measure or the install\'s bui
   assert.deepEqual(fs.readdirSync(h.roots.projectsRoot).filter((name) => name.startsWith('.jenny-install-')), []);
   assert.equal(await h.reason(s.op('carl', 'team.project.upload.commit', { upload_id: second })), 'team_upload_stale');
   await s.stagingEmpty();
+});
+
+test('a manifest with a negative or fractional size is refused before any project is measured', BOUNDED, async (t) => {
+  let measured = 0;
+  const s = await setup(t, { files: { wrapFolders: (folders) => ({ ...folders,
+    measure: (...args) => { measured += 1; return folders.measure(...args); } }) } });
+  for (const size of [-5, 1.5, Number.MAX_SAFE_INTEGER + 2]) {
+    // The wire schema refuses these first; the module is also reached directly (copy-in dispatches locally).
+    const seat = s.h.seats.carl;
+    const refused = await s.h.files.commands.dispatch({ operation: 'team.project.upload.begin' }, { actor: seat.actor ?? { member_id: seat.member_id,
+      owner: false, device_id: seat.device_id }, params: { project_id: s.projectId, folder_name: 'Bad',
+      files: [{ path: 'a.txt', size, sha256: 'a'.repeat(64) }] } });
+    assert.equal(refused.error?.reason, 'team_upload_manifest_invalid', `size ${size}: ${JSON.stringify(refused)}`);
+  }
+  assert.equal(measured, 0, 'no walk ran for a manifest that cannot be valid');
 });
 
 // Review sweeps, second run (X4b-F01): an installed file is on disk before the install answers ok, on the link path

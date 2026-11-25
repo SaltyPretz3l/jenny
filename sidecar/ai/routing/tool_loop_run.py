@@ -168,6 +168,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin, _RunLifecycleMixin
         self.degraded_transport_notified = False
         self.tool_budget_exhausted_notified = False
         self.compaction_stalled = False
+        self.overflow_recoveries = 0  # overflow compactions this loop (row 183 W1)
         # The provider's prompt count for the last request (tool_loop_compaction).
         self.request_measurement = None
         self.compaction_last_ditch_used = False
@@ -400,17 +401,16 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin, _RunLifecycleMixin
 
                 generation_clock = getattr(runtime, "clock", time.monotonic)
                 generation_started = generation_clock()
+                recover = _tl_hub.tool_loop_compaction.generate_with_overflow_recovery
                 try:
-                    result, streamed_generation_types = kernel._generate_step(
+                    result, streamed_generation_types = recover(
+                        self, kernel._generate_step, _tl_hub.build_generation_messages,
                         latest_user_content=self.latest_user_content,
-                        working_messages=_tl_hub.build_generation_messages(self.working_messages),
                         reasoning_effort=self.reasoning_effort,
                         prompt_cache_enabled=self.prompt_cache_enabled,
-                        source_key=self.cache_source_key,
-                        system_prompt=self.system_prompt,
+                        source_key=self.cache_source_key, system_prompt=self.system_prompt,
                         tool_schemas=generation_tool_payload,
-                        cache_break_detector=self.cache_break_detector,
-                        runtime=runtime,
+                        cache_break_detector=self.cache_break_detector, runtime=runtime,
                         response_format=generation_response_format,
                     )
                 except _tl_hub.TerminalChatStateError:

@@ -60,16 +60,20 @@
     let browserPanelFailed = false;
     let browserPanelSync = null; // while loading: the newest sync
     // Row 138: the Background tasks panel loads on first open; its global API exists from startup.
-    const BACKGROUND_TASKS_SCRIPTS = [
-      ['renderer/features/renderer-background-tasks-panel-render.js', 'rendererBackgroundTasksPanelRender'],
-      ['renderer/features/renderer-background-tasks-panel.js', 'rendererBackgroundTasksPanelOwner'],
-    ];
+    const BACKGROUND_TASKS_SCRIPTS = [['renderer/features/renderer-background-tasks-panel-render.js', 'rendererBackgroundTasksPanelRender'], ['renderer/features/renderer-background-tasks-panel.js', 'rendererBackgroundTasksPanelOwner']];
     let backgroundTasksPanel = null;
+    // Row 195: the tab strip's count (Runs), dot (Project) and the Session tab's "Running now" re-read on this event.
+    // Sent after the caller returns and once per burst: a signal raised while the strip is rendering must not re-enter it.
+    let signalQueued = false;
+    const signalsChanged = () => {
+      if (signalQueued) return;
+      signalQueued = true;
+      Promise.resolve().then(() => { signalQueued = false;
+        try { windowRef?.dispatchEvent?.(new windowRef.Event('jenny:side-signals-changed')); } catch (_error) { /* no listener, no event */ }
+      });
+    };
     // Row 178: the chat Terminal panel loads on first open; its global API exists from startup (with the pty bridge and the flag).
-    const TERMINAL_PANEL_SCRIPTS = [
-      ['renderer/chat/renderer-chat-terminal-panel-render.js', 'rendererChatTerminalPanelRender'],
-      ['renderer/chat/renderer-chat-terminal-panel.js', 'rendererChatTerminalPanelOwner'],
-    ];
+    const TERMINAL_PANEL_SCRIPTS = [['renderer/chat/renderer-chat-terminal-panel-render.js', 'rendererChatTerminalPanelRender'], ['renderer/chat/renderer-chat-terminal-panel.js', 'rendererChatTerminalPanelOwner']];
     let terminalPanel = null;
 
     // One Changes undo controller for both hosts (row 34 S5): the IDE chat
@@ -233,6 +237,8 @@
           renderAll: (...args) => renderAll(...args),
           appendClientLog: (...args) => appendClientLog(...args),
           showToastMessage: (...args) => showToastMessage(...args),
+          onSignalsChanged: signalsChanged,
+          openNotes: () => ensureProjectNotesEntry()?.open?.(), // the entry loads the Notes modules on first use
         });
         taskRailController?.bind?.();
         registerCleanup(() => taskRailController?.dispose?.());
@@ -295,6 +301,7 @@
           showToastMessage: (...args) => showToastMessage(...args),
           // The rail loads lazily: asking for the host builds it once its modules are present.
           getHost: () => { ensureProjectNotesRail(); return windowRef.rendererProjectNotesHost || null; },
+          onSignalsChanged: signalsChanged,
         }) || null;
         projectNotesEntry?.bind?.();
         const built = projectNotesEntry;
@@ -368,6 +375,11 @@
       return projectNotesRailController;
     }
 
+    // Row 195: a helper's row in Runs opens that helper's page (renderer-subagent-rail.js presses its card).
+    const openHelper = (target) => subagentRailModule?.openHelperRun?.({
+      ...target, doc: windowRef?.document, panes: state.panes?.panes, panel: resolveArtifactReviewPanelEl,
+    }) === true;
+
     function ensureBackgroundTasksPanel() {
       const owner = windowRef?.rendererBackgroundTasksPanelOwner;
       if (backgroundTasksPanel || typeof owner?.createBackgroundTasksPanel !== 'function') return backgroundTasksPanel;
@@ -384,6 +396,9 @@
           openSession: (sessionId) => callbacks.activateWorkspaceSession?.(sessionId, { mode: 'replace' }),
           stopSession: owner.createStopSession({ stopSessionStream: (id) => callbacks.stopSessionStream?.(id), getChat: () => windowRef?.jennyShell?.chat }),
           appendClientLog: (...args) => appendClientLog(...args),
+          getMessages: (sessionId) => state.messagesBySession?.get?.(sessionId) || [],
+          openHelper,
+          onSignalsChanged: signalsChanged,
         });
         panel.bind();
         registerCleanup(() => panel.dispose());
@@ -394,13 +409,12 @@
       return backgroundTasksPanel;
     }
 
-    async function loadBackgroundTasksPanel() {
-      // ensureScript answers at once for a loaded script and shares one load between concurrent callers.
-      for (const [src, name] of BACKGROUND_TASKS_SCRIPTS) {
-        if (!await windowRef?.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef?.[name]), log: appendClientLog })) return null;
-      }
-      return ensureBackgroundTasksPanel();
-    }
+    // ensureScript answers at once for a loaded script and shares one load between concurrent callers.
+    const loadScripts = async (list) => {
+      for (const [src, name] of list) if (!await windowRef?.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef?.[name]), log: appendClientLog })) return false;
+      return true;
+    };
+    const loadBackgroundTasksPanel = async () => ((await loadScripts(BACKGROUND_TASKS_SCRIPTS)) ? ensureBackgroundTasksPanel() : null);
 
     // The More menu and the session rail's rows call this; it loads the panel on first use.
     const backgroundTasksApi = {
@@ -417,10 +431,56 @@
       close: () => backgroundTasksPanel?.close?.() === true,
       isOpen: () => backgroundTasksPanel?.isOpen?.() === true,
       titleHtml: () => backgroundTasksPanel?.titleHtml?.() || '', // the panel chrome's title while a task is open
+      // Row 195: one run's page (Session's "Running now" rows), and what the strip and Session read. Empty until the panel loads (on the first run).
+      openRun: (id, options) => backgroundTasksApi.open({ ...options, taskId: id }),
+      runningCount: () => backgroundTasksPanel?.runningCount?.() || 0,
+      // null: the list is not loaded or shows another chat (two panes), so the caller keeps its own source. A server's
+      // address is its label in the list and its detail in Session.
+      runningRows: (sessionId) => {
+        if (!backgroundTasksPanel || String(sessionId || '') !== String(sidePanel.getSessionId() || '')) return null;
+        return (backgroundTasksPanel.runningRows?.() || []).map((row) => (row.kind === 'server' ? { ...row, label: row.detail, detail: row.label } : row));
+      },
+    };
+    // The Project tab's dot and switch, for the strip (renderer-app-chat-workbench-composition.js).
+    const projectSignals = {
+      noteChanged: () => projectNotesEntry?.noteChanged?.() === true,
+      preferredSide: () => {
+        const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => entry?.id === state.currentSessionId);
+        return session ? taskRailModule?.preferredSide?.(String(session.project_id || '').trim() || 'project_general') || '' : '';
+      },
+      // Jenny's checklist for the Session tab: [{ text, state: 'done' | 'now' | 'todo' }].
+      checklist: () => (taskRailModule?.buildSessionChecklist?.(state.messagesBySession?.get?.(state.currentSessionId) || [])?.items || []).map((item) => ({
+        text: String(item?.content || ''), state: item?.status === 'completed' ? 'done' : item?.status === 'in_progress' ? 'now' : 'todo',
+      })),
+      // The tab stopped showing: a held Delete (its Undo line) is carried out.
+      settle: () => { taskRailController?.settlePendingDelete?.(); },
     };
     if (windowRef && typeof windowRef === 'object') {
       windowRef.rendererBackgroundTasksPanel = backgroundTasksApi;
-      registerCleanup(() => { if (windowRef.rendererBackgroundTasksPanel === backgroundTasksApi) delete windowRef.rendererBackgroundTasksPanel; });
+      windowRef.rendererProjectTabSignals = projectSignals;
+      let stopJobWatch = null;
+      const onFirstJob = () => { stopJobWatch?.(); stopJobWatch = null; if (!backgroundTasksPanel) void loadBackgroundTasksPanel().then(signalsChanged, () => {}); };
+      try { stopJobWatch = windowRef.jennyShell?.backgroundJobs?.onChanged?.(onFirstJob) || null; } catch (_error) { stopJobWatch = null; }
+      Promise.resolve().then(() => windowRef.jennyShell?.backgroundJobs?.getState?.()).then((s) => { if (s?.jobs?.length) onFirstJob(); }, () => {}); // a run already going at load sends no event
+      // Helpers live in the chat's messages: after a transcript repaints (at most twice a second) the list re-reads
+      // them, and a chat whose first run is a helper loads the list then.
+      let helperTimer = 0;
+      const readHelpersSoon = () => {
+        if (helperTimer) return;
+        helperTimer = windowRef.setTimeout(() => { helperTimer = 0;
+          if (backgroundTasksPanel) { backgroundTasksPanel.refreshHelpers?.(); return; }
+          const messages = state.messagesBySession?.get?.(sidePanel.getSessionId()) || [];
+          if (messages.length && (windowRef.rendererSubagentMonitorView?.helperRuns?.(messages) || []).length) onFirstJob();
+        }, 500);
+      };
+      windowRef.document?.addEventListener?.('transcript-view-rendered', readHelpersSoon, true);
+      registerCleanup(() => {
+        stopJobWatch?.();
+        windowRef.document?.removeEventListener?.('transcript-view-rendered', readHelpersSoon, true);
+        if (helperTimer) windowRef.clearTimeout(helperTimer);
+        if (windowRef.rendererBackgroundTasksPanel === backgroundTasksApi) delete windowRef.rendererBackgroundTasksPanel;
+        if (windowRef.rendererProjectTabSignals === projectSignals) delete windowRef.rendererProjectTabSignals;
+      });
     }
 
     const terminalOffered = () => state.features?.featureFlags?.chat_terminal_panel !== false && Boolean(windowRef?.jennyShell?.workspacePty);
@@ -436,8 +496,6 @@
           openArtifactRail: (mode) => ensureArtifactSurface()?.openArtifactRail?.(mode),
           renderArtifactReviewPanel: () => ensureArtifactSurface()?.renderArtifactReviewPanel?.(),
           toggleArtifactReview: () => ensureArtifactSurface()?.toggleArtifactReview?.(),
-          toggleMaximize: () => ensureArtifactSurface()?.toggleArtifactReviewMaximized?.(),
-          isMaximized: () => ensureArtifactSurface()?.isArtifactReviewMaximized?.() === true,
           claimOwner: (sessionId) => sidePanel.claim(sessionId),
           getPanelSessionId: () => sidePanel.getSessionId(),
           getProjectSwitcher: () => callbacks.getProjectSwitcher?.(),
@@ -453,12 +511,7 @@
       return terminalPanel;
     }
 
-    async function loadTerminalPanel() {
-      for (const [src, name] of TERMINAL_PANEL_SCRIPTS) {
-        if (!await windowRef?.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef?.[name]), log: appendClientLog })) return null;
-      }
-      return ensureTerminalPanel();
-    }
+    const loadTerminalPanel = async () => ((await loadScripts(TERMINAL_PANEL_SCRIPTS)) ? ensureTerminalPanel() : null);
 
     // The More menu, Ctrl+` and the approval cards call this; it loads the panel on first use.
     const terminalApi = {
@@ -486,10 +539,7 @@
 
     async function loadBrowserPanel() {
       try {
-        for (const [src, name] of BROWSER_PANEL_SCRIPTS) {
-          const isReady = () => Boolean(windowRef[name]);
-          if (!isReady() && !await windowRef.scriptLoaderUtils?.ensureScript?.({ src, isReady, log: appendClientLog })) throw new Error(`${name} did not load`);
-        }
+        if (!await loadScripts(BROWSER_PANEL_SCRIPTS)) throw new Error('the browser panel scripts did not load');
         browserPanel = windowRef.rendererBrowserUsePanel.connectBrowserUsePanel(ctx);
         browserPanel.sync(browserPanelSync);
       } catch (error) {
@@ -507,6 +557,20 @@
     };
     registerCleanup(() => delete windowRef.rendererSyncBrowserUse);
 
+    // Row 197: the Live run view loads when its tab first renders, and not at all while the live_run_view flag is off.
+    const LIVE_PANEL_SCRIPTS = [['renderer/chat/renderer-live-run-form.js', 'rendererLiveRunForm'], ['renderer/chat/renderer-live-run-capture.js', 'rendererLiveRunCapture'], ['renderer/chat/renderer-live-run-panel.js', 'rendererLiveRunPanel']];
+    let livePanel = null, liveLoad = null; // liveLoad: the load in flight, or 'failed'
+    const loadLivePanel = () => loadScripts(LIVE_PANEL_SCRIPTS).then((ok) => {
+      if (!ok) throw new Error('the live panel scripts did not load');
+      livePanel = windowRef.rendererLiveRunPanel.connectLiveRunPanel(ctx);
+      ensureArtifactSurface()?.renderArtifactReviewPanel?.();
+    }).catch((error) => { if (!livePanel) liveLoad = 'failed'; appendClientLog('ERROR', 'live_run.panel_init_failed', { message: error?.message || String(error) }); try { ensureArtifactSurface()?.renderArtifactReviewPanel?.(); } catch (_repaintError) { /* the log has it */ } });
+    function renderLiveSurface(surface) { // pulled by the `live` mode: true while the panel loads (the load repaints)
+      if (state.features?.featureFlags?.live_run_view === false || liveLoad === 'failed') return false;
+      if (livePanel) return livePanel.renderRailContent(surface) === true;
+      liveLoad = liveLoad || loadLivePanel();
+      return true;
+    }
     // The session rail's Servers row opens the Browser panel; false while it has not loaded (nothing to show yet).
     const openBrowserUsePanel = () => (browserPanel ? browserPanel.open() !== false : false);
     windowRef.rendererOpenBrowserUsePanel = openBrowserUsePanel;
@@ -519,6 +583,7 @@
       getSubagentRailController: () => subagentRailController,
       renderBackgroundTasksSurface: (surface) => backgroundTasksPanel?.renderRailContent?.(surface) === true,
       renderTerminalSurface: (surface) => terminalPanel?.renderRailContent?.(surface) === true,
+      renderLiveSurface,
       backgroundTasksApi,
       ensureCodeReviewRail,
       ensureFilePreviewController,

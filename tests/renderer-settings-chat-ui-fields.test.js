@@ -15,6 +15,7 @@ const support = require('../renderer/shell/renderer-settings-support.js');
 const fieldCopy = require('../renderer/shell/renderer-settings-field-copy.js');
 const fieldBinding = require('../renderer/shell/renderer-settings-field-binding.js');
 const fieldDescriptors = require('../renderer/shell/renderer-settings-field-descriptors.js');
+const { restartList } = require('../renderer/shell/renderer-settings-foundation.js');
 const { createSettingsEventBindings } = require('../renderer/shell/renderer-settings-event-utils.js');
 const { segmentedGroup, segmentedValue, chooseSegmented } = require('./helpers/segmented-control');
 const { settingRow } = require('./helpers/settings-rows');
@@ -229,6 +230,7 @@ function checkedOf(harness, id) {
 }
 
 test('chat UI choices and numbers persist through the chatUi adapter and roll back unconfirmed saves', async () => {
+  restartList.clear();
   const harness = createBindingHarness();
   try {
     await pick(harness, 'safetyModeSelect', 'paranoid');
@@ -265,14 +267,20 @@ test('chat UI choices and numbers persist through the chatUi adapter and roll ba
     assert.deepEqual(harness.patches.pop(), { uiLanguage: 'ja' });
     assert.equal(harness.state.uiLanguage, 'ja');
     assert.equal(harness.window.localStorage.getItem('jenny.ui.language'), 'ja');
-    assert.equal(harness.toasts.length, 1);
+    assert.equal(harness.toasts.length, 0, 'no toast: the restart bar says a restart is owed');
+    assert.deepEqual(restartList.list(), [{ id: 'uiLanguageSelect', label: 'Language' }], 'the saved language waits for a restart');
     harness.setSnapshot(() => ({ uiLanguage: 'ja' }));
     await change(harness, 'uiLanguageSelect', 'fr');
     assert.deepEqual(harness.patches.pop(), { uiLanguage: 'fr' });
     assert.equal(harness.window.localStorage.getItem('jenny.ui.language'), 'ja', 'an unconfirmed language is not stored');
-    assert.equal(harness.toasts.length, 1, 'and no restart toast is shown');
+    assert.equal(harness.toasts.length, 0);
     assert.equal(harness.document.getElementById('uiLanguageSelect').value, 'ja');
+    harness.setSnapshot((patch) => patch);
+    await change(harness, 'uiLanguageSelect', 'en');
+    assert.equal(restartList.has('uiLanguageSelect'), false, 'back at the start-up language, nothing is owed');
+    assert.equal(harness.toasts.length, 0);
   } finally {
+    restartList.clear();
     harness.cleanup();
   }
 });

@@ -14,8 +14,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const { writeBackup } = require('../../services/team/host/host-backup');
-const { exportTeam } = require('../../services/team/host/host-export');
+const { readBackup, writeBackup } = require('../../services/team/host/host-backup');
+const { backupEntriesOf, exportTeam } = require('../../services/team/host/host-export');
 const { restoreTeam } = require('../../services/team/host/host-restore');
 const { ProjectStore } = require('../../services/projects/project-store');
 const { PROJECT_STORE_SCHEMA_VERSION, createGeneralProject } = require('../../services/projects/project-schema');
@@ -445,4 +445,64 @@ test('row 151 T1: an exported and restored team has the same board files byte fo
   const restored = await restore(fresh, out.name);
   assert.equal(restored.ok, true, JSON.stringify(restored));
   assert.deepEqual(snapshot(path.join(fresh.profile, 'team-boards')), boards);
+});
+
+// A desktop-style export of a team whose host root holds the profile only (no projects/ and no trash/ folder).
+async function exportedWithoutFolders(t) {
+  const { fx, team } = await seeded(t);
+  const desktop = path.join(fx.root, 'desk-bare');
+  const hostRoot = path.join(desktop, 'team-host');
+  fs.cpSync(fx.profile, path.join(hostRoot, 'profile'), { recursive: true });
+  const picked = path.join(desktop, 'picked');
+  fs.mkdirSync(picked);
+  const made = await exportTeam({ root: hostRoot, picked, userDataPath: desktop, ownerId: team.owner.member_id,
+    setting: { name: fx.teamName, direct_port: null, internet: null },
+    secrets: { seed: Buffer.from(fx.hostKey, 'base64url'), relayToken: null }, password: PASSWORD });
+  assert.equal(made.ok, true, JSON.stringify(made));
+  const [folder] = fs.readdirSync(picked);
+  const name = fs.readdirSync(path.join(picked, folder)).find((entry) => entry.endsWith('.jennyteam'));
+  return { fx, team, file: path.join(picked, folder, name), name };
+}
+
+test('C4: a backup of a team with no projects/ or trash/ folder records both as empty folders and restores', async (t) => {
+  const { fx, file, name } = await exportedWithoutFolders(t);
+  const dirs = [];
+  const manifest = await new Promise((resolve, reject) => {
+    let seen = null;
+    readBackup({ file, password: PASSWORD, handlers: { onManifest: (m) => { seen = m; }, onDir: (rel) => { dirs.push(rel); },
+      onFileStart() {}, onFileData() {}, onFileEnd() {} } }).then(() => resolve(seen), reject);
+  });
+  assert.equal(manifest.schema, 1);
+  assert.ok(dirs.includes('projects') && dirs.includes('trash'), `the empty top-level folders are recorded: ${dirs.join(',')}`);
+  const fresh = freshWith(t, file, name);
+  const restored = await restore(fresh, name);
+  assert.equal(restored.ok, true, JSON.stringify(restored));
+  assert.equal(fs.readFileSync(fresh.keyFile, 'utf8'), `${fx.hostKey}\n`);
+  assert.deepEqual(fs.readdirSync(fresh.profile).filter((entry) => entry.startsWith('.jenny')), [], 'no marker or staging');
+});
+
+test('C4: a backup made before the folders were recorded (no projects/ and no trash/ record) still restores', async (t) => {
+  const { fx } = await seeded(t);
+  const { entries } = await backupEntriesOf([{ top: 'profile', base: fx.profile }], 1000);
+  assert.equal(entries.some((entry) => entry.rel === 'projects' || entry.rel === 'trash'), false, 'a legacy entry list');
+  const target = path.join(fx.exchangeDir, 'legacy.jennyteam');
+  await writeBackup({ target, password: PASSWORD, entries, manifest: { schema: 1, team_name: fx.teamName, team_id: null,
+    exported_at: Date.now(), key: fx.hostKey, relay_token: null, setting: { name: fx.teamName, direct_port: null, internet: null } } });
+  const fresh = freshWith(t, target);
+  const restored = await restore(fresh, 'legacy.jennyteam');
+  assert.equal(restored.ok, true, JSON.stringify(restored));
+  assert.equal(restored.projects, 0);
+  assert.equal(fs.existsSync(path.join(fresh.profile, 'team-members.json')), true);
+  assert.equal(fs.readFileSync(fresh.keyFile, 'utf8'), `${fx.hostKey}\n`);
+});
+
+test('the restore core\'s kept profile names are team-maintenance\'s, plus the ready marker, and its staging name is the same', () => {
+  const { KEPT_IN_PROFILE, STAGING, STAGING_PREFIX } = require('../../server/team/team-maintenance');
+  const { NOT_MOVED, movable } = require('../../server/team/restore-core');
+  assert.deepEqual([...NOT_MOVED].sort(), [...KEPT_IN_PROFILE, 'team-ready.json'].sort());
+  const staging = `${STAGING_PREFIX}0123456789ab`;
+  assert.equal(STAGING.test(staging), true);
+  assert.equal(movable(staging), false);
+  assert.equal(movable(`${STAGING_PREFIX}xyz`), STAGING.test(`${STAGING_PREFIX}xyz`) === false);
+  assert.equal(movable('team-members.json'), true);
 });

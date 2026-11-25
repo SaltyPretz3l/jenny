@@ -22,7 +22,6 @@ from sidecar.ai.mcp.transport_base import MCPTransport
 _TOOLS = [{"name": "lookup", "description": "Look up.", "inputSchema": {"type": "object"}}]
 _INPUTS: dict[str, bool] = {
     "sse_enabled": False,
-    "resources_enabled": False,
     "allow_private_addresses": False,
     "allow_loopback": False,
 }
@@ -63,15 +62,6 @@ class _CountingTransport(MCPTransport):
 
     def call_tool(self, tool_name: str, arguments: dict[str, Any], **_kwargs: Any) -> Any:
         return {"content": [{"type": "text", "text": "ok"}]}
-
-    def list_resources(self, **_kwargs: Any) -> dict[str, Any]:
-        return {"resources": []}
-
-    def read_resource(self, uri: str, **_kwargs: Any) -> dict[str, Any]:
-        return {"contents": []}
-
-    def list_resource_templates(self, **_kwargs: Any) -> dict[str, Any]:
-        return {"resourceTemplates": []}
 
     def list_prompts(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
         return []
@@ -156,7 +146,6 @@ def test_identical_row_and_inputs_reuse_the_live_transport(
         ),
         (_config(), _config(), {"allow_private_addresses": True}),
         (_config(), _config(), {"allow_loopback": True}),
-        (_config(), _config(), {"resources_enabled": True}),
         (_config(), _config(), {"sse_enabled": True}),
     ],
 )

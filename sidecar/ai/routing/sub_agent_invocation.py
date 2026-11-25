@@ -56,6 +56,9 @@ SUBAGENT_DEADLINE_EXCEEDED_MESSAGE = (
     "Sub-agent reached the parent turn deadline before producing an answer."
 )
 _BUDGET_COMPLETION_REASONS = frozenset({"budget_exhausted", "max_iterations_summary"})
+# Re-exported: the contract helpers moved to delegation_contract.
+PARTIAL_ANSWER_PREFIX = _delegation_contract.PARTIAL_ANSWER_PREFIX
+build_delegation_contract_payload = _delegation_contract.build_delegation_contract_payload
 _PREFERENCE_KEYS = frozenset({"enabled_tools", "disabled_tools", "disabled_tool_families"})
 _DENY_ALL_ENABLED_TOOL_MARKER = "__subagent_no_tools__"
 
@@ -84,6 +87,8 @@ class SubAgentInvocationResult:
     observed_tool_names: tuple[str, ...] = ()
     completion_reason: str | None = None
     invocation_kind: str = INVOCATION_KIND_RESEARCH
+    # Row 184 W3: a write task's worktree (branch, path, kept, change counts).
+    worktree: dict[str, Any] | None = None
 
 
 def subagent_failure_result(
@@ -102,30 +107,6 @@ def subagent_failure_result(
         error_retryable=completion_reason == "capacity_unavailable",
         completion_reason=completion_reason,
     )
-
-
-def build_delegation_contract_payload(  # noqa: PLR0913
-    *,
-    goal: str,
-    context: str,
-    boundaries: tuple[str, ...] | list[str],
-    tasks: tuple[str, ...] | list[str],
-    verification: tuple[str, ...] | list[str],
-    return_format: str,
-) -> dict[str, Any]:
-    normalized = _delegation_contract.normalize_delegation_contract(
-        {
-            "goal": goal,
-            "context": context,
-            "boundaries": boundaries,
-            "tasks": tasks,
-            "verification": verification,
-            "return_format": return_format,
-        }
-    )
-    if normalized is None:
-        raise ValueError("research delegation requires goal, tasks, and return_format")
-    return normalized
 
 
 def _parent_agent_id(parent_context: ChatRequestContext) -> str:
@@ -254,13 +235,30 @@ def merge_sub_agent_tool_preferences(
     return merged if any(merged.values()) else None
 
 
-def _child_request_context(
+DEFAULT_ALLOWED_TOOL_FAMILIES = ("filesystem", "git", "code_intelligence")
+READ_ONLY_DISABLED_TOOLS = (
+    "subagent_run", "subagent_batch", "delegate",
+    "worktree_create", "worktree_select", "worktree_delete", "memory",
+)
+
+
+def build_subagent_tool_preferences(
+    allowed_tool_families: tuple[str, ...] | list[str],
+) -> dict[str, tuple[str, ...]]:
+    """Translate validated grants into existing request-scoped tool preferences."""
+    allowed = {str(item or "").strip() for item in allowed_tool_families if str(item or "").strip()}
+    disabled_families = tuple(sorted(KNOWN_TOOL_FAMILIES - allowed))
+    return {"disabled_tools": READ_ONLY_DISABLED_TOOLS, "disabled_tool_families": disabled_families}
+
+
+def _child_request_context(  # noqa: PLR0913 - explicit child context inputs.
     *,
     parent_context: ChatRequestContext,
     identity: SubAgentIdentity,
     tool_preferences_override: dict[str, tuple[str, ...]] | None,
     iteration_budget_override: int | None,
     report_mode: str,
+    write_context: Any = None,
 ) -> ChatRequestContext:
     parent_hash = str(parent_context.parent_approval_plan_hash or "").strip()
     if not parent_hash:
@@ -271,14 +269,18 @@ def _child_request_context(
         session_id=parent_context.session_id,
         mode=parent_context.mode,
         approvals_pre_granted=False,
-        execution_context=parent_context.execution_context,
+        # Row 184 W3: a writing helper's context names its worktree; it keeps the
+        # parent's Auto grant so ordinary edits need no card (delegate_write.py).
+        execution_context=write_context or parent_context.execution_context,
+        approval_mode=parent_context.approval_mode if write_context else "prompt",
+        sub_agent_write_mode=write_context is not None,
         inference_budget_required=parent_context.inference_budget_required,
         memory_policy=DISABLED_MEMORY_POLICY,
         reasoning_effort=parent_context.reasoning_effort,
         session_start_date=parent_context.session_start_date,
         current_date=parent_context.current_date,
         plan_mode=False,
-        read_only=True,
+        read_only=write_context is None,
         tool_preferences=merge_sub_agent_tool_preferences(
             parent_preferences=(
                 {}
@@ -310,8 +312,14 @@ def _delegation_contract_for_research(
     *,
     parent_context: ChatRequestContext,
     report_mode: str,
+    answer_chars: int,
+    write: bool = False,
 ) -> dict[str, Any]:
     plain_text_mode = report_mode == SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+    if write:
+        return _delegation_contract.write_contract_payload(
+            mode=parent_context.mode, answer_chars=answer_chars,
+        )
     return build_delegation_contract_payload(
         goal="Read-only research for the parent agent using bounded tool access.",
         # No per-turn ids here: the contract is a leading runtime overlay, and
@@ -346,8 +354,9 @@ def _delegation_contract_for_research(
         ),
         return_format=(
             "one concise, nonblank plain-text answer; do not return JSON. The parent sees "
-            f"only the first {_delegation_contract.MAX_DELEGATE_ANSWER_CHARS:,} characters; "
-            "lead with the result."
+            f"only the first {answer_chars:,} characters; lead with the result. If you could "
+            f"not cover everything asked, begin the answer with '{PARTIAL_ANSWER_PREFIX}' and "
+            "name what you did not cover."
             if plain_text_mode
             else (
                 'one JSON object: {"status":"completed|partial",'
@@ -431,10 +440,36 @@ def _child_loop_runtime(  # noqa: PLR0913 - explicit isolated child runtime depe
         electron_tool_writer=getattr(parent_runtime, "electron_tool_writer", None),
         electron_tool_reader=getattr(parent_runtime, "electron_tool_reader", None),
         electron_tool_reader_factory=getattr(parent_runtime, "electron_tool_reader_factory", None),
-        operation_admission=getattr(parent_runtime, "operation_admission", None),
+        operation_admission=_child_operation_admission(parent_runtime, child_context),
         inference_admission=child_inference_admission,
         request_context=child_context,
     )
+
+
+def _child_operation_admission(parent_runtime: Any, child_context: ChatRequestContext) -> Any:
+    admission = getattr(parent_runtime, "operation_admission", None)
+    if not child_context.sub_agent_write_mode or admission is None:
+        return admission
+    return helper_write_admission(admission, child_context.execution_context)
+
+
+def helper_write_admission(parent_admission: Any, write_context: Any) -> Any:
+    """Row 184 W3: the parent's live admission, answering with the helper's worktree.
+
+    Electron checks the operation against the parent's binding (Auto, policy,
+    disabled tools); the returned envelope is what builtin tools bind to, so it
+    names the helper's worktree. Helpers cannot issue further worktrees.
+    """
+    wire = write_context.to_wire()
+
+    def _admit(**fields: Any) -> dict[str, Any]:
+        parent_admission(**fields)
+        return dict(wire)
+
+    acquire = getattr(parent_admission, "acquire_resource", None)
+    if callable(acquire):
+        _admit.acquire_resource = acquire  # type: ignore[attr-defined]
+    return _admit
 
 
 def _failure_result(  # noqa: PLR0913 - mirrors the fixed failure envelope.
@@ -658,7 +693,11 @@ def _settle_child_response(
         )
     status = (
         "partial"
-        if plain_text_mode and completion_reason in _BUDGET_COMPLETION_REASONS
+        if plain_text_mode
+        and (
+            completion_reason in _BUDGET_COMPLETION_REASONS
+            or response_text.lstrip().upper().startswith(PARTIAL_ANSWER_PREFIX)
+        )
         else "completed"
     )
     return replace(base_result, status=status)
@@ -682,6 +721,7 @@ def invoke_sub_agent(  # noqa: PLR0913
     absolute_deadline: float | None = None,
     event_sink: Any | None = None,
     inference_provider: str | None = None,
+    write_context: Any = None,
 ) -> SubAgentInvocationResult:
     if int(parent_context.agent_depth or 0) >= 1:
         return SubAgentInvocationResult(
@@ -715,6 +755,7 @@ def invoke_sub_agent(  # noqa: PLR0913
             if report_mode == SUB_AGENT_REPORT_MODE_PLAIN_TEXT
             else SUB_AGENT_REPORT_MODE_STRUCTURED
         ),
+        write_context=write_context,
     )
     child_cancel = (
         cancel_handle.create_child(request_id=child_context.request_id)
@@ -728,6 +769,8 @@ def invoke_sub_agent(  # noqa: PLR0913
     delegation_contract = _delegation_contract_for_research(
         parent_context=parent_context,
         report_mode=child_context.sub_agent_report_mode,
+        answer_chars=_delegation_contract.delegate_answer_chars(getattr(router, "_config", None)),
+        write=write_context is not None,
     )
     child_context = replace(
         child_context,

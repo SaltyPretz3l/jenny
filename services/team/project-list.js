@@ -306,7 +306,8 @@ function createProjectList({ manager, teamId, push = () => {}, log = () => {}, i
       entry.approvals.add(event.approval_id);
       return true;
     }
-    if (kind === 'decision_changed') {
+    // A decision, or an approval that timed out (its `tool_use` alone ends it).
+    if (kind === 'decision_changed' || kind === 'tool_use') {
       const entry = activityOf(event.session_id, false);
       if (!entry) return false;
       // A live id goes; otherwise the decision answers one of the approvals the list read counted.

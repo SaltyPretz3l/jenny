@@ -52,11 +52,10 @@ function createBackendServiceWithDeps({
   getSystemStatsPayload = () => null,
   getMainWindow = () => null,
   getPackagedSmokeController = () => null,
-  // Managed llama-server manager getter (api key + base URL for the sidecar
-  // secrets broker, status for diagnostics, ensureRunning for engine switch).
+  // Managed llama-server manager getter (key + base URL for the secrets broker, diagnostics, engine switch).
   getLlamaServerManager = () => null,
-  // The managed NInfer runtime's manager (row 54); null while the flag is off.
-  getNinferManager = () => null,
+  // The managed NInfer (row 54) and Strata (row 200) runtimes' managers; null while their flag is off.
+  getNinferManager = () => null, getStrataManager = () => null,
   buildEffectiveFeatureFlags = () => ({}),
   buildFeatureStatePayload = () => ({}),
   refreshGpuMemorySample = async () => null,
@@ -154,6 +153,7 @@ function createBackendServiceWithDeps({
       : llamaServerSettings.profile,
     getLlamaServerManager,
     getNinferManager,
+    getStrataManager,
     configService: shellConfigService,
     personalityWorkspace,
     safeStorage,
@@ -211,24 +211,30 @@ function createBackendServiceWithDeps({
   backendService.imageEngine = imageEngine;
   imageEngine.on('changed', (state) => sendBridgeEvent('imageEngine.onChanged', state));
   backendService.exclusiveGpuCoordinator = backendService.exclusiveGpuCoordinator || new ExclusiveGpuCoordinator({ logger: log });
-  backendService.vramLoadPreflight = require('../backend/vram-load-preflight').createVramLoadPreflight({ log }); // free-VRAM check before a model loads
+  backendService.vramLoadPreflight = require('../backend/vram-load-preflight').createVramLoadPreflight({ // free-VRAM check before a model loads
+    log, liveRunPids: () => backendService.runView?.livePids?.() || [], // row 197: names a Live-tab program
+  });
+  // Row 197: the chat's Live tab. Nothing loads until its first call (services/main/run-view-composition.js).
+  backendService.runView = require('./run-view-composition').createLazyRunView({
+    userDataPath: app.getPath('userData'), getBackendService: () => backendService, sendBridgeEvent, log, platform: processRef.platform,
+  });
   backendService.chatGpuHandoff = createChatGpuHandoff({
-    backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager, getNinferManager,
+    backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager, getNinferManager, getStrataManager,
     reconcileRenderProcesses: () => reconcileRenderRecord({ userDataPath: app.getPath('userData'), log }),
     clearRenderRecordUnproven: () => clearRenderRecordUnproven({ userDataPath: app.getPath('userData'), log }),
-    renderRecordSummary: () => readRenderRecordSummary({ userDataPath: app.getPath('userData') }),
-    log,
+    renderRecordSummary: () => readRenderRecordSummary({ userDataPath: app.getPath('userData') }), log,
   });
   backendService.imageEngineRuntime = { killRenderSync: () => killRenderRecordSync({ userDataPath: app.getPath('userData'), log }) };
   backendService.comfyui = require('./comfyui-wiring').lazyComfyOwner({ userDataPath: app.getPath('userData'), log }); // row 127
-  // Managed NInfer runtime (row 54): eligibility, installer and artifact
-  // downloader; the manager in runtime-shutdown.js reads them from here.
+  // Managed NInfer runtime (row 54): eligibility, installer, artifact downloader; runtime-shutdown.js reads them.
   const { createNinferRuntime } = require('./ninfer-runtime-wiring');
   backendService.ninferRuntime = createNinferRuntime({
     userDataPath: app.getPath('userData'), flags: initialFeatureFlags, platform: processRef.platform, log,
   });
   // Renderers refetch ninfer.getState() on any change (it also changes the composer's model list).
   backendService.ninferRuntime.on('changed', (state) => { require('../backend/backend-model-list').clearModelListCaches(backendService); sendBridgeEvent('ninfer.onChanged', { source: 'runtime', ...state }); });
+  // Managed Strata runtime (row 200): install discovery, pack check, engine config.
+  require('./strata-runtime-wiring').attachStrataRuntime(backendService, { userDataPath: () => app.getPath('userData'), flags: initialFeatureFlags, platform: processRef.platform, getShellConfigService: () => shellConfigService, log, sendBridgeEvent });
   const { DesktopSandboxService } = require('../execution/desktop-sandbox-service');
   backendService.commandSandbox = new DesktopSandboxService({
     userDataPath: app.getPath('userData'),
@@ -301,14 +307,8 @@ function createBackendServiceWithDeps({
       backendService && backendService.sessionStore
         ? backendService.sessionStore.listSessions()
         : null,
-    listSessionRecords: () =>
-      backendService && backendService.sessionStore
-        && typeof backendService.sessionStore.listSessionRecords === 'function'
-        ? backendService.sessionStore.listSessionRecords()
-        : [],
     getWorkspaceState: () => shellConfigService.getWorkspaceState(),
     formatDateKey,
-    taskLifecycleEnabled: () => buildEffectiveFeatureFlags().task_lifecycle === true,
     taskBoardEnabled: () => buildEffectiveFeatureFlags().tools_task_board_enabled === true,
   });
   backendService.offlineIntelligenceService = offlineIntelligenceService;

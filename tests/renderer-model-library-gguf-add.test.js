@@ -362,7 +362,7 @@ test('removeLibraryModel fails unless the returned perModel has lost the key', a
 });
 
 // Slice 6-7: model sharing's item leads every ⋯ menu (renderer-model-library-share.test.js pins it); these pins are the rest.
-const shareFirst = (items) => { assert.equal(items[0]?.label, 'Send to someone in your team…'); return items.slice(1); };
+const shareFirst = (items) => { assert.equal(items[0]?.label, 'Set as default'); assert.equal(items[1]?.separator, true); assert.equal(items[2]?.label, 'Send to someone in your team…'); return items.slice(3); };
 function sectionHarness(t, options = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <nav class="settings-nav"><button data-settings-section="models">Models</button></nav>

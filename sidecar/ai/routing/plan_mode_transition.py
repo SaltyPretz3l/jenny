@@ -21,6 +21,7 @@ from sidecar.ai.context.runtime_message_markers import (
     RESTORED_TOOL_CONTRACT_HEADING,
 )
 from sidecar.ai.context.turn_context import is_turn_context_row
+from sidecar.ai.routing.iteration_limits import widen_turn_tool_budget
 from sidecar.ai.tools.preconditions import PRECONDITION_RENDER
 from sidecar.runtime.diagnostics import log_event
 
@@ -318,4 +319,6 @@ __all__ = [
     "build_restored_tool_contract_overlay",
     "context_with_plan_decision",
     "transition_after_exit_outcome",
+    # Re-exported for the exit sites, which swap in the Build tools and must widen the budget.
+    "widen_turn_tool_budget",
 ]

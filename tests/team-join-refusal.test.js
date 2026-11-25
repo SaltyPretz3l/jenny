@@ -83,7 +83,7 @@ test(`a recovery whose first redeem never reached the host keeps the new key, no
 test('the app quitting while a recovery waits out the cooldown still keeps the key the host accepted', async (t) => {
   const s = await savedTeam(t);
   // Both sides keep the binary's full minute; the quit below cuts the member's wait. An older host bridge says
-  // `host_refused` for its cooldown, so the member waits it out (this round's says `host_cooldown`: no wait).
+  // `host_refused` for its cooldown, so the member waits it out (this round's `host_cooldown` is waited out too, H11).
   s.host.hostSpawner.options.oldHost = true;
   const service = s.host.createService({ requestTimeoutMs: 300 });
   const oldKey = s.host.secureStore.values.get(keyName(s.me.teamId));
@@ -198,4 +198,26 @@ test('a wait ends at its time or at wakeAll, and leaves no timer behind', async 
   assert.ok(Date.now() - started < 1000);
   await waits.wait(5);
   assert.equal(waits.pending(), 0);
+});
+
+// Review H11. Fault: the device key's check after the second redeem meets the bridge's own cooldown of the key's
+// first refusal (`host_cooldown`) and reads it as unreachable: no wait, the join ends on the redeem answer alone
+// (no team name) and the new member's key sits out the cooldown. It is waited out once, as a refusal is (R10-F01).
+test('after a lost redeem, a host_cooldown on the device key check is waited out once and the check succeeds', async (t) => {
+  const { createJoin } = require('../services/team/join-flow');
+  const { createDeviceKeyStore } = require('../services/team/device-key-store');
+  const { saveClientFile } = require('../services/team/client-file');
+  const host = await createTeamClientHost(t);
+  const owner = await host.ownerDirect();
+  const calls = loseFirstRedeem(host);
+  host.hostSpawner.options.refusedCooldownMs = COOLDOWN_MS;
+  const { invite } = await host.invite({ actor: owner.member_id });
+  const flow = createJoin({ deviceKeys: createDeviceKeyStore({ getSecureStore: () => host.secureStore }),
+    userDataPath: host.userData, spawnChild: host.memberSpawner, appVersion: '1.6.1', requestTimeoutMs: 300,
+    refusedCooldownMs: COOLDOWN_MS });
+  const result = await flow.join({ invite, displayName: 'Mika Member', label: 'Laptop' },
+    { admit: () => null, writeRecord: (record) => saveClientFile(host.userData, record) });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls(), 2, 'redeemed once more after the device key was refused');
+  assert.equal(result.team_name, host.env.store.teamName(), 'the device key was checked: the status named the team');
 });

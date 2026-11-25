@@ -301,3 +301,43 @@
 .plan-document-receipt .plan-document__step-text {
   cursor: auto;
 }
+
+/* Row 198: an earlier version of a plan in the same turn is one line where it was, with what the owner asked for. */
+.plan-version-line {
+  padding: var(--space-2) 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.plan-version-line > summary {
+  align-items: baseline;
+  justify-content: flex-start;
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+}
+
+.plan-version-line__name {
+  flex: none;
+  color: var(--text-primary);
+  font-weight: var(--tl-weight-label);
+}
+
+.plan-version-line__ask {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-version-line .plan-document-receipt__meta {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+/* Row 198: a latest plan cut off by a stop keeps its card; one line says why, beside Build it. */
+.plan-document__stopped-note {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+}

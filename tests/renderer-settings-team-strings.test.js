@@ -53,6 +53,8 @@ const REASONS = [
   // TEAM_PROJECTS_SPEC 3-9: the shared-project client's own closed list (services/team/project-reasons.js)
   ...PROJECT_REASONS,
   ...MODEL_REASONS,
+  // Row 201 (OD-4, OD-5): the sharer's Ollama share set and the owner's pool context length.
+  'team_pool_context_invalid', 'team_sharing_invalid',
 ];
 
 // Reason-like words in the 3-9 client's source that are event or push names, never failure reasons.

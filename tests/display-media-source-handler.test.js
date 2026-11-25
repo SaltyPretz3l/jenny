@@ -3,7 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createDisplayMediaSourceHandler } = require('../services/main/display-media-source-handler');
+const { createDisplayMediaSourceHandler: createRawHandler } = require('../services/main/display-media-source-handler');
+const { createDisplayCaptureSlot, ARM_TTL_MS } = require('../services/main/display-capture-slot');
+
+// Most cases below are about the picker itself, so they run as a request from the
+// main window's main frame; the capture gate's own cases pass isTrustedRequest.
+const createDisplayMediaSourceHandler = (options = {}) => createRawHandler({ isTrustedRequest: () => true, ...options });
 
 // A minimal Electron-Session stand-in that captures the installed handler so
 // tests can drive it directly (mirrors createFakeSession() in
@@ -483,4 +488,105 @@ test('redacted logging: no log detail ever contains a source name or a data: URL
     assert.ok(!serialized.includes(secretName), `log ${entry.event} must not include the source name`);
     assert.ok(!serialized.includes('data:image'), `log ${entry.event} must not include a data: URL`);
   }
+});
+
+// ── Capture gate (row 197 S1) ────────────────────────────────────────────────
+
+function gateHarness({ trusted = true, sources = [makeSource({ id: 'window:591824:0', name: 'Game', display_id: '' })] } = {}) {
+  const capturer = createFakeDesktopCapturer(sources);
+  const renderer = createRendererSpies();
+  const logs = [];
+  const state = { now: 1000, trusted };
+  const slot = createDisplayCaptureSlot({ now: () => state.now });
+  const handler = createRawHandler({
+    desktopCapturer: capturer,
+    sendToRenderer: renderer.sendToRenderer.bind(renderer),
+    sendCancel: renderer.sendCancel.bind(renderer),
+    log: (level, event, details) => logs.push({ level, event, details }),
+    isTrustedRequest: () => state.trusted,
+    slot,
+  });
+  const session = createFakeSession();
+  assert.equal(handler.installHandler(session), true);
+  return { capturer, renderer, logs, state, handler, session };
+}
+
+test('capture gate: a request not from the main window main frame is refused without a picker', async () => {
+  const h = gateHarness({ trusted: false });
+  const calls = await fireRequest(h.session, { frame: {} });
+  assert.deepEqual(calls, [{}]);
+  assert.equal(h.capturer.calls.length, 0, 'no source is even listed');
+  assert.equal(h.renderer.pushed.length, 0, 'no picker opens');
+  assert.ok(h.logs.some((l) => l.event === 'display_media.request_refused'));
+  const unset = createRawHandler({ desktopCapturer: h.capturer, sendToRenderer: () => {} });
+  const unsetSession = createFakeSession();
+  unset.installHandler(unsetSession);
+  assert.deepEqual(await fireRequest(unsetSession), [{}], 'no isTrustedRequest fails closed');
+});
+
+test('capture gate: an armed slot answers one request with its window and no picker, then expires', async () => {
+  const h = gateHarness();
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: true });
+  const first = await fireRequest(h.session);
+  assert.deepEqual(first, [{ video: { id: 'window:591824:0', name: 'Game' } }]);
+  assert.deepEqual(h.capturer.calls[0], { types: ['window'], thumbnailSize: { width: 0, height: 0 } });
+  assert.equal(h.renderer.pushed.length, 0);
+  await fireRequest(h.session);
+  assert.equal(h.renderer.pushed.length, 1, 'the next request goes to the picker');
+  h.handler.resolvePick(h.renderer.pushed[0].requestId, null);
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: true });
+  h.state.now += ARM_TTL_MS + 1;
+  await fireRequest(h.session);
+  assert.equal(h.renderer.pushed.length, 2, 'an expired slot answers nothing');
+});
+
+test('capture gate: arming is refused while the picker is open, for a bad id, or when not installed', async () => {
+  const h = gateHarness();
+  await fireRequest(h.session);
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: false, reason: 'picker_open' });
+  h.handler.resolvePick(h.renderer.pushed[0].requestId, null);
+  assert.deepEqual(h.handler.armWindowCapture('screen:0:0'), { ok: false, reason: 'invalid_source' });
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: true });
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: false, reason: 'already_armed' });
+  h.handler.dispose();
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: false, reason: 'unavailable' });
+});
+
+test('capture gate: an armed window that no longer exists answers nothing and opens no picker', async () => {
+  const h = gateHarness({ sources: [] });
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: true });
+  assert.deepEqual(await fireRequest(h.session), [{}]);
+  assert.equal(h.renderer.pushed.length, 0);
+});
+
+test('capture gate: arming is refused while a picker request is still listing its sources', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const h = gateHarness({ sources: async () => { await gate; return [makeSource({ id: 'window:591824:0', name: 'Game', display_id: '' })]; } });
+  const calls = [];
+  const inFlight = h.session.displayMediaRequestHandler({}, (streams) => calls.push(streams));
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: false, reason: 'picker_open' });
+  release();
+  await inFlight;
+  h.handler.resolvePick(h.renderer.pushed[0].requestId, null);
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: true }, 'a failed listing would not leave the count held either');
+});
+
+test('capture gate: an armed request whose handler was torn down meanwhile gets nothing, and a throwing callback stays inside', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const h = gateHarness({ sources: async () => { await gate; return [makeSource({ id: 'window:591824:0', name: 'Game', display_id: '' })]; } });
+  assert.deepEqual(h.handler.armWindowCapture('window:591824:0'), { ok: true });
+  const calls = [];
+  const handlerFn = h.session.displayMediaRequestHandler;
+  const inFlight = handlerFn({}, (streams) => calls.push(streams));
+  h.handler.dispose();
+  release();
+  await inFlight;
+  assert.deepEqual(calls, [{}], 'no window is handed out after dispose');
+
+  const g = gateHarness();
+  assert.deepEqual(g.handler.armWindowCapture('window:591824:0'), { ok: true });
+  await assert.doesNotReject(g.session.displayMediaRequestHandler({}, () => { throw new Error('session gone'); }));
+  assert.ok(g.logs.some((l) => l.event === 'display_media.callback_threw'));
 });

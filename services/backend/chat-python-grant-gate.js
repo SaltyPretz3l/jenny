@@ -1,8 +1,8 @@
 'use strict';
 
 // Session review 2026-11-17, owner decision D1: "Always" on a Python card allows Python for the rest of
-// that chat, in the same project root. The sidecar still asks for every Python run
-// (sidecar/ai/routing/tool_execution.py, "Python execution always requires approval"); this is consent
+// that chat, in the same project root. Outside Auto with a project folder (row 184 W4) the sidecar asks for
+// every Python run (sidecar/ai/routing/tool_execution.py, "Python execution always requires approval"); this is consent
 // held by Electron answering that request without a card, the way Full auto and an allowed edit round do.
 //
 // The grant lives in memory only: never written to the permission store, never project-wide. It ends when

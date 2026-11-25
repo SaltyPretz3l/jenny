@@ -45,6 +45,8 @@ _HISTOGRAM_OVERFLOW_KEY = "other"
 # usage and 431 "visible" chars were reported for the continuation that died
 # before its usage trailer). The per-call ledger lives in ``provider_calls``.
 _MAX_PROVIDER_CALLS_RETAINED = 32
+# Compactions this turn, each with what the next provider call re-sent uncached (row 183 W3).
+_MAX_COMPACTIONS_RETAINED = 8
 _DEFAULT_PROVIDER_CALL_PURPOSE = "turn"
 _PROVIDER_CALL_FINISH_REASONS = frozenset({
     "stop", "length", "tool_calls", "incomplete", "error", "reasoning_only", "thinking_budget",
@@ -693,7 +695,58 @@ class TurnDiagnosticsStore:
             call = self._current_call_locked(turn)
             if call is not None and call_usage:
                 call["usage"] = call_usage
+                self._fill_compaction_cost_locked(turn, call, call_usage)
             turn["_updated_at"] = now
+
+    def record_compaction(
+        self,
+        *,
+        request_id: str,
+        phase: str,
+        strategy: str,
+        tokens_before: int,
+        tokens_after: int,
+    ) -> None:
+        """Note a compaction; the next turn call's usage fills in its cache cost."""
+        with self._lock:
+            turn = self._get_turn_locked(request_id)
+            if turn is None:
+                return
+            entries = turn.get("compactions")
+            if not isinstance(entries, list):
+                entries = []
+                turn["compactions"] = entries
+            entries.append(
+                {
+                    "phase": _safe_histogram_key(phase),
+                    "strategy": _safe_histogram_key(strategy),
+                    "tokens_before": max(int(tokens_before), 0),
+                    "tokens_after": max(int(tokens_after), 0),
+                    "after_provider_call": int(turn.get("_provider_call_count") or 0),
+                    "next_prompt_tokens": None,
+                    "resent_uncached_tokens": None,
+                }
+            )
+            del entries[:-_MAX_COMPACTIONS_RETAINED]
+
+    @staticmethod
+    def _fill_compaction_cost_locked(
+        turn: dict[str, Any], call: dict[str, Any], call_usage: dict[str, int]
+    ) -> None:
+        """The first turn call after a compaction: its prompt, less what the cache served."""
+        entries = turn.get("compactions")
+        prompt = call_usage.get("prompt_eval_count")
+        if not isinstance(entries, list) or not entries or prompt is None:
+            return
+        last = entries[-1]
+        if last.get("next_prompt_tokens") is not None or call.get("purpose") in (
+            _INTERNAL_PROVIDER_CALL_PURPOSES
+        ):
+            return
+        if int(call.get("ordinal") or 0) <= int(last.get("after_provider_call") or 0):
+            return
+        last["next_prompt_tokens"] = prompt
+        last["resent_uncached_tokens"] = max(prompt - call_usage.get("cached_tokens", 0), 0)
 
     def record_prefix_reuse(self, *, request_id: str, prefix_reuse: Mapping[str, Any]) -> None:
         """Attach the paired prefix-cache reading to the provider call just completed."""
@@ -751,9 +804,9 @@ class TurnDiagnosticsStore:
         # The ledger is the one mutable aggregate in the payload; a snapshot
         # serialized on another thread must not share it with the engine
         # thread that keeps appending to it.
-        calls = payload.get("provider_calls")
-        if isinstance(calls, list):
-            payload["provider_calls"] = copy.deepcopy(calls)
+        for key in ("provider_calls", "compactions"):
+            if isinstance(payload.get(key), list):
+                payload[key] = copy.deepcopy(payload[key])
         return payload
 
     def snapshot(self) -> dict[str, Any] | None:

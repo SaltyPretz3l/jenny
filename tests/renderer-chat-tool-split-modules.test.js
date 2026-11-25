@@ -52,6 +52,23 @@ test('tool-run-utils folds, groups and summarizes runs with the injected vocabul
   // A legacy subagent summary card carries its own Open control, like delegate's.
   assert.equal(runs.isToolRunFoldable({ toolName: 'subagent_run', status: 'completed' }), false);
   assert.equal(runs.isToolRunFoldable({ toolName: 'subagent_batch', status: 'completed' }), false);
+  // Row 192 C6: an approved step folds under the steps heading; an Answers run still keeps it apart (no jump there).
+  assert.equal(runs.isToolRunFoldable({ toolName: 'run_command', status: 'completed', approvalRequested: true, scope: 'ledger' }), true);
+  assert.equal(runs.isToolRunFoldable({ toolName: 'run_command', status: 'completed', approvalRequested: true }), false);
+  // C15: while the turn runs, steps, run lines and a run's rows are eligible; thinking only after the last step.
+  assert.deepEqual(runs.workLedgerTail([
+    { kind: 'note' }, { kind: 'run' }, { kind: 'step', inRun: true }, { kind: 'note', inRun: true }, { kind: 'step', inRun: true },
+    { kind: 'step' }, { kind: 'note' },
+  ], true), [false, true, true, true, true, true, true]);
+  // Text is pinned; with text a settled turn keeps the same shape; with none it folds whole (pins aside).
+  assert.deepEqual(runs.workLedgerTail([{ kind: 'note', text: true, pinned: true }, { kind: 'run' }, { kind: 'step', inRun: true }, { kind: 'note' }], false),
+    [true, true, true, false]);
+  assert.deepEqual(runs.workLedgerTail([{ kind: 'run' }, { kind: 'step', inRun: true }, { kind: 'step', pinned: true }], false), [false, false, true]);
+  // A run's rows show only while it is open; an open heading lists everything but the run lines, flat.
+  assert.deepEqual(runs.workLedgerShow({ kind: 'step', inRun: true, runExpanded: true, tail: true }, false), { show: true, nested: true });
+  assert.deepEqual(runs.workLedgerShow({ kind: 'step', inRun: true, runExpanded: false, tail: true }, false), { show: false, nested: false });
+  assert.deepEqual(runs.workLedgerShow({ kind: 'run', tail: true }, true), { show: false, nested: false });
+  assert.deepEqual(runs.workLedgerShow({ kind: 'note', tail: false }, true), { show: true, nested: false });
   assert.deepEqual(runs.groupToolRuns([{ role: 'member' }, { role: 'transparent' }, { role: 'member' }, { role: 'break' }]),
     [{ members: [0, 2], interior: [1] }]);
   const summary = runs.summarizeToolRun([{ tool: 'read_file', status: 'completed' }, { tool: 'read_file', status: 'errored' }]);

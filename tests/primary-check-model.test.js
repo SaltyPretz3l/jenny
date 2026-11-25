@@ -126,3 +126,21 @@ test('a model of an engine family the list does not carry is sized by its name, 
   const listedFamily = service({ primaryChat: { checkModel: 'deleted:70b' }, models: [{ id: 'qwen3.8:27b', engine_type: 'ollama' }] });
   assert.equal((await createCheckModelGate(listedFamily)({})).status, 'unavailable');
 });
+
+// Row 201 C1 / OD-1: a scheduled check never runs on a teammate's GPU.
+test('a team model is never picked for a scheduled check: not the check model, the pin, the chat or the loaded model', async () => {
+  const TEAM_ID = 'team/team_alpha1/qwen3.8:27b';
+  const withTeam = (primaryChat, extra = {}) => {
+    const svc = service({ primaryChat, models: MODELS, hints: { [TEAM_ID]: 'openai-compatible' }, ...extra });
+    svc.featureFlags = { team: true };
+    return svc;
+  };
+  const checkModel = withTeam({ checkModel: TEAM_ID, model: 'gemma3:2b' });
+  assert.equal((await createCheckModelGate(checkModel)({})).model, 'gemma3:2b', 'the saved team check model is skipped for the next candidate');
+  const chat = withTeam({}, {});
+  assert.equal((await createCheckModelGate(chat)({ preferred_model: TEAM_ID })).model !== TEAM_ID, true);
+  const loaded = withTeam({}, { currentModel: TEAM_ID });
+  const answer = await createCheckModelGate(loaded)({});
+  assert.notEqual(answer.model, TEAM_ID, 'a loaded team model is not a check model');
+  assert.equal(answer.status, 'unavailable');
+});

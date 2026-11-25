@@ -20,7 +20,8 @@
 // - Lifecycle (attach): a member revoked or leaving (`member_revoked`) -> `memberGone`; `role_changed` ->
 //   `roleChanged(memberId, role is owner or member)`; `device_revoked` -> each live transfer that device was
 //   receiving is cancelled as its receiver (`cancelled_by_receiver`), so a queued transfer no device can take stops
-//   counting toward the member's live transfers. A hook that throws is logged and never reaches the store.
+//   counting toward the member's live transfers, and each offer that device made is withdrawn (an offer is withdrawn
+//   only by the device that made it, and that device is gone). A hook that throws is logged and never reaches the store.
 // - Device presence comes from the one signal the host has, the team HTTP layer's member event-stream open and
 //   close (`onMemberStream`, also heard by chat presence and the viewers): the first open of a device ->
 //   `deviceBack`, its last close -> `deviceGone`, counted per device for at most 64 devices. A device first seen
@@ -179,14 +180,19 @@ function createTeamModelSharing({
     if (streams.size < DEVICE_STREAMS_MAX) relay.deviceGone(deviceId);
   }
 
-  // A revoked device's live transfers as receiver end as cancelled by the receiver.
-  function endReceiving(memberId, deviceIds) {
+  // A revoked device's live transfers as receiver end as cancelled by the receiver, and the offers it made are
+  // withdrawn. The member's offers are all listed to the device; `withdraw` answers not-found for one another device
+  // of the member made, so only this device's go.
+  function endDevices(memberId, deviceIds) {
     for (const deviceId of deviceIds) {
       const actor = { memberId, deviceId };
       const listed = relay.listOffers(actor);
       if (!listed.ok) continue;
       for (const view of listed.transfers) {
         if (view.receiver_member_id === memberId && LIVE.has(view.state)) relay.cancel(actor, view.transfer_id);
+      }
+      for (const offer of listed.offers) {
+        if (offer.sender_member_id === memberId) relay.withdraw(actor, offer.offer_id);
       }
     }
   }
@@ -201,7 +207,7 @@ function createTeamModelSharing({
       try {
         if (event.kind === 'member_revoked') relay.memberGone(event.member_id);
         else if (event.kind === 'role_changed') relay.roleChanged(event.member_id, SHARING_ROLES.has(event.role));
-        else if (event.kind === 'device_revoked') endReceiving(event.member_id, event.device_ids);
+        else if (event.kind === 'device_revoked') endDevices(event.member_id, event.device_ids);
       } catch {
         say('WARN', 'team_model.hook_failed', { event_kind: event.kind });
       }

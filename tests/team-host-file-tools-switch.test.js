@@ -118,6 +118,35 @@ test('a running team: on restarts the host, the launch keeps the setting, and th
   assert.equal(fake.calls.length, 3);
 });
 
+test('H7: the file_tools report that follows ready is pushed to the renderer, not swallowed by the push cache', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-files-');
+  const { controller, fake, pushed } = createTestHostController(t, { userDataPath, secureStore: seededStore(), platform: 'linux',
+    script: healthyHostScript({ teamId: TEAM_ID }) });
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal((await controller.handle('hostFileTools', { on: true })).restarted, true);
+  assert.equal(pushed.at(-1).file_tools.state, 'starting', 'ready, no report yet');
+  fake.last().reply(report({ available: false, reason: 'file_access_elevated' }));
+  await until(() => pushed.at(-1).file_tools.state !== 'starting', 'the pushed state to leave "starting"');
+  assert.deepEqual(pushed.at(-1).file_tools, { on: true, state: 'not_working', reason: 'file_access_elevated' });
+  fake.last().reply(report());
+  await until(() => pushed.at(-1).file_tools.state === 'working', 'the working report to be pushed');
+});
+
+test('H7: a state written by pushState is not reverted by the next quiet push (force_local stays)', async (t) => {
+  const userDataPath = tempProfile(t, 'jenny-host-files-');
+  const gate = { on: false, held() { return this.on; } };
+  const { controller, fake, pushed } = createTestHostController(t, { userDataPath, secureStore: seededStore(), platform: 'linux', gate,
+    script: healthyHostScript({ teamId: TEAM_ID }) });
+  assert.equal((await controller.handle('hostDeploy', { ...DEPLOY })).ok, true);
+  assert.equal(pushed.at(-1).force_local, undefined);
+  gate.on = true;
+  controller.pushState();
+  assert.equal(pushed.at(-1).force_local, true);
+  fake.last().reply({ type: 'reach', result: 'relay', reason: 'relay_connected' });
+  await until(() => pushed.at(-1).reach !== null, 'the verdict push');
+  assert.equal(pushed.at(-1).force_local, true, 'the quiet push is made from the state as it is now');
+});
+
 test('host-file-tools.js: every state, and every refusal before anything is written', async () => {
   const written = [];
   let snapshot = { state: 'stopped', files: null };

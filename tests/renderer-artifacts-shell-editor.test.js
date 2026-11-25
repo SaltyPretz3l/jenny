@@ -28,11 +28,9 @@ function dispatchPastedImage(window, input, name = 'clipboard.png') {
 function setWorkspaceWidths(window, doc, workspaceWidth = 1600) {
   const workspace = doc.getElementById('workspace');
   const sidebar = doc.getElementById('viewPanel');
-  const sidebarResizer = doc.getElementById('sidebarResizer');
   const height = 900;
   workspace.getBoundingClientRect = () => ({ top: 0, left: 0, right: workspaceWidth, bottom: height, width: workspaceWidth, height });
   sidebar.getBoundingClientRect = () => ({ top: 0, left: 0, right: 320, bottom: height, width: 320, height });
-  sidebarResizer.getBoundingClientRect = () => ({ top: 0, left: 320, right: 330, bottom: height, width: 10, height });
   window.dispatchEvent(new window.Event('resize'));
 }
 

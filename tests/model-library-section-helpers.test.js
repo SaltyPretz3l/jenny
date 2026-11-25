@@ -87,6 +87,26 @@ test('live sync: a parked llama-server is rechecked once, and dispose clears the
   assert.deepEqual(h.calls.at(-1), ['clearTimeout', 1]);
 });
 
+test('live sync: the page coming on screen calls onShown once per visit (Model roles mounts on the first visit)', () => {
+  const card = { classList: { active: false, contains(name) { return name === 'settings-section-active' && this.active; } } };
+  let shown = 0;
+  const watches = [];
+  const h = liveSyncHarness({ card: () => card, documentRef: { getElementById: () => null }, onShown: () => { shown += 1; } });
+  h.windowRef.jennyShell.system = { setStatsWatch: (payload) => { watches.push(payload.watched); } };
+  h.sync.bindWatch();
+  assert.equal(shown, 0, 'off screen at bind');
+  card.classList.active = true;
+  h.sync.bindWatch(); // no MutationObserver here: bind re-runs the visibility check
+  h.sync.bindWatch();
+  assert.equal(shown, 1, 'one call while it stays on screen');
+  card.classList.active = false;
+  h.sync.bindWatch();
+  card.classList.active = true;
+  h.sync.bindWatch();
+  assert.equal(shown, 2);
+  assert.deepEqual(watches, [true, false, true]);
+});
+
 function deleteHarness(windowRef) {
   const calls = [];
   const nodes = [];
@@ -176,16 +196,43 @@ test('menu: the share item is not drawn with the Team flag off; greyed with its 
       card: () => null, contextMenu: { show: (options) => { shown = options; }, hide: () => {} }, requestRemove: () => {},
     });
     menu.open({ engineType: 'ollama' }, 'qwen3:8b', null);
-    return shown.items.map((item) => item.label);
+    return shown.items.map((item) => item.label).filter(Boolean);
   };
   const send = 'Send to someone in your team…';
+  const setDefault = 'Set as default';
   for (const features of [undefined, {}, { featureFlags: {} }, { featureFlags: { team: false } }, { featureFlags: { team: 'yes' } }]) {
-    assert.deepEqual(open(features, () => null), ['Remove…', 'Copy tag'], JSON.stringify(features));
+    assert.deepEqual(open(features, () => null), [setDefault, 'Remove…', 'Copy tag'], JSON.stringify(features));
   }
-  assert.deepEqual(open({ featureFlags: { team: false } }, () => ({ menuItems: () => [{ label: send }] })), ['Remove…', 'Copy tag'],
+  assert.deepEqual(open({ featureFlags: { team: false } }, () => ({ menuItems: () => [{ label: send }] })), [setDefault, 'Remove…', 'Copy tag'],
     'a share section that is somehow loaded draws nothing with the flag off');
-  assert.deepEqual(open({ featureFlags: { team: true } }, () => null), [send, 'Remove…', 'Copy tag']);
-  assert.deepEqual(open({ featureFlags: { team: true } }, () => ({ menuItems: () => [{ label: send }] })), [send, 'Remove…', 'Copy tag']);
+  assert.deepEqual(open({ featureFlags: { team: true } }, () => null), [setDefault, send, 'Remove…', 'Copy tag']);
+  assert.deepEqual(open({ featureFlags: { team: true } }, () => ({ menuItems: () => [{ label: send }] })), [setDefault, send, 'Remove…', 'Copy tag']);
+});
+
+test('menu: Set as default is the first item, then a separator; on the default it is disabled with its reason', () => {
+  const calls = [];
+  const open = (model) => {
+    let shown = null;
+    const menu = createModelLibrarySectionMenu({
+      state: {}, isLibraryTag: () => false, ninferLibraryInput: () => null, getSourceData: () => null, card: () => null,
+      contextMenu: { show: (options) => { shown = options; }, hide: () => {} }, requestRemove: () => {},
+      setDefault: (tag) => calls.push(tag),
+    });
+    menu.open(model, 'qwen3:8b', null);
+    return shown.items;
+  };
+  const [first, separator, remove, copy] = open({ displayName: 'Qwen3 8B', engineType: 'ollama', preferredLocal: false });
+  assert.equal(first.label, 'Set as default');
+  assert.equal(first.description, 'New chats will use Qwen3 8B');
+  assert.equal(first.disabled, false);
+  assert.equal(separator.separator, true);
+  assert.deepEqual([remove.label, copy.label], ['Remove…', 'Copy tag']);
+  first.action();
+  assert.deepEqual(calls, ['qwen3:8b'], 'the action sets this card as the default');
+  const [already] = open({ displayName: 'Qwen3 8B', engineType: 'ollama', preferredLocal: true });
+  assert.equal(already.label, 'Set as default');
+  assert.equal(already.description, 'Already the default for new chats');
+  assert.equal(already.disabled, true);
 });
 
 test('delete flow: after a removal focus moves to the row now in its place, else to the status line', async () => {

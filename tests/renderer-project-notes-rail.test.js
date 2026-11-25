@@ -10,8 +10,9 @@ test('opening paints the current project note from get', async (t) => {
   t.after(() => r.controller.dispose());
   assert.deepEqual(r.callsOf('get'), [['get', 'project_alpha']]);
   assert.match(r.q('.notes-rail__preview').textContent, /line one/);
-  assert.equal(r.q('.notes-rail__header b').textContent, 'project_alpha');
-  assert.equal(r.q('.notes-rail__header').textContent.includes('Tasks'), false, 'mode buttons are icon-only');
+  assert.equal(r.q('.project-tab-name').textContent, 'project_alpha');
+  assert.equal(r.q('.notes-rail__header'), null, 'no header row of its own');
+  assert.equal(r.q('.notes-rail').firstElementChild.className, 'project-tab-head');
   assert.deepEqual(r.log.seen.at(-1), ['project_alpha', 1], 'a fetch while open marks the note seen');
 });
 
@@ -19,11 +20,11 @@ test('the project name comes from the switcher; General has its own copy', async
   const switcher = { refresh: async () => {}, projectById: (id) => (id === 'project_alpha' ? { name: 'Alpha App' } : null) };
   const r = await openedRig({ switcher });
   t.after(() => r.controller.dispose());
-  assert.equal(r.q('.notes-rail__header b').textContent, 'Alpha App');
+  assert.equal(r.q('.project-tab-name').textContent, 'Alpha App');
   r.state.currentSessionId = 's3';
   r.paint();
   await flush();
-  assert.equal(r.q('.notes-rail__header b').textContent, 'General');
+  assert.equal(r.q('.project-tab-name').textContent, 'General');
 });
 
 test('a click on the preview opens the editor with the text and takes the lease', async (t) => {
@@ -311,7 +312,7 @@ test('switching to a chat in another project repaints that project and drops the
   r.paint();
   await flush();
   assert.match(r.q('.notes-rail__preview').textContent, /beta text/);
-  assert.equal(r.q('.notes-rail__header b').textContent, 'project_beta');
+  assert.equal(r.q('.project-tab-name').textContent, 'project_beta');
   r.state.currentSessionId = 's1';
   r.paint();
   await flush();
@@ -385,10 +386,21 @@ test('open, toggle, close and isOpen drive the shared panel', async (t) => {
   assert.equal(r.controller.isOpen(), false);
 });
 
-test('switchToTasks opens the Tasks rail', async (t) => {
+test('choosing Tasks on the switch opens the Tasks rail; choosing Notes again changes nothing', async (t) => {
   const r = await openedRig();
   t.after(() => r.controller.dispose());
-  r.q('[data-action="notes-rail-switch-tasks"]').click();
+  const group = r.q('[data-inv-segmented="project-tab-side"]');
+  group.dispatchEvent(new r.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'project-tab-side', value: 'tasks' } }));
+  assert.deepEqual(r.log.opens, ['tasks']);
+  // Notes itself is already the shown side: choosing it again changes nothing.
+  group.dispatchEvent(new r.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'project-tab-side', value: 'notes' } }));
+  assert.deepEqual(r.log.opens, ['tasks']);
+});
+
+test('switchToTasks is still the way back to the Tasks rail', async (t) => {
+  const r = await openedRig();
+  t.after(() => r.controller.dispose());
+  r.controller.switchToTasks();
   assert.deepEqual(r.log.opens, ['tasks']);
 });
 

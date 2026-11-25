@@ -9,11 +9,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../inventory/badge'));
+    module.exports = factory();
     return;
   }
-  root.rendererSettingsControlTowerUtils = factory(root.inventoryBadge);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryBadge) {
+  root.rendererSettingsControlTowerUtils = factory();
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const DEFAULT_ESCAPE = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
@@ -316,61 +316,45 @@
     items.sort((left, right) => left.priority - right.priority);
 
     const attentionCount = items.length;
-    // The ready state lists each area the checks above cover as a success row, so
-    // the page is never empty and shows what was checked. An area appears only
-    // when its state is known (Force local: only while it is on).
-    if (!attentionCount) {
-      const ready = (id, label, message, sectionId, actionLabel) => addItem(items, {
-        id, label, message, tone: 'success', sectionId, actionLabel,
-      });
-      ready(READY_ITEM_ID, jt('settings.controlTower.ready.model', 'Model'), jt('settings.controlTower.ready.modelMessage', '{model} is the active model.', { model: String(getModelName(state)).trim() }), 'models', jt('settings.controlTower.reviewModels', 'Review models'));
-      if (hasWorkspaceSignal) {
-        ready('workspace-ready', jt('settings.controlTower.ready.workspace', 'Workspace'), workspaceRoot, 'tools', jt('settings.controlTower.openTools', 'Open tools'));
-      }
-      ready('tools-ready', jt('settings.controlTower.ready.tools', 'Tools'), jt('settings.controlTower.ready.toolsMessage', 'No enabled tool is blocked.'), 'tools', jt('settings.controlTower.reviewTools', 'Review tools'));
-      if (hasLoadedSetup(state)) {
-        ready('setup-ready', jt('settings.controlTower.ready.setup', 'Setup'), jt('settings.controlTower.ready.setupMessage', 'First-run setup is complete.'), 'general', jt('settings.controlTower.openProfile', 'Open profile'));
-      }
-      const known = (record) => Object.keys(normalizeRecord(record)).length > 0;
-      if (isLocalOnly(state)) {
-        ready('local-only-ready', jt('settings.controlTower.ready.forceLocal', 'Force local'), jt('settings.controlTower.ready.forceLocalMessage', 'Force local inference is on and the local model is ready.'), 'offline', jt('settings.controlTower.checkLocalModel', 'Check local model'));
-      }
-      if (known(state.memories || state.memory || state.memoryManager)) {
-        ready('memory-ready', jt('settings.controlTower.ready.memory', 'Memory'), jt('settings.controlTower.ready.memoryMessage', 'The memory manager is ready.'), '__memory', jt('settings.controlTower.openMemories', 'Open memories'));
-      }
-      if (known(state.skills || state.skillsState)) {
-        ready('skills-ready', jt('settings.controlTower.ready.skills', 'Skills'), jt('settings.controlTower.ready.skillsMessage', 'Skill discovery and activation are available.'), 'skills', jt('settings.controlTower.openSkills', 'Open skills'));
-      }
+    // The areas the checks cover, each listed as a success row while its state is known and fine
+    // (Force local: only while it is on). With nothing to fix they are the list; otherwise a fold.
+    const okItems = [];
+    const ready = (id, label, message, sectionId, actionLabel) => addItem(okItems, {
+      id, label, message, tone: 'success', sectionId, actionLabel,
+    });
+    if (chatReady) ready(READY_ITEM_ID, jt('settings.controlTower.ready.model', 'Model'), jt('settings.controlTower.ready.modelMessage', '{model} is the active model.', { model: String(getModelName(state)).trim() }), 'models', jt('settings.controlTower.reviewModels', 'Review models'));
+    if (hasWorkspaceSignal && !workspaceMissing) {
+      ready('workspace-ready', jt('settings.controlTower.ready.workspace', 'Workspace'), workspaceRoot, 'tools', jt('settings.controlTower.openTools', 'Open tools'));
     }
+    if (!blockedTools.length) {
+      ready('tools-ready', jt('settings.controlTower.ready.tools', 'Tools'), jt('settings.controlTower.ready.toolsMessage', 'No enabled tool is blocked.'), 'tools', jt('settings.controlTower.reviewTools', 'Review tools'));
+    }
+    if (hasLoadedSetup(state) && isSetupComplete(state)) {
+      ready('setup-ready', jt('settings.controlTower.ready.setup', 'Setup'), jt('settings.controlTower.ready.setupMessage', 'First-run setup is complete.'), 'general', jt('settings.controlTower.openGeneral', 'Open General'));
+    }
+    const known = (record) => Object.keys(normalizeRecord(record)).length > 0;
+    if (isLocalOnly(state) && !isLocalOnlyNotReady(state)) {
+      ready('local-only-ready', jt('settings.controlTower.ready.forceLocal', 'Force local'), jt('settings.controlTower.ready.forceLocalMessage', 'Force local inference is on and the local model is ready.'), 'offline', jt('settings.controlTower.checkLocalModel', 'Check local model'));
+    }
+    if (known(state.memories || state.memory || state.memoryManager) && !hasMemoryIssue(state)) {
+      ready('memory-ready', jt('settings.controlTower.ready.memory', 'Memory'), jt('settings.controlTower.ready.memoryMessage', 'The memory manager is ready.'), '__memory', jt('settings.controlTower.openMemories', 'Open memories'));
+    }
+    if (known(state.skills || state.skillsState) && !hasSkillsIssue(state)) {
+      ready('skills-ready', jt('settings.controlTower.ready.skills', 'Skills'), jt('settings.controlTower.ready.skillsMessage', 'Skill discovery and activation are available.'), 'skills', jt('settings.controlTower.openSkills', 'Open skills'));
+    }
+    if (!attentionCount) items.push(...okItems.splice(0));
 
     const hasWarning = items.some((item) => item.tone === 'warning' || item.tone === 'danger');
-    const capabilities = [{
-      tone: chatReady ? 'success' : 'warning',
-      text: chatReady ? jt('settings.controlTower.chatReady', 'Chat ready') : jt('settings.controlTower.chatNeedsModel', 'Chat needs a model'),
-    }];
-    if (hasWorkspaceSignal || blockedToolCount > 0) {
-      capabilities.push({
-        tone: workspaceMissing || blockedToolCount > 0 ? 'warning' : 'success',
-        text: workspaceMissing
-          ? jt('settings.controlTower.fileToolsNeedFolder', 'File tools need a folder')
-          : blockedToolCount > 0
-            ? jt('settings.controlTower.someToolsBlocked', 'Some tools are blocked')
-            : jt('settings.controlTower.fileToolsReady', 'File tools ready'),
-      });
-    }
     return {
       tone: attentionCount > 0 ? 'attention' : 'ready',
       summaryLabel: attentionCount > 0 ? jt('settings.controlTower.reviewCount', '{count} to review', { count: attentionCount }) : jt('healthPill.ready', 'Ready'),
-      summaryMessage: attentionCount > 0
-        ? ''
-        : jt('settings.controlTower.readySummary', 'Settings are ready for the current local-first workflow.'),
       attentionCount,
       readyCount: items.length - attentionCount,
       // Nav-rail badge source. Empty text at zero keeps the slot rendered-but-empty.
       badgeText: attentionCount > 0 ? String(attentionCount) : '',
       badgeTone: attentionCount > 0 ? (hasWarning ? 'warning' : 'pending') : '',
-      capabilities,
       items,
+      okItems,
     };
   }
 
@@ -391,11 +375,9 @@
     const statusRow = options?.statusRow
       || ((typeof globalThis !== 'undefined' && globalThis.inventoryStatusRow) || null);
     const safeModel = normalizeRecord(model);
-    const badge = options?.badge || inventoryBadge;
-    const capabilities = Array.isArray(safeModel.capabilities) ? safeModel.capabilities : [];
-    const chips = capabilities.map((capability) => badge({ tone: capability.tone, text: capability.text, size: 'sm' })).join('');
     const items = Array.isArray(safeModel.items) ? safeModel.items : [];
-    const rows = items.map((item) => {
+    const okItems = Array.isArray(safeModel.okItems) ? safeModel.okItems : [];
+    const toRow = (item) => {
       const sectionId = String(item.sectionId || 'models').trim() || 'models';
       const actionLabel = String(item.actionLabel || jt('common.open', 'Open'));
       const tone = String(item.tone || 'warning');
@@ -419,12 +401,35 @@
         + statusMarkup
         + actionMarkup
         + '</li>';
-    }).join('');
+    };
+    const list = (rows) => '<ul class="settings-control-tower-list">' + rows.map(toRow).join('') + '</ul>';
+    const attention = safeModel.attentionCount > 0;
+    const count = items.length;
+    const lineRow = {
+      tone: attention ? 'warning' : 'success',
+      message: attention
+        ? jtn('settings.controlTower.needYou', count, { count }, '{count} thing needs you before you can chat.', '{count} things need you before you can chat.')
+        : jt('settings.controlTower.allReady', 'Everything is ready: the model, your tools and setup.'),
+    };
+    const line = typeof statusRow === 'function'
+      ? statusRow({ ...lineRow, className: 'settings-readiness-line' })
+      : fallbackStatusRow(escapeHtml, { ...lineRow, label: '' });
+    // The fold is rebuilt on every poll: its open state is read from the page first.
+    const kind = attention ? 'ready' : 'details';
+    const prior = (options?.documentRef || (typeof globalThis !== 'undefined' && globalThis.document) || null)
+      ?.getElementById?.('settingsControlTower')?.querySelector?.('details.settings-readiness-fold');
+    const folded = attention ? okItems : items;
+    const fold = folded.length
+      ? '<details class="settings-fold settings-readiness-fold" data-readiness-fold="' + kind + '"' + (prior?.open && prior.dataset.readinessFold === kind ? ' open' : '') + '><summary>'
+        + escapeHtml(attention ? jt('settings.controlTower.showReady', 'Show what is ready') : jt('settings.controlTower.showDetails', 'Show details'))
+        + '<span class="settings-fold-count">' + escapeHtml(jtn('settings.controlTower.checkCount', folded.length, { count: folded.length }, '{count} check', '{count} checks')) + '</span></summary>'
+        + list(folded) + '</details>'
+      : '';
 
     return '<section class="settings-control-tower" id="settingsControlTower" data-tone="' + escapeHtml(safeModel.tone || 'ready') + '" aria-label="' + escapeHtml(jt('settings.controlTower.readinessChecksAria', 'Readiness checks')) + '">'
-      + '<div class="settings-control-tower-capabilities">' + chips + '</div>'
-      + (safeModel.attentionCount > 0 ? '' : '<p class="settings-copy settings-control-tower-summary">' + escapeHtml(safeModel.summaryMessage || '') + '</p>')
-      + '<ul class="settings-control-tower-list">' + rows + '</ul>'
+      + line
+      + (attention ? list(items) : '')
+      + fold
       + '</section>';
   }
 

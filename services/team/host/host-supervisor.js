@@ -44,7 +44,7 @@ const path = require('node:path');
 
 const { MAX_RELAY_FLOWING, isOutbound } = require('../../../server/team/parent-channel');
 const { REACH_REASONS, REACH_RESULTS } = require('../../../server/team/transport/reach');
-const { isAddressHint, isRelayToken } = require('../../../server/team/invites');
+const { MAX_INVITE_CHARS, isAddressHint, isRelayToken } = require('../../../server/team/invites');
 const { invalidRequest, teamFailure } = require('../team-errors');
 const { createHostLogSink } = require('./host-log');
 const { LOGS_DIR_NAME } = require('./host-layout');
@@ -84,7 +84,7 @@ function parseHostMessage(value) {
       if (!text(value.boot_epoch) || !text(value.team_id) || !text(value.public_key)) return null;
       if (!Array.isArray(value.addresses) || value.addresses.length > MAX_ADDRESSES || !value.addresses.every(text)) return null;
       return Object.freeze({ ...value, addresses: Object.freeze([...value.addresses]) });
-    case 'owner_invite': return text(value.invite) ? Object.freeze({ ...value }) : null;
+    case 'owner_invite': return typeof value.invite === 'string' && value.invite.length > 0 && value.invite.length <= MAX_INVITE_CHARS ? Object.freeze({ ...value }) : null; // a v2 invite is longer than MAX_TEXT
     case 'membership_changed': return REASON.test(value.kind) && text(value.member_id) ? Object.freeze({ ...value }) : null;
     case 'error': return typeof value.reason === 'string' && REASON.test(value.reason) ? Object.freeze({ ...value }) : null;
     case 'mapped': return value.external === null || (MAPPED_ADDRESS.test(value.external) && isAddressHint(value.external))

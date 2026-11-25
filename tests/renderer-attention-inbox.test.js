@@ -74,7 +74,6 @@ function harness(options = {}) {
   const logs = [];
   const errors = [];
   const openCalls = [];
-  const collapseCalls = [];
   const viewCalls = [];
   const controller = createAttentionInboxController({
     windowRef: window,
@@ -90,7 +89,6 @@ function harness(options = {}) {
     callbacks: {
       openSession: (sessionId) => openCalls.push(sessionId),
       setActiveView: (viewId) => viewCalls.push(viewId),
-      setSidebarCollapsed: (collapsed) => collapseCalls.push(collapsed),
       appendClientLog: (level, event, data) => logs.push([level, event, data]),
       showComposerActionError: (error, title) => errors.push([String(error?.message || error), title]),
     },
@@ -104,7 +102,7 @@ function harness(options = {}) {
 
   return {
     dom, window, document: window.document, state, controller, timers,
-    approveCalls, denyCalls, logs, errors, openCalls, collapseCalls, viewCalls,
+    approveCalls, denyCalls, logs, errors, openCalls, viewCalls,
     host: window.document.getElementById('attentionInbox'),
     badge: () => window.document.getElementById('attentionInboxBadge'),
     rows: () => [...window.document.querySelectorAll('.attention-inbox__row')],
@@ -331,14 +329,13 @@ test('one wait reads in the singular', () => {
   h.window.close();
 });
 
-test('the badge opens the panel, scrolls the section into view and lands on the first title, never a decision', () => {
+test('the badge reveals the section, scrolls the section into view and lands on the first title, never a decision', () => {
   const h = harness({ sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
   const scrolls = [];
   h.host.scrollIntoView = (options) => scrolls.push(options);
   h.controller.render();
   h.badge().click();
   assert.deepEqual(h.viewCalls, ['chat'], 'the section lives in the Chats panel, so the chat view comes first from any view');
-  assert.deepEqual(h.collapseCalls, [false]);
   assert.deepEqual(scrolls, [{ block: 'start' }]);
   assert.equal(h.document.activeElement, h.title('approval:call-1'), 'a stray Space or Enter must not approve a call');
   assert.notEqual(h.document.activeElement, h.action('approval:call-1', 'allow'));

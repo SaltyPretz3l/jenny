@@ -46,7 +46,7 @@ test('v58 -> v59 forgets a saved Home weather location', () => {
   const state = normalizeState(v58ConfigWithSavedLocation());
   const serialized = serializeState(state);
 
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.equal(Object.hasOwn(state.home, 'weather'), false);
   assert.equal(Object.hasOwn(serialized.home, 'weather'), false);
   assert.doesNotMatch(JSON.stringify(serialized), /40\.7128|-74\.006/);
@@ -72,7 +72,7 @@ test('the shipped v51 fixture also loses its weather slot', () => {
   assert.ok(Object.hasOwn(fixture.home, 'weather'), 'fixture still carries the retired key');
 
   const state = normalizeState(fixture);
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   assert.equal(Object.hasOwn(serializeState(state).home, 'weather'), false);
 });
 
@@ -83,7 +83,7 @@ test('the shipped v51 fixture loads and drops the retired memory.captureSuggesti
   assert.equal(fixture.memory.captureSuggestions, true, 'fixture still carries the retired key');
 
   const state = normalizeState(fixture);
-  assert.equal(state.version, 59);
+  assert.equal(state.version, 60);
   // Memory v2 reuses the section for its switches; the retired key is gone.
   const memoryDefaults = { takeNotes: true, askBeforeSaving: false, pauseSaving: false, useInChats: true };
   assert.deepEqual(state.memory, memoryDefaults);

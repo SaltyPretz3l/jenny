@@ -137,11 +137,15 @@ module.exports = Object.freeze({
   'team.hostModelRelay': invokeMethod('team:host-model-relay'),
   // Row 123: the owner's project files setting for this Jenny's own host (services/team/host/host-file-tools.js).
   'team.hostFileTools': invokeMethod('team:host-file-tools'),
+  // Row 201 (OD-5): the owner's cap on the pool's context length (services/team/host/host-pool-context.js).
+  'team.hostPoolContext': invokeMethod('team:host-pool-context'),
   // Slice 4e: sharing this PC's GPU (services/team/node/team-sharing.js) and the team's GPUs (pool-view.js).
   'team.shareStatus': invokeMethod('team:share-status'),
   'team.shareSet': invokeMethod('team:share-set'),
   'team.sharePause': invokeMethod('team:share-pause'),
   'team.shareStop': invokeMethod('team:share-stop'),
+  // Row 201 (OD-4): the Ollama models this PC shares (services/team/node/team-sharing.js setOllamaModels / ollamaModels).
+  'team.shareOllamaModels': invokeMethod('team:share-ollama-models'),
   'team.gpuList': invokeMethod('team:gpu-list'),
   'team.gpuUse': invokeMethod('team:gpu-use'),
   'team.teamModelSet': invokeMethod('team:team-model-set'),

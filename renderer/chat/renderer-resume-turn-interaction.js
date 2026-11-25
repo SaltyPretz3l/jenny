@@ -116,8 +116,8 @@
       if (changed) session.setSessionMessages(sessionId, next, 'session_' + sessionId);
     }
 
-    // "Build it" on an accepted-not-built plan receipt: flip the plan to approved
-    // (the backend refuses unless latest, accepted, and idle), leave Plan mode
+    // "Build it" on an accepted-not-built plan receipt or a plan card cut off by a stop: flip the plan
+    // to approved (the backend refuses unless latest, accepted/abandoned, and idle), leave Plan mode
     // through the composer's own run-mode control, then send.
     async function activateBuildAccepted(button) {
       var planId = String(button?.dataset?.planId || '').trim();
@@ -136,7 +136,7 @@
         var host = button.closest('[data-plan-document]');
         if (host) {
           host.dataset.planState = 'approved';
-          var label = host.querySelector('.plan-document-receipt__state');
+          var label = host.querySelector('.plan-document-receipt__state, .plan-document__stopped-note');
           if (label) label.textContent = jt('artifacts.plan.state.approved', 'Approved');
         }
         button.remove();

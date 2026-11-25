@@ -35,8 +35,8 @@ const liveRow = (m) => m.q('[data-conv-region="live"] .team-msg');
 const chipOf = (m, id) => m.q(`.team-turn-chip[data-turn-id="${id}"]`);
 const label = (chip) => chip.querySelector('.team-turn-chip__label').textContent;
 const clock = (chip) => (chip.querySelector('.team-turn-chip__time') || { textContent: '' }).textContent;
-const pop = (m) => m.q('#teamTurnPop');
-const popButton = (m, kind) => m.q(`#teamTurnPop [data-pop-action="${kind}"]`);
+const pop = (m) => m.q('[id$="teamTurnPop"]');
+const popButton = (m, kind) => m.q(`[id$="teamTurnPop"] [data-pop-action="${kind}"]`);
 const queued = (m) => [...m.root.querySelectorAll('[data-conv-region="queued"] .team-msg')];
 const queuedButton = (row, action) => row.querySelector(`[data-project-action="${action}"]`);
 const rowIds = (m) => [...m.root.querySelectorAll('[data-conv-region="log"] .team-msg')].map((el) => el.dataset.messageId || el.dataset.turnId);
@@ -146,14 +146,14 @@ test('(c) the popover: from the chip and Show work, Hide, the turn through the w
   assert.equal(pop(m).dataset.turnId, 'turn_1');
   assert.deepEqual([chipOf(m, 'turn_1').getAttribute('aria-expanded'), chipOf(m, 'turn_1').querySelector('.team-turn-chip__more').textContent], ['true', 'Hide']);
   assert.equal(m.window.document.activeElement, m.q('.team-turn-pop__scroll'), 'focus goes to the popover');
-  assert.match(m.q('#teamTurnPop .team-turn-pop__title span').textContent, /^Dot’s turn · .+ · Done · 1 tool · qwen3:30b$/);
+  assert.match(m.q('[id$="teamTurnPop"] .team-turn-pop__title span').textContent, /^Dot’s turn · .+ · Done · 1 tool · qwen3:30b$/);
   const body = m.q('.team-turn-pop__scroll');
   assert.match(body.querySelector('article.chat-entry.user').textContent, /Check src\/app\.js/, 'the prompt');
   assert.match(body.querySelector('.reasoning-row-header').textContent, /Look at the loader first/, 'the reasoning');
   for (const toggle of body.querySelectorAll('[data-tool-row-toggle]')) click(m, toggle);
   assert.ok(m.q('.team-turn-pop__scroll .tool-call-row'), 'a tool row');
   assert.match(m.q('.team-turn-pop__scroll').textContent, /It loads once\./);
-  assert.equal(m.q('#teamTurnPop').querySelector(AFFORDANCES), null, 'metadata and artifacts draw no path chip or card');
+  assert.equal(m.q('[id$="teamTurnPop"]').querySelector(AFFORDANCES), null, 'metadata and artifacts draw no path chip or card');
   assert.equal([...pop(m).querySelectorAll('*')].some((el) => [...el.attributes].some((a) => a.name.startsWith('data-inv-'))), false);
   assert.doesNotMatch(pop(m).textContent, /C:\/secret/, 'the metadata never reaches the popover');
   click(m, m.q('.team-msg[data-turn-id="turn_2"] .team-acts [data-project-action="turn-open"]'));
@@ -195,10 +195,10 @@ test('(c) the popover on the running turn: the live tail, the running time, and 
   click(m, liveRow(m).querySelector('.team-turn-chip'));
   assert.ok(pop(m));
   m.advance(3000);
-  assert.match(m.q('#teamTurnPop .team-turn-pop__title span').textContent, /3s/, 'the popover ticks with the chip');
+  assert.match(m.q('[id$="teamTurnPop"] .team-turn-pop__title span').textContent, /3s/, 'the popover ticks with the chip');
   stream(m, 'delta', { content: 'Drafting the plan' });
   m.frame();
-  assert.match(m.q('#teamTurnPop [data-streaming-row="true"]').textContent, /Drafting the plan/, 'the live tail');
+  assert.match(m.q('[id$="teamTurnPop"] [data-streaming-row="true"]').textContent, /Drafting the plan/, 'the live tail');
   click(m, popButton(m, 'stop'));
   await flush();
   assert.deepEqual(m.sent('conversationCancel'), [{ team_id: OTHER, session_id: S1, stream_id: 'stream_1' }]);
@@ -216,7 +216,7 @@ test('(d) a question in the live row and the popover, each in its own form; answ
   assert.equal(m.q('[data-conv-region="announce"]').textContent, 'Waiting for an answer');
   click(m, chipOf(m, 'turn_q'));
   const copies = () => [...m.root.querySelectorAll('.team-conv__question')];
-  assert.ok(m.q('#teamTurnPop .team-turn-pop__extra form.team-conv__qform .team-conv__question'), 'and in the popover');
+  assert.ok(m.q('[id$="teamTurnPop"] .team-turn-pop__extra form.team-conv__qform .team-conv__question'), 'and in the popover');
   assert.equal(m.root.querySelectorAll('form.team-conv__qform').length, 2);
   const radios = (wrap) => wrap.querySelectorAll('[data-user-question-option]');
   const [inRow, inPop] = copies();
@@ -458,7 +458,7 @@ test('the title: the pen opens a field in the head; Enter saves through conversa
   const m = mount(t, { answers: { conversationRename: () => answer } });
   await flush();
   const pen = () => m.q('[data-project-action="rename"]');
-  const input = () => m.q('#teamConversationTitle');
+  const input = () => m.q('[id$="teamConversationTitle"]');
   assert.deepEqual([pen().disabled, pen().getAttribute('title'), pen().getAttribute('aria-label')], [false, 'Rename this conversation', 'Rename this conversation']);
   click(m, pen());
   assert.equal(input().value, 'Palette loader cleanup');
@@ -505,7 +505,7 @@ test('after a rename the composer placeholder names the new title', async (t) =>
   const m = mount(t);
   await flush();
   click(m, m.q('[data-project-action="rename"]'));
-  const input = m.q('#teamConversationTitle');
+  const input = m.q('[id$="teamConversationTitle"]');
   input.value = 'Loader, read once';
   input.dispatchEvent(new m.window.Event('input', { bubbles: true }));
   key(m, input, 'Enter');
@@ -544,10 +544,10 @@ test('host shapes: saved reasoning in entries reaches the popover; the pool alia
   await flush();
   assert.equal(m.q('.reasoning-row-block'), null, 'no reasoning in the channel');
   click(m, chipOf(m, 'turn_1'));
-  assert.match(m.q('#teamTurnPop .reasoning-row-header').textContent, /Short answer\./);
-  assert.doesNotMatch(m.q('#teamTurnPop .team-turn-pop__title').textContent, /team-pool/, 'the alias names no model');
+  assert.match(m.q('[id$="teamTurnPop"] .reasoning-row-header').textContent, /Short answer\./);
+  assert.doesNotMatch(m.q('[id$="teamTurnPop"] .team-turn-pop__title').textContent, /team-pool/, 'the alias names no model');
   click(m, chipOf(m, 'turn_2'));
-  assert.match(m.q('#teamTurnPop .reasoning-row-header').textContent, /Planning the essay\./);
+  assert.match(m.q('[id$="teamTurnPop"] .reasoning-row-header').textContent, /Planning the essay\./);
 });
 
 test('hostile text in a status, a model and a question makes no element; an empty conversation says what it is, for a reader too', async (t) => {
@@ -573,7 +573,7 @@ test('hostile text in a status, a model and a question makes no element; an empt
 test('in the tab: what is typed and not sent is kept per conversation while the app runs, and sending clears it', async (t) => {
   const { h } = await openProjects({ list: listAnswer({ projects: [project(P1, 'jenny-site', 'writer')] }) });
   t.after(h.restore);
-  const open = async () => { h.view.q(`[data-session-id="${S1}"]`).click(); await flush(); return region(h).querySelector('#teamConversationInput'); };
+  const open = async () => { h.view.q(`[data-session-id="${S1}"]`).click(); await flush(); return region(h).querySelector('[id$="teamConversationInput"]'); };
   let input = await open();
   input.value = 'Half a thought';
   input.dispatchEvent(new h.window.Event('input', { bubbles: true }));

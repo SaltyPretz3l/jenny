@@ -4,7 +4,10 @@
  * solveLayout() call and hands it the tree rules (createSolver(h)). Pure: no DOM,
  * no I/O; it never mutates the layout.
  *
- *   solve(layout, { width, height, fontScale, lastUsed }) -> { sizes: {id: px}, folded: [stackId], extents: {splitId: px} }
+ *   solve(layout, { width, height, fontScale, lastUsed, centreMinWidth }) -> { sizes: {id: px}, folded: [stackId], extents: {splitId: px} }
+ *
+ * centreMinWidth (row 190) is the editor stack's width floor before the text scale; Chat passes
+ * 360 per chat pane. Absent, it is EDITOR_MIN_WIDTH, so Workspace and Board results do not change.
  *
  * Without a usable width/height it returns stored sizes and never folds. With one,
  * the editor keeps its floor: fixed children shrink toward their minimum (least
@@ -30,6 +33,7 @@
     var isObj = h.isObj;
     var isFiniteNumber = h.isFiniteNumber;
     var sanitizeScale = h.sanitizeScale;
+    var sanitizeCentreMin = h.sanitizeCentreMin;
     var DEFAULT_ROW_SIZE = h.DEFAULT_ROW_SIZE;
     var DEFAULT_COL_SIZE = h.DEFAULT_COL_SIZE;
     var SIZE_MAX = h.SIZE_MAX;
@@ -89,7 +93,7 @@
           else sizes[i] = desired[i];
           total += sizes[i];
           if (order.indexOf(i) >= 0 && folded.indexOf(i) < 0) {
-            slack += Math.max(0, desired[i] - nodeMin(child.node, axis, ctx.scale, true));
+            slack += Math.max(0, desired[i] - nodeMin(child.node, axis, ctx.scale, true, ctx.centreMin));
           }
         });
         var deficit = total - budget;
@@ -97,7 +101,7 @@
         if (slack >= deficit || !foldable.some(function (i) { return folded.indexOf(i) < 0; })) {
           order.forEach(function (i) {
             if (deficit <= 0 || folded.indexOf(i) >= 0) return;
-            var min = nodeMin(split.children[i].node, axis, ctx.scale, true);
+            var min = nodeMin(split.children[i].node, axis, ctx.scale, true, ctx.centreMin);
             var cut = Math.min(deficit, Math.max(0, sizes[i] - min));
             sizes[i] -= cut;
             deficit -= cut;
@@ -144,8 +148,8 @@
     /* The floor a flexible subtree defends against its siblings: only its first editor group
      * keeps the editor floor; later groups give way (yieldToFlex). Counting every group's
      * floor folded each side stack beside two groups in a narrow window, for good. */
-    function defendedMin(node, axis, scale) {
-      if (node.t !== 'split') return nodeMin(node, axis, scale, true);
+    function defendedMin(node, axis, ctx) {
+      if (node.t !== 'split') return nodeMin(node, axis, ctx.scale, true, ctx.centreMin);
       var seenEditor = false;
       var mins = node.children.map(function (c) {
         var child = c.node;
@@ -153,7 +157,7 @@
           if (seenEditor) return 0;
           seenEditor = true;
         }
-        return defendedMin(child, axis, scale);
+        return defendedMin(child, axis, ctx);
       });
       if (node.dir === axis) return mins.reduce(function (a, b) { return a + b; }, 0);
       return mins.reduce(function (a, b) { return Math.max(a, b); }, 0);
@@ -173,7 +177,7 @@
           size = stripOf(axis);
         } else {
           var base = child.size === null ? (axis === 'row' ? DEFAULT_ROW_SIZE : DEFAULT_COL_SIZE) : child.size;
-          size = clamp(base, nodeMin(node, axis, ctx.scale, true), SIZE_MAX);
+          size = clamp(base, nodeMin(node, axis, ctx.scale, true, ctx.centreMin), SIZE_MAX);
           if (ctx.usable && axis === 'col') size = Math.min(size, Math.floor(BOTTOM_MAX_RATIO * main));
           if (isViewSubtree(node)) foldable.push(i);
         }
@@ -181,7 +185,7 @@
         sizes[i] = size;
       });
 
-      var flexMin = defendedMin(split.children[flex].node, axis, ctx.scale);
+      var flexMin = defendedMin(split.children[flex].node, axis, ctx);
       if (ctx.usable) {
         fitSplit(split, flex, sizes, foldable, main - flexMin, ctx);
         yieldToFlex(split, flex, sizes, main, flexMin, ctx.lastUsed);
@@ -211,6 +215,7 @@
         folded: result.folded,
         extents: result.extents,
         scale: sanitizeScale(o.fontScale),
+        centreMin: sanitizeCentreMin(o.centreMinWidth),
         lastUsed: isObj(o.lastUsed) ? o.lastUsed : {},
         usable: usable,
       };

@@ -17,7 +17,7 @@ const { hostFailure } = require('../api-contract');
 const { channelMembers, chatBucket } = require('./authorize');
 const { LIMITS } = require('./member-schema');
 const { PROJECT_CHANGED_EVENT } = require('./event-scope');
-const { projectAudience } = require('./project-visibility');
+const { effectiveProjectRole, projectAudience } = require('./project-visibility');
 const { safeLogger } = require('./safe-logger');
 const { callSafely, reasonOf, storeFailed } = require('./team-project-common');
 
@@ -85,7 +85,7 @@ function createProjectAnnouncer({ directory, publish, logger = null } = {}) {
 function subscribeProjectChanges({ store, announce, pool = () => null, revokeLeases = () => {}, dropViewers = () => {},
   dropFiles = () => {}, logger = null } = {}) {
   const log = safeLogger(logger);
-  return store.onProjectChange((event) => {
+  const offProjects = store.onProjectChange((event) => {
     announce(event.project_id, event.reason, event.member_ids);
     if (!RECHECK_REASONS.has(event.reason)) return;
     try { revokeLeases(event.project_id, event.member_ids); } catch {
@@ -95,6 +95,19 @@ function subscribeProjectChanges({ store, announce, pool = () => null, revokeLea
     try { dropFiles(event); } catch { log('WARN', 'team_project.files_drop_failed', { reason: event.reason }); }
     try { pool()?.recheckLeases(); } catch { log('WARN', 'team_project.pool_recheck_failed', { reason: event.reason }); }
   });
+  // A team change that cascades into the projects (a revoke or leave, a demotion to read-only) emits no project event of
+  // its own: tell the clients of the projects it touched to read the member list again. A revoked member holds no
+  // row any more, so every project is named; a demotion names the projects the member is still in.
+  const offMembers = store.onMembershipChange((event) => {
+    const revoked = event?.kind === 'member_revoked';
+    if (!revoked && !(event?.kind === 'role_changed' && event.role === 'read_only')) return;
+    for (const project of store.snapshot()?.projects ?? []) {
+      if (revoked || project.members.some((entry) => entry.member_id === event.member_id)) {
+        announce(project.project_id, 'members', [event.member_id]);
+      }
+    }
+  });
+  return () => { offProjects(); offMembers(); };
 }
 
 // projects(): the application project service, null until the host core exists.
@@ -185,7 +198,10 @@ function createTeamProjectCommands({
   // The router authorized the rename before the queue; a rename that waited behind
   // another mutation looks again, so an admin removed meanwhile renames nothing.
   async function rename({ params, actor }, app) {
-    const role = directory.projectRole(actor.member_id, params.project_id);
+    // H3: the live device and the effective role, as the other mutations read them inside the queue.
+    const live = directory.liveActor(actor.device_id);
+    if (!live || live.member_id !== actor.member_id) return hostFailure('forbidden', 'role_forbidden');
+    const role = effectiveProjectRole(directory, live, params.project_id);
     if (role == null) return hostFailure('forbidden', 'team_not_found');
     if (role !== 'admin') return hostFailure('forbidden', 'role_forbidden');
     const renamed = callSafely(() => app.renameProject({ name: params.name, project_id: params.project_id }));

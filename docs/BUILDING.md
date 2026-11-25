@@ -356,6 +356,27 @@ container.
 The headless team host image (`Dockerfile.team`) copies this Linux binary in
 rather than building it: see `docs/operations/team-host-docker.md`.
 
+### Window helper (all platforms)
+`jenny-computer` is the Rust program the window and run features of rows 196 and
+197 use to list windows, report their geometry, start and stop the runs it
+owns and capture a window (the contract is `native/jenny-computer/PROTOCOL.md`).
+It is built from the crate in `native/jenny-computer/` by
+`scripts/packaging/build_computer_helper.py` (`npm run build:computer-helper`),
+which needs `cargo` from Rust 1.91 or newer on the build machine. It builds on
+Windows, macOS and Linux, and a missing `cargo` is an error. Only Windows gets a
+working helper: on macOS and Linux it builds with no Windows dependency and
+answers "not available" to every request (its `hello` reports `available: false`).
+The script follows the team bridge's steps: it deletes the previous binary, builds
+with `--locked`, checks that `--version` prints `jenny-computer protocol 1` (on
+Windows it also checks that the C runtime is linked in), copies the result to
+`build/sidecar/jenny-computer` (`.exe` on Windows) and writes
+`build/sidecar/jenny-computer.manifest.json` with the hash, the toolchain versions
+and the crates it was built from. `electron-builder.yml` ships the whole
+`build/sidecar/` directory, so it lands in `resources/sidecar/`.
+`services/computer-helper/helper-binary.js` finds it there in a packaged app (or in
+`build/sidecar/` in a checkout), and the one helper host in main starts it on the
+first Live tab run.
+
 ### File-access library (Windows)
 `jenny_file_access.dll` is the small Rust library a Windows team host loads to
 read and write project files inside the project folder (see

@@ -154,3 +154,6 @@ tests/.run-node-tests-safe-history.json
 /.swebench-data/
 /.swebench-runs/
 /.swebench-grader/
+
+# Local model-run state (sidecar memory databases, review notes).
+/runs/

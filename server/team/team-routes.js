@@ -67,14 +67,17 @@ function hasExactStrings(value, keys) {
   return names.length === keys.length && keys.every((key) => typeof value[key] === 'string');
 }
 
-// Answers once the response has finished, then ends the connection and drops the key.
-function endConnectionAfterResponse(ctx, context) {
+// Answers once the response has finished, then ends the connection. A spent invite also drops its key at the
+// bridge. A version mismatch (`dropKey: false`) only ends the socket with a FIN: the bridge closes a dropped key
+// with its refused code, which the member reads as a revoke, and a reset could cut the 409 off before it is read.
+function endConnectionAfterResponse(ctx, context, { dropKey = true } = {}) {
   const { request, response } = ctx;
   const teamKey = request.socket.teamKey;
   let done = false;
   const finish = () => {
     if (done) return;
     done = true;
+    if (!dropKey) { request.socket.end(); return; }
     request.socket.destroy();
     try { context.dropKey(teamKey); } catch { /* the socket is already gone */ }
   };
@@ -104,7 +107,7 @@ function createTeamRoutes(context) {
       log('INFO', 'team.hello_version_refused', { reason: tooOld ? 'team_client_too_old' : 'team_server_too_old' });
       sendHostFailure(ctx.response, hostFailure('conflict', tooOld ? 'team_client_too_old' : 'team_server_too_old',
         ctx.requestId), ctx.requestId);
-      endConnectionAfterResponse(ctx, context);
+      endConnectionAfterResponse(ctx, context, { dropKey: false });
       return;
     }
     ctx.markHello();

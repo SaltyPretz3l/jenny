@@ -11,7 +11,8 @@
   // Team channel or direct conversation the member can write, through one confirming dialog. The dialog shows the
   // exact text that will be posted (read-only, escaped) and says who can read it; Post goes through the team chat
   // post the composer uses (queued by the chat client). Never into a project conversation (every message there
-  // starts a Jenny turn). The menu item is never hidden: with no team, a read-only team, no connection or too long a
+  // starts a Jenny turn); a project's own channel (`chan_project_*`, kind `project`, OD-8) is a human channel and is
+  // offered, by its project name, when this member writes in that project. The menu item is never hidden: with no team, a read-only team, no connection or too long a
   // text it is greyed out with its reason.
   // - `menuItem({ text, trigger })` answers a context-menu item for any menu that offers "Send to chat..." or Pin.
   // - `cleanText(text)` is what is posted: attachments, previews and `jenny-team:` tokens are taken out.
@@ -26,6 +27,7 @@
   // The team states that lock a member out (renderer-team-chat-store.js LOCKED_STATES): nothing is posted to them.
   const LOCKED_STATES = new Set(['pending', 'revoked', 'update_required', 'needs_repair', 'force_local']);
   const QUEUED_STATES = new Set(['offline', 'reconnecting', 'connecting']);
+  const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g; // direction marks in another member's text
 
   // A `jenny-team:<team>/<channel>/<seq>/<message>[/<root>]` link, whole (a link means nothing to another reader's Jenny).
   const TEAM_TOKEN = /jenny-team:[A-Za-z0-9_/-]+/gu;
@@ -48,10 +50,10 @@
   const charCount = (text) => Array.from(text).length;
   const tooLong = (text) => charCount(text) > MAX_CHARS;
 
-  function readersLine(kind, teamName) {
-    return kind === 'dm'
-      ? jt('chat.postToTeam.readers.dm', "The people in this conversation and the team's host can read this.")
-      : jt('chat.postToTeam.readers.channel', "Everyone in {team} and the team's host can read this.", { team: teamName });
+  function readersLine(kind, teamName, projectName = '') {
+    if (kind === 'dm') return jt('chat.postToTeam.readers.dm', "The people in this conversation and the team's host can read this.");
+    if (kind === 'project') return jt('chat.postToTeam.readers.project', "The members of {project} and the team's host can read this.", { project: projectName });
+    return jt('chat.postToTeam.readers.channel', "Everyone in {team} and the team's host can read this.", { team: teamName });
   }
 
   const reasonText = (token) => ({
@@ -78,6 +80,11 @@
     const getChatTeam = typeof d.getChatTeam === 'function' ? d.getChatTeam : (teamId) => {
       const store = lazy('rendererTeamChatStore', '../team/renderer-team-chat-store');
       return store ? store.getChatStore().team(teamId) : null;
+    };
+    // The project store's row for a project channel (`chan_<project id>`), or null: the name to show and this member's role in it.
+    const getProject = typeof d.getProject === 'function' ? d.getProject : (teamId, projectId) => {
+      const holder = lazy('rendererTeamProjectStore', '../team/renderer-team-project-store');
+      return holder ? holder.getProjectStore().project(teamId, projectId) : null;
     };
     const post = typeof d.post === 'function' ? d.post : (payload) => {
       const store = lazy('rendererTeamStore', '../team/renderer-team-store');
@@ -106,14 +113,19 @@
       return row.participants.filter((id) => id !== team.member_id).map((id) => names.get(id) || former).join(', ') || former;
     }
 
-    // One team's rows: #team, its live custom channels, then its direct conversations (never a project's conversation).
+    // One team's rows: #team, its live custom channels, the project channels this member writes in, then its direct conversations
+    // (never a project's conversation).
     function optionsOf(team) {
       const chat = getChatTeam(team.team_id);
       const rows = chat && Array.isArray(chat.channels) ? chat.channels.filter(Boolean) : [];
       const options = [{ team_id: team.team_id, channel_id: CHANNEL_TEAM, kind: 'channel', label: jt('chat.postToTeam.teamChannel', '#team') }];
       for (const row of rows) {
-        if (row.archived || String(row.channel_id).startsWith('chan_project_')) continue;
-        if (row.kind === 'channel' && row.name) options.push({ team_id: team.team_id, channel_id: row.channel_id, kind: 'channel', label: '#' + row.name });
+        if (row.archived) continue;
+        if (row.kind === 'project') {
+          const project = String(row.channel_id).startsWith('chan_') ? getProject(team.team_id, String(row.channel_id).slice(5)) : null;
+          const name = project && project.role !== 'reader' && typeof project.name === 'string' ? project.name.replace(BIDI, '').trim() : '';
+          if (name) options.push({ team_id: team.team_id, channel_id: row.channel_id, kind: 'project', name, label: '#' + name });
+        } else if (row.kind === 'channel' && row.name) options.push({ team_id: team.team_id, channel_id: row.channel_id, kind: 'channel', label: '#' + row.name });
         else if (row.kind === 'dm' && Array.isArray(row.participants)) options.push({ team_id: team.team_id, channel_id: row.channel_id, kind: 'dm', label: dmLabel(row, team, chat.members) });
       }
       return options;
@@ -191,7 +203,7 @@
       const readers = $(s, '[data-chat-post-readers]');
       if (readers) {
         const group = option && s.groups.find((entry) => entry.team_id === option.team_id);
-        readers.textContent = option ? readersLine(option.kind, group ? group.name : '') : '';
+        readers.textContent = option ? readersLine(option.kind, group ? group.name : '', option.name) : '';
       }
       paintPost(s);
     }

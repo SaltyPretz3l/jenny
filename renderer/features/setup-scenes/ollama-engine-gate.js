@@ -198,7 +198,8 @@
       if (view.phase === 'upgradeRequired' && view.ollama.daemon) {
         return [close, { id: 'recheck', label: jt('setup.ollamaGate.recheck', 'Re-check'), variant: 'primary' }];
       }
-      if (view.phase === 'running' && view.ollama.daemon) {
+      // `daemon` facts exist only on Linux; a running engine continues on every platform.
+      if (view.phase === 'running') {
         return [close, { id: 'continue', label: jt('common.continue', 'Continue'), variant: 'primary' }];
       }
       if ((view.phase === 'missingInstallable' || view.phase === 'upgradeRequired') && view.installPlan.available) {

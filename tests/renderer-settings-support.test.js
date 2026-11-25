@@ -172,7 +172,7 @@ test('tool config fields fall back to the legacy tool toggles when metadata is a
     fields.map((field) => field.key),
     [
       'fileTools', 'richFiles', 'imageRead', 'web', 'bash',
-      'pythonRuntime', 'lsp', 'worktree', 'subagents',
+      'pythonRuntime', 'computer', 'lsp', 'worktree', 'subagents',
     ]
   );
   assert.ok(fields.every((field) => field.fieldType === 'toggle'));
@@ -391,7 +391,7 @@ test('the Permissions rows and the language row keep their control ids', () => {
   assert.equal(doc.querySelector('[data-inv-toggle="unattendedGuardToggle"]'), null);
   assert.equal(doc.getElementById('unattendedGuardMinutesInput').disabled, false);
   assert.equal(doc.querySelector('[data-inv-toggle="use24HourTimeToggle"]').getAttribute('aria-checked'), 'true');
-  assert.match(doc.querySelector('[data-settings-field="defaultRunModeSelect"] .settings-field-detail').dataset.tooltip, /The composer switcher changes the current chat\./);
+  assert.match(doc.querySelector('[data-settings-field="defaultRunModeSelect"] .settings-field-detail').dataset.tooltip, /The composer switcher changes this chat\./);
   assert.equal(doc.querySelector('[data-default-run-mode-field]'), null);
   assert.equal(doc.querySelector('[data-settings-field="defaultRunModeSelect"] [data-setting-revert]').getAttribute('data-setting-revert-default'), 'Ask');
   for (const retired of ['resolveSafetyModeChangeEvent', 'resolveDefaultRunModeChangeEvent', 'resolveUnattendedGuardChangeEvent', 'resolveAutoApproveStreakCapChangeEvent', 'resolveUiLanguageChangeEvent', 'resolveWebSearchFieldChangeEvent']) {

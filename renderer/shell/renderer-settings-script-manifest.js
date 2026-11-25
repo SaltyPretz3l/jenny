@@ -101,6 +101,7 @@
     Object.freeze(['renderer/team/renderer-team-start.js', 'rendererTeamStart']), // row 168: the start page, with no team yet
     Object.freeze(['renderer/team/renderer-team-overview.js', 'rendererTeamOverview']), // row 168: the Overview page of the column
     Object.freeze(['renderer/team/renderer-team-tab-notify-menu.js', 'rendererTeamTabNotifyMenu']), // row 175: the channel notify-level menu, moved out of the tab
+    Object.freeze(['renderer/team/renderer-team-tab-frame.js', 'rendererTeamTabFrame']), // row 201 (OD-10): the team's frame and its swappable main pane
     Object.freeze(['renderer/team/renderer-team-tab.js', 'rendererTeamTab']),
   ]);
   // The shared store alone: loaded by the gate, which reads the team state and the tab's count through it.
@@ -158,6 +159,9 @@
     Object.freeze(['renderer/shell/renderer-settings-cli-path.js', 'rendererSettingsCliPath']),
     // Models ▸ Engines and providers: the services table and its shared Manage drawer. Owners resolve it at call time.
     Object.freeze(['renderer/shell/model-library/model-library-services.js', 'modelLibraryServices']),
+    // Row 200: the Strata block (Engines row, Manage drawer, Library input) and the Tune drawer's Strata section; both resolve at call time.
+    Object.freeze(['renderer/shell/model-library/model-library-strata.js', 'modelLibraryStrata']),
+    Object.freeze(['renderer/shell/renderer-model-tuning-strata.js', 'rendererModelTuningStrata']),
     // GGUF folders ▸ Move and add (row 107); the folders row adds in place until it loads.
     Object.freeze(['renderer/shell/model-library/model-library-add-move.js', 'modelLibraryAddMove']),
     // llama-server builds (row 142): "Use build N" after a failed load, Get build, the runtime folders list; each stays hidden until it loads.

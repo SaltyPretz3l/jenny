@@ -89,9 +89,9 @@
       if (taskId && !linkedSessions.has(taskId)) linkedSessions.set(taskId, String(session?.id || '').trim());
     }
     // Loops inside the delete-undo window are already gone from the user's view.
-    const pendingDeleteIds = new Set(Array.isArray(state?.ui?.pendingLoopDeleteIds)
-      ? state.ui.pendingLoopDeleteIds.map((id) => String(id || '').trim()).filter(Boolean)
-      : []);
+    // The rail's own deleted-with-Undo ids (taskRail.hiddenIds) hide the same way.
+    const pendingDeleteIds = new Set([state?.ui?.pendingLoopDeleteIds, state?.ui?.taskRail?.hiddenIds]
+      .flatMap((ids) => (Array.isArray(ids) ? ids : [])).map((id) => String(id || '').trim()).filter(Boolean));
     const sources = [
       ['active', board.active],
       ['deferred', board.deferred],
@@ -262,6 +262,39 @@
     };
   }
 
+  // Project id -> name for the scope helper: the switcher's names, then a fallback for every id in play.
+  function projectNameMap(switcher, sessions, ids) {
+    const names = new Map();
+    for (const entry of switcher?.filterRows?.('') || []) {
+      if (entry.id) names.set(entry.id, entry.label);
+    }
+    const loaded = Boolean(switcher?.getProjects?.().length);
+    const seen = [...ids, ...(Array.isArray(sessions) ? sessions : []).map((entry) => String(entry?.project_id || '').trim())];
+    for (const id of seen.filter((value) => value && value !== 'current' && value !== 'all' && !names.has(value))) {
+      names.set(id, id === GENERAL_PROJECT_ID ? jt('projects.switcher.generalName', 'General')
+        : loaded ? jt('projects.filter.project', 'Project') : id);
+    }
+    return names;
+  }
+
+  // The scope menu: this chat's project, All projects, then the rest, each with its open count.
+  function scopeMenuRows(switcher, helper, rows) {
+    const open = rows.filter(isOpenRow);
+    const countFor = (id) => open.filter((row) => row.projectId === id).length;
+    const selectedId = helper.mode === 'all' ? null : helper.projectId;
+    const chatId = helper.chatProjectId;
+    const list = chatId ? [{
+      id: chatId, label: helper.projectNames.get(chatId) || chatId, kind: 'project',
+      detail: jt('tasks.rail.thisChat', 'this chat'), count: countFor(chatId), selected: selectedId === chatId,
+    }] : [];
+    list.push({ id: '', label: jt('projects.filter.all', 'All projects'), kind: 'project', count: open.length, selected: helper.mode === 'all' });
+    for (const entry of switcher.filterRows('')) {
+      if (!entry.id || entry.id === chatId) continue;
+      list.push({ ...entry, count: countFor(entry.id), selected: selectedId === entry.id });
+    }
+    return list;
+  }
+
   // A row with no project (never backfilled) belongs to no single-project scope.
   function scopeRowsFor(rows, scope) {
     if (!scope || scope.mode === 'all') return rows;
@@ -346,29 +379,6 @@
       + (done.length ? groupHeading(open.length ? jt('common.done', 'Done') : followUps, [], '', escapeHtml) + rowsMarkup(done) : '');
   }
 
-  // Jenny's checklist: the step she is on leads; in Open, finished steps fold into one toggle line.
-  function renderChecklist(items, filter, foldOpen, escapeHtml) {
-    if (!items.length) return '';
-    const done = items.filter((item) => item?.status === 'completed');
-    const foldable = filter === 'open' && done.length > 0;
-    const shown = filter === 'done' ? done
-      : filter === 'all' || foldOpen ? items : items.filter((item) => item?.status !== 'completed');
-    if (!shown.length && !foldable) return '';
-    return groupHeading(jt('tasks.rail.checklistHint', "Jenny's checklist"),
-      [jt('tasks.rail.checklistProgress', '{done} of {total} done', { done: done.length, total: items.length })], '', escapeHtml)
-      + (foldable ? action({
-        id: 'task-rail-checklist-fold', plain: true, className: 'task-rail-check-fold', ariaExpanded: foldOpen,
-        trustedHtml: '<span class="status-dot task-rail-check-dot" aria-hidden="true"></span><span>'
-          + escapeHtml(jt('tasks.rail.checklistDoneFold', '{count} done', { count: done.length })) + '</span>',
-      }) : '')
-      + shown.map((item) => '<div class="task-rail-check" data-check-status="'
-        + escapeHtml(item.status) + '"><span class="status-dot task-rail-check-dot" aria-hidden="true"></span>'
-        + '<span class="task-rail-check-text">' + escapeHtml(item.content) + '</span>'
-        + (item.status === 'in_progress' ? '<span class="task-rail-check-meta">'
-          + escapeHtml(jt('tasks.rail.now', 'now')) + '</span>' : '')
-        + '</div>').join('');
-  }
-
   function emptyCopyFor(filter, scope) {
     if (filter === 'done') return jt('tasks.rail.noCompleted', 'No completed tasks yet.');
     if (filter === 'all') return jt('tasks.rail.noTasks', 'No tasks yet. Ask Jenny to file one, or add one above.');
@@ -378,22 +388,109 @@
       : jt('tasks.rail.noOpenTasks', 'No open tasks. Ask Jenny to file one, or add one above.');
   }
 
+  // ---- The Project tab's head row, its remembered side, and the delete-undo line ----
+
+  const SIDE_KEY = 'jenny.projectTab.side';
+  const MAX_SIDES = 50;
+  const SIDES = ['tasks', 'notes'];
+
+  function sideStorage(storage) {
+    if (storage) return storage;
+    try { return typeof window !== 'undefined' ? window.localStorage : null; } catch (_error) { return null; }
+  }
+
+  function readSides(storage) {
+    try {
+      const parsed = JSON.parse(storage.getItem(SIDE_KEY) || '{}');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (_error) { return {}; }
+  }
+
+  // The side the owner last chose for a project: 'tasks', 'notes' or '' (never chosen).
+  function preferredSide(projectId, storage) {
+    const store = sideStorage(storage);
+    const side = store && projectId ? readSides(store)[projectId] : '';
+    return SIDES.includes(side) ? side : '';
+  }
+
+  // Most recent last, bounded to the newest MAX_SIDES projects.
+  function rememberSide(projectId, side, storage) {
+    const store = sideStorage(storage);
+    if (!store || !projectId || !SIDES.includes(side)) return;
+    try {
+      const map = readSides(store);
+      if (map[projectId] === side) return;
+      delete map[projectId];
+      map[projectId] = side;
+      const keys = Object.keys(map);
+      for (const key of keys.slice(0, Math.max(0, keys.length - MAX_SIDES))) delete map[key];
+      store.setItem(SIDE_KEY, JSON.stringify(map));
+    } catch (_error) { /* the remembered side is a convenience */ }
+  }
+
+  // Open follow-ups of one project: what the Tasks segment counts.
+  function openTaskCount(rows, projectId) {
+    return projectId ? (Array.isArray(rows) ? rows : []).filter((row) => isOpenRow(row) && row.projectId === projectId).length : 0;
+  }
+
+  // The one row both halves of the Project tab start with. `side` is 'tasks' or 'notes'.
+  function projectHeadHtml(options) {
+    const o = options || {};
+    const escape = typeof o.escapeHtml === 'function' ? o.escapeHtml : fallbackEscapeHtml;
+    const name = String(o.projectName || '').trim() || jt('projectTab.noProject', 'No project');
+    const count = Math.max(0, Math.floor(Number(o.openCount)) || 0);
+    const tasks = jt('projectTab.tasks', 'Tasks');
+    const switchHtml = typeof inventory.segmentedControl === 'function' ? inventory.segmentedControl({
+      id: 'project-tab-side', ariaLabel: jt('projectTab.switchLabel', 'Show tasks or notes'),
+      value: o.side === 'notes' ? 'notes' : 'tasks', className: 'project-tab-switch inv-segmented--compact',
+      options: [
+        { value: 'tasks', label: count > 0 ? tasks + ' ' + count : tasks },
+        { value: 'notes', label: jt('projectTab.notes', 'Notes') },
+      ],
+    }) : '';
+    return '<div class="project-tab-head"><b class="project-tab-name" title="' + escape(name) + '">' + escape(name) + '</b>' + switchHtml + '</div>';
+  }
+
+  // Focus lands on the chosen segment once the other half has painted.
+  function focusSide(rootEl, side) {
+    rootEl?.querySelector?.('[data-inv-segmented="project-tab-side"] [data-value="' + side + '"]')?.focus?.();
+  }
+
+  // Under the list: the last deleted task can still come back.
+  function renderUndoLine(uiState, escapeHtml) {
+    if (!uiState.pendingDelete) return '';
+    return '<div class="project-tab-undo" role="status"><span>' + escapeHtml(jt('projectTab.taskDeleted', 'Task deleted.')) + '</span>'
+      + action({ id: 'task-rail-undo-delete', label: jt('common.undo', 'Undo'), variant: 'ghost', size: 'sm' }) + '</div>';
+  }
+
+  // Same shared-chrome hand-over as the Notes rail: hide the artifact detail, paint into the preview host.
+  function prepareSurface(surface) {
+    if (!surface) return null;
+    surface.detailEmpty?.classList?.add('hidden');
+    surface.detailPanel?.classList?.remove('hidden');
+    for (const hidden of [surface.metaPane, surface.saveButton, surface.revertButton, surface.revealButton,
+      surface.openExternalButton, surface.deleteButton, surface.editorShell, surface.dirtyBadge]) hidden?.classList?.add('hidden');
+    for (const field of [surface.detailKicker, surface.detailTitle, surface.detailPath,
+      surface.detailStatus, surface.detailNote]) if (field) field.textContent = '';
+    if (surface.detailMeta) surface.detailMeta.innerHTML = '';
+    if (surface.provenanceTimeline) surface.provenanceTimeline.innerHTML = '';
+    const host = surface.previewContent || surface;
+    host?.classList?.remove?.('hidden');
+    return host;
+  }
+
   function renderTaskRailSurface(rows, uiState, helpers) {
     const escapeHtml = typeof helpers?.escapeHtml === 'function' ? helpers.escapeHtml : fallbackEscapeHtml;
     const scope = normalizeScope(helpers?.scope);
-    const source = scopeRowsFor(Array.isArray(rows) ? rows : [], scope);
+    const allRows = Array.isArray(rows) ? rows : [];
+    const source = scopeRowsFor(allRows, scope);
     const state = uiState && typeof uiState === 'object' ? uiState : {};
     const addBusy = String(state.busyTaskId || '') === '__add__';
     // All leads and is the default: open and finished tasks at a glance.
     const filter = ['open', 'done', 'all'].includes(state.filter) ? state.filter : 'all';
     const visibleRows = rowsForFilter(source, filter);
-    const checklist = helpers?.checklist && typeof helpers.checklist === 'object'
-      ? helpers.checklist : { items: [], updatedAt: '' };
-    const checklistItems = Array.isArray(checklist.items) ? checklist.items : [];
-    const openCount = source.filter(isOpenRow).length;
-    const checklistDone = checklistItems.filter((item) => item?.status === 'completed').length;
-    const openTotal = openCount + checklistItems.length - checklistDone;
-    const doneTotal = source.filter((row) => row.section === 'recentResolved').length + checklistDone;
+    const openTotal = source.filter(isOpenRow).length;
+    const doneTotal = source.filter((row) => row.section === 'recentResolved').length;
     const filters = typeof inventory.segmentedControl === 'function' ? inventory.segmentedControl({
       id: 'task-rail-filter', ariaLabel: jt('tasks.rail.filterLabel', 'Task filter'), value: filter, className: 'task-rail-filters inv-segmented--compact',
       dataset: { action: 'task-rail-filter' },
@@ -403,26 +500,29 @@
         { value: 'done', label: doneTotal ? jt('tasks.rail.filterDone', 'Done {count}', { count: doneTotal }) : jt('common.done', 'Done') },
       ],
     }) : '';
-    const sendAction = openCount ? action({ id: 'task-rail-send-list', plain: true, className: 'task-rail-group-action', label: jt('tasks.rail.sendListToChat', 'Send list to chat') }) : '';
-    const checklistMarkup = renderChecklist(checklistItems, filter, helpers?.checklistFoldOpen === true, escapeHtml);
+    const sendAction = openTotal ? action({ id: 'task-rail-send-list', plain: true, className: 'task-rail-group-action', label: jt('tasks.rail.sendListToChat', 'Send list to chat') }) : '';
     const followUpMarkup = renderFollowUps(visibleRows, scope, state, escapeHtml, sendAction);
-    const list = checklistMarkup || followUpMarkup
-      ? checklistMarkup + followUpMarkup
-      : '<div class="task-rail-empty">' + escapeHtml(emptyCopyFor(filter, scope)) + '</div>';
+    const list = followUpMarkup || '<div class="task-rail-empty">' + escapeHtml(emptyCopyFor(filter, scope)) + '</div>';
     const target = addTargetName(scope);
     const placeholder = target
       ? jt('tasks.rail.addToProject', 'Add a task to {project}', { project: target })
       : jt('tasks.rail.addFollowUpPlaceholder', 'Add a follow-up');
-    // The panel header carries the "Tasks" title and Close; one toolbar row holds
-    // the filter (with counts) and the project scope.
-    return '<section class="task-rail-surface" aria-label="' + escapeHtml(jt('artifactPanelV2Render.tasks', 'Tasks')) + '"><header class="task-rail-header">'
-      + filters + (scope ? renderScopeButton(scope, escapeHtml) : '') + '</header>'
+    const chatId = scope ? scope.chatProjectId : '';
+    const head = projectHeadHtml({
+      projectName: chatId ? projectLabel(scope, chatId) : '', side: 'tasks', openCount: openTaskCount(allRows, chatId), escapeHtml,
+    });
+    // One head row (the project and its Tasks | Notes switch), then one toolbar row
+    // holding the filter (with counts) and the project scope.
+    return '<section class="task-rail-surface" aria-label="' + escapeHtml(jt('artifactPanelV2Render.tasks', 'Tasks')) + '">' + head
+      + '<header class="task-rail-header">' + filters + (scope ? renderScopeButton(scope, escapeHtml) : '') + '</header>'
       + '<div class="task-rail-add">' + ADD_GLYPH
       + field({ id: 'taskRailDraftTitle', value: String(state.draftTitle || ''), placeholder, ariaLabel: jt('tasks.rail.taskTitle', 'Task title'), multiline: true, rows: 1, maxLength: 200, disabled: addBusy, dataset: { 'task-draft-title': '' } })
       + action({ id: 'task-rail-add', label: jt('tasks.rail.add', 'Add'), variant: 'primary', size: 'sm', disabled: addBusy }) + '</div>'
       + (state.lastError ? '<div class="task-rail-error" role="alert">' + escapeHtml(state.lastError) + '</div>' : '')
-      + '<div class="task-rail-list">' + list + '</div></section>';
+      + '<div class="task-rail-list">' + list + '</div>' + renderUndoLine(state, escapeHtml) + '</section>';
   }
 
-  return { buildSessionChecklist, buildTaskRows, renderTaskRailSurface, scopeRows: (rows, scope) => scopeRowsFor(Array.isArray(rows) ? rows : [], normalizeScope(scope)) };
+  return {
+    buildSessionChecklist, buildTaskRows, renderTaskRailSurface, projectHeadHtml, projectNameMap, scopeMenuRows, preferredSide, rememberSide, openTaskCount, focusSide, prepareSurface,
+    scopeRows: (rows, scope) => scopeRowsFor(Array.isArray(rows) ? rows : [], normalizeScope(scope)) };
 });

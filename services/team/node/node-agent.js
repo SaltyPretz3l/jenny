@@ -25,9 +25,10 @@ const MAX_SLOTS = 4;
 const DEFAULT_ENGINE = Object.freeze({ kind: 'openai-compatible', version: 'unknown' });
 const ENGINE_TEXT = /^[\x21-\x7e][\x20-\x7e]{0,63}$/u;
 
-// The host holds a claim up to 25 s; the call waits 10 s longer for its answer.
+// The host holds a claim up to 25 s (never longer than its heartbeat, so a claim in wait is contact enough);
+// the call waits 10 s longer for its answer.
 const CLAIM_WAIT_MS = 25_000;
-const CLAIM_TIMEOUT_MS = CLAIM_WAIT_MS + 10_000;
+const CLAIM_GRACE_MS = 10_000;
 const COMMAND_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 5_000;
 const BUSY_POLL_MS = 1_000;
@@ -67,7 +68,9 @@ function withCapabilities(models, capabilities) {
   return models.map((entry) => {
     const known = capabilities.get(entry.name);
     if (!known || typeof known !== 'object') return entry;
-    return { ...entry, vision: known.vision === true, thinking: known.thinking === true };
+    // The engine's own context length wins; the member's Jenny's fills a row the engine gave none for (Ollama's list has none).
+    const contextLength = entry.context_length ?? (Number.isSafeInteger(known.context_length) && known.context_length > 0 ? known.context_length : null);
+    return { ...entry, context_length: contextLength, vision: known.vision === true, thinking: known.thinking === true };
   });
 }
 
@@ -102,6 +105,14 @@ function createNodeAgent({
   let seqNext = 0;
   let offered = []; // the model names the last register sent
   let busyTold = false; // the host holds this PC paused for the member's own work (R16-F02)
+  // The member's own Pause (H12): the host may hold it (`manualHeld`, until a Resume the host took), when it was last told
+  // and whether that send was taken. `pauseEpoch` moves on every Pause or Resume: a Pause that was stopping jobs sends
+  // nothing once a Resume came. `manualBusy` holds the heartbeat back while pause() itself is sending.
+  let manualHeld = false;
+  let manualAt = null;
+  let manualOk = false;
+  let manualBusy = false;
+  let pauseEpoch = 0;
   const live = new Set();
   const sleepers = new Set();
   const jobs = new Map();
@@ -279,8 +290,11 @@ function createNodeAgent({
       if (state === 'idle' && busyNow()) { move('busy'); toldAt = null; } else if (state === 'busy_own' && !busyNow()) move('free');
       if (state === 'busy_own' && (toldAt === null || clock() - toldAt >= (busyTold ? heartbeatMs : Math.min(heartbeatMs, BUSY_RETRY_MS)))) {
         toldAt = clock();
-        busyTold = (await sendQuietly('team.node.pause', { on: true })) || busyTold;
+        const told = await sendQuietly('team.node.pause', { on: true });
+        busyTold = told || busyTold;
+        if (told) manualHeld = false; // this pause replaces the member's own at the host
       } else if (state === 'idle' && busyTold && await sendQuietly('team.node.pause', { on: false })) busyTold = false;
+      else if (!manualBusy && manualDue()) await tellPause(state === 'paused' ? { on: true, stop_running: false } : { on: false });
       if (run !== gen) return;
       await sleep(BUSY_POLL_MS);
     }
@@ -300,9 +314,10 @@ function createNodeAgent({
       const seq = pending ?? nextSeq();
       paced.push(clock());
       const startedAt = clock();
+      const waitMs = Math.min(CLAIM_WAIT_MS, heartbeatMs);
       let answer;
       try {
-        answer = await command('team.node.claim', { claim_seq: seq, wait_ms: CLAIM_WAIT_MS }, CLAIM_TIMEOUT_MS);
+        answer = await command('team.node.claim', { claim_seq: seq, wait_ms: waitMs }, waitMs + CLAIM_GRACE_MS);
       } catch (_error) {
         if (run !== gen) return;
         pending = seq;
@@ -346,6 +361,10 @@ function createNodeAgent({
     nodeId = null;
     target = null;
     busyTold = false;
+    manualHeld = false;
+    manualAt = null;
+    manualOk = false;
+    manualBusy = false;
   }
 
   // The member may no longer share (or the host speaks another version): running jobs are
@@ -396,17 +415,43 @@ function createNodeAgent({
     return { ok: true };
   }
 
+  // H12: the member's pause is kept in contact. While paused, busyWatch() repeats `pause { on: true, stop_running: false }`
+  // each heartbeat (the host marks a silent node offline and then drops it), and a send the host did not take is tried
+  // again after BUSY_RETRY_MS, a Resume's as well. A Resume that comes while Pause is stopping jobs wins.
+  function manualDue() {
+    if (state === 'paused') return manualAt === null || clock() - manualAt >= (manualOk ? heartbeatMs : Math.min(heartbeatMs, BUSY_RETRY_MS));
+    return manualHeld && state === 'idle' && (manualAt === null || clock() - manualAt >= Math.min(heartbeatMs, BUSY_RETRY_MS));
+  }
+  async function tellPause(params) {
+    manualAt = clock();
+    manualOk = await sendQuietly('team.node.pause', params);
+    if (params.on === false && manualOk) manualHeld = false;
+    return manualOk;
+  }
+
   async function pause({ on, stopRunning = false } = {}) {
     if (on === true) {
       if (!move('pause')) return refusedCall();
-      if (stopRunning === true) await stopJobs();
-      await sendQuietly('team.node.pause', { on: true, stop_running: stopRunning === true });
+      pauseEpoch += 1;
+      const mine = pauseEpoch;
+      manualHeld = true;
+      manualBusy = true;
+      try {
+        if (stopRunning === true) await stopJobs();
+        if (mine !== pauseEpoch) return { ok: true }; // a Resume came first: the host is never told this pause
+        await tellPause({ on: true, stop_running: stopRunning === true });
+        if (mine !== pauseEpoch) manualHeld = true; // a Resume came while this was sent: it may have been overtaken
+      } finally {
+        if (mine === pauseEpoch) manualBusy = false;
+      }
       return { ok: true };
     }
     if (on !== false || !move('resume')) return refusedCall();
+    pauseEpoch += 1;
+    manualBusy = false;
     busyTold = false; // this lifts any pause at the host; busyWatch() tells it again if the member is busy
     wakeAll();
-    await sendQuietly('team.node.pause', { on: false });
+    await tellPause({ on: false });
     return { ok: true };
   }
 

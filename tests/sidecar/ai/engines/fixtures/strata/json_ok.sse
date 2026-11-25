@@ -1,0 +1,14 @@
+: keep-alive
+
+: keep-alive
+
+data: {"id": "chatcmpl-e6d787690e884db7a13aa732", "object": "chat.completion.chunk", "created": 1795542989, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-e6d787690e884db7a13aa732", "object": "chat.completion.chunk", "created": 1795542989, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"content": "{\"title\":\"Inception\",\"year\":2010}", "reasoning_content": "The user asks for a JSON object with keys title and year for any film. Need output exactly one JSON object, no markdown. Need ensure valid JSON. Choose a well-known film. Keys title and year. Year likely number or string? Schema only says object, no types. Use title string and year number. Need only allowed fields? The schema is generic {\"type\":\"object\"} no additionalProperties specified, but user says keys title and year. Provide exactly those. No extra text. Ensure final only JSON."}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-e6d787690e884db7a13aa732", "object": "chat.completion.chunk", "created": 1795542989, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "timings": {"cache_n": 0, "prompt_n": 106, "prompt_ms": 52.8, "prompt_per_token_ms": 0.498, "prompt_per_second": 2007.6, "predicted_n": 133, "predicted_ms": 966.7, "predicted_per_token_ms": 7.268, "predicted_per_second": 137.6, "draft_n": 0, "draft_n_accepted": 0}}
+
+data: {"id": "chatcmpl-e6d787690e884db7a13aa732", "object": "chat.completion.chunk", "created": 1795542989, "model": "inkling-2-mini-sq-20", "choices": [], "usage": {"prompt_tokens": 106, "completion_tokens": 133, "total_tokens": 239, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 111}}}
+
+data: [DONE]
+

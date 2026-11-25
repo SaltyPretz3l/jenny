@@ -35,6 +35,18 @@ test('a tab click commits setActiveView and un-hides the right host', () => {
   assert.equal(rig.state.commits.length, 1, 'no-op click does not commit');
 });
 
+test('row 190 Wave 4: a click on the shown, active tab of a view goes to its onActiveTabClick instead', () => {
+  const rig = setup();
+  const clicked = [];
+  rig.views.search.onActiveTabClick = (tab) => clicked.push(tab.getAttribute('data-wb-tab'));
+  rig.click(rig.tab('search'));
+  assert.deepEqual(clicked, [], 'an inactive tab activates as before');
+  assert.equal(rig.state.commits.length, 1);
+  rig.click(rig.tab('search'));
+  assert.deepEqual(clicked, ['search'], 'the shown, active tab hands the click to its view');
+  assert.equal(rig.state.commits.length, 1);
+});
+
 test('a tab click on a collapsed header stack reveals it', () => {
   const rig = setup();
   rig.click(rig.tab('problems'));
@@ -249,6 +261,10 @@ test('More menu: moves per edge, disables the current edge, resets to the defaul
   assert.equal(rig.state.menus.length, 1);
   const menu = rig.state.menus[0];
   assert.equal(menu.anchorEl, rig.action('stack-1', 'more'));
+  // Row 195: the stack's tabs come first, as radio rows; the open one is checked.
+  const tabRows = menu.items.splice(0, 4);
+  assert.deepEqual(tabRows.map((i) => i.label || 'sep'), ['Explorer', 'Search', 'Source Control', 'sep']);
+  assert.deepEqual(tabRows.slice(0, 3).map((i) => i.checked), [true, false, false]);
   assert.deepEqual(
     menu.items.map((i) => i.label || 'sep'),
     ['Move next to Terminal', 'Move next to Chat', 'sep', 'Move to left side', 'Move to right side', 'Move to bottom', 'sep', 'Reset layout'],
@@ -267,16 +283,52 @@ test('More menu: moves per edge, disables the current edge, resets to the defaul
   menu.items[7].action();
   assert.ok(ops.isLayoutEqual(rig.state.layout, model.createDefaultLayout()));
 
+  rig.click(rig.action('stack-1', 'more'));
+  rig.state.menus.at(-1).items[1].action();
+  assert.equal(rig.wb.getActiveView('explorer'), 'search', 'a tab row opens that tab');
+
   rig.click(rig.action('stack-2', 'more'));
   const bottom = rig.state.menus.at(-1).items;
   const row = (label) => bottom.find((i) => i.label === label);
-  assert.equal(bottom[0].label, 'Move next to Explorer', 'the own stack is excluded');
+  assert.equal(bottom.find((i) => /^Move next/.test(i.label || '')).label, 'Move next to Search', 'the own stack is excluded; the other is named for its open tab');
   assert.equal(row('Move to bottom').disabled, true, 'bottom stack is already at the bottom');
   assert.equal(row('Move to left side').disabled, false);
   row('Move to left side').action();
   const railStack = rig.state.layout.root.children[0].node;
   assert.ok(railStack.views.includes('terminal'), 'joined the left edge stack');
   assert.equal(railStack.active, 'terminal');
+});
+
+test('row 195: the open tab is scrolled into view and More names tabs past the edge that have a count', () => {
+  const chrome = require('../renderer/features/renderer-ide-workbench-chrome');
+  const rig = setup();
+  const header = rig.action('stack-1', 'more').closest('.wb-stack-header');
+  const tabsEl = header.querySelector('.wb-tabs');
+  const tabs = Array.from(tabsEl.querySelectorAll('[data-wb-tab]'));
+  const more = header.querySelector('[data-wb-action="more"]');
+  const jt = (key, def, params) => def.replace(/\{(\w+)\}/g, (m, k) => params[k]);
+  const place = (el, left, right) => { el.getBoundingClientRect = () => ({ left: left - tabsEl.scrollLeft, right: right - tabsEl.scrollLeft, width: right - left }); };
+  tabsEl.getBoundingClientRect = () => ({ left: 0, right: 100, width: 100 });
+  tabsEl.scrollLeft = 0;
+  place(tabs[0], 0, 60);
+  place(tabs[1], 60, 120);
+  place(tabs[2], 120, 200);
+  tabs[2].insertAdjacentHTML('beforeend', '<span class="wb-count">3</span>');
+  tabs[2].setAttribute('aria-label', 'Source Control (3)');
+
+  assert.equal(chrome.syncTabOverflow(header, jt, false), true);
+  assert.equal(more.getAttribute('title'), 'More: Source Control (3)');
+  assert.ok(more.querySelector('.wb-unread'), 'the dot is on More');
+
+  tabs[0].classList.remove('wb-tab--active');
+  tabs[2].classList.add('wb-tab--active');
+  chrome.syncTabOverflow(header, jt, true);
+  assert.equal(tabsEl.scrollLeft, 100, 'the open tab is brought inside the strip');
+  assert.equal(more.getAttribute('title'), 'More actions');
+  assert.equal(more.querySelector('.wb-unread'), null);
+
+  tabsEl.getBoundingClientRect = () => ({ left: 0, right: 0, width: 0 });
+  assert.equal(chrome.syncTabOverflow(header, jt, true), false, 'a header with no size is left alone');
 });
 
 test('contextmenu on a tab opens the menu for that tab at the pointer', () => {

@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 
 const { loadModel } = require('../services/backend/backend-runtime');
 const { managedLoadPatch } = require('../services/backend/managed-engine-load');
+const { vramRefusalError } = require('../services/backend/vram-load-preflight');
 const { managedModelKey } = require('../services/shell-config-engines');
 
 test('managed load failures carry their cause while a reused server remains unloaded', () => {
@@ -24,6 +25,38 @@ test('managed load failures carry their cause while a reused server remains unlo
     assert.equal(patch.failure?.cause ?? null, expectedCause);
     if (expectedCause) assert.equal(patch.failure.model, 'qwen3:8b');
   }
+});
+
+const GAME_REFUSAL = {
+  reason: 'vram_in_use',
+  message: 'qwen3:8b needs about 20.0 GB of GPU memory, but only 2.0 GB is free. Using it now: game.exe (14.0 GB). Close them, then load the model again.',
+  holders: [{ pid: 7100, name: 'game.exe', mb: 14336, liveRun: true, liveRunPid: 7100 }],
+};
+const gameService = (refusal = GAME_REFUSAL) => ({
+  vramLoadPreflight: { getLastRefusal: () => refusal },
+  runView: { projectForPid: (pid) => (pid === 7100 ? 'proj-1' : '') },
+});
+
+test('row 197 R3b: a managed launch the free-memory check refused carries its own words and the live run', () => {
+  const service = gameService();
+  service._modelLifecycle = managedLoadPatch(service, { state: 'starting', alias: 'qwen3:8b' });
+  const patch = managedLoadPatch(service, { state: 'failed', lastError: 'vram_in_use' });
+  assert.equal(patch.state, 'unavailable');
+  assert.equal(patch.failure.cause, 'out_of_memory');
+  assert.equal(patch.failure.message, GAME_REFUSAL.message.slice(0, 240));
+  assert.deepEqual(patch.failure.live_run, { project_id: 'proj-1', program: 'game.exe' });
+  // No refusal on record: the code stays the message and there is no live run.
+  const bare = { vramLoadPreflight: { getLastRefusal: () => null } };
+  bare._modelLifecycle = managedLoadPatch(bare, { state: 'starting', alias: 'qwen3:8b' });
+  const quiet = managedLoadPatch(bare, { state: 'failed', lastError: 'vram_in_use' });
+  assert.equal(quiet.failure.message, 'vram_in_use');
+  assert.equal(Object.hasOwn(quiet.failure, 'live_run'), false);
+  // Any other error is untouched even when a refusal is on record.
+  const other = gameService();
+  other._modelLifecycle = managedLoadPatch(other, { state: 'starting', alias: 'qwen3:8b' });
+  const exited = managedLoadPatch(other, { state: 'failed', lastError: 'llama_server_exited:1' });
+  assert.equal(exited.failure.message, 'llama_server_exited:1');
+  assert.equal(Object.hasOwn(exited.failure, 'live_run'), false);
 });
 
 function makeManagedLlamaLoadService({ managerState = 'ready', managerError = '', ensureState = 'ready',
@@ -179,4 +212,18 @@ test('switching to Ollama stops an active llama-server first, then forgets the a
   const fell = makeManagedLlamaLoadService({ fallbackAfterInit: { reason: 'ollama down', requested_engine: 'ollama' } });
   await assert.rejects(loadModel(fell, { model: 'ornith:9b', engine_type: 'ollama' }), /Could not load ollama engine/);
   assert.deepEqual(fell.calls.map(([name]) => name), ['stop', 'initialize']);
+});
+
+test('row 197 R3b: an Ollama refusal is thrown before anything starts and leaves the model lifecycle untouched', async () => {
+  const service = makeManagedLlamaLoadService();
+  Object.assign(service, gameService(), { _modelLifecycle: { state: 'ready', failure: null } });
+  service.vramLoadPreflight.check = async () => ({ ok: false, ...GAME_REFUSAL });
+  await assert.rejects(loadModel(service, { model: 'ornith:9b', engine_type: 'ollama' }), (error) => {
+    assert.equal(error.code, 'vram_in_use');
+    assert.equal(error.vramRefusal.holders[0].liveRunPid, 7100);
+    return true;
+  });
+  // Nothing was stopped or initialized, and no lifecycle failure was recorded: the thrown error is the only carrier.
+  assert.deepEqual(service.calls, []);
+  assert.deepEqual(service._modelLifecycle, { state: 'ready', failure: null });
 });

@@ -5,7 +5,9 @@ use std::net::SocketAddr;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-use crate::admission::{MAX_HANDSHAKES_PER_SOURCE, MAX_WAITING, REFUSED_COOLDOWN_MS};
+use crate::admission::{
+    MAX_HANDSHAKES_PER_SOURCE, MAX_KNOWN_KEYS, MAX_WAITING, REFUSED_COOLDOWN_MS,
+};
 use crate::control::{field, parse_message, Message, Reason};
 pub use crate::relay::RelayStart;
 
@@ -92,6 +94,11 @@ pub enum HostCommand {
     },
     Drop {
         key: [u8; 32],
+    },
+    /// `known_keys` (review C3): the parent's admitted device keys and live invite keys, at
+    /// most [`MAX_KNOWN_KEYS`], replacing the last set. Public keys, no secret.
+    KnownKeys {
+        keys: Vec<[u8; 32]>,
     },
     Stop,
 }
@@ -257,6 +264,21 @@ pub fn parse_host_command(line: &[u8]) -> Result<HostCommand, Reason> {
         "drop" => {
             let key = *field::take_b64_32(fields, "key").map_err(invalid)?;
             Ok(HostCommand::Drop { key })
+        }
+        "known_keys" => {
+            let keys = match fields.get("keys") {
+                Some(Value::Array(items)) if items.len() <= MAX_KNOWN_KEYS => items
+                    .iter()
+                    .map(|item| {
+                        item.as_str()
+                            .and_then(|text| field::decode_b64_32(text).ok())
+                            .map(|key| *key)
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or(Reason::ProtocolInvalid)?,
+                _ => return Err(Reason::ProtocolInvalid),
+            };
+            Ok(HostCommand::KnownKeys { keys })
         }
         "stop" => Ok(HostCommand::Stop),
         _ => Err(Reason::ProtocolInvalid),

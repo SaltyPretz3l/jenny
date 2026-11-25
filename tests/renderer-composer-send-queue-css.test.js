@@ -19,12 +19,11 @@ function findRuleBody(css, selector) {
   return '';
 }
 
-// The queue-state send pill ("Queue - runs in Ask") is width:auto in
-// chat-composer.css at specificity (0,2,0). The IDE chat dock and the narrow
-// chat-view media query used to set the send button back to a fixed circle
-// from later stylesheets, which clipped the label. Density now only changes
-// --composer-primary-control-size, so neither sheet may size the send button.
-test('queue-state send pill keeps auto width in the IDE dock and narrow chat view', () => {
+// The send button is sized once, by --composer-primary-control-size. The IDE
+// chat dock and the narrow chat-view media query used to size it from later
+// stylesheets; density now only changes the token, so neither sheet may size
+// the send button (row 192: the queue state keeps that same size).
+test('the IDE dock and narrow chat view size Send only through the control-size token', () => {
   const dock = readRepoFile('styles/ide-chat-dock.css');
   const narrow = readRepoFile('styles/chat-media-queries.css');
   assert.doesNotMatch(findRuleBody(dock, '.ide-chat-dock-body .composer-send'), /width:/);
@@ -33,10 +32,11 @@ test('queue-state send pill keeps auto width in the IDE dock and narrow chat vie
   assert.match(findRuleBody(narrow, '.chat-view .composer'), /--composer-primary-control-size:/);
 });
 
-test('queue-state send pill can shrink and clips with an ellipsis instead of overflowing', () => {
-  const body = findRuleBody(readRepoFile('styles/chat-composer.css'), '.composer-send.composer-send-queue');
-  assert.match(body, /width:\s*auto;/);
-  assert.match(body, /min-width:\s*0;/);
-  assert.match(body, /overflow:\s*hidden;/);
-  assert.match(body, /text-overflow:\s*ellipsis;/);
+// Row 192 C11: Queue keeps Send's round shape and size (an icon, no label), so the toolbar never refits for it.
+test('the queue-state send button keeps Send\'s size and round shape', () => {
+  const css = readRepoFile('styles/chat-composer.css');
+  assert.equal(findRuleBody(css, '.composer-send.composer-send-queue'), '', 'the text pill rule is gone');
+  const body = findRuleBody(css, '.composer-send.composer-send-queue.composer-send-queue--icon');
+  assert.match(body, /width:\s*var\(--composer-primary-control-size\);/);
+  assert.match(body, /border-radius:\s*50%;/);
 });

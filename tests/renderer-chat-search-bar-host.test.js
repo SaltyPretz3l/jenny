@@ -28,7 +28,7 @@ const FIXTURE = ''
 
 function paneHtml(paneId, focused, timelineId, timelineHtml) {
   return '<div class="chat-pane" data-pane-id="' + paneId + '" data-pane-focused="' + focused + '">'
-    + '<div class="chat-timeline-utility-cluster" data-chat-node="chatTimelineUtilityCluster"><div class="session-bar-title">Title ' + paneId + '</div></div>'
+    + '<div class="chat-timeline-utility-cluster" data-chat-node="chatTimelineUtilityCluster"></div>'
     + '<div class="chat-thread-stage"><div id="' + timelineId + '" role="feed">' + timelineHtml + '</div></div>'
     + '</div>';
 }

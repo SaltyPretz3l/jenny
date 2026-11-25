@@ -133,6 +133,20 @@
   color: var(--state-danger);
 }
 
+/* Running now: the Default flag sits after the model name, like a Library row's flag. */
+.mm-head .mm-default-flag {
+  flex: none;
+  align-self: center;
+}
+
+/* The line under the Library that says where cloud models went. */
+.mlib-cloud-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  align-items: baseline;
+}
+
 .mrow-meta {
   margin-top: 1px;
   overflow: hidden;

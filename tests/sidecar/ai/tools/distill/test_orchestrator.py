@@ -205,3 +205,26 @@ def test_redaction_contract_no_reintroduction(tmp_path: Path) -> None:
     # Only the redacted token form is present — nothing un-redacted appears.
     assert "[REDACTED]" in restored
     assert "sk-" not in restored and "sk-" not in result.stdout
+
+
+def test_cloud_engine_passes_output_that_fits_the_shell_cap_whole(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    try:
+        distill.configure_distill({"engine_type": "api-provider", "tools_distill_enabled": True})
+        result = distill_command_output(
+            stdout=PYTEST_LOG, stderr="", command="pytest", store=store, source="run_command"
+        )
+        assert result.stdout == PYTEST_LOG
+        assert _row_count(store) == 0
+        long_log = PYTEST_LOG.replace(
+            "collected 40 items\n", "collected 40 items\n" + "x" * distill.CLOUD_MIN_DISTILL_CHARS + "\n"
+        )
+        assert "lines omitted" in distill_command_output(
+            stdout=long_log, stderr="", command="pytest", store=store, source="run_command"
+        ).stdout
+        distill.configure_distill({"engine_type": "ollama", "tools_distill_enabled": True})
+        assert "lines omitted" in distill_command_output(
+            stdout=PYTEST_LOG, stderr="", command="pytest", store=store, source="run_command"
+        ).stdout
+    finally:
+        distill.configure_distill(None)

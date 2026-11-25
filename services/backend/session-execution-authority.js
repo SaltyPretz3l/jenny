@@ -13,6 +13,7 @@ const { PROJECT_ERROR_CODES, RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('
 const { normalizeHandoffPreparation } = require('./session-handoff-context');
 const grants = require('./read-only-command-grant');
 const { normalizeKnowledgeRoots } = require('./execution-config-snapshot');
+const { HelperWorktreeAuthority } = require('./helper-worktree-authority');
 
 const EXECUTION_CONTEXT_SCHEMA_VERSION = 1;
 const SIDECAR_API_VERSION = '2026-10-15';
@@ -227,6 +228,7 @@ class SessionExecutionAuthority {
     resolveSessionDisabledTools = null,
     resolveExternalToolDescriptor = null,
     isReadOnlyCommandsEnabled = null,
+    resolveWorktreeService = null, logger = null,
     randomUUID: createUUID = randomUUID,
   } = {}) {
     if (!projectAuthority || typeof projectAuthority.captureSession !== 'function'
@@ -255,6 +257,7 @@ class SessionExecutionAuthority {
       ? resolveExternalToolDescriptor : null;
     this._readOnlyCommandsEnabled = typeof isReadOnlyCommandsEnabled === 'function' ? isReadOnlyCommandsEnabled : () => false;
     this._sessionBindings = new Map();
+    this._helperWorktrees = new HelperWorktreeAuthority({ resolveWorktreeService: resolveWorktreeService || undefined, logger });
   }
 
   _executionDescriptor(toolName) {
@@ -477,6 +480,11 @@ class SessionExecutionAuthority {
     };
   }
 
+  // Row 184 W3: issue or settle a writing helper's worktree on this binding (helper-worktree-authority.js).
+  handleHelperWorktree(binding, params) {
+    return this._helperWorktrees.handle(bindingStates.get(binding), params, () => this.requireCurrent(binding));
+  }
+
   checkRuntimeOperation(binding, params) {
     const validation = validateRuntimeOperation(params);
     const operationId = validation.ok ? validation.operationId : params?.operation_id;
@@ -573,6 +581,7 @@ class SessionExecutionAuthority {
     state.approved.clear();
     state.planApprovals.clear();
     state.readOnlyCommandGrants.clear();
+    void this._helperWorktrees.releaseAll(state);
     return true;
   }
 }

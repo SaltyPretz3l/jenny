@@ -3,7 +3,9 @@
    More takes the reserved 70. Activity (its feature flag is off by default) keeps its node, count and
    state sync, but leaves the bar: the More menu's Activity row clicks it. While the bar is compact
    (renderer-transcript-view-utils.js sets data-session-bar-compact below 560px of room) Artifacts, Tasks and Notes
-   leave the bar too and the same menu lists them. The IDE dock keeps its floating column. */
+   leave the bar too and the same menu lists them. Split view does the same: the three buttons exist once, in the first pane's
+   cluster, so both panes list them in More and the first pane's own copies hide (the menu clicks them for the pane that
+   opened it). The IDE dock keeps its floating column. */
 
 .chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > .chat-timeline-more-button {
   order: 70;
@@ -17,7 +19,8 @@
   display: none;
 }
 
-.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-session-bar-compact] > :is([data-chat-node="artifactSplitViewToggle"], #chatTimelineTasksToggle, #chatTimelineNotesToggle) {
+.chat-view > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster[data-session-bar-compact] > :is([data-chat-node="artifactSplitViewToggle"], #chatTimelineTasksToggle, #chatTimelineNotesToggle),
+.chat-view[data-pane-count="2"] > .chat-pane:not(.ide-chat-dock-body) > .chat-timeline-utility-cluster > :is([data-chat-node="artifactSplitViewToggle"], #chatTimelineTasksToggle, #chatTimelineNotesToggle) {
   display: none;
 }
 

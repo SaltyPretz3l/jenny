@@ -175,8 +175,19 @@ function sanitizeToolInputValue(value, depth = 0) {
   return String(value);
 }
 
+// Row 196: what a `computer` type step typed is seen during the turn only. Its input is the only `type` action
+// without a `ref` (the browser's always names one), so the shape alone tells it apart.
+const COMPUTER_TYPED_PLACEHOLDER = '[typed text not saved]';
+// A `key` step's chord is dropped the same way: only `computer` names its key field `chord`.
+const COMPUTER_CHORD_PLACEHOLDER = '[key not saved]';
+function withoutComputerTypedText(source) {
+  if (source.action === 'key' && typeof source.chord === 'string') return { ...source, chord: COMPUTER_CHORD_PLACEHOLDER };
+  if (source.action !== 'type' || typeof source.text !== 'string' || source.ref !== undefined) return source;
+  return { ...source, text: COMPUTER_TYPED_PLACEHOLDER };
+}
+
 function buildPersistedToolInputSnapshot(input) {
-  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const source = withoutComputerTypedText(input && typeof input === 'object' && !Array.isArray(input) ? input : {});
   const sanitizedInput = sanitizeToolInputValue(source);
   let inputJson;
   try {

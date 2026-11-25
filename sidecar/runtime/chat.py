@@ -20,8 +20,10 @@ from sidecar.ai.context.runtime_overlays import build_dynamic_system_messages  #
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.memory.contracts import MemoryPolicy
 from sidecar.ai.routing import vision_turn as _vision_turn
-from sidecar.ai.routing.agent_executor import AgentExecutor  # noqa: F401
-from sidecar.ai.routing.iteration_limits import effective_sub_agent_concurrency_budget
+from sidecar.ai.routing.iteration_limits import (
+    effective_sub_agent_concurrency_budget,
+    effective_sub_agent_iteration_budget,
+)
 from sidecar.ai.tools.handoff_preparation import handoff_preparation_from_params
 from sidecar.ai.tools.tool_call_healing import (
     bind_tool_call_healing,
@@ -32,7 +34,6 @@ from sidecar.runtime.chat_continuation_input import continuation_request_state_f
 from sidecar.runtime.chat_helpers import (  # noqa: F401
     CHAT_INVALID_PARAMS,
     _decision_usage_payload,
-    _executor_runtime_enabled,
     _fallback_usage_payload,
     attach_context_window,
     chat_error_notification,
@@ -420,7 +421,7 @@ def build_chat_send_response(
         agent_depth=max(agent_depth, 0),
         agent_surface=agent_surface,
         parent_approval_plan_hash=parent_approval_plan_hash,
-        sub_agent_iteration_budget=getattr(stack.config, "max_sub_agent_loop_iterations", 10),
+        sub_agent_iteration_budget=effective_sub_agent_iteration_budget(stack.config),
         sub_agent_concurrency_budget=effective_sub_agent_concurrency_budget(stack.config),
     )
     bind_chat_request_context(

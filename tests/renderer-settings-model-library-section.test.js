@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const { buildRunningNow } = require('../renderer/shell/model-library/model-library-section-render');
 const {
   flush, deferred, diagnostics, state, click, harness, contextMenuOptions, contextMenuItem, rowKeys,
 } = require('./helpers/model-library-section-harness');
@@ -195,7 +196,8 @@ test('a rerender keeps unchanged rows and puts focus back on the same action of 
     '[data-model-key="installed:1b"] [data-model-card-action="tune"]'
   );
   assert.notEqual(tuneAfter, tuneBefore);
-  assert.match(h.card.querySelector('[data-model-key="installed:1b"]').textContent, /Local default/);
+  assert.match(h.card.querySelector('[data-model-key="installed:1b"]').textContent, /Default/);
+  assert.doesNotMatch(h.card.querySelector('[data-model-key="installed:1b"]').textContent, /Local default/);
   assert.equal(h.document.activeElement, tuneAfter);
 });
 
@@ -344,7 +346,7 @@ test('a background row render never dismisses a context menu this section did no
   assert.deepEqual(hides, ['hide']);
 });
 
-test('use activates through the model lifecycle, persists preference after success, and tune still opens', async (t) => {
+test('load activates through the model lifecycle, leaves the default alone, and tune still opens', async (t) => {
   const h = harness(t);
   h.controller.bind();
   await flush();
@@ -359,14 +361,11 @@ test('use activates through the model lifecycle, persists preference after succe
     h.calls.find((entry) => entry[0] === 'load'),
     ['load', { model: 'installed:1b', engine_type: 'ollama' }]
   );
-  assert.deepEqual(
-    h.calls.find((entry) => entry[0] === 'updateSettings'),
-    ['updateSettings', { preferredLocalModel: 'installed:1b' }]
-  );
-  assert.equal(h.state.offline.preferredLocalModel, 'installed:1b');
+  assert.equal(h.calls.some((entry) => entry[0] === 'updateSettings'), false, 'a load never writes the default');
+  assert.equal(h.state.offline.preferredLocalModel, '');
   assert.deepEqual(
     h.calls.find((entry) => entry[0] === 'toast'),
-    ['toast', 'Now chatting with "installed:1b"', { tone: 'success' }]
+    ['toast', 'Loaded "installed:1b"', { tone: 'success' }]
   );
   assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null, 'the loaded model leaves the library for Running now');
 });
@@ -424,7 +423,7 @@ test('load failure renders an in-card error without preference persistence or to
     && entry[2] === 'model_library.activate_failed'));
 });
 
-test('preferred-model persistence failure stays a successful activation', async (t) => {
+test('a load succeeds without touching the saved default, whatever the settings store does', async (t) => {
   const h = harness(t, {
     offline: { updateSettings: async () => { throw new Error('Settings store unavailable.'); } },
   });
@@ -437,21 +436,15 @@ test('preferred-model persistence failure stays a successful activation', async 
   await flush();
 
   assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null, 'the loaded model is no library row');
-  assert.ok(h.calls.some((entry) => entry[0] === 'toast'));
-  assert.ok(h.calls.some((entry) => entry[0] === 'log'
-    && entry[2] === 'model_library.preferred_local_update_failed'));
+  assert.equal(h.calls.some((entry) => entry[0] === 'updateSettings'), false);
   assert.equal(h.calls.some((entry) => entry[0] === 'log'
-    && entry[2] === 'model_library.activate_failed'), false);
-  assert.match(
-    h.card.querySelector('.model-library-section-status').textContent,
-    /local preference could not be saved/
-  );
+    && (entry[2] === 'model_library.preferred_local_update_failed' || entry[2] === 'model_library.activate_failed')), false);
+  assert.equal(h.card.querySelector('.model-library-section-status').textContent, 'Loaded Installed model.');
 });
 
-test('an unacknowledged preference echo is reported as a preference failure, not merged', async (t) => {
-  const h = harness(t, {
-    offline: { updateSettings: async () => ({}) },
-  });
+test('after a load the status line says new chats still use a different default', async (t) => {
+  const h = harness(t);
+  h.state.offline.preferredLocalModel = 'other:7b';
   h.controller.bind();
   await flush();
 
@@ -460,14 +453,7 @@ test('an unacknowledged preference echo is reported as a preference failure, not
   ));
   await flush();
 
-  assert.equal(h.card.querySelector('[data-model-key="installed:1b"]'), null, 'the loaded model is no library row');
-  assert.notEqual(h.state.offline.preferredLocalModel, 'installed:1b');
-  assert.ok(h.calls.some((entry) => entry[0] === 'log'
-    && entry[2] === 'model_library.preferred_local_update_failed'));
-  assert.match(
-    h.card.querySelector('.model-library-section-status').textContent,
-    /local preference could not be saved/
-  );
+  assert.equal(h.card.querySelector('.model-library-section-status').textContent, 'Loaded Installed model. New chats still use other:7b.');
 });
 
 // Running now owns Unload.
@@ -531,7 +517,7 @@ test('controller without a toast dependency completes activation through the liv
 
   assert.equal(
     h.card.querySelector('.model-library-section-status').textContent,
-    'Now chatting with "installed:1b".'
+    'Loaded Installed model.'
   );
 });
 
@@ -762,3 +748,162 @@ test('failed row routes recovery and repaints when the failure changes or clears
 });
 
 // --- Settings > Models > Library: one search line, scope chips, sort, keyed rows ---
+
+// --- Row 194: Running now says which model is the default; the row menu can set it ---
+
+function runningHtml(card, extra = {}) {
+  const { JSDOM } = require('jsdom');
+  const active = { key: 'qwen:14b', tag: 'qwen:14b', displayName: 'Qwen3.8 14B', installed: true, active: true, selectedEngine: 'ollama', engineType: 'ollama', vramRequiredMb: 9000, fitSource: 'observed', ...card };
+  return JSDOM.fragment(buildRunningNow({
+    merged: { cards: [active], hardware: { detected: true, vramMb: 16384, name: 'Test GPU' } },
+    activation: { status: 'idle', key: '', message: '' }, activeModelId: active.tag, preferredModel: '', hardwarePending: false, preview: null, ...extra,
+  }));
+}
+
+test('Running now marks the loaded default with the Default flag and offers no Set as default', () => {
+  const head = runningHtml({ preferredLocal: true }).querySelector('.mm-head');
+  const flag = head.querySelector('.mm-default-flag');
+  assert.equal(flag.textContent, 'Default');
+  assert.equal(flag.title, 'New chats set to Default use this model');
+  assert.ok(flag.classList.contains('mrow-flag'));
+  assert.deepEqual([...head.children].map((el) => el.className.split(' ')[0]), ['mm-name', 'mrow-flag', 'mm-meta', 'mm-actions'], 'the flag sits after the name');
+  assert.equal(head.querySelector('[data-model-card-action="setDefault"]'), null);
+});
+
+test('Running now offers a quiet Set as default for a loaded local model that is not the default', () => {
+  const head = runningHtml({ preferredLocal: false }).querySelector('.mm-head');
+  assert.equal(head.querySelector('.mm-default-flag'), null);
+  const button = head.querySelector('[data-model-card-action="setDefault"]');
+  assert.equal(button.textContent.trim(), 'Set as default');
+  assert.equal(button.getAttribute('aria-label'), 'Set as default Qwen3.8 14B');
+  assert.equal(button.dataset.modelTag, 'qwen:14b');
+  assert.ok(button.classList.contains('btn--ghost'));
+  assert.deepEqual([...head.querySelectorAll('[data-model-card-action]')].map((el) => el.dataset.modelCardAction), ['unload', 'tune', 'setDefault'], 'after Unload and Tune, as in the mockup');
+  assert.equal(runningHtml({ preferredLocal: false }, { activation: { status: 'running', key: 'qwen:14b' } }).querySelector('[data-model-card-action="setDefault"]').disabled, true, 'disabled while a load runs, like Unload');
+});
+
+test('Running now names a cloud model by provider and offers neither the flag nor Set as default', () => {
+  const head = runningHtml({ engineType: 'OpenRouter', selectedEngine: '', preferredLocal: false }).querySelector('.mm-head');
+  assert.equal(head.querySelector('.mm-meta').textContent, "Cloud · OpenRouter · runs on the provider's servers");
+  assert.equal(head.querySelector('.mm-default-flag'), null);
+  assert.equal(head.querySelector('[data-model-card-action="setDefault"]'), null);
+  assert.ok(head.querySelector('[data-model-card-action="unload"]'));
+});
+
+test('row menu: Set as default comes first, and is disabled on the model that already is the default', async (t) => {
+  const h = harness(t);
+  h.controller.bind();
+  await flush();
+  const open = () => click(h.windowRef, h.card.querySelector('[data-model-key="installed:1b"] [data-model-card-action="menu"]'));
+  open();
+  assert.deepEqual(contextMenuOptions(h).items.slice(0, 2).map((item) => item.label || 'separator'), ['Set as default', 'separator']);
+  assert.equal(contextMenuItem(h, 'Set as default').description, 'New chats will use Installed model');
+  assert.equal(contextMenuItem(h, 'Set as default').disabled, false);
+  h.state.offline.preferredLocalModel = 'installed:1b';
+  h.controller.syncFromState();
+  open();
+  assert.equal(contextMenuItem(h, 'Set as default').disabled, true);
+  assert.equal(contextMenuItem(h, 'Set as default').description, 'Already the default for new chats');
+});
+
+// Row 194 integration: Set as default, the cloud link and the 'models' stats watcher are wired to the section.
+async function loadedHarness(t, options = {}) {
+  const loaded = state();
+  loaded.status.model = 'installed:1b';
+  const h = harness(t, { state: loaded, ...options });
+  h.controller.bind();
+  await flush();
+  return h;
+}
+const defaultWrites = (h) => h.calls.filter((entry) => entry[0] === 'updateSettings').map((entry) => entry[1]);
+
+test("Running now's Set as default saves that model as the default and says so", async (t) => {
+  const h = await loadedHarness(t);
+  click(h.windowRef, h.document.querySelector('#modelRunningHost [data-model-card-action="setDefault"]'));
+  await flush();
+  assert.deepEqual(defaultWrites(h), [{ preferredLocalModel: 'installed:1b' }]);
+  assert.equal(h.card.querySelector('.model-library-section-status').textContent, 'New chats now use Installed model.');
+  assert.equal(h.document.querySelector('#modelRunningHost [data-model-card-action="setDefault"]'), null, 'the button goes once it is the default');
+});
+
+test('the row menu item Set as default does the same', async (t) => {
+  const h = harness(t);
+  h.controller.bind();
+  await flush();
+  click(h.windowRef, h.card.querySelector('[data-model-key="installed:1b"] [data-model-card-action="menu"]'));
+  await contextMenuItem(h, 'Set as default').action();
+  assert.deepEqual(defaultWrites(h), [{ preferredLocalModel: 'installed:1b' }]);
+  assert.equal(h.card.querySelector('.model-library-section-status').textContent, 'New chats now use Installed model.');
+});
+
+test('the cloud line link scrolls the Cloud providers group into view and moves focus to its heading', async (t) => {
+  const h = harness(t);
+  h.document.body.insertAdjacentHTML('beforeend', '<div id="modelServicesHost"><div class="srow-head" data-service-head="chat"><span>Chat engines</span></div><div class="srow-head" data-service-head="cloud"><span>Cloud providers</span></div></div>');
+  const scrolled = [];
+  h.windowRef.HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.getAttribute('data-service-head')); };
+  h.controller.bind();
+  await flush();
+  click(h.windowRef, h.card.querySelector('.mlib-cloud-note [data-model-library-section-action="cloud-providers"]'));
+  assert.deepEqual(scrolled, ['cloud']);
+  assert.equal(h.document.activeElement, h.document.querySelector('[data-service-head="cloud"]'));
+});
+
+test('the section is a stats watcher while Settings > Models is on screen, and clears when hidden or disposed', async (t) => {
+  const h = harness(t);
+  const watches = [];
+  h.windowRef.jennyShell.system = { setStatsWatch: async (payload) => { watches.push(payload); return { watched: payload.watched }; } };
+  h.controller.bind();
+  await flush();
+  assert.deepEqual(watches, [{ source: 'models', watched: true }]);
+  h.card.classList.remove('settings-section-active');
+  await flush();
+  assert.deepEqual(watches.slice(1), [{ source: 'models', watched: false }], 'another Settings page');
+  h.card.classList.add('settings-section-active');
+  await flush();
+  assert.deepEqual(watches.slice(2), [{ source: 'models', watched: true }]);
+  h.card.classList.add('settings-section-active');
+  await flush();
+  assert.equal(watches.length, 3, 'a class change that leaves it shown registers nothing');
+  h.controller.dispose();
+  await flush();
+  assert.deepEqual(watches.slice(3), [{ source: 'models', watched: false }]);
+});
+
+test('with Settings hidden the section is not a watcher', async (t) => {
+  const h = harness(t);
+  const watches = [];
+  h.document.body.insertAdjacentHTML('beforeend', '<div id="settingsView"></div>');
+  h.windowRef.jennyShell.system = { setStatsWatch: async (payload) => { watches.push(payload); } };
+  h.controller.bind();
+  await flush();
+  assert.deepEqual(watches, [], 'the Settings view is not the active view');
+  h.document.getElementById('settingsView').classList.add('active-view');
+  await flush();
+  assert.deepEqual(watches, [{ source: 'models', watched: true }]);
+});
+
+test('Show models that fit in the too-large warning closes the drawer and shows the catalog; the card size is the Library hardware', async (t) => {
+  const flagged = state();
+  flagged.features.featureFlags.llama_server_acceleration = true;
+  const closed = [];
+  const previous = globalThis.modelLibraryServices;
+  globalThis.modelLibraryServices = { shared: () => ({ register() {}, unregister() {}, refresh() {}, has: () => true, open: () => true, close: () => closed.push('close') }) };
+  t.after(() => { globalThis.modelLibraryServices = previous; });
+  const plan = { ok: true, inside: false, file: 'Big-70B-Q4_K_M.gguf', companions: [], sizeBytes: 40 * 1024 ** 3, sourceDirName: 'Downloads', destRoot: 'D:\\gguf', destDir: 'D:\\gguf\\Big', fit: { ctx: 32768, needMb: 48000, smallNeedMb: 46000 } };
+  const h = harness(t, { state: flagged, llamaServer: {
+    async chooseGguf() { return { ok: true, picked: true, path: 'C:\\Downloads\\Big-70B-Q4_K_M.gguf', dir: 'C:\\Downloads' }; },
+    async planGgufImport() { return plan; },
+    async importGguf() { return { ok: true }; },
+    async ggufImportStatus() { return { ok: true, active: false }; },
+  } });
+  h.document.body.insertAdjacentHTML('beforeend', '<div id="modelLibraryFoldersHost"></div>');
+  h.controller.bind();
+  await flush();
+  click(h.windowRef, h.card.querySelector('[data-model-library-section-action="add-gguf"]'));
+  await flush();
+  const warning = h.document.querySelector('.model-library-add-fit');
+  assert.match(warning.textContent, /Needs about 46\.9 GB at a 32K context · 35\.2 GB more than this card has.*11\.7 GB card/, 'the card is the test GPU, 12000 MB');
+  click(h.windowRef, warning.querySelector('[data-model-library-add-action="show-fits"]'));
+  assert.deepEqual(closed, ['close']);
+  assert.equal(h.card.querySelector('[data-inv-chip="scope-get"]').getAttribute('aria-pressed'), 'true');
+});

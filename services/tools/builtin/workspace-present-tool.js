@@ -6,7 +6,7 @@
  * never registers it.
  *
  * Presents a workspace file in the user's IDE: view='preview' targets the
- * unified Preview stage (markdown/mermaid/self-contained HTML); view=
+ * unified Preview stage (markdown/mermaid/self-contained HTML/png-jpg-gif-webp images); view=
  * 'file_map' opens the File Map stage and optionally reveals a path; view=
  * 'file' opens a text file in the IDE editor, optionally at a 1-based `line`.
  * The tool mutates UI only — it never reads content into the transcript and
@@ -41,10 +41,15 @@ const { manifestSchema, toolFailure } = require('./tool-result');
 const { workspaceRootId } = require('../../workspace-root-identity');
 
 // Kept in sync BY CONVENTION with renderer/features/renderer-ide-preview-stage.js
-// (MARKDOWN_EXTENSIONS / HTML_EXTENSIONS / MAX_PREVIEW_BYTES — the renderer
-// UMD and services cannot share an import; the RAIL_PANELS precedent).
-const PREVIEWABLE_EXTENSIONS = new Set(['md', 'markdown', 'mmd', 'mermaid', 'html', 'htm']);
+// (MARKDOWN_EXTENSIONS / HTML_EXTENSIONS / IMAGE_EXTENSIONS / MAX_PREVIEW_BYTES /
+// MAX_IMAGE_BYTES — the renderer UMD and services cannot share an import; the
+// RAIL_PANELS precedent). SVG stays out of the image set: it is script-capable.
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+const PREVIEWABLE_EXTENSIONS = new Set(['md', 'markdown', 'mmd', 'mermaid', 'html', 'htm', ...IMAGE_EXTENSIONS]);
+const PREVIEWABLE_LABEL = [...PREVIEWABLE_EXTENSIONS].map((ext) => `.${ext}`).join(', ');
 const MAX_PREVIEW_BYTES = 1_500_000;
+// The readImage cap (versioned-workspace-file-bytes DEFAULT_MAX_IMAGE_BYTES).
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8_192;
 const BINARY_SNIFF_TIMEOUT_MS = 2000;
 const VALID_VIEWS = new Set(['preview', 'file_map', 'change_diff', 'file']);
@@ -76,6 +81,7 @@ async function sniffPreviewFile({
   setTimeoutImpl,
   clearTimeoutImpl,
   maxBytes = MAX_PREVIEW_BYTES,
+  binary = false,
 }) {
   let handle = null;
   let closed = false;
@@ -99,6 +105,9 @@ async function sniffPreviewFile({
     const openedStat = typeof opened.stat === 'function' ? await opened.stat() : preStat;
     if (!openedStat?.isFile?.()) return { kind: 'unsupported_file_kind' };
     if (Number(openedStat.size) > maxBytes) return { kind: 'too_large' };
+    // An image is binary by nature: it keeps the open/regular-file identity
+    // checks above but skips the NUL text sniff (a PNG always contains NULs).
+    if (binary) return { kind: 'ok' };
     const scanSize = Math.min(Math.max(0, Number(openedStat.size) || 0), BINARY_SNIFF_BYTES);
     const buffer = Buffer.alloc(scanSize);
     await opened.read(buffer, 0, scanSize, 0);
@@ -146,10 +155,12 @@ const SNIFF_FAILURES = Object.freeze({
 async function gateFileContent({ view, relPath, resolved, fsLike, sniffOptions, logger }) {
   const words = GATE_WORDS[view];
   const isPreview = view === 'preview';
+  const isImage = isPreview && IMAGE_EXTENSIONS.has(extensionOf(relPath));
+  const previewCap = isImage ? MAX_IMAGE_BYTES : MAX_PREVIEW_BYTES;
   if (isPreview && !PREVIEWABLE_EXTENSIONS.has(extensionOf(relPath))) {
     return failure({
       reason: 'unsupported_file',
-      message: `"${relPath}" is not previewable — supported: .md, .markdown, .mmd, .mermaid, .html, .htm.`,
+      message: `"${relPath}" is not previewable — supported: ${PREVIEWABLE_LABEL}.`,
       summary: 'Unsupported file type',
     });
   }
@@ -173,7 +184,7 @@ async function gateFileContent({ view, relPath, resolved, fsLike, sniffOptions, 
       summary: 'Unsupported file kind',
     });
   }
-  if (isPreview && stat.size > MAX_PREVIEW_BYTES) {
+  if (isPreview && stat.size > previewCap) {
     return failure(SNIFF_FAILURES.too_large(relPath, words));
   }
   const sniff = await sniffPreviewFile({
@@ -181,7 +192,8 @@ async function gateFileContent({ view, relPath, resolved, fsLike, sniffOptions, 
     resolved,
     preStat: stat,
     ...sniffOptions,
-    maxBytes: isPreview ? MAX_PREVIEW_BYTES : Number.POSITIVE_INFINITY,
+    maxBytes: isPreview ? previewCap : Number.POSITIVE_INFINITY,
+    binary: isImage,
   });
   if (sniff.kind === 'ok') return null;
   if (SNIFF_FAILURES[sniff.kind]) return failure(SNIFF_FAILURES[sniff.kind](relPath, words));

@@ -97,14 +97,18 @@
   // The receipt names what was decided: the command's first line when there
   // is one, else the tool.
   // `subjectText` (a stop's "Stop <title>") replaces the command line as plain text.
-  function renderResolvedReceipt(source, displayToolName, escapeHtml, subjectText = '') {
-    const decision = receiptDecision(source.decision);
-    const mark = decision === 'allowed' ? '\u2713' : (decision === 'denied' ? '\u2715' : '');
+  function receiptCommand(source, subjectText) {
     const firstLine = String(source.commandText == null ? '' : source.commandText).trim().split('\n')[0];
     // An Always allowed command names what the saved rule covers (row 103).
     const savedPrefix = source.approvalScope === 'always' ? normalizeText(source.alwaysAllowPrefix) : '';
-    const command = subjectText ? '' : (savedPrefix ? `${boundedText(savedPrefix, RECEIPT_SUBJECT_MAX_CHARS)} …`
+    return subjectText ? '' : (savedPrefix ? `${boundedText(savedPrefix, RECEIPT_SUBJECT_MAX_CHARS)} …`
       : boundedText(firstLine, RECEIPT_SUBJECT_MAX_CHARS));
+  }
+
+  function renderResolvedReceipt(source, displayToolName, escapeHtml, subjectText = '') {
+    const decision = receiptDecision(source.decision);
+    const mark = decision === 'allowed' ? '\u2713' : (decision === 'denied' ? '\u2715' : '');
+    const command = receiptCommand(source, subjectText);
     const subject = command
       ? `<code class="tool-approval-receipt-subject">${escapeHtml(command)}</code>`
       : `<span class="tool-approval-receipt-subject">${escapeHtml(boundedText(subjectText, RECEIPT_SUBJECT_MAX_CHARS) || displayToolName)}</span>`;
@@ -112,6 +116,23 @@
       + (mark ? `<span class="tool-approval-receipt-mark" aria-hidden="true">${mark}</span>` : '')
       + `<span class="tool-approval-receipt-label">${escapeHtml(receiptLabel(decision, source.approvalScope))}</span>`
       + `<span class="tool-approval-receipt-sep" aria-hidden="true">\u00b7</span>${subject}</p>`;
+  }
+
+  // Row 192 D2 A: an answered inline approval row renders visually empty (the
+  // step carries the answer); its live region still says the receipt once.
+  function renderSpokenReceipt(source, displayToolName, escapeHtml, subjectText = '') {
+    const decision = receiptDecision(source.decision);
+    const subject = receiptCommand(source, subjectText) || boundedText(subjectText, RECEIPT_SUBJECT_MAX_CHARS) || displayToolName;
+    return `<span class="sr-only">${escapeHtml(`${receiptLabel(decision, source.approvalScope)} \u00b7 ${subject}`)}</span>`;
+  }
+
+  // The answer on the step's own row, before its status and duration: the
+  // receipt label, with the check mark when it was allowed.
+  function renderApprovalNote(source, escapeHtml) {
+    const decision = receiptDecision(source && source.decision);
+    return `<span class="tool-call-meta tool-call-approval-note" data-approval-decision="${decision}">`
+      + (decision === 'allowed' ? '<span aria-hidden="true">\u2713 </span>' : '')
+      + `${escapeHtml(receiptLabel(decision, source && source.approvalScope))}</span>`;
   }
 
   // Which card a pending approval row shows (A4, owner-approved 2026-09-22).
@@ -180,7 +201,9 @@
     approvalKeepsReceipt,
     deriveApprovalReceipt,
     receiptDecision,
+    renderApprovalNote,
     renderResolvedReceipt,
+    renderSpokenReceipt,
     resolveApprovalCardState,
   };
 });

@@ -151,7 +151,7 @@ async function addWith(options) {
 // The real Settings section, wired to real main for engine writes; `live`
 // holds what the next load reads.
 // Slice 6-7: model sharing's item leads every ⋯ menu (renderer-model-library-share.test.js pins it); these pins are the rest.
-const shareFirst = (items) => { assert.equal(items[0]?.label, 'Send to someone in your team…'); return items.slice(1); };
+const shareFirst = (items) => { assert.equal(items[0]?.label, 'Set as default'); assert.equal(items[1]?.separator, true); assert.equal(items[2]?.label, 'Send to someone in your team…'); return items.slice(3); };
 function sectionHarness(t, options = {}) {
   const main = options.main || realMain(options.seed);
   const dom = new JSDOM(`<!doctype html><body>

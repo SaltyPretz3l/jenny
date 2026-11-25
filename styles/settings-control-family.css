@@ -77,7 +77,28 @@
   border-color: color-mix(in srgb, var(--text-primary) 55%, transparent);
 }
 
+/* D3 A: light-dark() follows the color-scheme each palette declares; light themes get a darker edge. */
 .settings-field--row .inv-toggle--on .inv-toggle-track,
 .settings-field--row .inv-toggle--on:not(.inv-toggle--disabled) .inv-toggle-track:hover {
-  border-color: var(--accent);
+  border-color: light-dark(color-mix(in srgb, var(--accent) 45%, var(--text-primary)), var(--accent));
+}
+
+/* A changed switch is quiet: its revert shows on row hover or focus; the slot keeps its place. */
+.settings-field--row[data-setting-kind="toggle"] .settings-field-revert-slot {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.settings-field--row[data-setting-kind="toggle"]:hover .settings-field-revert-slot,
+.settings-field--row[data-setting-kind="toggle"]:focus-within .settings-field-revert-slot {
+  opacity: 1;
+}
+
+/* A managed row is read-only, not faded out, so its value can still be read. */
+.settings-field[data-setting-managed="true"] > .settings-field-control {
+  pointer-events: none;
+}
+
+.settings-field[data-setting-managed="true"] .inv-toggle--disabled {
+  opacity: 0.7;
 }

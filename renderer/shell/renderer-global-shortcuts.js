@@ -1,7 +1,7 @@
 /* renderer/shell/renderer-global-shortcuts.js – app-level keyboard shortcuts (UMD)
-   Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+6 (the Team tab, only
-   while it exists; same rules as the other digits), Ctrl+N (new chat), Ctrl+B
-   (toggle the active view's panel), Ctrl+Shift+\ (split view W1-4c: open the
+   Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+6/7 (the Team/Board tab,
+   only while it exists), Ctrl+N (new chat), Ctrl+B (toggle the active view's
+   panel), Ctrl+Alt+B (the Board's chat column), Ctrl+Shift+\ (split view W1-4c: open the
    most recent other tab beside, or close the non-focused pane), Ctrl+Alt+W
    (row 92: Wide transcript on/off), Ctrl+\ (row 115: close the open side panel,
    else hide the focused pane's docked Session rail, else nothing).
@@ -11,7 +11,7 @@
    anywhere. Ctrl+B also fires from the Workspace's Monaco editor (VS Code's
    toggle side bar works from the editor).
 
-   Text-editing surfaces own Ctrl+1..5/N/B. The Ctrl+Shift+Space capture chord
+   Text-editing surfaces own Ctrl+1..7/N/B. The Ctrl+Shift+Space capture chord
    is exempt by design and may fire from anywhere, including editors. The
    split chord also fires from a chat composer (.composer-input) and stands
    down in every other editor (Monaco binds Ctrl+Shift+\ to jump-to-bracket).
@@ -35,8 +35,8 @@
   root.rendererGlobalShortcuts = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   var DIGIT_KEYS = ['1', '2', '3', '4', '5'];
-  // Ctrl+6 / Ctrl+Alt+6 open the Team tab, which is not in VIEW_TAB_ORDER: it exists only with a team.
-  var TEAM_DIGIT = '6';
+  // Ctrl+6 / Ctrl+7 (and with Alt) open the Team and Board tabs, not in VIEW_TAB_ORDER: each exists only sometimes.
+  var TAB_DIGITS = { 6: 'team', 7: 'board' };
 
   // Same predicate as renderer-chat-keyboard-utils.js's isTextInputFocused,
   // duplicated (not required) so this module has no load-order dependency on
@@ -87,11 +87,15 @@
       && (event.code === 'Backquote' || event.key === '`'));
   }
 
-  function isChatWidthChord(event) {
+  // Ctrl+Alt with no other modifier; stands down for AltGr, which reports Ctrl+Alt on Windows layouts that type characters with it.
+  function isCtrlAlt(event) {
     return Boolean(event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey
       && !event.defaultPrevented && !event.isComposing
-      && !(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph'))
-      && (event.code === 'KeyW' || String(event.key || '').toLowerCase() === 'w'));
+      && !(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph')));
+  }
+
+  function isCtrlAltKey(event, letter) {
+    return isCtrlAlt(event) && (event.code === `Key${letter.toUpperCase()}` || String(event.key || '').toLowerCase() === letter);
   }
 
   function createGlobalShortcutsController(deps) {
@@ -163,7 +167,7 @@
         }
         return;
       }
-      if (isChatWidthChord(event)) {
+      if (isCtrlAltKey(event, 'w')) {
         if (typeof toggleChatWidth !== 'function' || isForeignTextEditingSurfaceFocused(documentRef)) return;
         event.preventDefault();
         if (event.repeat) return;
@@ -193,6 +197,28 @@
         appendClientLog?.('INFO', 'shortcuts.terminal_toggle', { key: 'Ctrl+`' });
         return;
       }
+      // Ctrl+Alt+B on the Board: its chat column; in Chat (row 190): the right stack. Elsewhere the key is untouched
+      // (the Workspace keymap keeps it).
+      if (isCtrlAltKey(event, 'b')) {
+        const view = documentRef?.documentElement?.dataset?.activeView;
+        if (isInsideWorkspaceView(event) || isForeignTextEditingSurfaceFocused(documentRef) || (view !== 'board' && view !== 'chat')) return;
+        // A held chord auto-repeats keydown; toggle on the first press only.
+        if (event.repeat) { event.preventDefault(); return; }
+        if (view === 'chat') {
+          const chat = (windowRef && windowRef.rendererChatWorkbenchController) || rootRef.rendererChatWorkbenchController;
+          if (chat?.toggle?.('right') === true) {
+            event.preventDefault();
+            appendClientLog?.('INFO', 'shortcuts.chat_right_toggle', { key: 'Ctrl+Alt+B' });
+          }
+          return;
+        }
+        const page = (windowRef && windowRef.rendererBoardPage) || rootRef.rendererBoardPage;
+        if (page?.toggleChat?.() === true) {
+          event.preventDefault();
+          appendClientLog?.('INFO', 'shortcuts.board_chat_toggle', { key: 'Ctrl+Alt+B' });
+        }
+        return;
+      }
       if (isPaneSplitChord(event)) {
         if (typeof togglePaneSplit !== 'function' || isForeignTextEditingSurfaceFocused(documentRef)) return;
         event.preventDefault();
@@ -201,13 +227,9 @@
         appendClientLog?.('INFO', 'shortcuts.pane_split_toggle', { toggled: toggled === true });
         return;
       }
-      // Ctrl+Alt+1..5: the view tabs from anywhere, editors included (O1). AltGr
-      // reports Ctrl+Alt on Windows layouts that type characters with it.
-      if (event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey
-        && !event.defaultPrevented && !event.isComposing
-        && !(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph'))
-        && (DIGIT_KEYS.indexOf(digitOf(event)) >= 0 || digitOf(event) === TEAM_DIGIT)) {
-        if (digitOf(event) === TEAM_DIGIT) openTeamView(event, 'Ctrl+Alt+6');
+      // Ctrl+Alt+1..7: the view tabs from anywhere, editors included (O1).
+      if (isCtrlAlt(event) && (DIGIT_KEYS.indexOf(digitOf(event)) >= 0 || TAB_DIGITS[digitOf(event)])) {
+        if (TAB_DIGITS[digitOf(event)]) openTabView(event, digitOf(event), 'Ctrl+Alt+');
         else switchView(event, DIGIT_KEYS.indexOf(digitOf(event)), `Ctrl+Alt+${digitOf(event)}`);
         return;
       }
@@ -233,15 +255,15 @@
       const digitIndex = DIGIT_KEYS.indexOf(key);
       const lower = key.toLowerCase();
       // The Workspace keymap owns Ctrl+1..5 (editor groups) and Ctrl+N (new file).
-      if ((digitIndex >= 0 || key === TEAM_DIGIT || lower === 'n') && isInsideWorkspaceView(event)) {
+      if ((digitIndex >= 0 || TAB_DIGITS[key] || lower === 'n') && isInsideWorkspaceView(event)) {
         return;
       }
       if (digitIndex >= 0) {
         switchView(event, digitIndex, `Ctrl+${key}`);
         return;
       }
-      if (key === TEAM_DIGIT) {
-        openTeamView(event, 'Ctrl+6');
+      if (TAB_DIGITS[key]) {
+        openTabView(event, key, 'Ctrl+');
         return;
       }
       if (lower === 'n') {
@@ -263,15 +285,17 @@
     // changes event.key.
     function digitOf(event) {
       const code = String(event.code || '');
-      return /^Digit[1-6]$/.test(code) ? code.slice(5) : String(event.key || '');
+      return /^Digit[1-7]$/.test(code) ? code.slice(5) : String(event.key || '');
     }
 
-    // The Team tab exists only with a team (row 123, slice 1g-2): the shell opens it and lands focus on
-    // its tab, and says whether it did. Without the tab the chord is not claimed and the key keeps its default.
-    function openTeamView(event, chord) {
-      if (rootRef.rendererTopNavShellController?.openTeamView?.() !== true) return;
+    // The Team tab exists only with a team (row 123, slice 1g-2), the Board tab only with its flag: the shell opens
+    // it, lands focus on its tab and says whether it did. Without the tab the chord is not claimed and the key keeps its default.
+    function openTabView(event, digit, prefix) {
+      const viewId = TAB_DIGITS[digit];
+      const open = viewId === 'team' ? 'openTeamView' : 'openBoardView';
+      if (rootRef.rendererTopNavShellController?.[open]?.() !== true) return;
       event.preventDefault();
-      appendClientLog?.('INFO', 'shortcuts.view_switch', { viewId: 'team', key: chord });
+      appendClientLog?.('INFO', 'shortcuts.view_switch', { viewId, key: prefix + digit });
     }
 
     function switchView(event, digitIndex, chord) {

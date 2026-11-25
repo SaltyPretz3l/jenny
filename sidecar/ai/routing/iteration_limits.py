@@ -2,7 +2,7 @@
 
 Jenny's resource-discipline limits are engine-keyed. A cloud frontier engine can
 sustain a far longer agentic loop than a single local GPU, so when the ACTIVE
-engine is one of ``_CLOUD_ENGINE_TYPES`` the widened ``cloud_*`` config values
+engine is one of ``CLOUD_ENGINE_TYPES`` (``config_models``) the widened ``cloud_*`` config values
 are selected; every other engine keeps the historical local values.
 
 ``config.engine_type`` is the POST-FALLBACK actual engine: a signed-out
@@ -17,6 +17,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
+from sidecar.ai.config_models import is_cloud_engine_type
 from sidecar.ai.engines.response_format import ResponseFormat
 from sidecar.ai.feature_flags import is_resource_discipline_enabled
 from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
@@ -36,16 +37,28 @@ _sub_agent_response_format = _subagent_finalization.response_format
 # The tool reserves the last 160 s for the chat-engine restore.
 IMAGE_GENERATE_TIMEOUT_SECONDS = 900.0
 
+# Row 197: the Live tab's tools. A restart waits for a build (10 min limit in
+# services/run-view/build-step.js), the stop before it and the start after it.
+RUN_VIEW_LOOK_TOOL_ID = "run_view_look"
+RUN_VIEW_RESTART_TOOL_ID = "run_view_restart"
+RUN_VIEW_RESTART_TIMEOUT_SECONDS = 720.0
+
 # The Electron-owned browsing tool. MCP tools merely named *browser* are not it.
 BROWSER_USE_TOOL_ID = "browser"
 BROWSER_USE_TURN_STEPS = 30  # maxStepsPerTurn in services/browser-use/browser-use-service.js
-_MAX_CHECKPOINTED_TOOL_CALLS = 256  # continuation_checkpoint refuses a larger limit
+# Row 196: the real mouse and keyboard. Its own step budget, as the browser's.
+COMPUTER_USE_TOOL_ID = "computer"
+COMPUTER_USE_TURN_STEPS = 60  # stepBudget in services/computer-use/computer-use-service.js
+_MAX_CHECKPOINTED_TOOL_CALLS = 530  # continuation_checkpoint refuses a larger limit
 
 LOOP_PROFILE_CLOUD = "cloud"
 LOOP_PROFILE_LOCAL = "local"
 
-_CLOUD_ENGINE_TYPES = frozenset({"chatgpt", "codex-cli", "api-provider"})
 _CLOUD_CHUNK_INACTIVITY_FLOOR_SECONDS = 300.0
+# A cloud helper works like a Claude Code subagent: enough steps to finish the
+# survey it was given, and its whole answer back (CLOUD_DELEGATE_ANSWER_CHARS).
+# Ten steps with the wind-down at 75% made helpers stop after seven (2026-11-20).
+CLOUD_SUB_AGENT_LOOP_ITERATIONS = 60
 
 _CHAT_MODE = "chat"
 _WIND_DOWN_RATIO = 0.75
@@ -109,15 +122,25 @@ def max_iterations_for_mode(config: Any, *, mode: str) -> int:
 def max_iterations_for_agent_surface(config: Any, *, mode: str, agent_surface: str) -> int:
     normalized_surface = str(agent_surface or "").strip().lower()
     if normalized_surface == AGENT_SURFACE_SUB_AGENT:
-        # Sub-agent budgets are profile-independent by design: a widened parent
-        # loop should spawn more sub-agents, not longer ones.
-        if not _resource_discipline_enabled(config):
-            return _safe_iteration_limit(getattr(config, "max_loop_iterations", 8), default=8)
-        value = getattr(config, "max_sub_agent_loop_iterations", None)
-        if value is None:
-            value = getattr(config, "max_loop_iterations", 10)
-        return _safe_iteration_limit(value, default=10)
+        return effective_sub_agent_iteration_budget(config)
     return max_iterations_for_mode(config, mode=mode)
+
+
+def effective_sub_agent_iteration_budget(config: Any) -> int:
+    """Steps one helper may take: the cloud figure on a cloud engine, else the local setting."""
+    if not _resource_discipline_enabled(config):
+        return _safe_iteration_limit(getattr(config, "max_loop_iterations", 8), default=8)
+    if _is_cloud_profile_active(config):
+        return CLOUD_SUB_AGENT_LOOP_ITERATIONS
+    return local_sub_agent_iteration_budget(config)
+
+
+def local_sub_agent_iteration_budget(config: Any) -> int:
+    """The local setting, also for a local helper under a cloud parent (row 179)."""
+    value = getattr(config, "max_sub_agent_loop_iterations", None)
+    if value is None:
+        value = getattr(config, "max_loop_iterations", 10)
+    return _safe_iteration_limit(value, default=10)
 
 
 def effective_max_loop_wall_seconds(config: Any) -> float:
@@ -173,14 +196,32 @@ def turn_tool_call_limit(config: Any, tool_contract: Any) -> int:
     """The cumulative tool budget for one turn, read by the loop and by an approval resume.
 
     A chat that can browse gets the browser's own step budget on top, so pages do not use up
-    the budget for its other tools. Every call still counts: checkpoints and approval plans
-    require the counter to equal the calls made.
+    the budget for its other tools; a chat with the computer tool gets its 60 steps the same
+    way. Every call still counts: checkpoints and approval plans require the counter to equal
+    the calls made.
     """
     limit = effective_max_tools_per_turn(config)
     lookup = getattr(tool_contract, "executable_descriptor", None)
-    if not callable(lookup) or lookup(BROWSER_USE_TOOL_ID) is None:
+    if not callable(lookup):
         return limit
-    return max(limit, min(limit + BROWSER_USE_TURN_STEPS, _MAX_CHECKPOINTED_TOOL_CALLS))
+    extra = (BROWSER_USE_TURN_STEPS if lookup(BROWSER_USE_TOOL_ID) is not None else 0) + (
+        COMPUTER_USE_TURN_STEPS if lookup(COMPUTER_USE_TOOL_ID) is not None else 0
+    )
+    if not extra:
+        return limit
+    return max(limit, min(limit + extra, _MAX_CHECKPOINTED_TOOL_CALLS))
+
+
+def widen_turn_tool_budget(runtime: Any, config: Any, tool_contract: Any) -> None:
+    """Follow the turn's tools when they grow mid-turn (Plan Mode exit offers the browser).
+
+    The budget is fixed when the loop starts; an approval plan records it and the resume check
+    recomputes it from the plan's tools, so a budget left at the read-only Plan Mode figure reads
+    as drift on the next approval.
+    """
+    raise_limit = getattr(runtime, "raise_tool_call_limit", None)
+    if callable(raise_limit):
+        raise_limit(turn_tool_call_limit(config, tool_contract))
 
 
 def effective_max_tool_calls_per_session(config: Any) -> int:
@@ -276,8 +317,7 @@ def _resource_discipline_enabled(config: Any) -> bool:
 
 
 def _is_cloud_profile_active(config: Any) -> bool:
-    engine_type = str(getattr(config, "engine_type", "") or "").strip().lower()
-    return engine_type in _CLOUD_ENGINE_TYPES
+    return is_cloud_engine_type(getattr(config, "engine_type", ""))
 
 
 def _profiled_int(
@@ -375,6 +415,8 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
             configured_timeout = max(configured_timeout, wait_seconds + 5.0)
     if call is not None and call.tool_id == "image_generate":
         configured_timeout = max(configured_timeout, IMAGE_GENERATE_TIMEOUT_SECONDS)
+    if call is not None and call.tool_id == RUN_VIEW_RESTART_TOOL_ID:
+        configured_timeout = max(configured_timeout, RUN_VIEW_RESTART_TIMEOUT_SECONDS)
     if call is not None and str(call.tool_id).startswith("mcp__"):
         configured_timeout = max(configured_timeout, _mcp_row_request_timeout(config, call.tool_id))
     if runtime is None:
@@ -388,6 +430,10 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
         )
     if call is not None and call.tool_id == "ask_user" and remaining is not None:
         return remaining
+    if call is not None and call.tool_id == RUN_VIEW_RESTART_TOOL_ID:
+        # The turn's clocks stop while the Live tab rebuilds (the wait is credited back afterwards),
+        # so the remaining working time must not cut the restart off; its own bounded limit applies.
+        return configured_timeout
     return runtime.tool_timeout_seconds(configured_timeout)
 
 

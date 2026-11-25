@@ -73,11 +73,13 @@ test('each live state has its own effect line; an unreadable target is unnamed, 
 });
 
 test('the receipt names the target, and the command preview never quotes the id', () => {
-  const receipt = render({ cardState: 'resolved', decision: 'denied' });
+  // Row 192 D2 A: the chat's inline row renders empty (the step carries the answer); the card keeps the receipt line.
+  const receipt = render({ cardState: 'resolved', decision: 'denied', mode: 'card' });
+  assert.equal(render({ cardState: 'resolved', decision: 'denied' }).querySelector('.sr-only').textContent, 'Denied · Stop Beta parser');
   assert.equal(receipt.querySelector('.tool-approval-receipt-subject').textContent, 'Stop Beta parser');
   assert.ok(!receipt.textContent.includes(RAW_ID));
   assert.equal(toolApprovalFacts.getApprovalCommandPreview('session_stop', { session_id: RAW_ID }), '');
-  assert.equal(render({ cardState: 'resolved', decision: 'allowed', sessionStopApproval: undefined, commandText: '' })
+  assert.equal(render({ cardState: 'resolved', decision: 'allowed', sessionStopApproval: undefined, commandText: '', mode: 'card' })
     .querySelector('.tool-approval-receipt-subject').textContent, 'Session Stop');
 });
 

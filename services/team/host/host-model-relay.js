@@ -54,7 +54,9 @@ function createHostModelRelay({ userDataPath, supervisor, writeConfig, hostState
 
   // A host that is running is sent the saved setting (it holds the file's value from its start), once per run and value.
   supervisor.onState((snapshot) => {
-    if (!snapshot || snapshot.state !== 'running') return;
+    // A host that is not running is between teams or runs: the saved setting is read afresh when the next one runs
+    // (a restore or a new deploy writes its config in between), never taken from the last team's.
+    if (!snapshot || snapshot.state !== 'running') { held = null; return; }
     const want = savedNow();
     const key = `${snapshot.since}:${want}`;
     if ((snapshot.relay && snapshot.relay.flowing === want) || sentFor === key) return;

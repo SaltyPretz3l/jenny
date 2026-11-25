@@ -3,7 +3,10 @@
    exactly over .bu-stage, and the still picture takes its place while a menu covers it. */
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-controls,
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-status,
-.artifact-review-panel[data-artifact-review-mode="browser"] > .artifact-review-header {
+.artifact-review-panel[data-artifact-review-mode="browser"] > .artifact-review-header,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-controls,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-status,
+.artifact-review-panel[data-artifact-review-mode="live"] > .artifact-review-header {
   display: none;
 }
 
@@ -12,37 +15,50 @@
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-detail-panel,
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-v2-content-host,
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-shell,
-.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content {
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-review-scroll,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-review-detail-panel,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-v2-content-host,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-preview-shell,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-preview-content {
   min-height: 0;
   height: 100%;
 }
 
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-v2-scroll,
 .artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-scroll,
-.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content {
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-v2-scroll,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-review-scroll {
   overflow: hidden;
 }
 
-.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-detail-panel {
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-review-detail-panel,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-review-detail-panel {
   gap: 0;
 }
 
-.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content {
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-preview-content,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-preview-content {
   padding: 0;
 }
 
-.artifact-review-panel[data-artifact-review-mode="browser"] {
+.artifact-review-panel[data-artifact-review-mode="browser"],
+.artifact-review-panel[data-artifact-review-mode="live"] {
   background: var(--bg-base);
   border-inline-start: 1px solid var(--line);
 }
 
 /* The bar stands in for the shared header's title. */
-.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-header {
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-header,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-header {
   height: 40px;
   min-height: 40px;
 }
 
-.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-header-primary {
+.artifact-review-panel[data-artifact-review-mode="browser"] .artifact-panel-header-primary,
+.artifact-review-panel[data-artifact-review-mode="live"] .artifact-panel-header-primary {
   display: none;
 }
 
@@ -150,8 +166,8 @@
   font: inherit;
 }
 
-/* Only the drawer covers the chat, so only the drawer needs a way back to it. */
-.artifact-review-panel:not(.artifact-review-overlay) .bu-back-to-chat {
+/* The panel never covers the chat, so it needs no way back to it. */
+.artifact-review-panel .bu-back-to-chat {
   display: none;
 }
 

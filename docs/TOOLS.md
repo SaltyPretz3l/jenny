@@ -24,7 +24,8 @@ Tools are grouped by family below. Jump to the relevant section when you need to
 | [Home](#home) | `home`, `task_board` | Writes are auto; `home` deletes need a `confirm` round-trip | On by default; gated by `tools_home_enabled` / `tools_task_board_enabled`; `home` covers the Home calendar, reminders, and a read-only scratchpad view; `task_board` adds durable, identity-addressed `add`/`update`/`complete`/`list` tasks into the same persisted Open Loops store, badged `agent_task`, and requires the model to complete a task when its tracked work is finished |
 | [Skills](#skills) | `load_skill` | Read-only | On by default; gated by `tools_load_skill_enabled`; reads a bundled/user/project skill's `SKILL.md` body, or one bounded `references/<file>.md` beside it, by name+scope — the only tool that can reach skill scope roots outside the tools workspace root |
 | [Browser](#browser) | `browser` | Policy `auto`; consent asked inside the tool | Per-chat switch, off by default; gated by `tools_browser_use_enabled` (internal, default on); Electron-owned page beside the chat; not offered in Plan or read-only modes |
-| [Workspace](#workspace) | `workspace_present`, `preview_test`, `verify`, `image_generate` | Mixed | `workspace_present` and `preview_test` are read-only and on by default; `workspace_present` asks the IDE to show a preview/File Map/change diff (request, not outcome); `preview_test` loads one workspace HTML file in a hidden network-isolated one-shot sandbox and reports render state and console/page errors; `verify` runs one of the user's own saved Test Runner configurations (side-effecting, default off) |
+| [Computer](#computer-computer) | `computer` | Policy `auto`; grants, opens and the first file dialog asked inside the tool, never settled by Full auto | Per-chat switch, off by default; gated by `tools_computer_use_enabled` (internal, default on) and the Settings switch "Let chats use the computer"; Windows only, normal safety mode, command sandbox off, local engine and a model that can see pictures; Electron-owned; not offered in Plan or read-only modes |
+| [Workspace](#workspace) | `workspace_present`, `preview_test`, `verify`, `image_generate`, `run_view_look`, `run_view_restart` | Mixed | `run_view_look` and `run_view_restart` (row 197, auto) only for a chat whose project has a confirmed Live tab run command; `workspace_present` and `preview_test` are read-only and on by default; `workspace_present` asks the IDE to show a preview/File Map/change diff (request, not outcome); `preview_test` loads one workspace HTML file in a hidden network-isolated one-shot sandbox and reports render state and console/page errors; `verify` runs one of the user's own saved Test Runner configurations (side-effecting, default off) |
 | [Runtime interaction](#runtime) | `ask_user`, `suggest_next_step`, `exit_plan_mode`, `propose_git_action`, `propose_command`, `propose_session`, `complete_session_handoff`, `session_message`, `sessions_list`, `session_status`, `session_stop`, `session_prioritize`, `settings_get`, `settings_change`, `project_create`, `projects_list`, `app_view`, `session_export`, `terminal_read`, `terminal_run`, `chat_organize`, `chat_configure`, `schedule_list`, `schedule_change`, `away_digest`, `jenny_help`, `operation_status`, `session_spawn`, `session_wait`, `session_result`, `delegate`, `automation_list`, `recall_tool_output` | Mixed read-only interaction and runtime authority | Application-owned durable work and interaction; `delegate` is bounded synchronous research. See the runtime references below. |
 | [Code intelligence and worktrees](#code-intelligence-and-worktrees) | `lsp`, `workspace_change_baseline`, `workspace_change_delta`, `worktree_list`, `worktree_create`, `worktree_select`, `worktree_delete` | Reads are read-only; worktree mutations require policy admission | Workspace-bound, with separate configuration gates for LSP and worktrees |
 
@@ -966,6 +967,62 @@ browser on or off never changes a system prompt.
   are stubbed every few steps, which costs prefix-cache reuse.
 - **Not in this version.** PDFs and downloads (the next phase), saved sign-ins, multiple tabs, script evaluation and file upload.
 
+### Computer: `computer`
+
+Row 196 (plan `docs/plans/COMPUTER_USE_2026-11-23.md`, interface spec `docs/archive/COMPUTER_USE_UI_SPEC_2026-11-24.md`).
+A local model uses the owner's real mouse and keyboard, only in programs the owner allows in each chat. Electron-owned
+(`owner: electron`, `tool_family: computer_use`), reaching the model through `tool.execute_electron`. Built on `wt/rows-int`,
+not on main yet. The helper that takes the pictures and sends the input is `native/jenny-computer/`.
+
+- **Offered only where it can work** ([`computer-use-tool-gate.js`](../services/backend/computer-use-tool-gate.js):
+  `computerHidden`, `withComputerEngineGate`, and `computerBlockReason` for the Tools menu's reason line). All must hold:
+  `tools_computer_use_enabled` (internal, default on, `JENNY_ENABLE_TOOLS_COMPUTER_USE=0`), Windows, the Settings
+  switch "Let chats use the computer" (tool config key `computer`, default on), safety mode normal (the sidecar also unlists it in
+  strict and paranoid), the command sandbox off, a local engine, and a model that can see pictures (`VISION_REQUIRED_REASON` in
+  `sidecar/ai/tools/assembly.py`). The per-chat family `computer_use` is off until the chat turns it on
+  (`DEFAULT_OFF_FAMILIES`); wake turns drop it and a chat started by New session does not inherit it. The body refuses in Plan and
+  read-only modes, on a stale call and on an unattended turn. A hosted server reports `disabled` on the bridge.
+- **Actions** (all declared side-effecting): `screenshot`, `click`, `drag`, `move`, `scroll`, `type`, `key`, `wait`, `open`, `focus`,
+  `windows` (`ACTIONS` in `services/computer-use/result-format.js`). One step per call. A step that changes anything returns a
+  picture of the window, at most 1280 px on the long edge. Policy is `auto`; consent is asked inside the tool. A turn has 60 steps
+  (`stepBudget`; the sidecar adds the same 60 to the turn's tool limit, `COMPUTER_USE_TURN_STEPS`).
+- **Grants** (`grant-gate.js`, `program-rules.js`). Per chat, per program file, held in memory, at most `MAX_GRANTS` (64). A program
+  is `never` (refused without a card; every Jenny process, script and installer host, password managers, most of the Windows
+  folder), `view_only` (browsers and terminals: Jenny may look, never click or type) or `grantable`. A person answers every card:
+  the grant, `open`, and the first Open or Save dialog in each program. The card carries a validated `computer_approval`
+  (`kind` grant, open or file_dialog; program name and path; `view_only`), is once-only, and Full auto never answers it
+  (`full-auto-gate.js`). The chat's Tools menu lists the grants under "Allowed in this chat" with Revoke; a revoked program is asked for again.
+- **The owner stays in charge** (`owner-control.js`, `owner-hold.js`, `turn-watch.js`). Touching the mouse or keyboard pauses the
+  turn and holds the step open with the turn's clocks suspended. Resume, from the pill or the chat, answers the step `resumed`;
+  the model must take a new picture. Stop, or Ctrl+Alt+Shift+F12, ends the turn and every later step answers at once. After 30
+  minutes the rest of the turn answers at once. A Stop is never downgraded to a pause.
+- **Frame and pill** (`services/computer-use/turn-overlay.js`, `renderer/computer-pill/`, preload
+  `services/main/computer-pill-preload.js`). A 3 px frame and a small pill with the state, Resume and Stop show from the first
+  step that has a program window in front until the turn ends. Both are left out of every capture (`setContentProtection`). The pill
+  can be dragged and keeps its spot per screen in `computer-use-pill.json` (user data). One chat drives it; only the pill's own page may call it.
+- **Results.** `isError` is false for `done` and for the recoverable statuses (`RECOVERABLE_STATUSES`: `resumed`, `refused`,
+  `declined`, `paused_by_user`, `busy`, `no_target`, `not_found`, `budget`). `unavailable`, `invalid`, `failed` and `cancelled`
+  are errors, so the loop's repeated-error stop still catches a model that retries them. The picture crosses the same three
+  allowlists as the browser's and is never saved. Window text is untrusted data.
+- **Saved history.** `metadata` is `{ result_kind: 'computer', status, step_summary, refusal_reason?, human_wait_ms? }`.
+  `step_summary` is the action, the program's name and the status, never typed text, a chord or a window title.
+  `refusal_reason` is a fixed code (`REFUSAL_CODES`), never free text. `savedComputerOutput` keeps only that line.
+- **The bridge** `computerUse.*` (`services/main/computer-use-ipc-registration.js`, descriptors in
+  `services/ipc-contract/descriptors-addons.js`): `status`, `grants`, `revoke`, `resume`, `stop`, `listPrograms`, `addProgram`
+  (main's own `.exe` picker), `renameProgram`, `removeProgram`, and the pushes `onTurnState` and `onStatus`. Trusted-sender
+  authorized; answers are `{ ok, ... }` or `{ ok: false, reason }`; none of them starts the service. The lazy holder is
+  `services/main/computer-use-composition.js`; it shares the Live tab's helper host, and `services/run-view` never requires
+  `services/computer-use`.
+- **In the app.** Settings > Tools > Computer has the switch, the fixed Stop key (with a warning when Windows did not give Jenny
+  the key) and "Your programs" (Start menu entries are found by themselves; others are kept in `computer-use-programs.json`, at most 100).
+  The chat marks a step that did not work with a warn dot and a short reason, counts them under the final answer, and shows
+  Resume and Stop under a held step (`renderer/chat/renderer-computer-step-display.js`). The Live tab says when the screen helper is missing.
+- **Known limits.** Windows only. A program that runs as administrator is refused. The Stop key cannot be changed. A program
+  with no pause keeps running while the model thinks. Password fields are refused. Window titles and pictures are untrusted.
+- Sources: [`computer-tool.js`](../services/tools/builtin/computer-tool.js),
+  [`services/computer-use/`](../services/computer-use/) (`computer-use-service.js`). Tests: `tests/computer-use-*.test.js`,
+  `tests/renderer-computer-*.test.js`.
+
 ## Workspace
 
 Three Electron-owned tools let Jenny work with the user's own workspace
@@ -1157,6 +1214,37 @@ the project's tests.
 - Source: [`services/tools/builtin/verify-tool.js`](../services/tools/builtin/verify-tool.js).
 - Flag: `tools_verify_enabled` (internal, **default off**,
   `JENNY_ENABLE_TOOLS_VERIFY=1` to register it).
+
+### The Live tab: `run_view_look` and `run_view_restart`
+
+Row 197 (plan `docs/plans/LIVE_RUN_VIEW_2026-11-23.md`). The chat's Live tab runs the project's program
+from a run command the owner confirmed there; these two tools let the model check its own change.
+
+- **Offered only where they can work.** Both need `tools_run_view_enabled` (internal, default on,
+  `JENNY_ENABLE_TOOLS_RUN_VIEW=0`) and `live_run_view`, Windows (`platforms: ["win32"]`), and a chat
+  whose project root has a confirmed run command. Every other turn gets them on its `disabled_tools`
+  ([`run-view-tool-gate.js`](../services/backend/run-view-tool-gate.js)). The look is also hidden on a
+  remote engine (its picture goes only to a local model); the restart is hidden while commands run
+  only in the sandbox. Both are in the `workspace` family, so the per-chat Checks switch governs them
+  and a delegate is never granted them. Hosted servers keep the flag off.
+- **`run_view_look`** (read-only, `auto`, no arguments): one PNG of the program window's client
+  area, taken by the helper with Windows' own capture (never the panel's video), at most 1568 px and
+  2,000,000 bytes, checked as untrusted. The text is one line naming the run's generation, the first
+  eight digits of the frame signature, and whether the frame changed since the last look; history
+  keeps only that line. A model that cannot see is told so by the sidecar.
+- **`run_view_restart`** (side-effecting, `auto`, no arguments): stop, build and start with the
+  owner's confirmed command only. Unlike `verify`, the first run after a write does not ask: the owner
+  chose that for this tool (D5 A, the same rule as restarting at a turn's end, D4 A). It holds the
+  turn's clocks while it waits (`TURN_CLOCK_TOOLS` in `services/tools/mid-tool-consent.js`), stops
+  the build when the turn is stopped, waits about half a second after the window appears, and on a
+  failure returns the end of the build output or the program's last lines (at most 4,000 characters).
+  The sidecar waits up to 720 seconds for it.
+- **Refused at call time** in Plan and read-only modes, in strict and paranoid safety, on a stale or
+  unattended turn, and when the Live tab may not run here; the look also on a remote engine. The
+  offline lock classes the look as no network and the restart like `run_command`.
+- Sources: [`run-view-look-tool.js`](../services/tools/builtin/run-view-look-tool.js),
+  [`run-view-restart-tool.js`](../services/tools/builtin/run-view-restart-tool.js),
+  [`run-service.js`](../services/run-view/run-service.js) (`look`, `restartAndWait`).
 
 ### Image generation
 

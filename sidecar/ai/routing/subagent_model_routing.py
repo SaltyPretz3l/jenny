@@ -65,6 +65,7 @@ def invoke_routed_task(  # noqa: PLR0913 - explicit scheduler/invocation boundar
     on_task_started: Any = None,
     on_task_event: Any = None,
     route: SubagentModelRoute,
+    local_step_budget: int | None = None,
 ) -> tuple[Any, SubagentModelRoute]:
     with subagent_router_for_route(router, route) as child_router:
         if on_task_started is not None:
@@ -74,6 +75,10 @@ def invoke_routed_task(  # noqa: PLR0913 - explicit scheduler/invocation boundar
         if route.local:
             # Admitted on the helper's own route (the local lane), not the cloud parent's.
             invocation_kwargs["inference_provider"] = LOCAL_SUBAGENT_ENGINE_TYPE
+            # Only cloud helpers get the cloud step budget; the local model keeps its own.
+            steps = invocation_kwargs.get("iteration_budget_override")
+            if steps is not None and local_step_budget is not None:
+                invocation_kwargs["iteration_budget_override"] = min(int(steps), local_step_budget)
         context = replace(parent_context, reasoning_effort=route.reasoning_effort)
         return invoke(router=child_router, parent_context=context, **invocation_kwargs), route
 

@@ -272,3 +272,18 @@ test('does not throw when runtime is an array (defensive)', () => {
   const result = deriveRuntimeHealthState({ runtime: [] });
   assert.equal(result.tone, 'pending');
 });
+
+// Row 200: the power-watchdog stop names Strata; the NInfer and llama-server wording above is untouched.
+test('a Strata watchdog stop names Strata and the watts; a plain Strata crash uses the shared sentence', () => {
+  const watchdog = snapshotWithProfiles([readyProfile()]);
+  watchdog.runtime.managed_server = { kind: 'strata', state: 'crashed', alias: 'inkling-2-mini-sq-20', stopped_by: 'watchdog', watchdog_watts: 512 };
+  assert.deepEqual(deriveRuntimeHealthState(watchdog), {
+    tone: 'danger',
+    label: 'Blocked',
+    summary: 'The power watchdog stopped Strata (512 W). Restart it from the status pill when the card has cooled.',
+  });
+  const crashed = snapshotWithProfiles([readyProfile()]);
+  crashed.runtime.managed_server = { kind: 'strata', state: 'crashed', alias: 'inkling-2-mini-sq-20', stopped_by: '' };
+  assert.equal(deriveRuntimeHealthState(crashed).summary,
+    'The local model server stopped unexpectedly (inkling-2-mini-sq-20). It restarts when you send your next message.');
+});

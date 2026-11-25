@@ -69,6 +69,20 @@ function isLikelyVllmModel(model) {
   return false;
 }
 
+// Row 194: the default for new chats is always a model on this PC. Throws for a cloud id, and (row 201 C1, OD-1)
+// for a team model: a teammate's GPU is a third source class, never "On this PC". The save has no service, so
+// the bare team prefix counts (fail closed); resolveDefaultChatModel ignores a saved one, flag aware.
+function assertLocalDefaultModel(patch) {
+  const requested = patch && (patch.preferredLocalModel ?? patch.preferred_local_model);
+  if (typeof requested !== 'string') return;
+  const invalid = require('./error-codes').CONFIG_ERROR_CODES.INVALID;
+  if (require('./team-engine-models').isTeamModelId(requested.trim())) {
+    throw Object.assign(new Error('The default model must be a model on this PC, not a team model.'), { code: invalid, reason: 'team_model_not_local' });
+  }
+  if (!require('../model-size-class').CLOUD_ENGINE_TYPES.has(inferEngineTypeFromModel(requested))) return;
+  throw Object.assign(new Error('The default model must be a model on this PC.'), { code: invalid });
+}
+
 function inferEngineTypeFromModel(model) {
   const token = String(model || '').trim().toLowerCase();
   if (!token) {
@@ -414,8 +428,12 @@ function requestToolPreferences(toolPreferences, { catalog, session, application
   }
   // A woken chat keeps its Browser switch so it can close a page it left open when another chat asks:
   // browser-tool.js refuses every other step of a turn nobody typed. A check or digest still gets none.
-  const chatSwitches = isUnattendedApplicationTurn(applicationTurn) && applicationTurn !== APPLICATION_TURN_WAKE
+  // Row 196: a woken chat never gets the Computer switch; only a turn a person started uses the mouse.
+  let chatSwitches = isUnattendedApplicationTurn(applicationTurn) && applicationTurn !== APPLICATION_TURN_WAKE
     ? null : session?.tool_category_overrides;
+  if (applicationTurn === APPLICATION_TURN_WAKE && chatSwitches?.computer_use === true) {
+    chatSwitches = { ...chatSwitches, computer_use: false };
+  }
   return resolveRequestToolPreferences({ families: defaultOffFamilySwitches(chatSwitches) }, catalog);
 }
 
@@ -430,6 +448,7 @@ function resolveSessionToolDenyList(session, catalog) {
 
 module.exports = {
   LOCAL_AUTH_ACCOUNTS_KEY,
+  assertLocalDefaultModel,
   inferEngineTypeFromModel,
   resolveRequestedEngineType,
   normalizeModelCapabilities,

@@ -77,6 +77,8 @@
     team_host_stopped: () => jt('settings.team.reason.hostStopped', 'The server was stopped before it finished starting.'),
     team_host_not_deployed: () => jt('settings.team.reason.notDeployed', 'This PC has not hosted a team yet.'),
     team_file_tools_windows_unreviewed: () => jt('settings.team.reason.fileToolsWindows', 'Project files are not on Windows yet. They wait for a safety review of how Jenny reaches files on Windows.'),
+    team_pool_context_invalid: () => jt('settings.team.reason.poolContextInvalid', 'Use a whole number from 2,048 to 1,048,576 tokens, or leave the field empty for Auto.'),
+    team_sharing_invalid: () => jt('settings.team.reason.sharingInvalid', 'Jenny could not save the models to share. Check the list and try again.'),
     team_host_turn_running: () => jt('settings.team.reason.turnRunning', 'A turn is running in a team project. Try again when it finishes.'),
     team_host_start_timeout: () => jt('settings.team.reason.startTimeout', 'The server did not start in time.'),
     team_host_exited: () => jt('settings.team.reason.exited', 'The server stopped unexpectedly.'),
@@ -183,6 +185,7 @@
     team_download_folder_not_empty: () => jt('settings.team.reason.downloadNotEmpty', 'Pick an empty folder to download into.'),
     team_download_folder_invalid: () => jt('settings.team.reason.downloadFolderInvalid', 'That is not a folder Jenny can download into. Pick an empty folder.'),
     team_download_write_failed: () => jt('settings.team.reason.downloadWriteFailed', 'Jenny could not save a file in that folder. Nothing partly saved was kept.'),
+    team_download_file_too_large: () => jt('settings.team.reason.downloadTooLarge', 'A file is larger than 64 MB, so it was not downloaded. The other files were.'),
     team_project_drafts_unavailable: () => jt('settings.team.reason.projectDraftsUnavailable', 'Jenny could not keep this draft on this PC. The text stays in the box until you send it.'),
     // Row 175 round 2b: conversation actions and plan decisions.
     team_turn_not_latest: () => jt('settings.team.reason.turnNotLatest', 'A newer question was asked since. Only the latest question can be redone.'),

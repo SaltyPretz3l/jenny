@@ -185,6 +185,11 @@
       refresh,
     };
     const page = entry.page;
+    // The shown Chat tab names the docked chat and opens its picker; a team board's column is its own.
+    bench.setChatTab?.({
+      label: (shown) => (team() ? '' : entry.dock.chatTabLabel?.(shown) || ''),
+      onActiveTabClick: (tab) => { if (!team()) entry.dock.openSwitcher?.(tab); },
+    });
 
     return {
       available: true,
@@ -209,6 +214,7 @@
       detach() {
         if (detached) return;
         detached = true;
+        bench.setChatTab?.(null);
         if (entry.page === page) entry.page = null;
         setIfChanged(state.ui, 'boardChatDockOpen', false);
         if (state.ui.boardChat) state.ui.boardChat = null;

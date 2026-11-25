@@ -164,7 +164,7 @@
       if (!step(overview)) return false;
       const members = new Map((Array.isArray(overview.members) ? overview.members : []).map((m) => [m.member_id, m]));
       const nameOf = (id) => (members.get(id) || {}).display_name || jt('team.chat.formerMember', 'Former member');
-      const titleOf = (row) => (channels.isDirect(row) ? channels.namesText(channels.others(row, team.member_id).map(nameOf)) : '#' + channels.channelName(row.channel_id));
+      const titleOf = (row) => (channels.isDirect(row) ? channels.namesText(channels.others(row, team.member_id).map(nameOf)) : '#' + channels.channelName(row.channel_id, teamId));
       const rows = (Array.isArray(overview.channels) ? overview.channels : []).filter((r) => r && typeof r.channel_id === 'string' && (r.kind !== 'dm' || channels.isDirect(r)));
       const ordered = rows.filter((r) => r.channel_id === channels.CHANNEL).concat(rows.filter((r) => r.channel_id !== channels.CHANNEL && !channels.isDirect(r)),
         rows.filter(channels.isDirect).sort((a, b) => titleOf(a).localeCompare(titleOf(b), tag(), { sensitivity: 'base' })));

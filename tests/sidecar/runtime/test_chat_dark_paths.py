@@ -1126,7 +1126,6 @@ def test_validate_approval_plan_raises_on_tool_contract_mismatch() -> None:
         system_prompt="New different prompt",
         session_start_date=None,
         tools_workspace_manifest_enabled=False,
-        tools_task_capsule_enabled=False,
     )
     engine = _TextOnlyEngine()
     stack = SimpleNamespace(
@@ -1269,82 +1268,6 @@ def test_build_chat_send_response_raises_on_invalid_interactive_response() -> No
         )
 
     assert "interactive_response" in exc_info.value.message
-
-
-# ── Tests: emit_agent_progress optional fields (lines 1889, 1891) ─────────────
-
-def test_emit_agent_progress_includes_parent_agent_id_and_terminal_subcode() -> None:
-    """Lines 1889, 1891: parent_agent_id and terminal_subcode appear in payload
-    when the AgentProgressEvent has them set."""
-    # We patch _build_router_response indirectly by making executor.execute
-    # trigger the emit_agent_progress callback with all optional fields.
-    # To avoid spawning a real executor, we test the inner callback directly.
-    # Extract the callback by monkeypatching AgentExecutor
-    from unittest import mock
-
-    from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR
-    from sidecar.ai.routing.agent_executor import AgentProgressEvent
-
-    decision = ChatDecision(
-        thinking_text=None,
-        response_text="Hello.",
-        approval_request=None,
-        tool_results=(),
-    )
-
-    class _FakeExecutor:
-        def __init__(self, **kwargs: Any) -> None:
-            # call on_progress immediately with a full event
-            on_progress = kwargs.get("on_progress")
-            if callable(on_progress):
-                on_progress(
-                    AgentProgressEvent(
-                        task_id="task-1",
-                        task_type="tool",
-                        source="agent",
-                        status="running",
-                        stage="executing",
-                        percent=50,
-                        summary="Running tool",
-                        terminal=False,
-                        success=False,
-                        agent_id="agent-1",
-                        parent_agent_id="parent-agent-1",
-                        terminal_subcode="some_subcode",
-                    )
-                )
-
-        def execute(self, **kwargs: Any) -> ChatDecision:
-            return decision
-
-    brain = _make_brain_container(
-        decision,
-        feature_flags={FEATURE_AGENT_EXECUTOR: True},
-    )
-
-    with mock.patch(
-        "sidecar.runtime.chat.AgentExecutor",
-        side_effect=_FakeExecutor,
-    ):
-        response = build_chat_send_response(
-            "msg-progress",
-            {
-                "request_id": "req-progress",
-                "messages": [{"role": "user", "content": "do something"}],
-            },
-            approvals_pre_granted=True,
-            brain_container=brain,
-            invalid_params_code=-32602,
-        )
-
-    progress_notifs = [
-        n for n in response.notifications
-        if n.get("method") == "agent.progress"
-    ]
-    assert len(progress_notifs) >= 1
-    payload = progress_notifs[0]["params"]
-    assert payload["parent_agent_id"] == "parent-agent-1"
-    assert payload["terminal_subcode"] == "some_subcode"
 
 
 def test_build_router_response_rewraps_tool_execution_failure() -> None:
@@ -1566,7 +1489,6 @@ def test_validate_approval_plan_builds_summary_with_non_list_components() -> Non
         system_prompt="Different prompt",
         session_start_date=None,
         tools_workspace_manifest_enabled=False,
-        tools_task_capsule_enabled=False,
     )
     stack = SimpleNamespace(config=config, router=_MismatchRouter(), engine=_TextOnlyEngine())
     brain = SimpleNamespace(stack=stack)

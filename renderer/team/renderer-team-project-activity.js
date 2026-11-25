@@ -3,12 +3,12 @@
  * downloaded and copied in, and the always-allow rules. It holds counts and ids, never a file or folder name and
  * no membership change, so each kind gets one sentence from what an entry carries.
  *
- * The host reads the audit oldest first (`after_seq`, at most 100 a page, `next_cursor`). Newest first is found so:
- * the first page; if more follow, probes of one entry find the last sequence number (doubling, then halving: at most
- * 40 probes, none after the page closes), then the newest 100 are read, and "Show all activity" reads the log again
- * and the 100 before them, and so on. Shown: 20 at first, then everything read. Cap: 500 entries held; past that the
- * oldest go and the button stops. Each entry's sentence is built once, when it is read. The page reads it again on
- * the project's rules, requests or a finished transfer.
+ * The host reads the audit backwards (`before_seq`: the newest page below it, oldest first, at most 100 a page; its
+ * `next_cursor` is the page's oldest seq, the next `before_seq`, or null at the start). So the newest 100 are one call
+ * (a `before_seq` no entry reaches), and "Show earlier activity" reads the 100 before the oldest held, and so on, each
+ * sequence number once. Shown: 20 at first, then everything read. Cap: 500 entries held; past that the oldest go and
+ * the button stops. Each entry's sentence is built once, when it is read. The page reads it again on the project's
+ * rules, requests or a finished transfer.
  *
  * `createActivity({ teamId, projectId, call, nameOf(id), conversationTitle(id), timeText(ms), errorText, onChange() })`
  * -> { html(), onClick(target), refresh(), dispose() }. */
@@ -29,7 +29,7 @@
   const PAGE = 100;
   const FIRST_SHOWN = 20;
   const MAX_HELD = 500;
-  const MAX_PROBES = 40;
+  const NEWEST = Number.MAX_SAFE_INTEGER; // a before_seq no entry reaches: the tail
 
   function inv() { return globalThis.inventory || {}; }
   const tag = () => globalThis.jennyI18n?.tag?.() || undefined;
@@ -96,7 +96,7 @@
   function createActivity({ teamId, projectId, call, nameOf, conversationTitle, timeText, errorText, onChange }) {
     const ids = { team_id: teamId, project_id: projectId };
     let entries = []; // newest first: { entry, text }
-    let olderFrom = 0; // the after_seq that reads the page before the oldest held; 0: none left
+    let olderFrom = 0; // the before_seq that reads the page before the oldest held; 0: none left
     let all = false;
     let reading = false;
     let loaded = false; // a refresh keeps what was shown until its answer
@@ -104,65 +104,24 @@
     let disposed = false;
     let epoch = 0;
 
-    const page = (afterSeq, limit = PAGE) => call('projectAudit', { ...ids, after_seq: afterSeq, limit });
+    const page = (beforeSeq) => call('projectAudit', { ...ids, before_seq: beforeSeq, limit: PAGE });
     const said = (list) => list.map((entry) => ({ entry, text: sentence(entry, nameOf, conversationTitle) }));
     const keep = (list) => { entries = list.slice(0, MAX_HELD); if (list.length > MAX_HELD) olderFrom = 0; };
-
-    // The last sequence number: the smallest after_seq that answers nothing. `known` answers something. A probe that
-    // answers entry e proves e - 1 answers something too.
-    async function lastSeq(known) {
-      let low = known;
-      let high = 0;
-      let step = PAGE;
-      let probes = 0;
-      const probe = async (afterSeq) => {
-        probes += 1;
-        if (disposed) return { error: null };
-        const answer = await page(afterSeq, 1);
-        if (disposed) return { error: null };
-        if (!answer.ok) return { error: answer.error };
-        return { seq: answer.entries.length ? answer.entries[0].seq : 0 };
-      };
-      while (!high && probes < MAX_PROBES) {
-        const got = await probe(low + step);
-        if ('error' in got) return got;
-        if (got.seq) { low = Math.max(low + step, got.seq - 1); step *= 2; } else high = low + step;
-      }
-      while (high - low > 1 && probes < MAX_PROBES) {
-        const mid = Math.floor((low + high) / 2);
-        const got = await probe(mid);
-        if ('error' in got) return got;
-        if (got.seq) low = Math.max(mid, got.seq - 1); else high = mid;
-      }
-      return { seq: high && high - low <= 1 ? high : low + 1 };
-    }
 
     async function load() {
       const run = ++epoch;
       reading = true;
       error = '';
       onChange();
-      const first = await page(0);
+      const newest = await page(NEWEST);
       if (disposed || run !== epoch) return;
-      if (!first.ok) { reading = false; loaded = true; error = errorText(first.error); onChange(); return; }
-      if (first.next_cursor === null || first.entries.length < PAGE) {
-        keep(said(first.entries.slice().reverse()));
-        olderFrom = 0;
-      } else {
-        const last = await lastSeq(first.next_cursor);
-        if (disposed || run !== epoch) return;
-        if ('error' in last) { reading = false; error = errorText(last.error); onChange(); return; }
-        const start = Math.max(first.next_cursor, last.seq - PAGE);
-        const newest = await page(start);
-        if (disposed || run !== epoch) return;
-        if (!newest.ok) { reading = false; error = errorText(newest.error); onChange(); return; }
-        // What lies between the first page and the newest (none when they meet) is read by "Show all activity".
-        const tail = said(newest.entries.slice().reverse());
-        keep(start <= first.next_cursor ? tail.concat(said(first.entries.slice().reverse())) : tail);
-        olderFrom = start > first.next_cursor ? start : 0;
-      }
       reading = false;
       loaded = true;
+      if (!newest.ok) error = errorText(newest.error);
+      else {
+        keep(said(newest.entries.slice().reverse()));
+        olderFrom = newest.next_cursor || 0;
+      }
       onChange();
     }
 
@@ -171,13 +130,14 @@
       const run = epoch;
       reading = true;
       onChange();
-      const start = Math.max(0, olderFrom - PAGE);
-      const answer = await page(start, olderFrom - start);
+      const answer = await page(olderFrom);
       if (disposed || run !== epoch) return;
       reading = false;
       if (!answer.ok) { error = errorText(answer.error); onChange(); return; }
-      const before = answer.entries.filter((entry) => entry.seq <= olderFrom).reverse();
-      olderFrom = start > 0 && before.length ? start : 0;
+      // Each sequence number once, whatever overlap the host sends: not one already held, nor twice in the page.
+      const seen = new Set(entries.map((item) => item.entry.seq));
+      const before = answer.entries.filter((entry) => entry.seq < olderFrom && !seen.has(entry.seq) && seen.add(entry.seq)).reverse();
+      olderFrom = before.length ? answer.next_cursor || 0 : 0;
       keep(entries.concat(said(before)));
       onChange();
     }
@@ -195,7 +155,7 @@
 
     function onClick(target) {
       if (target.dataset.projectAction !== 'activity-more') return false;
-      if (!all) { all = true; void load(); } else void older();
+      if (!all) { all = true; onChange(); } else void older();
       return true;
     }
 

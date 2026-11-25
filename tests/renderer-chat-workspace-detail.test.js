@@ -225,3 +225,45 @@ test('changes passes a chat findings list on to the working-tree page only when 
   assert.equal(h.detail.open({ surface: 'changes', ownerSessionId: 'sess_a', opener }), true);
   assert.equal('reviewFindings' in h.calls.changes[1], false);
 });
+
+/* Row 195 C14: the Session rail is hosted in the stack, outside every pane, so its opener has no pane of its own. */
+function hostedOpener(h) {
+  const host = h.document.createElement('div');
+  const opener = h.document.createElement('button');
+  host.append(opener);
+  h.document.body.append(host);
+  return opener;
+}
+
+test('an action taken from a rail hosted outside the panes lands in the pane the rail is bound to, not the left one', () => {
+  const h = setup();
+  const opener = hostedOpener(h);
+  const pane = h.el('pane1');
+  assert.equal(h.detail.open({ surface: 'context', ownerSessionId: 's2', opener, pane }), true);
+  assert.equal(h.detail.open({ surface: 'environment', ownerSessionId: 's2', opener, pane }), true);
+  assert.deepEqual(h.clicks, ['ring1', 'project1']);
+  // The right pane has no Activity button: nothing opens, and the left pane's is not borrowed.
+  assert.equal(h.detail.open({ surface: 'background_tasks', ownerSessionId: 's2', opener, pane }), false);
+  assert.deepEqual(h.clicks, ['ring1', 'project1']);
+  // Without a named pane the old reading stands: the first pane in the document.
+  assert.equal(h.detail.open({ surface: 'context', ownerSessionId: 's1', opener }), true);
+  assert.equal(h.clicks.at(-1), 'ring0');
+  // A pane that is not an element is ignored, not trusted.
+  assert.equal(h.detail.open({ surface: 'context', ownerSessionId: 's1', opener, pane: { nope: true } }), true);
+  assert.equal(h.clicks.at(-1), 'ring0');
+});
+
+test('the injected openers get the named pane in their context, and only when one was named', () => {
+  const seen = [];
+  const h = setup({
+    openChanges: (context) => { seen.push(['changes', context.pane]); return true; },
+    openBackgroundTasks: (context) => { seen.push(['runs', context.pane]); return true; },
+    openArtifact: (ref, context) => { seen.push(['artifact', context.pane]); return true; },
+  });
+  const opener = hostedOpener(h);
+  const pane = h.el('pane1');
+  for (const surface of ['changes', 'background_tasks', 'outputs']) h.detail.open({ surface, ownerSessionId: 's2', opener, pane });
+  assert.deepEqual(seen, [['changes', pane], ['runs', pane], ['artifact', pane]]);
+  h.detail.open({ surface: 'background_tasks', ownerSessionId: 's2', opener });
+  assert.deepEqual(seen.at(-1), ['runs', undefined], 'no pane named: no pane key');
+});

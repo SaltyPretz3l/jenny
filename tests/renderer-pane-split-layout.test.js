@@ -1,4 +1,4 @@
-// Split view W1-1: the pane wrapper, the pane kicker and divider hosts, and the
+// Split view W1-1: the pane wrapper, the pane divider host, and the
 // inert second-pane template in index.html.
 //
 // W1-1 is the first slice that changes pane 0's DOM tree, and it is still
@@ -6,8 +6,8 @@
 // "the wrapper is the ONLY structural change". This suite pins that from four
 // sides: the id set inside #chatView (frozen from the pre-W1 markup), the
 // exact child order of #chatView and #chatPane0, the resolver's answer for
-// pane 0 (every name by id) and for a clone of the template (exactly the 19
-// hosts a second pane owns: Wave 1's 18, W2-2b's attachment tray and W3-2's
+// pane 0 (every name by id) and for a clone of the template (exactly the 18
+// hosts a second pane owns: Wave 1's 17 (row 190 retires the pane kicker), W2-2b's attachment tray and W3-2's
 // subagent inspector; W3-1's three notice hosts are template-only, see
 // PANE_TEMPLATE_NOTICE_NAMES), and a real renderer boot.
 //
@@ -43,7 +43,7 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   'artifactReviewDetailTitle', 'artifactReviewDirtyBadge', 'artifactReviewEditorFallback',
   'artifactReviewEditorHost', 'artifactReviewEditorShell', 'artifactReviewJumpButton',
   'artifactReviewOpenExternalButton', 'artifactReviewPanel', 'artifactReviewPreviewContent',
-  'artifactReviewPreviewShell', 'artifactReviewProvenanceTimeline', 'artifactReviewResizer',
+  'artifactReviewPreviewShell', 'artifactReviewProvenanceTimeline',
   'artifactReviewRevealButton', 'artifactReviewRevertButton', 'artifactReviewSaveButton',
   'artifactReviewStatus', 'artifactSplitViewToggle', 'attachmentNotice', 'attachmentTray',
   'chatAssistantSprite', 'chatContextPanel', 'chatInput', 'chatOriginChip',
@@ -71,7 +71,7 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
 // children of #artifactReviewPanel are gone from index.html. The V3 chrome
 // (renderer-artifact-panel-chrome-render.js buildPanelHtml) replaced them at
 // install anyway and re-creates every id the manager reads; the <aside> and
-// its resizer stay.
+// stays.
 const REMOVED_LEGACY_ARTIFACT_PANEL_IDS = Object.freeze([
   'artifactReviewCollapseButton', 'artifactReviewDeleteButton', 'artifactReviewDetailEmpty',
   'artifactReviewDetailKicker', 'artifactReviewDetailMeta', 'artifactReviewDetailNote',
@@ -83,10 +83,10 @@ const REMOVED_LEGACY_ARTIFACT_PANEL_IDS = Object.freeze([
   'artifactReviewSaveButton', 'artifactReviewStatus',
 ]);
 
-// The only ids W1-1 may add inside #chatView: the pane wrapper, its kicker
-// host, the pane divider, and the <template> element itself (its CONTENT
-// carries no id; see below).
-const W1_ADDED_IDS = Object.freeze(['chatPane0', 'chatPaneKicker', 'chatPaneResizer', 'chatPaneTemplate']);
+// The only ids W1-1 may add inside #chatView: the pane wrapper, the pane
+// divider, and the <template> element itself (its CONTENT carries no id; see
+// below).
+const W1_ADDED_IDS = Object.freeze(['chatPane0', 'chatPaneResizer', 'chatPaneTemplate']);
 // W3-3 (2026-09-26) adds one wrapper on purpose: pane 0's composer settings
 // group (display: contents until the toolbar collapses into the summary pill).
 // Row 59 checkpoint 4 (2026-10-15) adds pane 0's addressed-message strip host.
@@ -95,14 +95,16 @@ const CHAT_PANEL_IDS = ['composerChatChipHost', 'composerChatPanel', 'composerCh
   'composerChatPanelList', 'composerChatPosture', 'composerChatPostureDot', 'composerChatPostureText'];
 const REMOVED_GEAR_IDS = ['composerSettingsButton', 'composerSettingsDisabledReason', 'composerGearPostureDot', 'composerRunModeHint'];
 
-// The three resolution groups for a clone of #chatPaneTemplate. 18 + 7 + 3 = 28
+// The three resolution groups for a clone of #chatPaneTemplate. 17 + 7 + 2 = 26
 // (2026-09-29: timelineCollapseExpandToggle retired with transcript views;
 // row 63, 2026-10-19: the Commands button folds into the + menu; row 156,
-// 2026-11-14: the find field moves into the session bar, chatSearchOverlayHost retires).
+// 2026-11-14: the find field moves into the session bar, chatSearchOverlayHost retires;
+// row 190, 2026-11-23: the pane kicker retires, each pane's header row is the session bar, and the
+// side panel's own resizer retires with its sizing).
 // Hosts a second pane owns (present in the template; W2-2b adds attachmentTray,
 // W3-2 adds subagentInspector).
 const TEMPLATE_HOST_NAMES = Object.freeze([
-  'chatPaneKicker', 'heroStage', 'chatThreadStage',
+  'heroStage', 'chatThreadStage',
   'chatSelectionOverlayHost', 'chatSurface', 'chatThreadScroll', 'chatThreadColumn',
   'chatSpriteLayer', 'chatAssistantSprite', 'chatOriginChip', 'chatOriginLabel', 'chatTimeline',
   'chatScrollSentinel', 'chatTimelineUtilityCluster', 'composerWrap',
@@ -120,7 +122,7 @@ const RUNTIME_BUILT_CONTROL_NAMES = Object.freeze([
 // composer status notice and failed-send notice, named after
 // pane 0's ids. They are NOT pane node names: pane 0 keeps reaching its nodes
 // by id and gains no data-chat-node (one pane stays byte-identical), so
-// CHAT_PANE_NODE_NAMES and the 19 + 9 + 3 split are unchanged and the pane
+// CHAT_PANE_NODE_NAMES and the 18 + 9 + 3 split are unchanged and the pane
 // composition resolves these three inside the pane root.
 // Row 59 checkpoint 4 adds composerMessageStrip (the addressed-message strip above the status
 // notice) on the same terms: pane 0 by id, the template by data-chat-node.
@@ -130,7 +132,7 @@ const PANE_TEMPLATE_NOTICE_NAMES = Object.freeze([
 // View-level grid columns that stay pane 0's until Wave 2 gives the artifact
 // panel to a pane.
 const PANE_ZERO_ONLY_COLUMN_NAMES = Object.freeze([
-  'chatContextPanel', 'artifactReviewResizer', 'artifactReviewPanel',
+  'chatContextPanel', 'artifactReviewPanel',
 ]);
 
 function indexHtmlDocument() {
@@ -156,22 +158,22 @@ function cloneTemplateInto(documentRef) {
   return paneRoot;
 }
 
-test('the three resolution groups partition CHAT_PANE_NODE_NAMES (18 + 7 + 3 = 28)', () => {
+test('the three resolution groups partition CHAT_PANE_NODE_NAMES (17 + 7 + 2 = 26)', () => {
   const groups = [...TEMPLATE_HOST_NAMES, ...RUNTIME_BUILT_CONTROL_NAMES, ...PANE_ZERO_ONLY_COLUMN_NAMES];
-  assert.equal(TEMPLATE_HOST_NAMES.length, 18);
+  assert.equal(TEMPLATE_HOST_NAMES.length, 17);
   assert.equal(RUNTIME_BUILT_CONTROL_NAMES.length, 7);
-  assert.equal(PANE_ZERO_ONLY_COLUMN_NAMES.length, 3);
+  assert.equal(PANE_ZERO_ONLY_COLUMN_NAMES.length, 2);
   assert.equal(new Set(groups).size, groups.length, 'no name sits in two groups');
-  assert.equal(CHAT_PANE_NODE_NAMES.length, 28, 'row 156 retires chatSearchOverlayHost: 29 -> 28; row 118 removes jumpToLastPromptButton: 30 -> 29; W1-1 adds chatPaneKicker: 28 -> 29; W2-2b adds attachmentTray and composerAttachShortcut: 31; W3-2 adds subagentInspector: 32; W3-3 adds composerSettingsGroup: 33; transcript views retire timelineCollapseExpandToggle: 32; row 63 retires composerTerminalShortcut: 31; the merged jump control retires composerWayfinderHost: 30');
+  assert.equal(CHAT_PANE_NODE_NAMES.length, 26, 'row 190 retires artifactReviewResizer: 27 -> 26; row 190 retires chatPaneKicker: 28 -> 27; row 156 retires chatSearchOverlayHost: 29 -> 28; row 118 removes jumpToLastPromptButton: 30 -> 29; W1-1 adds chatPaneKicker: 28 -> 29; W2-2b adds attachmentTray and composerAttachShortcut: 31; W3-2 adds subagentInspector: 32; W3-3 adds composerSettingsGroup: 33; transcript views retire timelineCollapseExpandToggle: 32; row 63 retires composerTerminalShortcut: 31; the merged jump control retires composerWayfinderHost: 30');
   assert.deepEqual([...groups].sort(), [...CHAT_PANE_NODE_NAMES].sort());
 });
 
-test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four W1 ids and the one W3-3 id', () => {
+test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the three W1 ids and the one W3-3 id', () => {
   const documentRef = indexHtmlDocument();
   const chatView = documentRef.getElementById('chatView');
   const ids = [...chatView.querySelectorAll('[id]')].map((node) => node.id).sort();
 
-  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 82); // less the never-visible hero avatar id (empty-chat hero direction A, 2026-11-15), less chatSearchOverlayHost (the find field moved into the session bar, row 156, 2026-11-14), less the attachment preview pill (row 153, 2026-11-14), less the last-prompt button (row 118, 2026-11-09); 107 less the six context panel ids (its sections, toggle and diagnostic log retired, row 115 slice 2a, 2026-11-09), less composerWayfinderHost (the merged jump control, 2026-11-09), less backgroundJobsStrip (background jobs moved to the session rail, 2026-11-01), less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
+  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 81); // less artifactReviewResizer (the side panel's own resizer retired with its sizing, row 190, 2026-11-23), less the never-visible hero avatar id (empty-chat hero direction A, 2026-11-15), less chatSearchOverlayHost (the find field moved into the session bar, row 156, 2026-11-14), less the attachment preview pill (row 153, 2026-11-14), less the last-prompt button (row 118, 2026-11-09); 107 less the six context panel ids (its sections, toggle and diagnostic log retired, row 115 slice 2a, 2026-11-09), less composerWayfinderHost (the merged jump control, 2026-11-09), less backgroundJobsStrip (background jobs moved to the session rail, 2026-11-01), less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
   assert.deepEqual(
     ids,
     [...PRE_W1_CHAT_VIEW_IDS.filter((id) => !REMOVED_LEGACY_ARTIFACT_PANEL_IDS.includes(id) && !REMOVED_GEAR_IDS.includes(id)), ...W1_ADDED_IDS, ...W3_ADDED_IDS, ...CHAT_PANEL_IDS].sort(),
@@ -191,7 +193,7 @@ test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four 
   );
 });
 
-test('structure: the wrapper holds exactly the four pane children behind the kicker', () => {
+test('structure: the wrapper holds exactly the four pane children', () => {
   const documentRef = indexHtmlDocument();
   const chatView = documentRef.getElementById('chatView');
   const pane = documentRef.getElementById('chatPane0');
@@ -200,13 +202,11 @@ test('structure: the wrapper holds exactly the four pane children behind the kic
     'chatSurfaceEffects',
     'chatPane0',
     'chatPaneResizer',
-    'artifactReviewResizer',
     'artifactReviewPanel',
     'chatContextPanel',
     'chatPaneTemplate',
   ]);
   assert.deepEqual(childIds(pane), [
-    'chatPaneKicker',
     'heroStage',
     'chatThreadStage',
     'chatTimelineUtilityCluster',
@@ -218,15 +218,8 @@ test('structure: the wrapper holds exactly the four pane children behind the kic
   assert.equal(pane.getAttribute('data-pane-id'), '0');
   assert.equal(pane.getAttribute('data-pane-focused'), 'true');
 
-  const kicker = documentRef.getElementById('chatPaneKicker');
-  assert.equal(kicker.classList.contains('chat-pane-kicker'), true);
-  assert.equal(kicker.hasAttribute('hidden'), true, 'the kicker is hidden with one pane');
-  assert.equal(kicker.children.length, 0, 'the kicker host is empty until W1-4 fills it');
-  assert.equal(kicker.textContent, '');
-
   const resizer = documentRef.getElementById('chatPaneResizer');
   assert.equal(resizer.classList.contains('chat-pane-resizer'), true);
-  assert.equal(resizer.classList.contains('artifact-review-resizer'), true, 'shares the artifact divider look');
   assert.equal(resizer.classList.contains('hidden'), true, 'the divider is hidden with one pane');
 });
 
@@ -253,7 +246,7 @@ test('resolver: pane 0 resolves all 30 by id; the data-chat-node set outside the
   assert.deepEqual(marked, [...CHAT_PANE_NODE_NAMES].sort());
 });
 
-test('resolver: a cloned template resolves exactly the 19 hosts and null for the 8 + 3', () => {
+test('resolver: a cloned template resolves exactly the 18 hosts and null for the 8 + 3', () => {
   const documentRef = indexHtmlDocument();
   const paneZero = resolveChatPaneDom(documentRef, null);
   const paneRoot = cloneTemplateInto(documentRef);
@@ -284,9 +277,8 @@ test('resolver: a cloned template resolves exactly the 19 hosts and null for the
   // Direct children, in pane 0's order.
   assert.deepEqual(
     [...paneRoot.children].map((child) => child.getAttribute('data-chat-node')),
-    ['chatPaneKicker', 'heroStage', 'chatThreadStage', 'chatTimelineUtilityCluster', 'composerWrap']
+    ['heroStage', 'chatThreadStage', 'chatTimelineUtilityCluster', 'composerWrap']
   );
-  assert.equal(resolved.chatPaneKicker.hasAttribute('hidden'), true);
   assert.equal(resolved.chatSelectionOverlayHost.hasAttribute('hidden'), true);
   assert.equal(resolved.chatInput.tagName.toLowerCase(), 'textarea');
   assert.equal(resolved.chatInput.hasAttribute('aria-describedby'), false, 'its target would be an id');
@@ -399,13 +391,11 @@ test('the template copies pane 0 i18n markers and never invents one', () => {
   assert.ok(templateMarkerCount >= 8, 'the hero, timeline, cluster and composer markers are kept');
 });
 
-test('the pane divider mirrors the artifact divider attribute names plus the aria-value range', () => {
+test('the pane divider carries the separator attributes plus the aria-value range', () => {
   const documentRef = indexHtmlDocument();
-  const artifact = documentRef.getElementById('artifactReviewResizer');
   const pane = documentRef.getElementById('chatPaneResizer');
   const mirrored = ['role', 'aria-orientation', 'aria-label', 'data-i18n-aria-label', 'title', 'data-i18n-title', 'tabindex'];
   for (const attribute of mirrored) {
-    assert.equal(artifact.hasAttribute(attribute), true, `the artifact divider has ${attribute}`);
     assert.equal(pane.hasAttribute(attribute), true, `the pane divider has ${attribute}`);
   }
   assert.equal(pane.getAttribute('role'), 'separator');

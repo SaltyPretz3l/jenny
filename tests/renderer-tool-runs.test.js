@@ -47,6 +47,10 @@ test('isToolRunFoldable keeps approvals, questions and content rows out of runs'
   assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'ask_user', status: 'completed' }), false);
   assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'image_generate', status: 'completed' }), false);
   assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'read_file', status: 'completed', hasOwnContent: true }), false);
+  // Row 192: under the steps heading an approved step folds like any other; an open card never does.
+  assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'run_command', status: 'completed', approvalRequested: true, scope: 'ledger' }), true);
+  assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'run_command', status: 'awaiting_approval', approvalRequested: true, scope: 'ledger' }), false);
+  assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'image_generate', status: 'completed', scope: 'ledger' }), false);
 });
 
 test('summarizeToolRun writes one sentence in first-appearance order with plurals', () => {
@@ -144,6 +148,11 @@ function createList() {
     buildRowBodyMarkup(row) {
       if (row.kind === 'assistant_text') return `<p>${row.payload.text}</p>`;
       if (row.kind === 'reasoning') return '<div class="reasoning-row-stack">Thinking</div>';
+      if (row.kind === 'system_notice') return '<div class="error-card">Failed</div>';
+      if (row.kind === 'approval_gap') {
+        const resolved = row.payload.state === 'resolved';
+        return `<div class="approval-gap-row" data-approval-status="${resolved ? 'resolved' : 'pending'}">${resolved ? '<span class="sr-only">Allowed once</span>' : 'Allow?'}</div>`;
+      }
       const status = row.payload.state;
       const own = row.payload.own_content ? ' data-run-foldable="false"' : '';
       return `<div class="tool-call-row tool-call-row--minimal" data-tool-status="${status}" data-is-error="${status === 'errored'}"${own}>${row.payload.tool_name}</div>`;
@@ -405,5 +414,6 @@ test('the content-row fold stamp is Answers-only markup', () => {
   const answers = src.buildToolCallRowMarkup(row, [], { transcriptView: 'answers', pairedToolResultRow: result, sessionId: 's' });
   const thinking = src.buildToolCallRowMarkup(row, [], { transcriptView: 'thinking', pairedToolResultRow: result, sessionId: 's' });
   assert.match(answers, /data-run-foldable="false"/);
-  assert.doesNotMatch(thinking, /data-run-foldable/);
+  // Row 192: the steps heading folds by the same stamp in every view.
+  assert.match(thinking, /data-run-foldable="false"/);
 });

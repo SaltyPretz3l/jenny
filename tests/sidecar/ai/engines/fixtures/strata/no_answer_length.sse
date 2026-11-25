@@ -1,0 +1,14 @@
+data: {"id": "chatcmpl-0123456789abcdef01234567", "object": "chat.completion.chunk", "created": 1795000000, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-0123456789abcdef01234567", "object": "chat.completion.chunk", "created": 1795000000, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": "Let me think about every case in turn"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-0123456789abcdef01234567", "object": "chat.completion.chunk", "created": 1795000000, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"reasoning_content": " and then check each one again"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-0123456789abcdef01234567", "object": "chat.completion.chunk", "created": 1795000000, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {"content": "[No answer: the model used all of the reply's token limit while thinking. Ask again with a higher max_tokens or a lower thinking budget (reasoning_budget_tokens).]"}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl-0123456789abcdef01234567", "object": "chat.completion.chunk", "created": 1795000000, "model": "inkling-2-mini-sq-20", "choices": [{"index": 0, "delta": {}, "finish_reason": "length"}], "timings": {"cache_n": 0, "prompt_n": 60, "prompt_ms": 5.0, "prompt_per_token_ms": 0.083, "prompt_per_second": 12000.0, "predicted_n": 64, "predicted_ms": 320.0, "predicted_per_token_ms": 5.0, "predicted_per_second": 200.0}}
+
+data: {"id": "chatcmpl-0123456789abcdef01234567", "object": "chat.completion.chunk", "created": 1795000000, "model": "inkling-2-mini-sq-20", "choices": [], "usage": {"prompt_tokens": 60, "completion_tokens": 64, "total_tokens": 124, "prompt_tokens_details": {"cached_tokens": 0}, "completion_tokens_details": {"reasoning_tokens": 64}}}
+
+data: [DONE]
+

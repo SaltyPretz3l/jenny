@@ -40,7 +40,7 @@ const click = (m, el) => el.dispatchEvent(new m.window.MouseEvent('click', { bub
 const planRow = (m) => m.q('[data-conv-region="live"] .plan-document, [data-conv-region="log"] .plan-document');
 const buttons = (m) => [...planRow(m).querySelectorAll('[data-plan-actions] button')].map(text);
 const button = (m, action) => m.q(`[data-project-action="${action}"]`);
-const chip = (m) => m.q('#teamConvPlanChip');
+const chip = (m) => m.q('[id$="teamConvPlanChip"]');
 
 test('plan row in the conversation: the read-only plan document and three decisions for a viewing writer', async (t) => {
   const m = mount(t, { open: planned() });
@@ -110,7 +110,7 @@ test('decisions: Build it, Looks good not yet and Keep planning (with its feedba
   const keep = mount(t, { open: planned(), answers });
   await flush();
   click(keep, button(keep, 'plan-keep'));
-  const feedback = keep.q('#teamPlanFeedback');
+  const feedback = keep.q('[id$="teamPlanFeedback"]');
   assert.ok(feedback && keep.root.ownerDocument.activeElement === feedback, 'a small field, focused');
   assert.equal(feedback.maxLength, 800);
   assert.equal(keep.sent('conversationDecide').length, 0, 'asking for feedback decides nothing');
@@ -168,8 +168,8 @@ test('the Plan chip: greyed, never hidden, with its reason: a reader, somebody e
   assert.ok(plan.title.endsWith('A plan is waiting for a decision. Decide it first.'));
   click(plan.m, chip(plan.m));
   assert.equal(plan.m.sent('conversationPreferences').length, 0, 'a greyed chip changes nothing');
-  assert.ok(plan.m.q('[data-conv-box="left"] #teamConvPlanChip'), 'in the box');
-  assert.ok(other.m.q('[data-conv-box="left"] #teamConvPlanChip'), 'kept in the locked box too');
+  assert.ok(plan.m.q('[data-conv-box="left"] [id$="teamConvPlanChip"]'), 'in the box');
+  assert.ok(other.m.q('[data-conv-box="left"] [id$="teamConvPlanChip"]'), 'kept in the locked box too');
 });
 
 test('an accepted plan folds into the local receipt with who and when, and keeps Build it while plan mode is on', async (t) => {
@@ -234,7 +234,7 @@ test('in Jenny\'s work the plan is a one-line receipt: waiting for a decision, n
   await flush();
   click(m, m.q('.team-turn-chip'));
   await flush();
-  const pop = m.q('#teamTurnPop');
+  const pop = m.q('[id$="teamTurnPop"]');
   assert.ok(pop);
   assert.equal(text(pop.querySelector('.plan-document-receipt .plan-document-receipt__state')), 'Waiting for a decision');
   assert.equal(pop.querySelector('.plan-document, [data-plan-actions]'), null);
@@ -248,4 +248,42 @@ test('the conversation says who changed plan mode, in the quiet line the Tools c
   await flush();
   const line = text(m.q('.team-conv-note'));
   assert.match(line, /^Maya turned on plan mode: Jenny plans and changes nothing until a plan is accepted · .+/);
+});
+
+test('H21.2: Keep planning has a Cancel and Escape that bring the decision buttons back, the typed feedback survives a refusal and a Cancel, and a held, modified or repeated Shift+Tab is left to the browser', async (t) => {
+  const refused = { ok: false, error: { code: 'CMP-TEAM-0001', reason: 'stale_decision' } };
+  const m = mount(t, { open: planned(), answers: { conversationDecide: refused, conversationPreferences: { ok: true } } });
+  await flush();
+  click(m, button(m, 'plan-keep'));
+  const feedback = () => m.q('[id$="teamPlanFeedback"]');
+  feedback().value = 'Cover the 404 page';
+  feedback().dispatchEvent(new m.window.Event('input', { bubbles: true }));
+  click(m, button(m, 'plan-send'));
+  await flush();
+  assert.ok(planRow(m).querySelector('.team-set-note'), 'a refusal says why');
+  assert.equal(feedback().value, 'Cover the 404 page', 'the typed feedback survives the redraw');
+  assert.ok(button(m, 'plan-keep-cancel'), 'Keep planning has a Cancel');
+  click(m, button(m, 'plan-keep-cancel'));
+  assert.equal(feedback(), null, 'Cancel closes the field');
+  assert.deepEqual(buttons(m), ['Keep planning', 'Looks good, not yet', 'Build it'], 'the three decisions are back');
+  assert.equal(m.window.document.activeElement, button(m, 'plan-keep'), 'with the focus on Keep planning');
+  click(m, button(m, 'plan-keep'));
+  assert.equal(feedback().value, 'Cover the 404 page', 'the draft is there again after a Cancel');
+  feedback().dispatchEvent(new m.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(feedback(), null, 'Escape closes it too');
+  assert.equal(m.window.document.activeElement, button(m, 'plan-keep'));
+  const shiftTab = (extra) => { const event = new m.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true, ...extra }); field(m).dispatchEvent(event); return event; };
+  for (const extra of [{ repeat: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }]) assert.equal(shiftTab(extra).defaultPrevented, false, JSON.stringify(extra) + ' keeps the browser’s own Shift+Tab');
+  await flush();
+  assert.equal(m.sent('conversationPreferences').length, 0, 'none of them switched plan mode');
+});
+
+test('the Plan chip also switches with Alt+P (the local composer’s own shortcut), where Shift+Tab is wanted for focus', async (t) => {
+  const m = mount(t, { open: saved('accepted', {}, { plan_mode: false }), answers: { conversationPreferences: { ok: true } } });
+  await flush();
+  const alt = new m.window.KeyboardEvent('keydown', { key: 'p', altKey: true, bubbles: true, cancelable: true });
+  field(m).dispatchEvent(alt);
+  await flush();
+  assert.equal(alt.defaultPrevented, true);
+  assert.deepEqual(m.sent('conversationPreferences'), [{ ...IDS, plan_mode: true }]);
 });

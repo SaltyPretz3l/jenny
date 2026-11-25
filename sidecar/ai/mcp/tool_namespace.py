@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 
 from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
 
 MCP_TOOL_NAMESPACE_PREFIX = "mcp__"
-MCP_RESOURCE_NAMESPACE_PREFIX = "mcp_resource__"
 _COMPONENT_PATTERN = re.compile(r"[^a-z0-9_]+")
 _UNDERSCORE_RUN_PATTERN = re.compile(r"_+")
 
@@ -43,9 +41,3 @@ def is_external_mcp_tool_of_server(server_name: str, tool_name: str) -> bool:
 def is_namespaced_mcp_tool_name(tool_name: str) -> bool:
     return str(tool_name or "").strip().startswith(MCP_TOOL_NAMESPACE_PREFIX)
 
-
-def namespace_mcp_resource_id(server_name: str, uri: str) -> str:
-    """Return a stable per-server resource id for an MCP resource URI."""
-    server_component = normalize_mcp_name_component(server_name, fallback="server")
-    digest = hashlib.sha256(str(uri or "").encode("utf-8", errors="replace")).hexdigest()[:16]
-    return f"{MCP_RESOURCE_NAMESPACE_PREFIX}{server_component}__{digest}"

@@ -86,9 +86,11 @@
   // trip; a removal forces a refetch.
   const APPROVAL_RULES_CACHE_MS = 5000;
   const APPROVAL_RULE_REMOVE_ACTION = 'tools-approval-rule-remove';
+  const APPROVAL_RULE_CONFIRM_ACTION = 'tools-approval-rule-confirm';
+  const APPROVAL_RULE_CANCEL_ACTION = 'tools-approval-rule-cancel';
   const APPROVAL_DECISION_LABELS = Object.freeze({ auto: jt('settings.shell.approvalDecisionAlways', 'Always allow'), ask: jt('settings.shell.approvalDecisionAsk', 'Ask before'), deny: jt('settings.shell.approvalDecisionNever', 'Never allow') });
   const approvalRulesCache = { fetchedAt: 0, saved: null, inFlight: null, version: 0,
-    projects: [], reviewExpanded: false, reviewPage: 0 };
+    projects: [], reviewExpanded: false, reviewPage: 0, confirming: '' };
   const pendingReviewContainers = new WeakSet();
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
@@ -155,6 +157,16 @@
     return typeof candidate === 'function' ? candidate : null;
   }
 
+  // A removed rule cannot be restored from here (the tools API only clears), so Remove asks first, in a strip under the row.
+  function approvalRuleConfirmMarkup(row, escapeHtml, actionButton) {
+    const data = { 'rule-kind': row.kind, 'rule-key': row.key };
+    return '<div class="projects-confirm" role="group" aria-label="' + escapeHtml(jt('settings.shell.removeRuleConfirmTitle', 'Remove this saved rule?')) + '">'
+      + '<p>' + escapeHtml(jt('settings.shell.removeRuleConfirm', 'Jenny will ask again next time this comes up.')) + '</p><div class="settings-actions">'
+      + actionButton({ id: APPROVAL_RULE_CONFIRM_ACTION, label: jt('common.remove', 'Remove'), variant: 'danger', size: 'sm', dataset: data })
+      + actionButton({ id: APPROVAL_RULE_CANCEL_ACTION, label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', dataset: data })
+      + '</div></div>';
+  }
+
   function approvalRuleRowsMarkup(rows, escapeHtml, actionButton) {
     if (!rows.length) {
       return '<div class="settings-note tools-approval-rules-empty">' + escapeHtml(jt('settings.shell.approvalRulesEmpty', 'No saved approval rules yet. Choose "Always allow" on an approval card and it shows up here.')) + '</div>';
@@ -175,7 +187,8 @@
         + '<div class="tools-approval-rule-text">'
         + `<span class="tools-approval-rule-label">${escapeHtml(row.label)}</span>`
         + `<span class="tools-approval-rule-detail">${escapeHtml(row.detail)}</span>`
-        + `</div>${remove}</div>`;
+        + `</div>${remove}</div>`
+        + (actionButton && approvalRulesCache.confirming === row.kind + ':' + row.key ? approvalRuleConfirmMarkup(row, escapeHtml, actionButton) : '');
     }).join('');
   }
 
@@ -256,6 +269,7 @@
     approvalRulesCache.projects = [];
     approvalRulesCache.reviewExpanded = false;
     approvalRulesCache.reviewPage = 0;
+    approvalRulesCache.confirming = '';
   }
 
   function permissionReviewMarkup(options, escapeHtml, actionButton) {
@@ -372,16 +386,38 @@
     const api = options?.api;
     if (!container || typeof registerListener !== 'function') return;
     bindPermissionReview(options);
+    const removeSelector = `[data-action="${APPROVAL_RULE_REMOVE_ACTION}"]`;
+    const repaint = () => renderApprovalRules({ ...options, container, api });
+    // Cancel or Escape closes the strip; focus goes back to the Remove that opened it.
+    const closeConfirm = (kind, key) => {
+      approvalRulesCache.confirming = '';
+      repaint();
+      [...container.querySelectorAll(removeSelector)].find((node) => node.dataset.ruleKey === key && node.dataset.ruleKind === kind)?.focus({ preventScroll: true });
+    };
+    registerListener(container, 'keydown', (event) => {
+      const cancel = event.key === 'Escape' && event.target.closest?.('.projects-confirm')
+        && container.querySelector(`[data-action="${APPROVAL_RULE_CANCEL_ACTION}"]`);
+      if (!cancel) return;
+      event.stopPropagation();
+      closeConfirm(cancel.dataset.ruleKind, cancel.dataset.ruleKey);
+    }, options?.listenerOptions);
     registerListener(container, 'click', (event) => {
       const target = event?.target;
-      const button = target && typeof target.closest === 'function'
-        ? target.closest(`[data-action="${APPROVAL_RULE_REMOVE_ACTION}"]`)
+      const found = target && typeof target.closest === 'function'
+        ? target.closest(`${removeSelector},[data-action="${APPROVAL_RULE_CONFIRM_ACTION}"],[data-action="${APPROVAL_RULE_CANCEL_ACTION}"]`)
         : null;
-      if (!button || !container.contains(button)) return;
-      const key = button.dataset.ruleKey;
+      if (!found || !container.contains(found)) return;
+      const key = found.dataset.ruleKey;
+      if (found.dataset.action === APPROVAL_RULE_REMOVE_ACTION) {
+        approvalRulesCache.confirming = found.dataset.ruleKind + ':' + key;
+        repaint();
+        container.querySelector(`[data-action="${APPROVAL_RULE_CANCEL_ACTION}"]`)?.focus({ preventScroll: true });
+        return;
+      }
+      if (found.dataset.action === APPROVAL_RULE_CANCEL_ACTION) { closeConfirm(found.dataset.ruleKind, key); return; }
+      const button = found;
       const method = button.dataset.ruleKind === 'rule' ? 'removePermissionRule' : 'clearPermission';
-      const removeSelector = `[data-action="${APPROVAL_RULE_REMOVE_ACTION}"]`;
-      const index = [...container.querySelectorAll(removeSelector)].indexOf(button);
+      const index = [...container.querySelectorAll(removeSelector)].findIndex((node) => node.dataset.ruleKey === key);
       slots().forgetSlot(container);
       button.disabled = true;
       Promise.resolve()
@@ -389,9 +425,10 @@
           if (!api || typeof api[method] !== 'function') throw new Error(jt('settings.shell.approvalRulesUnavailable', 'Approval rules are unavailable in this window.'));
           return api[method](key);
         })
-        .then(() => renderApprovalRules({
-          ...options, container, api, force: true,
-        }))
+        .then(() => {
+          approvalRulesCache.confirming = '';
+          return renderApprovalRules({ ...options, container, api, force: true });
+        })
         .then(() => {
           // The repaint replaced the focused button: keep focus in the list
           // (the next rule's Remove, else the list) unless it moved elsewhere.

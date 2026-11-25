@@ -450,3 +450,35 @@ fn loopback_only_is_an_optional_boolean() {
     member["loopback_only"] = json!(1);
     assert_eq!(member_reason(&member), Some(Reason::StartInvalid));
 }
+
+/// Review C3: `known_keys` replaces the known set with at most 128 public keys; anything else
+/// about it fails closed like any other bad line.
+#[test]
+fn known_keys_carries_at_most_128_public_keys() {
+    assert_eq!(
+        parse_host_command(&line(
+            &json!({ "t": "known_keys", "keys": [b64(&[3; 32])] })
+        )),
+        Ok(HostCommand::KnownKeys {
+            keys: vec![[3; 32]]
+        })
+    );
+    assert_eq!(
+        parse_host_command(br#"{"t":"known_keys","keys":[]}"#),
+        Ok(HostCommand::KnownKeys { keys: vec![] }),
+        "an empty set clears it"
+    );
+    let full: Vec<String> = (0..128u8).map(|index| b64(&[index; 32])).collect();
+    assert!(parse_host_command(&line(&json!({ "t": "known_keys", "keys": full }))).is_ok());
+    let over: Vec<String> = (0..129u8).map(|index| b64(&[index; 32])).collect();
+    let invalid = Err(Reason::ProtocolInvalid);
+    for bad in [
+        json!({ "t": "known_keys", "keys": over }),
+        json!({ "t": "known_keys", "keys": ["short"] }),
+        json!({ "t": "known_keys", "keys": [7] }),
+        json!({ "t": "known_keys", "keys": b64(&[3; 32]) }),
+        json!({ "t": "known_keys" }),
+    ] {
+        assert_eq!(parse_host_command(&line(&bad)), invalid, "{bad}");
+    }
+}

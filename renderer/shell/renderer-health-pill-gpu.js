@@ -17,11 +17,11 @@
    Warnings follow settings.gpu_warnings_enabled and do not depend on the Performance rail section. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/string-utils'), require('../inventory/action-button'));
+    module.exports = factory(require('../shared/string-utils'), require('../inventory/action-button'), require('./renderer-health-pill-markup-utils'));
     return;
   }
-  root.rendererHealthPillGpu = factory(root.stringUtils, root.inventoryActionButton);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, defaultActionButton) {
+  root.rendererHealthPillGpu = factory(root.stringUtils, root.inventoryActionButton, root.rendererHealthPillMarkupUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, defaultActionButton, markup) {
   'use strict';
 
   const escapeHtml = stringUtils.escapeHtml;
@@ -228,7 +228,7 @@
     // The pill's own tone follows an active warning only while it would otherwise read healthy.
     function adjustSignal(signal) {
       if (!current || current.state === 'unknown' || !signal || signal.tone !== 'success') return signal;
-      return { ...signal, tone: current.tone, label: current.title, summary: current.stateLine, statusLabel: `${current.title} · ${current.stateLine}` };
+      return { ...signal, tone: current.tone, label: current.title, summary: current.stateLine, statusLabel: `${current.title} · ${current.stateLine}`, plain: false };
     }
 
     function dispose() {
@@ -245,7 +245,212 @@
     };
   }
 
+  /* ---- Row 194: the model named in the title bar, and the popover's engine and graphics-memory block ---- */
+  const text = (value) => (typeof value === 'string' ? value.trim() : '');
+  const canon = (id) => text(id).toLowerCase().replace(/:latest$/, '');
+  const gbNumber = (mb) => Math.round((Number(mb) / 1024) * 10) / 10;
+  const PROVIDERS = Object.freeze({ chatgpt: () => 'ChatGPT', 'codex-cli': (jt) => jt('composer.modelPicker.codexCliGroup', 'Codex CLI') });
+  const runtimeOf = (snapshot) => (isObject(snapshot) && isObject(snapshot.runtime) ? snapshot.runtime : {});
+  const providerOf = (runtime) => (PROVIDERS[text(runtime.engine)] ? PROVIDERS[text(runtime.engine)](resolveJt()) : text(runtime.engine));
+  const meterBuilder = () => (globalThis.modelLibrarySectionRender || require('./model-library/model-library-section-render')).buildMemoryMeter;
+  // Row 201 C1 / OD-1: the composer picker's helpers own the one team-model predicate and the formatted name.
+  const pickerUtils = () => globalThis.rendererComposerModelPickerUtils || require('../chat/renderer-composer-model-picker-utils');
+  const isTeamModel = (id) => pickerUtils().isTeamModel(id);
+  const shownName = (id) => (isTeamModel(id) ? pickerUtils().displayModelId(id) : id);
+
+  function isCloud(runtime) {
+    const residency = text(runtime.local_runtime && runtime.local_runtime.model && runtime.local_runtime.model.residency);
+    return residency === 'remote' || residency === 'cli' || Boolean(PROVIDERS[text(runtime.engine)]);
+  }
+
+  // The state the control and popover name, or '' while a warning, an error or another lifecycle state owns the words.
+  function engineKind(signal, runtime) {
+    if (!signal || signal.plain !== true) return '';
+    if (signal.loading) return 'loading';
+    if (signal.lifecycleState === 'model_unavailable' || signal.lifecycleState === 'unavailable') return 'failed';
+    if (signal.lifecycleState !== 'ready') return '';
+    if (isCloud(runtime)) return text(runtime.model) ? 'cloud' : '';
+    if (isTeamModel(text(runtime.model))) return 'team'; // a teammate's GPU: never "On this PC", nothing here to unload
+    if (runtime.model_loaded === true && text(runtime.model)) return 'loaded';
+    return runtime.model_loaded === false ? 'idle' : '';
+  }
+
+  // The model the pill last named: the popover asks for team names only for a team model (row 201: a PC that never
+  // joined a team builds no Team service when the popover opens).
+  let lastRuntimeModel = '';
+  // The signal (from combineHealthSignal, after any warning) gains kind, modelName and the control's words.
+  function nameSignal(signal, snapshot) {
+    const runtime = runtimeOf(snapshot);
+    lastRuntimeModel = text(runtime.model);
+    const kind = engineKind(signal, runtime);
+    if (!kind) return signal;
+    const lifecycle = isObject(runtime.lifecycle) ? runtime.lifecycle : {};
+    const acquisition = isObject(lifecycle.model_acquisition) ? lifecycle.model_acquisition : {};
+    const model = text(runtime.model);
+    const jt = resolveJt();
+    const modelName = shownName(kind === 'loading' || kind === 'failed' ? text(acquisition.requested_model || lifecycle.requested_model) || model : model);
+    let words = signal.label;
+    if (kind === 'loaded' || kind === 'team') words = shownName(model);
+    else if (kind === 'cloud') words = providerOf(runtime) + ' · ' + model;
+    else if (kind === 'loading') words = signal.label.replace(/ · (\d+:\d\d)$/, ' $1');
+    else if (kind === 'idle') words = jt('healthPill.named.none', 'No model loaded');
+    return { ...signal, kind, modelName, words, tone: kind === 'idle' ? 'muted' : signal.tone };
+  }
+
+  // input: { signal (named), snapshot, reading (system stats), facts { defaultModel, card, fits } }; null when the control is not named.
+  function describeEngine(input) {
+    const { signal, snapshot, reading, facts } = input;
+    if (!signal || !signal.kind) return null;
+    const jt = resolveJt();
+    const makeButton = input.actionButton || defaultActionButton;
+    const runtime = runtimeOf(snapshot);
+    const acquisition = (isObject(runtime.lifecycle) && runtime.lifecycle.model_acquisition) || {};
+    const { kind, modelName: name } = signal;
+    const engine = markup.engineLabelForRuntime(runtime) || text(runtime.engine);
+    const def = text(facts && facts.defaultModel);
+    const gpu = reading && isObject(reading.gpuMemory) ? reading.gpuMemory : {};
+    const vramMb = gpu.available === true && Number(gpu.totalMb) > 0 ? Number(gpu.totalMb) : 0;
+    const usedMb = vramMb ? Math.min(Math.max(Number(gpu.usedMb) || 0, 0), vramMb) : 0;
+    const freeMb = vramMb - usedMb;
+    const fit = ((facts && facts.fits) || []).find((entry) => canon(entry.modelId) === canon(name));
+    const needMb = Number(fit && fit.vramRequiredMb) || 0;
+    const onPc = jt('healthPill.engine.onPc', 'On this PC, on {engine}.', { engine });
+    const teamId = kind === 'team' ? pickerUtils().parseTeamModel(text(runtime.model)).teamId : '';
+    const teamName = (teamId && facts && facts.teams && text(facts.teams[teamId])) || jt('settings.team.joined.unnamed', 'Unnamed team');
+    const last = Number(acquisition.last_load_ms) > 0 ? markup.formatLoadClock(acquisition.last_load_ms) : '';
+    const overFree = needMb > 0 && vramMb > 0 && needMb > freeMb;
+    const reason = text(acquisition.status).split(/(?<=[.!?])\s/)[0].replace(/[.!?]+$/, '');
+    let heading = jt('healthPill.engine.loaded', '{model} is loaded', { model: name });
+    let summary;
+    const actions = [];
+    const loadDefault = (label) => { if (def) actions.push([label, 'load-default']); };
+    if (kind === 'loaded') {
+      const isDefault = canon(name) === canon(def);
+      summary = onPc + (def ? ' ' + (isDefault ? jt('healthPill.engine.isDefault', 'This is your default for new chats.') : jt('healthPill.engine.stillUses', 'New chats still use {model}.', { model: def })) : '');
+      actions.push([jt('healthPill.engine.unload', 'Unload'), 'unload-model']);
+      if (!isDefault) loadDefault(jt('healthPill.engine.loadDefault', 'Load {model}', { model: def }));
+    } else if (kind === 'team') {
+      summary = jt('healthPill.engine.team', 'On {team} (shared GPU).', { team: teamName }) + ' '
+        + jt('team.engine.notice', 'The team’s host and the person whose hardware responds can read your prompts and replies.')
+        + (def ? ' ' + jt('healthPill.engine.cloudDefault', 'New chats use {model}.', { model: def }) : '');
+      loadDefault(jt('healthPill.engine.loadDefault', 'Load {model}', { model: def }));
+    } else if (kind === 'cloud') {
+      summary = jt('healthPill.engine.cloud', 'A cloud model on {provider}. Messages in chats that picked it leave this PC.', { provider: providerOf(runtime) })
+        + (def ? ' ' + jt('healthPill.engine.cloudDefault', 'New chats use {model}.', { model: def }) : '');
+      loadDefault(jt('healthPill.engine.loadDefault', 'Load {model}', { model: def }));
+    } else if (kind === 'loading') {
+      heading = signal.label;
+      summary = onPc + (last ? ' ' + jt('healthPill.engine.lastTime', 'Last time it took {clock}.', { clock: last }) : '');
+    } else if (kind === 'idle') {
+      heading = jt('healthPill.engine.nothing', 'Nothing is loaded');
+      summary = def ? jt('healthPill.engine.willLoad', 'Jenny loads {model}, your default, with your next message.', { model: def })
+        : jt('healthPill.engine.willLoadPlain', 'Jenny loads your default model with your next message.');
+      loadDefault(jt('healthPill.engine.loadDefault', 'Load {model}', { model: def }));
+    } else {
+      heading = jt('healthPill.engine.failed', '{model} did not load', { model: name });
+      const none = jt('healthPill.engine.nothingNow', 'Nothing is loaded now.');
+      summary = overFree
+        ? jt('healthPill.engine.needs', 'It needs about {need} GB of graphics memory and {free} GB is free.', { need: gbNumber(needMb), free: gbNumber(freeMb) }) + ' ' + none
+        : (reason ? reason + '. ' : '') + none;
+      actions.push([jt('healthPill.popover.retry', 'Retry'), 'retry-model']);
+      loadDefault(jt('healthPill.engine.loadDefaultInstead', 'Load {model} instead', { model: def }));
+    }
+    // The bar and legend come from the builder Running now uses; a failed load is drawn past the end.
+    const loading = kind === 'loading' && needMb > 0;
+    const failedOver = kind === 'failed' && overFree;
+    const shown = loading ? { vramRequiredMb: needMb } : usedMb > 0 ? { vramRequiredMb: usedMb, fitSource: 'observed' } : null;
+    const meter = vramMb ? meterBuilder()({
+      bar: true, loading, idle: !shown, shown, need: loading ? needMb : usedMb, vramMb,
+      preview: failedOver ? { vramRequiredMb: usedMb + needMb } : null,
+    }) : null;
+    const legend = failedOver
+      ? '<span class="mm-preview mm-preview--over"><b>' + escapeHtml(name) + '</b> '
+        + escapeHtml(jt('healthPill.engine.wouldUse', 'would use about {n} GB · {m} GB more than is free', { n: gbNumber(needMb), m: gbNumber(needMb - freeMb) }))
+        + '</span><span class="mm-free">' + escapeHtml(jt('settings.models.running.free', '{n} free', { n: gbNumber(freeMb) + ' GB' })) + '</span>'
+      : meter && meter.legend;
+    const size = gbNumber(vramMb) + ' GB';
+    const title = !vramMb ? jt('healthPill.engine.cardTitleNone', 'Graphics memory')
+      : text(facts && facts.card) ? jt('healthPill.engine.cardTitle', 'Graphics memory · {card}, {size}', { card: text(facts.card), size })
+        : jt('healthPill.engine.cardTitleSize', 'Graphics memory · {size}', { size });
+    const button = (label, action) => (makeButton ? makeButton({ label, plain: true, className: 'workbench-health-popover-action', dataset: { 'health-pill-action': action } }) : '');
+    const gpuHtml = '<div class="workbench-health-popover-gpu" data-engine-gpu>'
+      + '<div class="workbench-health-popover-gpu-title">' + escapeHtml(title) + '</div>'
+      + (meter ? meter.barHtml + '<div class="mm-legend">' + legend + '</div>' : '<div class="workbench-health-popover-gpu-state">' + escapeHtml(stateLine('unknown', jt)) + '</div>')
+      + '<div class="workbench-health-popover-gpu-caveat">' + escapeHtml(jt('healthPill.engine.readWhen', 'Read when you opened this.')) + ' ' + button(jt('healthPill.engine.recheck', 'Recheck'), 'recheck-gpu') + '</div></div>';
+    return { kind, heading, summary, gpuHtml, actionsHtml: actions.map(([label, action]) => button(label, action)).join('') };
+  }
+
+  /* What the popover reads when it opens (the default model, the card's name, each model's fit), the card reading it
+     shows (kept until Recheck or close), and the actions it runs. Nothing is read until load(). */
+  function createEngineFacts(o) {
+    const shell = () => (o.window && o.window.jennyShell) || {};
+    const jt = resolveJt();
+    let facts = { defaultModel: '', card: '', fits: [], teams: {} };
+    let reading = null;
+    let signature = '';
+    let retrying = false;
+    let restarting = false;
+    const changed = () => {
+      const next = JSON.stringify([facts, reading && reading.gpuMemory]);
+      if (next !== signature) { signature = next; o.onChange(); }
+    };
+    // team id -> team name, for a team model's "On <team> (shared GPU)"; empty when Team is off or cannot answer.
+    async function teamNames() {
+      const answer = await Promise.resolve().then(() => shell().team.status()).catch(() => null);
+      const names = {};
+      for (const team of isObject(answer) && Array.isArray(answer.teams) ? answer.teams : []) {
+        if (isObject(team) && text(team.team_id) && text(team.team_name)) names[team.team_id] = text(team.team_name);
+      }
+      return names;
+    }
+    async function load() {
+      void recheck(); // the card is not read while idle, so the first pushed reading can be old: read it now
+      const read = await Promise.resolve().then(() => shell().offline.getDiagnostics()).catch(() => null);
+      if (!isObject(read)) return;
+      const teams = isTeamModel(lastRuntimeModel) ? await teamNames() : {};
+      const card = isObject(read.hardwareProfile) && isObject(read.hardwareProfile.gpu) ? read.hardwareProfile.gpu : {};
+      facts = { defaultModel: text(read.preferredLocalModel), card: text(card.name), fits: Array.isArray(read.modelFitEstimates) ? read.modelFitEstimates : [], teams };
+      changed();
+    }
+    function noteReading(payload) { if (!reading && isObject(payload)) { reading = payload; changed(); } }
+    async function recheck() {
+      const fresh = await Promise.resolve().then(() => shell().system.refreshStats()).catch(() => null);
+      if (isObject(fresh)) { reading = fresh; changed(); }
+    }
+    function modelCall(method, args, failure) {
+      const models = shell().models;
+      if (!models || typeof models[method] !== 'function') return;
+      Promise.resolve().then(() => models[method](...args)).catch(() => o.toast(failure)).finally(() => o.refresh());
+      o.refresh();
+    }
+    // null: not an engine action; true: handled, close the popover; false: handled, keep it open.
+    function run(action) {
+      const bridge = shell();
+      if (action === 'recheck-gpu') { void recheck(); return false; }
+      if (action === 'unload-model') modelCall('unload', [], jt('healthPill.engine.unloadFailed', 'Could not unload the model.'));
+      else if (action === 'load-default') modelCall('load', [facts.defaultModel], jt('healthPill.engine.loadFailed', 'Could not load {model}.', { model: facts.defaultModel }));
+      else if (action === 'retry-model') {
+        // One retry is latched in the shell status controller; standalone, the bridge is called once at a time.
+        if (o.retryBackendStart) o.retryBackendStart();
+        else if (!retrying && bridge.backend && typeof bridge.backend.retryStart === 'function') {
+          retrying = true;
+          Promise.resolve(bridge.backend.retryStart()).catch(() => {}).finally(() => { retrying = false; });
+        }
+      } else if (/^restart-(llama-server|ninfer|strata)$/.test(action)) {
+        // Crash policy: a managed server is never respawned on its own; this row and the next chat are the two recovery paths.
+        const target = { 'restart-ninfer': bridge.ninfer, 'restart-strata': bridge.strata }[action] || bridge.llamaServer;
+        if (!restarting && target && typeof target.restart === 'function') {
+          restarting = true;
+          Promise.resolve(target.restart()).catch(() => {}).finally(() => { restarting = false; o.refresh(); });
+        }
+      } else return null;
+      return true;
+    }
+    return { load, run, noteReading, drop: () => { reading = null; }, reading: () => reading, facts: () => facts, signature: () => signature };
+  }
+
   return {
     HOST_SESSION_ID, ACTION_HIDE, TONES, safeBasename, stateLine, describeGpu, buildGpuSection, gpuSignature, createGpuFeed,
+    nameSignal, describeEngine, createEngineFacts,
   };
 });

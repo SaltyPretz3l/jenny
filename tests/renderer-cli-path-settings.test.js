@@ -133,7 +133,7 @@ test('an unreadable PATH still renders the row with an error and a usable button
 test('the Settings page group loads the module and binds it under the update check, once', async () => {
   assert.ok(settingsScriptManifest.some(([src, name]) => src === 'renderer/shell/renderer-settings-cli-path.js' && name === 'rendererSettingsCliPath'));
   const composition = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app', 'renderer-app-controller-composition.js'), 'utf8');
-  assert.match(composition, /rendererSettingsCliPath\?\.bindCliPathSettings\?\.\(window, registerRendererCleanup\)/);
+  assert.match(composition, /rendererSettingsCliPath\?\.bindCliPathSettings\?\.\(ctx\.window, ctx\.registerRendererCleanup\)/);
 
   const dom = new JSDOM('<div data-settings-merged-section="aboutUpdates"><div class="settings-setup-row" id="updates"></div></div>');
   const windowRef = dom.window;

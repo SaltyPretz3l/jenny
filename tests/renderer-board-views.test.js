@@ -24,9 +24,10 @@ function memoryStorage() {
   return { getItem: (key) => (map.has(key) ? map.get(key) : null), setItem: (key, value) => { map.set(key, String(value)); } };
 }
 
-async function harness(t, { storage = memoryStorage(), source = null, switcher = null } = {}) {
+async function harness(t, { storage = memoryStorage(), source = null, switcher = null, prepare = null } = {}) {
   const dom = new JSDOM('<!doctype html><body><section id="boardView"></section></body>', { url: 'https://jenny.invalid/', pretendToBeVisual: true });
   const { window } = dom;
+  if (prepare) prepare(window);
   let seq = 100;
   const boards = source || createMemoryBoardSource({ model, makeId: () => uid(++seq) });
   window.jennyShell = { boards };
@@ -258,4 +259,32 @@ test('a page that started before the Workspace folder was known follows its proj
   assert.equal(h.page.getProjectId(), 'project_site');
   assert.equal(h.q('.board-list__project').textContent, 'Site');
   assert.equal(h.doc.querySelectorAll('[data-board-id]').length, 0, 'the boards listed are that project\'s');
+});
+
+test('with tools overflowing into the More menu the page re-measures on resize and the view switch still moves between the slot and the outline bar', async (t) => {
+  const observers = [];
+  const room = { toolbar: 420, page: 800 };
+  const prepare = (window) => {
+    // jsdom has no layout: every element is 90px wide and the toolbar has 420px of room.
+    window.ResizeObserver = class { constructor(callback) { this.callback = callback; observers.push(this); } observe() {} disconnect() {} };
+    window.HTMLElement.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, right: 90, bottom: 20, width: 90, height: 20, x: 0, y: 0 });
+    Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', { configurable: true, get() { return this.classList.contains('board-toolbar') ? room.toolbar : room.page; } });
+  };
+  const h = await harness(t, { prepare });
+  const resize = async (page) => { room.page = page; observers.forEach((observer) => observer.callback([])); await new Promise((resolve) => setTimeout(resolve, 80)); };
+  const all = () => [...h.doc.querySelectorAll('[data-board-tool]')];
+  await resize(801);
+  assert.equal(h.q('[data-board-more]').hidden, false, 'the bar is narrower than its tools');
+  assert.ok(all().some((el) => el.hidden) && all().some((el) => !el.hidden));
+  assert.ok(h.q('[data-board-toolbar-slot] > [data-board-view-switch]'), 'the switch is in the slot');
+  h.choose('outline');
+  await flush();
+  assert.ok(h.q('.board-outline__bar > [data-board-view-switch]'), 'the switch moved to the outline bar');
+  assert.equal(h.q('[data-board-toolbar-slot]').childNodes.length, 0);
+  room.toolbar = 2000;
+  h.choose('canvas');
+  await flush();
+  assert.ok(h.q('[data-board-toolbar-slot] > [data-board-view-switch]'), 'and back into the slot');
+  assert.equal(h.q('[data-board-more]').hidden, true, 'moving the switch back re-measured the bar: there is room now');
+  assert.ok(all().every((el) => !el.hidden));
 });

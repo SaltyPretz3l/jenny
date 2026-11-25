@@ -45,23 +45,30 @@ pub(crate) async fn accept_loop(
                 // Counted only once the source is validated, so a spoofed address cannot
                 // spend a real member's rate.
                 let remote = incoming.remote_addr();
-                let relayed = matches!(remote, IncomingAddr::Relay { .. });
-                let admitted = {
+                let (admitted, relayed_share) = {
                     let mut state = shared.lock();
                     let now = std::time::Instant::now();
                     let max = shared.limits.max_handshakes;
-                    let full = slots_full(&remote, state.handshakes, state.relayed_handshakes, max);
+                    // A relayed dial claiming a known key holds no slot of the relayed share
+                    // (review C3): strangers stalling relayed handshakes cannot lock it out.
+                    let relayed_share = matches!(remote, IncomingAddr::Relay { .. })
+                        && !state.admission.is_known_relayed(&remote);
+                    let full = if relayed_share {
+                        slots_full(&remote, state.handshakes, state.relayed_handshakes, max)
+                    } else {
+                        state.handshakes >= max
+                    };
                     let go = !state.stopping && state.admission.before_handshake(&remote, full, now);
                     if go {
                         state.handshakes += 1;
-                        if relayed {
+                        if relayed_share {
                             state.relayed_handshakes += 1;
                         }
                     } else if full && !state.stopping {
                         state.refused_connections += 1;
                         shared.publish(&state);
                     }
-                    go
+                    (go, relayed_share)
                 };
                 if !admitted {
                     // Ignored, not refused: a refusal would read as host_refused to a member.
@@ -69,7 +76,7 @@ pub(crate) async fn accept_loop(
                     incoming.ignore();
                     continue;
                 }
-                let task = handshake(shared.clone(), incoming, relayed, stop_for_task);
+                let task = handshake(shared.clone(), incoming, relayed_share, stop_for_task);
                 connections.spawn(task);
             }
         }
@@ -84,8 +91,8 @@ pub(crate) async fn accept_loop(
     }
 }
 
-/// Holds one handshake slot (and, for a relayed connection, one of the relayed share) until
-/// dropped.
+/// Holds one handshake slot (and, for a relayed connection of a key not known, one of the
+/// relayed share) until dropped.
 struct HandshakeSlot {
     shared: Arc<Shared>,
     relayed: bool,

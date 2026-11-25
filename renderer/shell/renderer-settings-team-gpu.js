@@ -3,7 +3,11 @@
  *   PC is in two or more teams, the sharer's notice the first time, the state line with its
  *   buttons, what this PC offers and the question when it is switched off mid-request;
  * - the owner's "Team GPUs" (the team model) and "GPU use" (totals for 7 days, every request
- *   behind a fold).
+ *   behind a fold);
+ * - row 201 (OD-4): under the share state, "Models to share from Ollama": the models installed in Ollama as a
+ *   checkable list (read once a visit with `models.listOllamaTags`; the saved set with `shareOllamaModels { team_id }`).
+ *   Nothing checked is the default (the model the owner's chat uses now). Save sends `shareOllamaModels { team_id, names }`
+ *   (null for none checked). Not Ollama: the list is disabled with its reason, never hidden.
  * The page (renderer-settings-team-section.js) places the groups and hands each call a context:
  * `{ data, call, run, render, confirm, setConfirm, hostedTeam }`. The sharing state and the GPU
  * lists come from the team state push (renderer-team-store.js `sharing`, `pools`), already rebuilt
@@ -35,12 +39,18 @@
   const OFFERING = new Set(['idle', 'serving', 'busy_own', 'paused']); // the states with an Offers line
   const TICK_MS = 1000;
   const SLOT = '\u0001'; // stands for the model list inside a sentence; never in a PC name (clean text)
+  // The share set's own rule (services/team/node/sharing-file.js): at most 64 distinct printable names of at most 128 characters.
+  const SHARE_NAME = /^[!-~][ -~]{0,127}$/u;
+  const SHARE_MAX = 64;
 
   let picked = ''; // the team the switch is for, once the person picked one
   let usage = freshUsage();
   let wantUse = '';
   let ticker = null;
+  let ollama = freshOllama(); // the Ollama share set of the team the switch is for
+  let wantOllama = '';
 
+  function freshOllama(teamId = '') { return { teamId, loaded: false, available: false, readable: true, installed: [], saved: null, draft: null }; }
   function freshUsage(teamId = '') { return { teamId, loaded: false, failed: false, totals: [], rows: [], next: null, open: false }; }
   function inv() { return globalThis.inventory || {}; }
   function tag() { try { return globalThis.jennyI18n?.tag?.() || undefined; } catch (_error) { return undefined; } }
@@ -140,6 +150,108 @@
     return '<p class="team-share-offers">' + html + '</p>';
   }
 
+  // ------------------------------------------------- the Ollama share set (row 201, OD-4)
+
+  // The names of an installed-models answer that the share set would accept, each once.
+  function installedNames(rows) {
+    const names = [];
+    for (const row of rows) {
+      const name = typeof row === 'string' ? row : row && (row.id || row.name || row.model);
+      if (typeof name === 'string' && SHARE_NAME.test(name) && !names.includes(name)) names.push(name);
+    }
+    return names;
+  }
+
+  // What the list shows: a saved name Ollama no longer has (so it can be unchecked), then the installed models.
+  function ollamaListing() { return [...(ollama.saved || []).filter((name) => !ollama.installed.includes(name)), ...ollama.installed]; }
+  function ollamaChecked() { return ollama.draft || ollama.saved || []; }
+  function ollamaDirty() {
+    if (!ollama.draft) return false;
+    const was = ollama.saved || [];
+    return ollama.draft.length !== was.length || ollama.draft.some((name) => !was.includes(name));
+  }
+
+  function ollamaTags() {
+    const shell = globalThis.jennyShell || (globalThis.window && globalThis.window.jennyShell);
+    const models = shell && shell.models;
+    if (!models || typeof models.listOllamaTags !== 'function') return Promise.resolve(null);
+    return Promise.resolve().then(() => models.listOllamaTags()).catch(() => null);
+  }
+
+  // The installed models, then (only with Ollama there) the saved set; read once a visit for the team.
+  async function loadOllama(ctx, teamId) {
+    const state = ollama;
+    const tags = await ollamaTags();
+    const rows = tags && tags.available !== false && Array.isArray(tags.data) ? tags.data : null;
+    let saved = null;
+    let readable = true;
+    if (rows) {
+      let answer = null;
+      try { answer = await ctx.call('shareOllamaModels', { team_id: teamId }); } catch (_error) { /* read as unreadable below */ }
+      if (answer && answer.ok === true) saved = Array.isArray(answer.ollama_models) ? answer.ollama_models : null;
+      else readable = false;
+    }
+    if (ollama !== state) return;
+    Object.assign(state, { loaded: true, available: rows !== null, readable, installed: rows ? installedNames(rows) : [], saved });
+    ctx.render();
+  }
+
+  function ollamaChecks(vm, locked) {
+    const checkbox = inv().checkbox;
+    if (typeof checkbox !== 'function') return '';
+    const checked = ollamaChecked();
+    const full = checked.length >= SHARE_MAX;
+    return '<ul class="team-set-list" data-team-ollama role="group" aria-labelledby="teamOllamaTitle">' + ollamaListing().map((name, i) => {
+      const on = checked.includes(name);
+      return '<li class="team-set-person"><div class="team-set-person__who">' + checkbox({ id: 'teamOllama' + i, label: name, checked: on,
+        disabled: locked || vm.isBusy('ollama') || (full && !on), dataset: { 'ollama-name': name } }) + '</div></li>';
+    }).join('') + '</ul>';
+  }
+
+  // Under the share state, for a member who may share: the row; its words say why a list is not live.
+  function ollamaRow(vm, team, sharing) {
+    wantOllama = team.team_id;
+    const state = ollama.teamId === team.team_id && ollama.loaded ? ollama : null;
+    const engine = sharing && sharing.engine;
+    const applies = !engine || engine === 'Ollama';
+    let help = jt('settings.team.ollama.reading', 'Reading the models on this PC…');
+    let list = '';
+    let save = '';
+    if (state && !state.available) {
+      help = jt('settings.team.ollama.off', 'Ollama is not running on this PC, so there is nothing to choose.');
+    } else if (state && !state.readable) {
+      help = jt('settings.team.ollama.unreadable', 'Jenny could not read the models this PC shares. Try again later.');
+    } else if (state && ollamaListing().length === 0) {
+      help = jt('settings.team.ollama.none', 'Ollama has no models installed on this PC.');
+    } else if (state) {
+      help = applies ? jt('settings.team.ollama.help', 'Only the models you check are offered to the team. With none checked, Jenny offers the model you are using now.')
+        : jt('settings.team.ollama.notOllama', 'This list applies when this PC shares through Ollama. It shares through {engine} now.', { engine: ENGINE_NAMES[engine] || engine });
+      list = ollamaChecks(vm, !applies);
+      save = view.button(vm, 'ollama-save', jt('settings.team.ollama.save', 'Save'), { variant: 'primary', ids: { teamId: team.team_id }, busyKey: 'ollama',
+        disabled: !applies || !ollamaDirty(), title: jt('settings.team.ollama.saveTip', 'Saves which Ollama models this PC offers to the team.') });
+    }
+    return inv().settingsField({ id: 'teamOllamaRow', variant: 'row', titleId: 'teamOllamaTitle', helpId: 'teamOllamaHelp', label: jt('settings.team.ollama.label', 'Models to share from Ollama'),
+      help, controlHtml: save }) + list;
+  }
+
+  function toggleOllama(name, on) {
+    const keep = new Set(ollamaChecked());
+    if (on) keep.add(name); else keep.delete(name);
+    ollama.draft = ollamaListing().filter((model) => keep.has(model));
+  }
+
+  // Nothing checked saves null: back to the default share set.
+  async function saveOllama(ctx, teamId) {
+    const names = ollamaChecked();
+    const answer = await ctx.run('ollama', 'ollama', () => ctx.call('shareOllamaModels', { team_id: teamId, names: names.length ? names : null }));
+    if (!answer) return;
+    if (ollama.teamId === teamId) {
+      ollama.saved = Array.isArray(answer.ollama_models) ? answer.ollama_models : names.length ? names : null;
+      ollama.draft = null;
+    }
+    ctx.render();
+  }
+
   function confirmHtml(label, sentence, buttons) {
     return '<div class="team-set-confirm" role="group" aria-label="' + escapeHtml(label) + '"><p>' + escapeHtml(sentence) + '</p>'
       + '<div class="team-set-inline">' + buttons.join('') + '</div></div>';
@@ -174,6 +286,7 @@
         + '<div class="team-share-state__acts">' + line[2] + '</div></div>';
       if (OFFERING.has(sharing.state)) body += offersLine(team, sharing);
     }
+    if (!readOnly) body += ollamaRow(vm, team, sharing);
     if (sharing && !readOnly && vm.confirm === 'share-off') {
       body += confirmHtml(jt('settings.team.gpu.stopSharing', 'Stop sharing'),
         jt('settings.team.gpu.offQuestion', 'A request from the team is running on this PC. Stop sharing when it finishes, or stop it now? If you stop it now, that reply ends early and its sender can try other hardware.'),
@@ -181,7 +294,7 @@
           view.button(vm, 'share-stop', jt('settings.team.gpu.stopNow', 'Stop now'), { variant: 'danger', ids: { teamId: id }, busyKey: 'share' }),
           view.button(vm, 'share-cancel', jt('settings.team.cancel', 'Cancel'), { busyKey: 'share' })]);
     }
-    return view.group('share', jt('settings.team.gpu.heading', 'Share this PC’s GPU'), { body: body + view.note(vm.errors.share) });
+    return view.group('share', jt('settings.team.gpu.heading', 'Share this PC’s GPU'), { body: body + view.note(vm.errors.share) + view.note(vm.errors.ollama) });
   }
 
   // ------------------------------------------------------------- the owner's groups
@@ -326,6 +439,7 @@
       case 'share-pause': void share(ctx, 'sharePause', { team_id: teamId, on: true }); return true;
       case 'share-resume': void share(ctx, 'sharePause', { team_id: teamId, on: false }); return true;
       case 'share-stop-running': void share(ctx, 'sharePause', { team_id: teamId, on: true, stop_running: true }); return true;
+      case 'ollama-save': void saveOllama(ctx, teamId); return true;
       case 'open-models': openModels(); return true;
       case 'use-toggle': usage.open = !usage.open; ctx.render(); return true;
       case 'use-more': if (usage.next !== null) void loadUsage(ctx, true); return true;
@@ -336,6 +450,11 @@
   function onChange(event, ctx) {
     const target = event.target;
     if (!target) return false;
+    if (target.dataset && target.dataset.ollamaName !== undefined && target.type === 'checkbox') {
+      toggleOllama(target.dataset.ollamaName, target.checked);
+      ctx.render();
+      return true;
+    }
     if (target.id === 'teamShareTeam') { picked = String(target.value || ''); ctx.setConfirm(''); ctx.render(); return true; }
     if (target.id === 'teamModel') {
       const hosted = ctx.hostedTeam();
@@ -360,6 +479,9 @@
     const serving = ctx.data().sharing?.state === 'serving';
     if (serving && ticker === null) ticker = setInterval(() => tick(ctx), TICK_MS);
     if (!serving && ticker !== null) { clearInterval(ticker); ticker = null; }
+    const wantSet = wantOllama;
+    wantOllama = '';
+    if (wantSet && ollama.teamId !== wantSet) { ollama = freshOllama(wantSet); void loadOllama(ctx, wantSet); }
     const want = wantUse;
     wantUse = '';
     if (want && usage.teamId !== want) { usage = freshUsage(want); void loadUsage(ctx, false); }
@@ -370,6 +492,8 @@
     picked = '';
     usage = freshUsage();
     wantUse = '';
+    ollama = freshOllama();
+    wantOllama = '';
     if (ticker !== null) clearInterval(ticker);
     ticker = null;
   }

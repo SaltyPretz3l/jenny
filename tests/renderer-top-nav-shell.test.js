@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 
-async function loadRendererTestApp(t, options) {
+async function loadRendererTestApp(t, options = {}) {
   const app = await loadRendererApp(options);
   t.after(async () => {
     await app.dispose();
@@ -10,12 +10,7 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-function readPanelsStore(window) {
-  const raw = window.localStorage.getItem('jenny.panels.v2');
-  return raw ? JSON.parse(raw) : null;
-}
-
-test('the rail shows unconditionally and drives view switching with per-view panels', async (t) => {
+test('the rail shows unconditionally and drives view switching with full-bleed views', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const workspace = doc.getElementById('workspace');
@@ -48,113 +43,11 @@ test('the rail shows unconditionally and drives view switching with per-view pan
   doc.getElementById('chatTopRailTab').click();
   await waitForUi(window, 40);
   assert.equal(window.__rendererState.ui.activeView, 'chat');
-  assert.equal(workspace.classList.contains('panel-none'), false, 'chat keeps its sessions panel');
+  assert.equal(workspace.classList.contains('panel-none'), true, 'chat renders full-bleed: its Chats list is a workbench stack');
   assert.equal(doc.getElementById('chatTopRailTab').getAttribute('aria-selected'), 'true');
   assert.equal(artifactToggle.hidden, false, 'artifact action appears in Chat');
   assert.equal(artifactToggle.getAttribute('aria-pressed'), 'false', 'view changes preserve artifact pressed state');
   assert.equal(healthButton.hidden, false, 'runtime health remains available in Chat');
-});
-
-test('the sidebar toggle collapses to the strip and the strip toggle restores; Workspace renders full-bleed', async (t) => {
-  const { window } = await loadRendererTestApp(t);
-  const doc = window.document;
-  const workspace = doc.getElementById('workspace');
-  await waitForUi(window, 60);
-
-  doc.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 40);
-  const collapseToggle = doc.getElementById('chatsPanelCollapseToggle');
-  assert.ok(collapseToggle, 'the sidebar header mounted the collapse toggle');
-  assert.ok(collapseToggle.closest('.sidebar-header-actions'), 'the toggle belongs to the sidebar header actions');
-  assert.equal(doc.getElementById('topRailPanelToggle'), null, 'the rail action slot no longer owns a panel toggle');
-  assert.equal(collapseToggle.hidden, false, 'visible on a collapsible panel view');
-  assert.equal(collapseToggle.getAttribute('aria-expanded'), 'true');
-  assert.equal(collapseToggle.getAttribute('aria-controls'), 'viewPanel');
-  assert.equal(collapseToggle.hasAttribute('aria-pressed'), false);
-  assert.equal(collapseToggle.getAttribute('aria-label'), 'Collapse chats panel');
-
-  collapseToggle.focus();
-  collapseToggle.click();
-  await waitForUi(window, 40);
-  assert.equal(workspace.classList.contains('panel-collapsed'), true, 'click collapses the chat panel to the strip');
-  const expandToggle = doc.getElementById('chatsStripPanelToggle');
-  assert.ok(expandToggle, 'the strip mounts its own expand toggle');
-  assert.equal(expandToggle.getAttribute('aria-expanded'), 'false');
-  assert.equal(expandToggle.getAttribute('aria-controls'), 'viewPanel');
-  assert.equal(expandToggle.getAttribute('aria-label'), 'Expand chats panel');
-  assert.equal(doc.activeElement, expandToggle, 'collapse hands focus to the strip toggle');
-
-  expandToggle.click();
-  await waitForUi(window, 40);
-  assert.equal(workspace.classList.contains('panel-collapsed'), false, 'the strip toggle restores the panel');
-  assert.equal(collapseToggle.isConnected, true, 'the header toggle survives the round trip');
-
-  // Workspace owns its internal explorer rail; the shared panel host (recent
-  // chats) must not render there. The header toggle lives inside #viewPanel,
-  // so panel-none (display:none + inert) removes it with the panel.
-  doc.getElementById('ideTopRailTab').click();
-  await waitForUi(window, 40);
-  assert.equal(window.__rendererState.ui.activeView, 'ide');
-  assert.equal(workspace.classList.contains('panel-none'), true, 'Workspace renders full-bleed');
-  assert.ok(collapseToggle.closest('#viewPanel'), 'the toggle disappears with the inert panel host');
-});
-
-test('phone-width chat auto-collapses but the strip toggle can explicitly expand it', async (t) => {
-  const { window } = await loadRendererTestApp(t, { windowInnerWidth: 480 });
-  const doc = window.document;
-  const workspace = doc.getElementById('workspace');
-  await waitForUi(window, 80);
-
-  doc.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 40);
-  assert.equal(workspace.classList.contains('panel-collapsed'), true);
-  assert.equal(workspace.dataset.panelAutoCollapsed, 'true');
-  const expandToggle = doc.getElementById('chatsStripPanelToggle');
-  assert.ok(expandToggle, 'auto-collapse mounts the strip and its expand toggle');
-  assert.equal(expandToggle.disabled, false);
-  assert.equal(expandToggle.getAttribute('aria-label'), 'Expand chats panel');
-  assert.equal(expandToggle.getAttribute('aria-expanded'), 'false');
-  assert.equal(expandToggle.getAttribute('aria-controls'), 'viewPanel');
-  assert.equal(expandToggle.hasAttribute('aria-pressed'), false);
-  assert.equal(readPanelsStore(window).byView.chat.collapsed, false, 'responsive state is not persisted');
-
-  expandToggle.click();
-  await waitForUi(window, 40);
-  assert.equal(workspace.classList.contains('panel-collapsed'), false, 'explicit expansion overrides responsive collapse');
-  assert.equal(workspace.dataset.panelAutoCollapsed, 'false');
-
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 860 });
-  window.dispatchEvent(new window.Event('resize'));
-  await waitForUi(window, 40);
-  assert.equal(workspace.classList.contains('panel-collapsed'), false);
-  assert.equal(workspace.dataset.panelAutoCollapsed, 'false');
-});
-
-test('a narrow window shows the clamped sidebar width and restores the chosen one when widened', async (t) => {
-  const { window } = await loadRendererTestApp(t, { windowInnerWidth: 1400 });
-  const doc = window.document;
-  const workspace = doc.getElementById('workspace');
-  await waitForUi(window, 80);
-  doc.getElementById('chatTopRailTab').click();
-  await waitForUi(window, 40);
-  const controller = window.rendererTopNavShellController;
-  controller.setActivePanelWidth(400);
-  await waitForUi(window, 20);
-  assert.equal(workspace.style.getPropertyValue('--view-panel-current-width'), '400px');
-
-  const resizeTo = async (width) => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-    window.dispatchEvent(new window.Event('resize'));
-    await waitForUi(window, 40);
-  };
-  await resizeTo(900);
-  assert.equal(workspace.style.getPropertyValue('--view-panel-current-width'), '248px');
-  assert.equal(controller.getActivePanelState().width, 248, 'drags start from the rendered width');
-  assert.equal(readPanelsStore(window).byView.chat.width, 400);
-
-  await resizeTo(1400);
-  assert.equal(workspace.style.getPropertyValue('--view-panel-current-width'), '400px', 'the chosen width returns');
-  assert.equal(controller.getActivePanelState().width, 400);
 });
 
 // UIUX-038 (Artifacts view aria-labelledby / focus landing) was deleted in

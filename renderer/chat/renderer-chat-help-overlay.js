@@ -45,6 +45,7 @@
       ['quickSettings', jt('help.shortcut.quickSettings', 'Quick settings'), [['Ctrl', ',']]],
       ['switchView', jt('help.shortcut.switchView', 'Go to Home, Chat, Workspace, Diagnostics, Settings'), [['Ctrl', '1–5']]],
       ['teamView', jt('help.shortcut.teamView', 'Go to Team'), [['Ctrl', '6']]],
+      ['boardView', jt('help.shortcut.boardView', 'Go to Board'), [['Ctrl', '7']]],
       ['newChat', jt('help.shortcut.newChat', 'New chat'), [['Ctrl', 'N']]],
       ['togglePanel', jt('help.shortcut.togglePanel', 'Show or hide the side panel'), [['Ctrl', 'B']]],
       ['closePanel', jt('help.shortcut.closePanel', 'Close the open side panel'), [['Ctrl', '\\']]],
@@ -86,6 +87,10 @@
       ['selectAll', jt('help.shortcut.selectAll', 'Select all'), [['Ctrl', 'A']]],
       ['deleteAfter', jt('help.shortcut.deleteAfter', 'Delete selected and everything after'), [['Delete']]],
       ['cancelSelect', jt('help.shortcut.cancelSelect', 'Cancel'), [['Esc']]],
+    ]),
+    group('board', jt('help.group.board', 'Board'), 2, [
+      ['boardList', jt('help.shortcut.boardList', 'Show or hide the Boards list'), [['Ctrl', 'B']]],
+      ['boardChat', jt('help.shortcut.boardChat', 'Show or hide the Board chat'), [['Ctrl', 'Alt', 'B']]],
     ]),
     group('team', jt('help.group.team', 'Team'), 2, [
       ['teamNextRegion', jt('help.shortcut.teamNextRegion', 'Next region'), [['F6']]],

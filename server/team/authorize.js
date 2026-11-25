@@ -14,12 +14,13 @@ const {
   projectAudience, projectIdVisible, resourceProject, roleAtLeast,
 } = require('./project-visibility');
 const {
-  DEFAULT_BUCKET, POOL_NODES_EVENT, PRESENCE_EVENT, PROJECT_BUCKET, PROJECT_CHANGED_EVENT, SESSION_BUCKET,
+  DEFAULT_BUCKET, POOL_NODES_EVENT, PRESENCE_EVENT, PROJECT_BUCKET, PROJECT_CHANGED_EVENT, SESSION_BUCKET, TEAM_RENAMED_EVENT,
 } = require('./event-scope');
 // The bucketless types: presence (sent live only), the project change, whose payload is a
 // project id the receiver already knows or may list, and a reason, and the GPU list (slice
-// 4e, sent live only), which every active member may read with team.node.list.
-const BUCKETLESS_TYPES = new Set([PRESENCE_EVENT, PROJECT_CHANGED_EVENT, POOL_NODES_EVENT]);
+// 4e, sent live only), which every active member may read with team.node.list, and the team's new name (row 201,
+// live only), which every member reads at connect.
+const BUCKETLESS_TYPES = new Set([PRESENCE_EVENT, PROJECT_CHANGED_EVENT, POOL_NODES_EVENT, TEAM_RENAMED_EVENT]);
 
 const SINGLE_OWNER_MEMBER_ID = 'member_single_owner';
 const ROLE_COLUMNS = new Set(['owner', 'member', 'read_only']);

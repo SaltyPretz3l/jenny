@@ -403,6 +403,7 @@ function createPrimaryChatControls({
       const raw = source[key];
       const value = typeof raw === 'string' ? normalizePrimaryChat({ [field]: raw })[field] : null;
       if (value === null || (value === '' && raw.trim() !== '')) return refusal('invalid_request');
+      if (flags().team === true && require('./backend/team-engine-models').isTeamModelId(value)) return refusal('team_model_not_local'); // OD-1
       wanted[field] = value;
     }
     if (!Object.keys(wanted).length) return refusal('invalid_request');

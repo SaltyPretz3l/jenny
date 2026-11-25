@@ -176,10 +176,12 @@ function createTeamBoardAssets({
     }
   }
 
-  // A picture uploaded again is about to be named by a card: its clock goes. A damaged file is the sweep's to rebuild.
+  // A picture uploaded again is about to be named by a card: its clock goes. A damaged file is read as far as it can
+  // be (the sweep rebuilds the rest); the one clock that is readable still goes, or a full project could free the
+  // picture just sent again before its card lands.
   function forgetClock(projectId, hash) {
     const clocks = readClocks(projectId);
-    if (clocks.status !== 'ok' || clocks.rebuilt || !clocks.since.has(hash)) return;
+    if (clocks.status !== 'ok' || !clocks.since.has(hash)) return;
     clocks.since.delete(hash);
     writeClocks(projectId, clocks.since);
   }
@@ -233,11 +235,22 @@ function createTeamBoardAssets({
     return removed > 0;
   }
 
+  // The caller's check (`recheck`, as the board store takes it): null or undefined lets the write go on, a failure
+  // is answered as it is, and a throw or any other value is unavailable.
+  function checkedBy(recheck) {
+    if (recheck === undefined || recheck === null) return null;
+    let verdict;
+    try { verdict = recheck(); } catch { return UNAVAILABLE(); }
+    if (verdict === null || verdict === undefined) return null;
+    return isPlainObject(verdict) && verdict.ok === false ? verdict : UNAVAILABLE();
+  }
+
   async function put(args) {
-    const { projectId, hash, bytes } = args || {};
+    const { projectId, hash, bytes, recheck } = args || {};
     if (!isTeamProjectId(projectId)) return NOT_FOUND();
     if (!isHash(hash)) return answers.INVALID();
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return answers.INVALID();
+    if (recheck !== undefined && recheck !== null && typeof recheck !== 'function') return answers.INVALID();
     if (bytes.byteLength > caps.pictureBytes) return answers.SIZE();
     if (sha256(bytes) !== hash) return answers.MISMATCH();
     const info = imageInfo(bytes);
@@ -247,6 +260,9 @@ function createTeamBoardAssets({
       bytes: bytes.byteLength, stored });
     // One synchronous stretch, from the folder check to the write: the answer, or FULL.
     const store = () => {
+      // The caller may no longer act (removed, demoted, revoked while the body arrived): nothing is written.
+      const denied = checkedBy(recheck);
+      if (denied !== null) return denied;
       const state = files.assetsState(projectId);
       if (state === 'no_project' || state === 'invalid') return NOT_FOUND();
       if (state === 'unsafe' && files.projectState(projectId) !== 'ok') return NOT_FOUND();
@@ -311,18 +327,32 @@ function createTeamBoardAssets({
     });
   }
 
+  // `ifUnreferenced`: the picture goes only when no board names it, decided on the board store's full view in the same
+  // synchronous stretch as its scan; with no view, nothing is removed.
   async function discard(args) {
-    const { projectId, hash } = args || {};
+    const { projectId, hash, ifUnreferenced } = args || {};
     if (!isTeamProjectId(projectId) || !isHash(hash)) return ASSET_NOT_FOUND();
-    return run(projectId, () => call(() => {
+    return run(projectId, () => call(async () => {
       const state = files.assetsState(projectId);
       if (state === 'missing' || state === 'no_project') return { ok: true, removed: false };
       if (state !== 'ok') return UNAVAILABLE();
       const present = ids.ASSET_EXTENSIONS.some((ext) => files.assetEntry(files.assetPath(projectId, pictureName(hash, ext))) !== 'missing');
       if (!present) return { ok: true, removed: false };
-      if (!removePicture(projectId, hash)) return UNAVAILABLE();
-      forgetClock(projectId, hash);
-      return { ok: true, removed: true };
+      const remove = () => {
+        if (!removePicture(projectId, hash)) return false;
+        forgetClock(projectId, hash);
+        return true;
+      };
+      if (ifUnreferenced !== true) return remove() ? { ok: true, removed: true } : UNAVAILABLE();
+      let outcome = null; // 'kept' | 'removed' | 'failed'
+      const use = (referenced) => {
+        if (outcome !== null || !(referenced instanceof Set)) return;
+        if (referenced.has(hash)) outcome = 'kept';
+        else outcome = remove() ? 'removed' : 'failed';
+      };
+      try { await refs(projectId, use); } catch { /* no view: nothing was decided */ }
+      if (outcome === 'kept') return { ok: true, removed: false };
+      return outcome === 'removed' ? { ok: true, removed: true } : UNAVAILABLE();
     }));
   }
 

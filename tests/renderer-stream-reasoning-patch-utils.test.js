@@ -28,7 +28,6 @@ function setup(articleInner, extraDeps = {}) {
   const headerPatches = [];
   const patcher = createReasoningStackPatcher({
     getRuntime: () => runtime,
-    isStreamPaintV2Enabled: () => false,
     noteHeaderPatch: (kind) => headerPatches.push(kind),
     ...extraDeps,
   });
@@ -49,12 +48,43 @@ test('reasoning patch module: aligned blocks patch in place and the unchanged st
   assert.strictEqual(article.querySelector('.reasoning-row-panel-body'), bodyNode, 'the body keeps its node');
   assert.equal(article.querySelector('.summary').textContent, 'Planning');
   assert.equal(bodyNode.textContent, 'first, then second');
-  assert.deepEqual(headerPatches, ['reasoning_header_rewrite']);
+  assert.deepEqual(headerPatches, ['reasoning_header_morph']);
   assert.equal(runtime.lastThinkingMarkup, nextMarkup);
   assert.equal(runtime.lastThinkingMarkupKey, 'msg_1');
 
   const again = patcher.patchReasoningStack(article, { thinkingMarkup: nextMarkup }, document, null);
   assert.equal(again.reason, 'stack_unchanged');
+});
+
+test('reasoning patch module: a header the morph cannot update is rewritten and counted as a rewrite', (t) => {
+  // The patcher binds morphElementChildren when it loads, so the fallback is
+  // reached by loading a second copy against a DOM patch module whose morph
+  // declines (what the real one returns for unusable input or a throw).
+  const modulePath = require.resolve('../renderer/chat/renderer-stream-reasoning-patch-utils');
+  const realDomPatchUtils = require('../renderer/chat/renderer-stream-dom-patch-utils');
+  const previousGlobal = globalThis.rendererStreamDomPatchUtils;
+  const cachedModule = require.cache[modulePath];
+  globalThis.rendererStreamDomPatchUtils = { ...realDomPatchUtils, morphElementChildren: () => false };
+  delete require.cache[modulePath];
+  t.after(() => {
+    if (previousGlobal === undefined) delete globalThis.rendererStreamDomPatchUtils;
+    else globalThis.rendererStreamDomPatchUtils = previousGlobal;
+    require.cache[modulePath] = cachedModule;
+  });
+  const { createReasoningStackPatcher: createWithDecliningMorph } = require(modulePath);
+
+  const dom = new JSDOM(`<!doctype html><body><article id="a">${stack(block('p1', 'Thinking', '<p>first</p>'))}</article></body>`);
+  t.after(() => dom.window.close());
+  const document = dom.window.document;
+  const article = document.getElementById('a');
+  const runtime = { streamingArticleMessageId: 'msg_1', streamingMessageId: 'msg_1', lastThinkingMarkup: '', lastThinkingMarkupKey: '' };
+  const headerPatches = [];
+  const patcher = createWithDecliningMorph({ getRuntime: () => runtime, noteHeaderPatch: (kind) => headerPatches.push(kind) });
+
+  const result = patcher.patchReasoningStack(article, { thinkingMarkup: stack(block('p1', 'Planning', '<p>first</p>')) }, document, null);
+  assert.equal(result.patched, true);
+  assert.equal(article.querySelector('.summary').textContent, 'Planning');
+  assert.deepEqual(headerPatches, ['reasoning_header_rewrite']);
 });
 
 test('reasoning patch module: declines name their reason', (t) => {

@@ -259,3 +259,44 @@ test('the single-owner host has none of the five operations', BOUNDED, async (t)
   const snapshot = await fx.router.dispatch(command(fx.a, 'sessions.snapshot', {}, { session_id: sessionId }), fx.contextA);
   assert.equal(Object.hasOwn(snapshot.snapshot, 'viewers'), false);
 });
+
+// H3: the branch's gate runs again inside the conversation's queue; the redo answers the lease it holds.
+const turns = async (count) => { for (let i = 0; i < count; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+
+test('H3: a branch queued behind a redo is checked again: its member revoked meanwhile forks nothing', BOUNDED, async (t) => {
+  const s = await setup(t);
+  seedTurn(s, s.sP, 'alice');
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let entered = false;
+  s.h.backend.editAndRegenerate = async (payload) => {
+    entered = true;
+    await held;
+    return { sessionId: payload.sessionId, streamId: 'stream_redo_held' };
+  };
+  const regenerating = s.send('alice', 'team.project.regenerate', { project_id: s.P, session_id: s.sP, message_id: 'message_q' });
+  for (let i = 0; i < 50 && !entered; i += 1) await turns(1);
+  assert.equal(entered, true, 'the redo holds the conversation queue');
+  const before = s.h.backend.sessionStore.getSessionIds().length;
+  const branching = s.send('carl', 'team.project.branch', { project_id: s.P, session_id: s.sP, message_id: 'message_q_answer' });
+  await turns(20);
+  assert.equal((await s.h.store.revokeMember({ actorMemberId: s.member('owner'), memberId: s.member('carl') })).ok, true);
+  release();
+  assert.equal((await regenerating).ok, true);
+  assert.equal(reasonOf(await branching), 'member_revoked');
+  assert.equal(s.h.backend.sessionStore.getSessionIds().length, before, 'nothing was forked');
+});
+
+test('a redo answers the control generation of the lease it holds, so the client can release it', BOUNDED, async (t) => {
+  const s = await setup(t);
+  seedTurn(s, s.sP, 'carl');
+  stubRegenerate(s);
+  const answer = await regen(s, 'carl');
+  assert.equal(answer.ok, true, JSON.stringify(answer));
+  const lease = s.h.leases.get(s.sP);
+  assert.equal(lease.member_id, s.member('carl'));
+  assert.equal(answer.control_generation, lease.generation);
+  // The client releases with it: the conversation is free at once.
+  assert.equal((await s.send('carl', 'control.release', {}, { session_id: s.sP, control_generation: answer.control_generation })).ok, true);
+  assert.equal(s.h.leases.get(s.sP), null);
+});

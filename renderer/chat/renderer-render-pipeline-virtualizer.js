@@ -56,8 +56,6 @@
         chatThreadScroll,
         document: typeof document !== 'undefined' ? document : null,
         window: typeof window !== 'undefined' ? window : null,
-        boundsEnabled: state.features?.featureFlags?.chat_long_thread_bounds !== false,
-        contentVisibilityEnabled: state.features?.featureFlags?.chat_render_content_visibility === true,
         getActiveTurnRootMessageId: function readActiveTurnRoot() {
           return virtualizerActiveRootRef.id || '';
         },

@@ -95,11 +95,11 @@ const GPUS = { team_model: 'qwen3.8-27b', nodes: [node(DOT, 'Dot PC', [{ name: '
   node(MAYA, 'Maya PC', [{ name: 'gemma4-12b', thinking: false }, { name: 'qwen3.8-27b-board', thinking: true }])] };
 const session = (over = {}) => ({ session_id: S1, title: 'Palette loader cleanup', revision: 'r1', plan_mode: false, file_tools: 'available', ...over });
 const opened = (over = {}, rest = {}) => ({ ok: true, snapshot: snapshot({ session: session(over), ...rest }) });
-const chip = (m) => m.q('#teamConvToolsChip');
-const pill = (m) => m.q('#teamConvModelPill');
+const chip = (m) => m.q('[id$="teamConvToolsChip"]');
+const pill = (m) => m.q('[id$="teamConvModelPill"]');
 const sent = (m) => m.sent('conversationPreferences');
 const ids = { team_id: OTHER, session_id: S1 };
-const switchOf = (m, id) => m.q('#teamPrefSwitch-' + id);
+const switchOf = (m, id) => m.q('[id$="teamPrefSwitch-' + id + '"]');
 const option = (m, name) => [...m.root.querySelectorAll('[data-pref-model]')].find((el) => el.dataset.prefModel === name);
 const text = (el) => el.textContent.replace(/\s+/g, ' ').trim();
 // What a reader hears: each piece of text on its own, so a row's label and its sub line are not run together.
@@ -128,9 +128,9 @@ test('the Tools panel: title, tally, section, rows with their tool names, the al
   assert.equal(spoken(panel), 'Tools for this conversation 2 of 2 on In this project · jenny-site Read and search files Look through this project’s team files 4 tools read_file , list_dir , glob_files , grep_search '
     + 'Write and edit files Each change asks a writer first, unless a project rule allows it 3 tools write_file , edit_file , propose_change Always on: questions For everyone in this conversation');
   assert.equal(panel.querySelector('[data-pref-reset]'), null, 'nothing to reset');
-  assert.equal(m.q('#teamPrefMembers-read').hidden, true);
+  assert.equal(m.q('[id$="teamPrefMembers-read"]').hidden, true);
   click(m, panel.querySelector('[data-pref-members="read"]'));
-  assert.equal(m.q('#teamPrefMembers-read').hidden, false);
+  assert.equal(m.q('[id$="teamPrefMembers-read"]').hidden, false);
   click(m, pill(m));
   assert.deepEqual([m.q('.composer-chat-panel'), Boolean(m.q('.composer-model-popover'))], [null, true], 'one at a time');
   key(m, m.q('.composer-model-popover [data-pref-model=""]'), 'Escape');

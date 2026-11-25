@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from sidecar.ai.config import MCPServerConfig, parse_runtime_config
+from sidecar.ai.routing.delegation_contract import delegate_answer_chars
 from sidecar.ai.routing.iteration_limits import (
     AGENT_SURFACE_SUB_AGENT,
+    CLOUD_SUB_AGENT_LOOP_ITERATIONS,
     append_sub_agent_finalization_message,
     effective_chunk_inactivity_seconds,
     effective_max_loop_wall_seconds,
@@ -14,6 +17,7 @@ from sidecar.ai.routing.iteration_limits import (
     effective_max_tools_per_turn,
     effective_max_web_tool_calls_per_turn,
     effective_sub_agent_concurrency_budget,
+    effective_sub_agent_iteration_budget,
     effective_tools_execution_timeout_seconds,
     is_sub_agent_final_iteration,
     loop_profile_name,
@@ -185,17 +189,20 @@ def test_wind_down_threshold_scales_with_the_cloud_task_cap() -> None:
     ) is True
 
 
-def test_sub_agent_budget_is_profile_independent() -> None:
+def test_cloud_sub_agent_budget_is_wider_than_the_local_setting() -> None:
     cloud = parse_runtime_config({"engine_type": "chatgpt"})
     local = parse_runtime_config({})
 
-    for config in (cloud, local):
-        assert (
-            max_iterations_for_agent_surface(
-                config, mode="task", agent_surface=AGENT_SURFACE_SUB_AGENT
-            )
-            == 10
+    def budget(config: Any) -> int:
+        return max_iterations_for_agent_surface(
+            config, mode="task", agent_surface=AGENT_SURFACE_SUB_AGENT
         )
+
+    assert budget(cloud) == CLOUD_SUB_AGENT_LOOP_ITERATIONS == 60
+    assert budget(local) == 10
+    assert effective_sub_agent_iteration_budget(cloud) == 60
+    assert delegate_answer_chars(cloud) == 16_000
+    assert delegate_answer_chars(local) == 2_500
     assert max_iterations_for_agent_surface(cloud, mode="task", agent_surface="main") == 300
 
 

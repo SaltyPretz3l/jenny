@@ -158,9 +158,8 @@ test('chat.thinking with explicit persist=true persists even when kind is not re
   assert.equal(callsOf(ctx, 'emitThinkingStatus').length, 0);
 });
 
-test('agent.progress is dropped when the agent_executor flag is off', () => {
+test('agent.progress that is not delegate child progress is dropped', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags.agent_executor = false;
   handleNotification(
     ctx,
     {
@@ -181,9 +180,8 @@ test('agent.progress is dropped when the agent_executor flag is off', () => {
   assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
 });
 
-test('agent.progress emits a control event when the agent_executor flag is on', () => {
+test('delegate child agent.progress emits a control event carrying the agent identity', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags.agent_executor = true;
   handleNotification(
     ctx,
     {
@@ -192,7 +190,8 @@ test('agent.progress emits a control event when the agent_executor flag is on', 
         request_id: 'stream-1',
         session_id: 'session-1',
         task_id: 'task-1',
-        task_type: 'build',
+        task_type: 'sub_agent',
+        source: 'delegate',
         agent_id: 'research@stream-1:call-1:1',
         parent_agent_id: 'main@stream-1',
         status: 'running',
@@ -581,7 +580,7 @@ test('legacy tool.result notes a completed step and delegates the notification',
   const handled = callsOf(ctx, 'handleToolNotification');
   assert.equal(handled.length, 1);
   assert.equal(handled[0].notification.method, 'tool.result');
-  assert.deepEqual(ctx.toolResultCounts, { successful: 1, failed: 0 });
+  assert.deepEqual(ctx.toolResultCounts, { successful: 1, failed: 0, last: { name: 'shell', success: true } });
 });
 
 test('a tool notification claimed by handleToolNotification returns before the unknown-method check', () => {
@@ -599,7 +598,7 @@ test('a tool notification claimed by handleToolNotification returns before the u
   // error status step recorded.
   const steps = callsOf(ctx, 'noteToolStep');
   assert.equal(steps[0].step.status, 'error');
-  assert.deepEqual(ctx.toolResultCounts, { successful: 0, failed: 1 });
+  assert.deepEqual(ctx.toolResultCounts, { successful: 0, failed: 1, last: { name: 'shell', success: false } });
 });
 
 test('an unknown notification method warns once and counts repeats without re-warning', () => {

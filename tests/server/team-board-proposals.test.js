@@ -228,11 +228,11 @@ test('an accept that landed is written to its proposal whatever the check says a
   await must(h.boards.apply({ projectId: P, boardId: h.board.id, actor: ALICE, batch: batch({ op: 'card.remove', id: uid(3) }) }), 'remove');
   // The member is demoted between the board's write and the proposal's.
   let asked = 0;
-  const once = () => { asked += 1; return asked === 1 ? null : hostFailure('forbidden', 'role_forbidden'); };
+  const once = () => { asked += 1; return asked <= 2 ? null : hostFailure('forbidden', 'role_forbidden'); };
   const out = await must(h.decide(proposal.id, 'accept_additions', undefined, BOB, { recheck: once }), 'accept');
   assert.deepEqual([out.applied, out.skipped, states(out.proposal)], [2, 2,
     ['1:note:applied', '2:connect:skipped', '3:append:skipped', '4:append:applied']]);
-  assert.equal(asked, 1, 'the proposal is written without asking again: its change is on the board');
+  assert.equal(asked, 2, 'asked before the proposals were read and before the board write; the proposal is written without asking again: its change is on the board');
   assert.equal((await h.get()).cards[uid(2)].data.text, 'Do we keep refresh tokens?\nMore.');
   assert.equal(reasonOf(await h.decide(proposal.id, 'accept_additions')), 'team_board_proposal_closed', 'nothing is offered twice');
   assert.equal(h.diskRev(), 3);
@@ -340,4 +340,52 @@ test('a decision made again after its list was left behind applies nothing twice
   await must(decide(two.id, 'accept', 2), 'remove');
   const after = await h.get();
   assert.deepEqual([after.cards[uid(3)].data.text, Object.hasOwn(after.cards, uid(2))], ['Ship on Monday', false]);
+});
+
+test('a decision and a list ask the caller\'s check before they read the proposals, and answer nothing of their state to a refused caller', async (t) => {
+  const h = await setup(t);
+  const proposal = await h.record(block('note A new idea', 'remove n2'));
+  const denied = () => hostFailure('forbidden', 'role_forbidden');
+  const asked = [];
+  const watching = (verdict) => () => { asked.push('check'); return verdict; };
+  // The proposal id is unknown, and a closed change: neither answer may tell a refused caller anything.
+  for (const [what, overrides] of [['unknown proposal', { proposalId: `${SESSION}:nobody:1` }], ['closed change', { n: 99 }], ['real change', { n: 2 }]]) {
+    const out = await h.proposals.decide({ projectId: P, boardId: h.board.id, proposalId: proposal.id, action: 'reject', actor: BOB,
+      recheck: denied, ...overrides });
+    assert.equal(reasonOf(out), 'role_forbidden', what);
+  }
+  assert.equal(reasonOf(await h.proposals.list({ projectId: P, boardId: h.board.id, recheck: denied })), 'role_forbidden');
+  assert.equal((await must(h.proposals.list({ projectId: P, boardId: h.board.id, recheck: watching(null) }))).proposals.length, 1);
+  assert.deepEqual(asked, ['check'], 'the list asks once, before it reads');
+  assert.equal(h.diskRev(), 1);
+  assert.deepEqual(h.entries(), []);
+});
+
+test('OD-9: a file line is a proposal when project files are on, for a path inside the project\'s folder only', async (t) => {
+  const h = await setup(t);
+  const folder = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-team-proposal-files-')));
+  t.after(() => removeTreeSync(folder));
+  fs.mkdirSync(path.join(folder, 'src', 'auth'), { recursive: true });
+  fs.writeFileSync(path.join(folder, 'src', 'auth', 'tokens.ts'), 'export {};\n');
+  const on = createHostProposals({ boards: h.boards, audit: (entry) => h.log.append(entry), batchRefusal: () => null,
+    projectRoot: (projectId) => (projectId === P ? folder : null), clock: () => h.clock.now, logger: () => {} });
+  const record = (text, messageId) => on.record({ projectId: P, boardId: h.board.id, sessionId: SESSION, messageId, text, sentWhole: [], prompter: ALICE });
+  const proposal = (await must(record(block('file src/auth/tokens.ts', 'file ../outside.txt', 'file src/auth/none.ts', 'file src'), 'f1'))).proposal;
+  assert.deepEqual(proposal.changes.map((change) => [change.type, change.state, change.reason]),
+    [['file', 'pending', ''], ['file', 'refused', 'outside'], ['file', 'refused', 'not_found'], ['file', 'refused', 'not_file']]);
+  // Accepting it puts a file card with the relative path on the board, as the accepting member.
+  const decided = await must(on.decide({ projectId: P, boardId: h.board.id, proposalId: proposal.id, action: 'accept_additions',
+    actor: BOB, recheck: allow }));
+  assert.equal(decided.applied, 1);
+  const cards = Object.values((await h.get()).cards).filter((card) => card.kind === 'file');
+  assert.deepEqual(cards.map((card) => [card.data.path, card.created_by]), [['src/auth/tokens.ts', BOB]]);
+  // A project with no folder (project files off) refuses the same line, with its reason.
+  const off = (await must(h.proposals.record({ projectId: P, boardId: h.board.id, sessionId: SESSION, messageId: 'f2',
+    text: block('file src/auth/tokens.ts'), sentWhole: [], prompter: ALICE }))).proposal;
+  assert.deepEqual(off.changes.map((change) => [change.state, change.reason]), [['refused', 'no_root']]);
+  const missing = createHostProposals({ boards: h.boards, audit: (entry) => h.log.append(entry), batchRefusal: () => null,
+    projectRoot: () => { throw new Error('no folder'); }, clock: () => h.clock.now, logger: () => {} });
+  const gone = (await must(missing.record({ projectId: P, boardId: h.board.id, sessionId: SESSION, messageId: 'f3',
+    text: block('file src/auth/tokens.ts'), sentWhole: [], prompter: ALICE }))).proposal;
+  assert.deepEqual(gone.changes.map((change) => [change.state, change.reason]), [['refused', 'no_root']]);
 });

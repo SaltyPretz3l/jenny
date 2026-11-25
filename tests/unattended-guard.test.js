@@ -12,6 +12,8 @@ function createHarness({
   runMode = 'auto',
   pauseResult = { requested: true },
   powerMonitor = null,
+  getRealInputAgeMs = null,
+  now = Date.now,
 } = {}) {
   let currentIdleSeconds = idleSeconds;
   let currentThresholdMinutes = thresholdMinutes;
@@ -64,6 +66,8 @@ function createHarness({
       return timer;
     },
     clearIntervalFn: (timer) => cleared.push(timer),
+    getRealInputAgeMs,
+    now,
   });
   return {
     activeStreams,
@@ -306,4 +310,42 @@ test('a throwing isFullAutoArmed fails closed: the guard still pauses', () => {
 
   assert.deepEqual(harness.runtimePauseSessionIds, ['armed-1', 'plain-1']);
   assert.deepEqual(harness.pausedSessionIds, ['armed-1', 'plain-1']);
+});
+
+test('row 196: while a computer turn injects input, the owner\'s real idle time from the helper decides', async () => {
+  let clock = 1000000;
+  let realAgeMs = 400000;
+  const harness = createHarness({ idleSeconds: 2, getRealInputAgeMs: async () => realAgeMs, now: () => clock });
+  harness.activeStreams.clear();
+  harness.guard.tick();
+  assert.deepEqual(harness.runtimePauseCalls, [], 'the first tick only reads the helper; Windows says 2 s idle');
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.guard.tick();
+  assert.equal(harness.runtimePauseCalls.length, 1, 'the owner has been away 400 s, past the 5 minute threshold');
+
+  realAgeMs = null; // the watch stopped
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.guard.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+  clock += 1000;
+  harness.guard.tick();
+  assert.equal(harness.runtimePauseCalls.length, 2, 'the tick that read null still used the last fresh value once');
+  harness.guard.tick();
+  assert.equal(harness.runtimePauseCalls.length, 2, 'with no watch, Windows\' idle time decides again');
+});
+
+test('row 196: a stale or throwing real-input reader falls back to Windows\' idle time', async () => {
+  let clock = 0;
+  const harness = createHarness({ idleSeconds: 2, getRealInputAgeMs: async () => 400000, now: () => clock });
+  harness.activeStreams.clear();
+  harness.guard.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+  clock += 120000; // older than two intervals
+  harness.guard.tick();
+  assert.deepEqual(harness.runtimePauseCalls, []);
+  const throwing = createHarness({ idleSeconds: 2, getRealInputAgeMs: () => { throw new Error('gone'); } });
+  throwing.activeStreams.clear();
+  throwing.guard.tick();
+  throwing.guard.tick();
+  assert.deepEqual(throwing.runtimePauseCalls, []);
 });

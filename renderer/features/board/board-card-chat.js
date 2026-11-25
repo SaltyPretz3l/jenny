@@ -102,7 +102,7 @@
       const menu = resolveGlobal(ctx.windowRef, 'inventoryContextMenu', '../../inventory/context-menu');
       if (!menu || typeof menu.show !== 'function') { tell(ctx, jt('board.chat.noMenu', 'The list of chats is not available here.')); return; }
       const canvas = ctx.surface.element.parentNode;
-      const anchor = canvas ? canvas.querySelector('[data-board-tool="kind-chat"]') : null;
+      const anchor = canvas ? canvas.querySelector('[data-board-tool="kind-chat"]:not([hidden]), [data-board-more]') : null; // More while the tool is in its menu
       menu.show({
         rootEl: ctx.surface.element, anchorEl: anchor, className: 'board-chat-menu',
         heading: jt('board.chat.menuHeading', 'Add a chat from this project'),

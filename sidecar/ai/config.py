@@ -470,7 +470,6 @@ def _apply_execution_policy_overrides(
             tools_python_runtime_enabled=False,
             tools_lsp_enabled=False,
             tools_automations_enabled=False,
-            tools_mcp_resources_enabled=False,
             mcp_sse_enabled=False,
             electron_tool_bridge_enabled=True,
             # Keep the user-facing command descriptor available.  The builtin

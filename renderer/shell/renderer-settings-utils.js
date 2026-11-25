@@ -155,12 +155,12 @@
       settingsModelCard,
       modelStartupLoadList, appearanceResetButton,
       modelCatalogEmpty,
-      accountSummary, localProfileSettingsMount, backendSummary,
+      accountSummary, localProfileSettingsMount,
       setupSettingsSummary, setupSettingsActions, setupProgressContainer,
       settingsControlTowerHost,
       contextStatus, contextSettingsSection,
       contextSourcesList, contextRuntimeList, contextCompactionTuning,
-      toolsConfigFieldList, permissionsSettingsSection, toolsFilesList, toolsWebList, toolsTerminalList, toolsCodeList,
+      toolsConfigFieldList, permissionsSettingsSection, toolsFilesList, toolsWebList, toolsComputerList, toolsTerminalList, toolsCodeList,
       toolsWorkspaceLine, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
       toolsWorkspaceProject, toolsWorkspaceChooseButton,
       editorStatus, editorSettingsFieldList,
@@ -302,7 +302,6 @@
       mountSettingRow(appearanceSettingsSection, 'appearanceFontScaleSelect', appearancePreferences.fontScaleId);
       const surfaceEffectMount = mountSettingRow(appearanceSettingsSection, 'appearanceSurfaceEffectSelect', appearancePreferences.surfaceEffectId);
       mountSettingRow(appearanceSettingsSection, 'appearanceAppZoomSelect', appZoomPercent);
-      if (state.features?.featureFlags?.team === true) mountSettingRow(appearanceSettingsSection, 'appearanceTeamDensitySelect', appearancePreferences.teamDensityId, { afterId: 'appearanceAppZoomSelect' }); else appearanceSettingsSection?.querySelector?.('[data-setting-mount="appearanceTeamDensitySelect"]')?.remove();
       // Row 133: Chat › Layout and Side panel, General › Machine status (rows that left Appearance).
       mountSettingRow(chatSettingsSection, 'appearanceChatWidthSelect', appearancePreferences.chatWidthId);
       mountSettingRow(chatSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
@@ -374,7 +373,6 @@
           localProfileSettingsMount.dataset.profileName = localProfileName;
         }
       }
-      backendSummary.textContent = jt('settings.account.backendSummary', 'Backend: {phase}{detail}', { phase: state.backend.phase || jt('settings.account.backendPhaseUnknown', 'unknown'), detail: state.backend.detail ? ` - ${state.backend.detail}` : '' });
       renderSetupSettingsRow({
         setupSnapshot: state.setup || {},
         setupSettingsSummary,
@@ -440,6 +438,7 @@
         const groups = [
           [toolsFilesList, ['fileTools', 'richFiles', 'imageRead']],
           [toolsWebList, ['web']],
+          [toolsComputerList, ['computer']],
           [toolsTerminalList, ['bash']],
           [toolsCodeList, ['pythonRuntime', 'lsp', 'worktree', 'subagents']],
         ];

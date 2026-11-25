@@ -38,6 +38,14 @@
     return jt('settings.models.services.kind.chat', 'Chat engines');
   }
 
+  // One record row, shared by Models and Extensions: name, what it is, a status dot with words, then the actions.
+  function recordRowHtml(escapeHtml, spec) {
+    return '<div class="mrow srow' + (spec.className ? ' ' + spec.className : '') + '" ' + spec.attr + '="' + escapeHtml(spec.id) + '"><div class="mrow-main"><div class="mrow-title"><span class="mrow-name">'
+      + escapeHtml(spec.name) + '</span></div><div class="mrow-meta">' + escapeHtml(spec.what) + '</div></div>'
+      + '<div class="srow-status">' + (spec.tone ? '<span class="settings-page-status-dot mp-dot" data-tone="' + spec.tone + '" aria-hidden="true"></span><span>'
+      + escapeHtml(spec.statusText) + '</span>' : '') + '</div><div class="mrow-actions">' + (spec.actionsHtml || '') + '</div></div>';
+  }
+
   // A row with `inSummary: false` (the "Add provider…" row) is drawn but never counted.
   function summaryText(items) {
     var rows = items.filter(function (item) { return item.entry.inSummary !== false; });
@@ -97,10 +105,8 @@
         label: label, variant: status.set ? 'ghost' : 'secondary', size: 'sm', ariaLabel: full, title: full,
         dataset: { 'model-service-action': 'open', 'service-id': entry.id },
       });
-      return '<div class="mrow srow" data-service-id="' + escapeHtml(entry.id) + '"><div class="mrow-main"><div class="mrow-title"><span class="mrow-name">'
-        + escapeHtml(name) + '</span></div><div class="mrow-meta">' + escapeHtml(entry.what || '') + '</div></div>'
-        + '<div class="srow-status"><span class="settings-page-status-dot mp-dot" data-tone="' + status.tone + '" aria-hidden="true"></span><span>'
-        + escapeHtml(status.text) + '</span></div><div class="mrow-actions">' + button + '</div></div>';
+      return recordRowHtml(escapeHtml, { attr: 'data-service-id', id: entry.id, name: name, what: entry.what || '',
+        tone: status.tone, statusText: status.text, actionsHtml: button });
     }
 
     function itemsOfKind(kind) {
@@ -121,7 +127,7 @@
       KINDS.forEach(function (kind) {
         var items = itemsOfKind(kind);
         if (!items.length) return;
-        html += '<div class="srow-head"><span>' + escapeHtml(kindLabel(kind)) + '</span><small data-service-summary="' + kind + '">'
+        html += '<div class="srow-head" data-service-head="' + kind + '"><span>' + escapeHtml(kindLabel(kind)) + '</span><small data-service-summary="' + kind + '">'
           + escapeHtml(summaryText(items)) + '</small></div>';
         items.forEach(function (item) {
           var markup = rowHtml(item);
@@ -331,5 +337,5 @@
     return created;
   }
 
-  return { shared: shared, createModelLibraryServices: createModelLibraryServices, HOST_ID: HOST_ID, DRAWER_ID: DRAWER_ID, READY_EVENT: READY_EVENT };
+  return { shared: shared, createModelLibraryServices: createModelLibraryServices, recordRowHtml: recordRowHtml, HOST_ID: HOST_ID, DRAWER_ID: DRAWER_ID, READY_EVENT: READY_EVENT };
 });

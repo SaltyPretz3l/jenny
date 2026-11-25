@@ -83,11 +83,6 @@ const FEATURE_FLAG_ROWS = [
   // ---- Internal, env-only (INTERNAL_FEATURE_FLAG_KEYS) ----
   // Environment OFF cannot be overridden by stored preferences.
   { key: 'session_runtime', env: 'SESSION_RUNTIME', default: true, internal: true, forceDeny: true },
-  // agent_executor gates the runtime wrapper and its agent.progress notifications
-  // (delegate child progress is forwarded either way: work-lifecycle-coordinator.js).
-  { key: 'agent_executor', env: 'AGENT_EXECUTOR', default: false, internal: true },
-  // task_lifecycle only affects task tracking and transcript repair inside the executor.
-  { key: 'task_lifecycle', env: 'TASK_LIFECYCLE', default: false, internal: true },
   // multiplexer enables the Batch 4 single-pipe routed transport.
   { key: 'multiplexer', env: 'MULTIPLEXER', default: true, internal: true },
   // chat_cancel enables end-to-end chat cancellation over the routed transport.
@@ -103,17 +98,6 @@ const FEATURE_FLAG_ROWS = [
   { key: 'canonical_turn_events', env: 'CANONICAL_TURN_EVENTS', default: false, internal: true, dynamicDefault: 'canonical_m3_rollout' },
   // Follows the same rollout and projects accepted turn.event payloads.
   { key: 'canonical_bridge', env: 'CANONICAL_BRIDGE', default: false, internal: true, dynamicDefault: 'canonical_m3_rollout' },
-  // chat_stream_paint_v2 (Ht-C) gates streaming paint-minimization in the live
-  // reasoning patch path: summary-only deltas morph the reasoning header in
-  // place instead of destructively rewriting its innerHTML every tick.
-  // DEFAULT-ON at landing (owner-directed 2026-07-05, weekend-soak sweep
-  // posture); =0 rolls back to the rewrite path (byte-identical pre-Ht-C behavior).
-  { key: 'chat_stream_paint_v2', env: 'CHAT_STREAM_PAINT_V2', default: true, internal: true },
-  // The streaming answer token fade. OFF restores today's plain per-frame innerHTML write.
-  { key: 'chat_stream_token_fade', env: 'CHAT_STREAM_TOKEN_FADE', default: true, internal: true },
-  // Row 101 Phase 2: a streaming reasoning body caps at the chat viewport and
-  // scrolls inside itself; =0 restores the growing panel.
-  { key: 'reasoning_live_box', env: 'REASONING_LIVE_BOX', default: true, internal: true },
   // Full cumulative `aggregate` values on live delta frames. Checkpoints avoid
   // frames x final_length serialization growth and keep background-session
   // deltas under the buffered-bytes cap.
@@ -136,10 +120,6 @@ const FEATURE_FLAG_ROWS = [
   // The <repository-delta> turn-start injection. DEFAULT-ON since 2026-07-07
   // (owner-directed flip for in-app testing).
   { key: 'repo_delta_resume', env: 'REPO_DELTA_RESUME', default: true, internal: true },
-  // Default-off coding-turn orientation for local models.
-  { key: 'task_capsule', env: 'TASK_CAPSULE', default: false, internal: true },
-  // Default-off MCP resource/list/read tools.
-  { key: 'mcp_resources', env: 'MCP_RESOURCES', default: false, internal: true },
   // Default-off automation list/read tools.
   { key: 'tools_automations_enabled', env: 'TOOLS_AUTOMATIONS', default: false, internal: true },
   // The workspace_present presentation tool; =0 leaves it unregistered
@@ -150,6 +130,12 @@ const FEATURE_FLAG_ROWS = [
   // The model-driven `browser` tool (row 114). On here, but each chat's Browser switch defaults off
   // (DEFAULT_OFF_FAMILIES in tools/tool-surface-families.js); =0 leaves the tool unregistered.
   { key: 'tools_browser_use_enabled', env: 'TOOLS_BROWSER_USE', default: true, internal: true },
+  // Row 197: run_view_look and run_view_restart, the Live tab's tools; offered only to a chat whose project has a
+  // confirmed run command (backend/run-view-tool-gate.js), and off with live_run_view. =0 leaves both unregistered.
+  { key: 'tools_run_view_enabled', env: 'TOOLS_RUN_VIEW', default: true, internal: true },
+  // Row 196: the `computer` tool, the real mouse and keyboard in programs the owner grants. On here, but each chat's
+  // Computer switch defaults off (DEFAULT_OFF_FAMILIES); Windows only. =0 leaves the tool unregistered.
+  { key: 'tools_computer_use_enabled', env: 'TOOLS_COMPUTER_USE', default: true, internal: true },
   // The `verify` tool, which lets the model run one of the user's own saved
   // Workspace Test Runner configurations. DEFAULT-OFF pending owner sign-off;
   // =1 registers it (flag-off: the tool is not registered and never reaches the
@@ -237,6 +223,8 @@ const FEATURE_FLAG_ROWS = [
   { key: 'model_catalog_guard', env: 'MODEL_CATALOG_GUARD', default: true, internal: true },
   // Startup and "Default" chats load only an installed default and never pull one (owner, 2026-11-13).
   { key: 'no_silent_model_pull', env: 'NO_SILENT_MODEL_PULL', default: true, internal: true },
+  // Row 184 W3: delegate write tasks in their own worktree; =0 refuses every helper worktree.
+  { key: 'helper_worktrees', env: 'HELPER_WORKTREES', default: true, internal: true },
   // Row 60 harness fixes (sidecar-only), DEFAULT-ON and A/B-measured; =0 restores the old behaviour.
   { key: 'shell_noninteractive_env', env: 'SHELL_NONINTERACTIVE_ENV', default: true, internal: true },
   { key: 'shell_head_tail_output', env: 'SHELL_HEAD_TAIL_OUTPUT', default: true, internal: true },
@@ -291,11 +279,6 @@ const FEATURE_FLAG_ROWS = [
   // 6c1cd33) is satisfied. When on, the in-composer chip defaults to active for
   // the session.
   { key: 'workspace_active_file_context', env: 'WORKSPACE_ACTIVE_FILE_CONTEXT', default: true, internal: true },
-  // Legacy compatibility key. Automatic change-diff surfacing is retired:
-  // Jenny's Changes remains passive until the user or model explicitly asks to
-  // review a recorded change. Keep the default off while older profiles and
-  // environment overrides age out; enabling it has no runtime effect.
-  { key: 'workspace_ghost_edit', env: 'WORKSPACE_GHOST_EDIT', default: false, internal: true },
   // The Workspace IDE Test Runner: headless execution of a project's own test
   // commands (own process + real exit code, run through a shell) feeding a Home
   // dashboard trend widget AND the IDE bottom-panel "Test Runner" view (config
@@ -343,14 +326,6 @@ const FEATURE_FLAG_ROWS = [
   // keeps driving the moved nodes). =0 is byte-identical: nodes never leave
   // #chatView, main-chat approval-lock unchanged.
   { key: 'ide_chat_dock', env: 'IDE_CHAT_DOCK', default: true, internal: true },
-  // Ht-D: content-visibility:auto paint-skip on chat transcript turn-articles
-  // (.chat-entry), mirrored onto document.documentElement.dataset.chatContentVisibility
-  // ('on' when ON; ATTRIBUTE ABSENT -- not 'false' -- when OFF, so the CSS rule
-  // is inert and markup is byte-identical pre-Ht-D). Complements, never
-  // replaces, the JS virtualizer. Exemptions (never paint-skipped): the
-  // active/pending turn, turns with an unresolved approval gate, and the
-  // bottom-2 turn-articles. DEFAULT-ON (owner-ratified design spec, 2026-07-05).
-  { key: 'chat_render_content_visibility', env: 'CHAT_RENDER_CONTENT_VISIBILITY', default: true, internal: true },
   // The turn-finalization verification gate (sidecar routing/verification_gate.py)
   // that runs the user's designated Test Runner configuration after a typed file
   // mutation and hands a failing verdict back to the model. It also requires
@@ -359,18 +334,6 @@ const FEATURE_FLAG_ROWS = [
   // or unrunnable gate becomes one honest sentence on the model's own response.
   // DEFAULT-OFF pending owner sign-off; =1 to try it.
   { key: 'verification_gate', env: 'VERIFICATION_GATE', default: false, internal: true },
-  // Track B's in-place keyed morph for structural streaming article rebuilds.
-  // DEFAULT-ON since 2026-07-11: live telemetry (streaming_article_rebuild
-  // outcome=raw_innerhtml at every turn boundary) confirmed the raw-innerHTML
-  // swap as the turn-boundary repaint flash (the Rank-1 flicker diagnosis), so
-  // the built cure ships; =0 rolls back to the historical raw innerHTML
-  // replacement path.
-  { key: 'chat_timeline_streaming_article_morph', env: 'CHAT_TIMELINE_STREAMING_ARTICLE_MORPH', default: true, internal: true },
-  // R2 bounded projection/virtualization: caps rebuildable renderer
-  // projection/markup caches and virtualized transcript state. Electron remains
-  // the canonical history owner. =0 restores the pre-R2 full-history renderer
-  // cache/virtualizer retention path during the R2 soak.
-  { key: 'chat_long_thread_bounds', env: 'CHAT_LONG_THREAD_BOUNDS', default: true, internal: true },
   // Chat files as a base plus append-only journal
   // (services/backend/session-journal-wiring.js). =0 makes every chat write
   // replace the whole file again (journals already on disk are still read).
@@ -391,6 +354,10 @@ const FEATURE_FLAG_ROWS = [
   // off there is no nvidia-smi probe for NInfer, no NInfer IPC data and no
   // NInfer DOM. Not user-overridable.
   { key: 'ninfer', env: 'NINFER', default: true, internal: true },
+  // Row 200: the managed Strata runtime (Inkling 2 Mini) over the owner's own
+  // Strata install. With the flag off there is no install probe, no Strata IPC
+  // data and no Strata DOM. Not user-overridable.
+  { key: 'strata', env: 'STRATA', default: true, internal: true },
   // The free-VRAM check before a model loads (services/backend/vram-load-preflight.js):
   // a load other programs' GPU memory would push into system RAM is refused
   // and the programs are named. =0 loads without checking.
@@ -429,6 +396,9 @@ const FEATURE_FLAG_ROWS = [
   // Row 181: the DOCX pane's Pages view (Word or LibreOffice converts to PDF in main);
   // =0 answers every conversion `disabled` and the Pages button stays greyed out.
   { key: 'docx_page_view', env: 'DOCX_PAGE_VIEW', default: true },
+  // Row 197: the chat's Live tab (the project's own program in its own window, shown live);
+  // =0 hides the tab and every run-view call answers `disabled`.
+  { key: 'live_run_view', env: 'LIVE_RUN_VIEW', default: true },
 ];
 
 const FEATURE_FLAG_TABLE = Object.freeze(FEATURE_FLAG_ROWS.map((row) => Object.freeze(row)));
@@ -436,46 +406,25 @@ const FEATURE_FLAG_TABLE = Object.freeze(FEATURE_FLAG_ROWS.map((row) => Object.f
 // Retired flags whose JENNY_ENABLE_* name is still ACCEPTED AND IGNORED until
 // the listed release, so a leftover operator setting stays harmless: no flag
 // key is emitted and nothing reads the env var. Drop each entry at removeIn.
-// The plugin platform's own `plugins` and `plugin_developer_profile` flags went
-// with its deletion (owner, 2026-10-05).
-// Failed-attempt reasoning capture for retries was deleted unreplayed, and the
-// unproven stream envelope v2 transport was deleted (owner, 2026-10-05).
 const RETIRED_FEATURE_FLAG_ENV_KEYS = Object.freeze({
-  failure_retry_reasoning_carry: Object.freeze({ env: 'JENNY_ENABLE_FAILURE_RETRY_REASONING_CARRY', removeIn: '1.4.0' }),
-  stream_envelope_v2: Object.freeze({ env: 'JENNY_ENABLE_STREAM_ENVELOPE_V2', removeIn: '1.4.0' }),
-  plugins: Object.freeze({ env: 'JENNY_ENABLE_PLUGINS', removeIn: '1.5.0' }),
-  plugin_developer_profile: Object.freeze({ env: 'JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE', removeIn: '1.5.0' }),
-  // Row 39 (owner, 2026-10-06): default-ON flags collapsed to their ON
-  // behaviour, and the compatibility-only subagent_batch input dropped.
-  chatgpt_auth_turn_retry: Object.freeze({ env: 'JENNY_ENABLE_CHATGPT_AUTH_TURN_RETRY', removeIn: '1.5.0' }),
-  reasoning_prettify: Object.freeze({ env: 'JENNY_ENABLE_REASONING_PRETTIFY', removeIn: '1.5.0' }),
-  quick_settings: Object.freeze({ env: 'JENNY_ENABLE_QUICK_SETTINGS', removeIn: '1.5.0' }),
-  composer_turn_timer: Object.freeze({ env: 'JENNY_ENABLE_COMPOSER_TURN_TIMER', removeIn: '1.5.0' }),
-  scratchpad_pin: Object.freeze({ env: 'JENNY_ENABLE_SCRATCHPAD_PIN', removeIn: '1.5.0' }),
-  turn_activity_envelope: Object.freeze({ env: 'JENNY_ENABLE_TURN_ACTIVITY_ENVELOPE', removeIn: '1.5.0' }),
-  katex_math: Object.freeze({ env: 'JENNY_ENABLE_KATEX_MATH', removeIn: '1.5.0' }),
-  artifact_renderer_registry: Object.freeze({ env: 'JENNY_ENABLE_ARTIFACT_RENDERER_REGISTRY', removeIn: '1.5.0' }),
-  artifact_html_preview: Object.freeze({ env: 'JENNY_ENABLE_ARTIFACT_HTML_PREVIEW', removeIn: '1.5.0' }),
-  settings_search: Object.freeze({ env: 'JENNY_ENABLE_SETTINGS_SEARCH', removeIn: '1.5.0' }),
-  setup_hub: Object.freeze({ env: 'JENNY_ENABLE_SETUP_HUB', removeIn: '1.5.0' }),
-  mcp_management_ui: Object.freeze({ env: 'JENNY_ENABLE_MCP_MANAGEMENT_UI', removeIn: '1.5.0' }),
-  model_management_ui: Object.freeze({ env: 'JENNY_ENABLE_MODEL_MANAGEMENT_UI', removeIn: '1.5.0' }),
-  chat_timeline_render_telemetry: Object.freeze({ env: 'JENNY_ENABLE_CHAT_TIMELINE_RENDER_TELEMETRY', removeIn: '1.5.0' }),
-  workspace_root_nudge: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_ROOT_NUDGE', removeIn: '1.5.0' }),
-  workspace_preview_surface: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_PREVIEW_SURFACE', removeIn: '1.5.0' }),
-  file_preview_html_render: Object.freeze({ env: 'JENNY_ENABLE_FILE_PREVIEW_HTML_RENDER', removeIn: '1.5.0' }),
-  titlebar_gpu_telemetry: Object.freeze({ env: 'JENNY_ENABLE_TITLEBAR_GPU_TELEMETRY', removeIn: '1.5.0' }),
-  workspace_explorer_qol: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_EXPLORER_QOL', removeIn: '1.5.0' }),
-  workspace_external_import: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_EXTERNAL_IMPORT', removeIn: '1.5.0' }),
-  surface_effect_heartbeat: Object.freeze({ env: 'JENNY_ENABLE_SURFACE_EFFECT_HEARTBEAT', removeIn: '1.5.0' }),
-  workspace_file_map: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_FILE_MAP', removeIn: '1.5.0' }),
-  mcp_http_transport: Object.freeze({ env: 'JENNY_ENABLE_MCP_HTTP_TRANSPORT', removeIn: '1.5.0' }),
-  model_fit_estimates: Object.freeze({ env: 'JENNY_ENABLE_MODEL_FIT_ESTIMATES', removeIn: '1.5.0' }),
-  subagent_batch: Object.freeze({ env: 'JENNY_ENABLE_SUBAGENT_BATCH', removeIn: '1.5.0' }),
-  // Row 39 B1 (2026-10-06): the legacy vision and plain-chat live-stream paths
-  // these gated are deleted from the sidecar.
-  vision_unified_turn: Object.freeze({ env: 'JENNY_ENABLE_VISION_UNIFIED_TURN', removeIn: '1.5.0' }),
-  canonical_text_primary: Object.freeze({ env: 'JENNY_ENABLE_CANONICAL_TEXT_PRIMARY', removeIn: '1.5.0' }),
+  // 2026-11-22: default-ON chat render flags collapsed to their ON behaviour;
+  // the OFF branches and the tests that pinned them are deleted.
+  chat_stream_paint_v2: Object.freeze({ env: 'JENNY_ENABLE_CHAT_STREAM_PAINT_V2', removeIn: '1.11.0' }),
+  chat_stream_token_fade: Object.freeze({ env: 'JENNY_ENABLE_CHAT_STREAM_TOKEN_FADE', removeIn: '1.11.0' }),
+  reasoning_live_box: Object.freeze({ env: 'JENNY_ENABLE_REASONING_LIVE_BOX', removeIn: '1.11.0' }),
+  chat_render_content_visibility: Object.freeze({ env: 'JENNY_ENABLE_CHAT_RENDER_CONTENT_VISIBILITY', removeIn: '1.11.0' }),
+  chat_timeline_streaming_article_morph: Object.freeze({ env: 'JENNY_ENABLE_CHAT_TIMELINE_STREAMING_ARTICLE_MORPH', removeIn: '1.11.0' }),
+  chat_long_thread_bounds: Object.freeze({ env: 'JENNY_ENABLE_CHAT_LONG_THREAD_BOUNDS', removeIn: '1.11.0' }),
+  // 2026-11-22: default-OFF features that never shipped enabled; their code is deleted.
+  agent_executor: Object.freeze({ env: 'JENNY_ENABLE_AGENT_EXECUTOR', removeIn: '1.11.0' }),
+  task_lifecycle: Object.freeze({ env: 'JENNY_ENABLE_TASK_LIFECYCLE', removeIn: '1.11.0' }),
+  task_capsule: Object.freeze({ env: 'JENNY_ENABLE_TASK_CAPSULE', removeIn: '1.11.0' }),
+  // Default-off flags whose code is gone or never read them (MCP resource tools;
+  // the retired automatic change-diff surfacing).
+  mcp_resources: Object.freeze({ env: 'JENNY_ENABLE_MCP_RESOURCES', removeIn: '1.11.0' }),
+  workspace_ghost_edit: Object.freeze({ env: 'JENNY_ENABLE_WORKSPACE_GHOST_EDIT', removeIn: '1.11.0' }),
+  // 2026-11-23 row 190 Wave 5: the Chat room is always on the workbench; the old shell is deleted.
+  chat_workbench: Object.freeze({ env: 'JENNY_ENABLE_CHAT_WORKBENCH', removeIn: '1.11.0' }),
 });
 
 module.exports = {

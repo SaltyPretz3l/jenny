@@ -59,7 +59,8 @@
         || pretextUtils.resolveElementWidth(chatThreadColumn)
         || 760;
     }
-    const COLLAPSED_BODY_EXCLUDE_SELECTOR = '.tool-call-row[data-expanded="false"] .tool-call-row-body, .reasoning-row-panel:not(.expanded) .reasoning-row-panel-body';
+    // Row 192: the steps a closed steps heading hides (styles/chat-thread-rail.css) are left out too.
+    const COLLAPSED_BODY_EXCLUDE_SELECTOR = '.tool-call-row[data-expanded="false"] .tool-call-row-body, .reasoning-row-panel:not(.expanded) .reasoning-row-panel-body, .chat-row[data-ledger-member]:not([data-ledger-show="true"])';
     const COLLAPSED_BODY_PREDICTION_OPTIONS = Object.freeze({
       excludeSelector: COLLAPSED_BODY_EXCLUDE_SELECTOR,
     });
@@ -83,11 +84,10 @@
         && (markup.includes('data-row-kind="reasoning"') || markup.includes('data-run-member'))) {
         return ANSWERS_VIEW_PREDICTION_OPTIONS;
       }
-      if (state?.features?.featureFlags?.reasoning_live_box === true
-        && markup.includes('data-turn-live="true"') && markup.includes('reasoning-row-panel-body')) {
+      if (markup.includes('data-turn-live="true"') && markup.includes('reasoning-row-panel-body')) {
         return LIVE_BOX_PREDICTION_OPTIONS;
       }
-      return markup.includes('tool-call-row-body') || markup.includes('reasoning-row-panel-body')
+      return markup.includes('tool-call-row-body') || markup.includes('reasoning-row-panel-body') || markup.includes('data-ledger-member')
         ? COLLAPSED_BODY_PREDICTION_OPTIONS
         : undefined;
     }

@@ -11,7 +11,7 @@
    and exposed so a later slice can build a second pane; it changes nothing
    about what is built. Every dependency is injected - the pane's already
    resolved nodes arrive as `dom`, the sibling factories as `factories`, the
-   composition's with(ctx) wrappers as `callbacks` - so this file resolves no
+   composition's wrappers as `callbacks` - so this file resolves no
    globals and looks nothing up for itself.
 
    Dispose order is behaviour, not taste. The renderer cleanup registry pops
@@ -31,32 +31,6 @@
   const noopAsync = async () => {};
   const noopNull = () => null;
   const noopFalse = () => false;
-
-  const SESSION_RAIL_REFLOW_EVENT = 'session-rail-reflow';
-
-  /* Row 59 checkpoint 2: the session rail docking in or out changes the pane's reading width.
-     The rail controller (renderer-session-rail.js) brackets that change with a `session-rail-reflow`
-     notice on the pane ({phase: 'before' | 'after'}); this pane's own scroll coordinator captures
-     the reader's anchor before and restores it after, the same capture/restore
-     the side-panel motion uses (no second anchoring path). Returns a disposer. */
-  function observeSessionRailReflow(stage, scrollCoordinator) {
-    const pane = stage && stage.parentElement;
-    if (!pane || typeof pane.addEventListener !== 'function') return noop;
-    let anchored = false;
-    function onReflow(event) {
-      const phase = event && event.detail && event.detail.phase;
-      if (phase === 'before') {
-        anchored = scrollCoordinator?.captureReaderAnchor?.() === true;
-      } else if (phase === 'after') {
-        if (anchored) scrollCoordinator.restoreReaderAnchor?.();
-        anchored = false;
-      }
-    }
-    pane.addEventListener(SESSION_RAIL_REFLOW_EVENT, onReflow);
-    return function disposeSessionRailReflow() {
-      pane.removeEventListener(SESSION_RAIL_REFLOW_EVENT, onReflow);
-    };
-  }
 
   /* The composition destructured the viewport controller with a default for
      every member so a null controller could not crash the shell. That contract
@@ -160,8 +134,6 @@
     const viewportApi = buildViewportApi(viewport, state, callbacks, followState);
     scrollCoordinator?.setViewportController?.(viewport);
 
-    const disposeSessionRailReflow = observeSessionRailReflow(dom.chatThreadStage, scrollCoordinator);
-
     /* These used to be separate cleanup-registry entries, each wrapped in its own
        try/catch by renderer/app.js; fused into one dispose() they keep that isolation,
        so a throwing viewport dispose can never skip the coordinator. */
@@ -172,7 +144,6 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
-      safely(disposeSessionRailReflow);
       safely(() => viewportApi.disposeViewportController?.());
       safely(() => scrollCoordinator?.dispose?.());
     }
@@ -182,6 +153,5 @@
 
   return {
     createChatPaneSurfaceControllers,
-    observeSessionRailReflow,
   };
 });

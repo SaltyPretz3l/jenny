@@ -37,6 +37,11 @@
     return /^[A-Za-z0-9_-]+$/.test(normalized) ? normalized : fallback;
   }
 
+  function tagTone(tag) { return tag.tone === 'managed' ? 'managed' : 'restart'; }
+  function tagMarkup(tag) {
+    return '<span class="settings-field-meta"><span class="settings-field-tag" data-tone="' + tagTone(tag) + '">' + escapeHtml(tag.text) + '</span></span>';
+  }
+
   function sanitizeClassName(value) {
     return String(value || '')
       .trim()
@@ -55,6 +60,8 @@
    *   an obvious "nothing rendered" signal, matching segmentedControl's guard.
    * @param {string} [opts.label] - Field title text (HTML-escaped)
    * @param {string} [opts.help] - Helper/description text (HTML-escaped)
+   * @param {{text:string,tone:'restart'|'managed'}} [opts.tag] - One tag on the title line, in the place of "Modified".
+   * @param {string} [opts.reason] - Takes the help paragraph's place; the help stays in an sr-only span for the description.
    * @param {string} [opts.metaHtml] - TRUSTED markup slot rendered on the title
    *   line (default value, "Modified", a per-field reset): same rules as
    *   controlHtml - inventory-builder output only. Lives in the text column so
@@ -111,6 +118,9 @@
       + (o.titleId ? ' id="' + escapeHtml(o.titleId) + '"' : '')
       + '>' + escapeHtml(label) + '</' + titleTag + '>' : '';
     var detail = o.detail != null ? String(o.detail) : '';
+    var reason = o.reason != null ? String(o.reason).trim() : '';
+    var tag = o.tag && o.tag.text ? o.tag : null;
+    if (tag) metaHtml = tagMarkup(tag) + metaHtml;
     // The Revert sits on the title line after "Modified", never beside the
     // control, so it cannot read as one more option of the control.
     var revertHtml = o.revertSlot === true
@@ -130,7 +140,8 @@
     if (label || help || detail || metaHtml || revertHtml) {
       textHtml = '<div class="settings-field-text">'
         + titleHtml
-        + (help ? '<p class="settings-field-help"' + (o.helpId ? ' id="' + escapeHtml(o.helpId) + '"' : '') + '>' + escapeHtml(help) + '</p>' : '')
+        + (help || reason ? '<p class="settings-field-help' + (reason ? ' settings-field-reason' : '') + '"' + (o.helpId ? ' id="' + escapeHtml(o.helpId) + '"' : '') + '>'
+          + escapeHtml(reason || help) + (reason && help ? '<span class="settings-field-help-original sr-only"> ' + escapeHtml(help) + '</span>' : '') + '</p>' : '')
         + '</div>';
     }
 
@@ -140,6 +151,7 @@
       + ' class="' + cls + '"'
       + ' data-settings-field="' + id + '"'
       + (state ? ' data-state="' + state + '"' : '')
+      + (tag ? ' data-tag="' + tagTone(tag) + '"' : '')
       + dataset
       + '>'
       + textHtml
@@ -220,9 +232,53 @@
     if (on) rootEl.setAttribute('data-modified', 'true');
     else rootEl.removeAttribute('data-modified');
     var tag = rootEl.querySelector('.settings-field-meta-modified');
-    if (tag) tag.hidden = !on;
+    // A tag stands in the place of "Modified".
+    if (tag) tag.hidden = !on || rootEl.hasAttribute('data-tag');
     var revert = rootEl.querySelector('.settings-field-reset');
     if (revert) revert.hidden = !on;
+  }
+
+  /** Set or clear (null) the row's one tag; needs the title tail (a revert slot or meta line), else a no-op. */
+  function setFieldTag(rootEl, tag) {
+    if (!rootEl || typeof rootEl.querySelector !== 'function') return;
+    var old = rootEl.querySelector('.settings-field-tag');
+    if (old && tag && old.textContent === tag.text && old.getAttribute('data-tone') === tagTone(tag)) return;
+    if (old) old.parentElement.remove();
+    rootEl.removeAttribute('data-tag');
+    var tail = rootEl.querySelector('.settings-field-title-tail');
+    if (tag && tag.text && tail) {
+      tail.insertAdjacentHTML('afterbegin', tagMarkup(tag));
+      rootEl.setAttribute('data-tag', tagTone(tag));
+    }
+    setFieldModified(rootEl, rootEl.hasAttribute('data-modified'));
+  }
+
+  /** Show or clear ('') a reason in the help paragraph's place; the help moves into an sr-only span and comes back. */
+  function setFieldReason(rootEl, text) {
+    if (!rootEl || typeof rootEl.querySelector !== 'function') return;
+    var reason = text != null ? String(text).trim() : '';
+    var p = rootEl.querySelector('.settings-field-help');
+    var holder = rootEl.querySelector('.settings-field-text');
+    var original = p ? p.querySelector('.settings-field-help-original') : null;
+    var help = original ? original.textContent.trim() : (p && !p.classList.contains('settings-field-reason') ? p.textContent : '');
+    if (!p && !reason) return;
+    // A poll that repeats the same reason leaves the row alone.
+    if (p && reason && p.classList.contains('settings-field-reason') && p.firstChild.textContent === reason) return;
+    if (!p) {
+      if (!holder) return;
+      p = holder.ownerDocument.createElement('p');
+      p.className = 'settings-field-help';
+      holder.appendChild(p);
+    }
+    p.classList.toggle('settings-field-reason', Boolean(reason));
+    p.textContent = reason || help;
+    if (reason && help) {
+      var span = p.ownerDocument.createElement('span');
+      span.className = 'settings-field-help-original sr-only';
+      span.textContent = ' ' + help;
+      p.appendChild(span);
+    }
+    if (!p.textContent) p.remove();
   }
 
   /**
@@ -241,6 +297,8 @@
   settingsField.setFieldError = setFieldError;
   settingsField.setFieldBusy = setFieldBusy;
   settingsField.setFieldModified = setFieldModified;
+  settingsField.setFieldTag = setFieldTag;
+  settingsField.setFieldReason = setFieldReason;
   settingsField.findField = findField;
   settingsField.escapeHtml = escapeHtml;
   settingsField.sanitizeToken = sanitizeToken;

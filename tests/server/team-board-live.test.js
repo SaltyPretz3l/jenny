@@ -207,3 +207,21 @@ test('T4 limits: a cursor is counted by device, presence calls by member, and ne
   assert.equal(s.h.logText().includes(X.note), false);
   assert.equal((await must(s.boards.get({ projectId: X.id, boardId: X.live }))).board.cards[X.note].x, 1);
 });
+
+test('T4 drops: deleting a board takes its viewers and locks with it and tells the project; restoring it starts clean', async (t) => {
+  const s = await setupBoards(t);
+  const { X } = s;
+  const carl = s.id('carl');
+  const stream = s.h.attach('alice');
+  await s.h.ok(s.h.send('carl', 'team.board.view', s.at(X)));
+  await s.h.ok(s.h.send('carl', 'team.board.lock', PARAMS['team.board.lock'](X)));
+  assert.deepEqual([s.host.presence.viewersOf(X.live), s.host.presence.lockHolder(X.live, X.note)], [[carl], carl]);
+  await s.h.ok(s.h.send('alice', 'team.board.delete', { project_id: X.id, board_id: X.live }));
+  assert.deepEqual([s.host.presence.viewersOf(X.live), s.host.presence.lockHolder(X.live, X.note)], [[], null],
+    'nobody is left viewing a board in the trash');
+  assert.deepEqual(s.frames(stream, 'team_board_viewers').at(-1), { project_id: X.id, board_id: X.live, viewers: [] });
+  assert.deepEqual(s.frames(stream, 'team_board_lock').at(-1), { project_id: X.id, board_id: X.live, card_id: X.note, member_id: null });
+  assert.equal(s.host.presence.resources().boards, 0);
+  await s.h.ok(s.h.send('alice', 'team.board.restore', { project_id: X.id, board_id: X.live }));
+  assert.deepEqual(s.host.presence.viewersOf(X.live), []);
+});

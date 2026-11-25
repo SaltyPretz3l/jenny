@@ -3,7 +3,8 @@
  * The toolbar (mockup: over the canvas, top centre) has Note, Link, one button per tool a card kind module offers
  * (deps.tools, from board-card-kinds.js), Undo and Redo, and a slot at its end for the
  * Canvas | Outline switch. "Link" opens a small inline form for the address and refuses anything that is not http or
- * https before it sends. The selection bar sits under it and shows only while something is selected: "N selected",
+ * https before it sends. Tools that do not fit hide from the end (Redo, then Undo, last; the switch stays) into a "More"
+ * menu; the canvas view calls layout() when its room changes. The selection bar sits under it and shows only while something is selected: "N selected",
  * Group or Ungroup, Colour, Duplicate, Bring forward, Send back, Delete; with a connector selected it offers its
  * label, solid or dashed, and Delete. A control that does not apply is disabled with its reason as the tooltip, never
  * hidden; on a read-only board every control says the board cannot be changed.
@@ -81,6 +82,10 @@
       + button({ label: jt('board.toolbar.redo', 'Redo'), title: jt('board.toolbar.redoTitle', 'Redo the change you undid'), dataset: { 'board-tool': 'redo' } }));
     const slot = made('span', 'board-toolbar__slot', 'data-board-toolbar-slot');
     toolbar.appendChild(slot);
+    const moreTitle = jt('board.bar.moreTitle', 'Tools that do not fit on the bar');
+    html(toolbar, button({ label: jt('board.bar.more', 'More'), title: moreTitle, ariaHaspopup: 'menu', dataset: { 'board-more': '' } }));
+    const more = toolbar.querySelector('[data-board-more]');
+    more.hidden = true;
     element.appendChild(toolbar);
 
     /* ---------------------------------------------------------------- the link form */
@@ -108,7 +113,7 @@
       form.hidden = true;
       input.value = '';
       linkProblem('');
-      if (refocus) { const opener = find('[data-board-tool="link"]'); if (opener) opener.focus({ preventScroll: true }); }
+      if (refocus) { const opener = find('[data-board-tool="link"]'); (opener && !opener.hidden ? opener : more).focus({ preventScroll: true }); }
     }
     async function submitLink() {
       const url = input.value.trim();
@@ -207,6 +212,78 @@
       return true;
     }
 
+    /* ---------------------------------------------------------------- tools that do not fit */
+
+    const separator = find('.board-sep');
+    const toolEls = Array.from(toolbar.querySelectorAll('[data-board-tool]'));
+    const undoEl = find('[data-board-tool="undo"]');
+    const redoEl = find('[data-board-tool="redo"]');
+    const ordinary = toolEls.filter((el) => el !== undoEl && el !== redoEl);
+    // Hide order: the last ordinary tool first, Undo and Redo last (Redo before Undo); the switch in the slot never hides.
+    const hideOrder = ordinary.slice().reverse().concat([redoEl, undoEl]);
+    const px = (value) => parseFloat(value) || 0;
+    const style = (el) => doc.defaultView.getComputedStyle(el);
+    // deps.measure replaces any of these (jsdom has no layout, so a test supplies the widths).
+    const measure = Object.assign({
+      available: () => toolbar.clientWidth,
+      width: (el) => { const css = style(el); return el.getBoundingClientRect().width + px(css.marginLeft) + px(css.marginRight); },
+      spacing: () => {
+        const css = style(toolbar);
+        return { gap: px(css.columnGap), pad: px(css.paddingLeft) + px(css.paddingRight) }; // clientWidth has no border
+      },
+    }, deps.measure);
+    let menuOpen = false;
+    let labelKey = '';
+
+    // One pass: show everything, read the widths once, then hide from the end until the rest and the More button fit.
+    // A bar with no width (detached or hidden) is unknown, so it shows every tool and no More button.
+    function layout() {
+      const hadMore = doc.activeElement === more;
+      place();
+      // More had focus and everything fits again: focus goes to a tool, not to the page.
+      const next = hadMore && more.hidden && toolEls.find((el) => !el.hidden && !el.disabled);
+      if (next) next.focus({ preventScroll: true });
+    }
+    function place() {
+      toolEls.forEach((el) => { el.hidden = false; });
+      separator.hidden = false;
+      more.hidden = false;
+      const room = measure.available();
+      if (!(room > 0)) { more.hidden = true; return; }
+      const { gap, pad } = measure.spacing();
+      const slotShown = slot.childNodes.length > 0;
+      const row = ordinary.concat([separator, undoEl, redoEl, more]).concat(slotShown ? [slot] : []);
+      const widths = new Map(row.map((el) => [el, measure.width(el)]));
+      let used = pad + gap * (row.length - 1);
+      widths.forEach((w) => { used += w; });
+      const drop = (el) => { used -= widths.get(el) + gap; el.hidden = true; };
+      if (used - widths.get(more) - gap <= room + 1) { more.hidden = true; return; }
+      for (const el of hideOrder) {
+        if (used <= room + 1) break;
+        drop(el);
+        if (el === ordinary[0]) drop(separator);
+      }
+      const active = doc.activeElement;
+      if (active && active.hidden && toolbar.contains(active)) more.focus({ preventScroll: true });
+    }
+
+    const resolveMenu = () => deps.contextMenu || globalThis.inventoryContextMenu || (typeof require === 'function' ? require('../../inventory/context-menu') : null);
+
+    // Each entry is the real, hidden button: its label, its disabled state and its reason, and choosing it clicks it.
+    function openMore() {
+      const menu = resolveMenu();
+      if (!menu) return;
+      if (menuOpen) { menu.hide(); return; }
+      refresh();
+      const items = toolEls.filter((el) => el.hidden).map((el) => ({
+        label: el.textContent.trim(), disabled: el.disabled, description: el.disabled ? el.title : '', action: () => el.click(),
+      }));
+      if (!items.length) return;
+      menuOpen = true;
+      menu.show({ items, anchorEl: more, rootEl: element, ariaLabel: jt('board.bar.moreMenu', 'More board tools'), placement: 'below', restoreFocusTo: more, onHide: () => { menuOpen = false; } });
+    }
+    listen(more, 'click', openMore);
+
     /* ---------------------------------------------------------------- state */
 
     function set(selector, { disabled, title, text }) {
@@ -237,6 +314,8 @@
       const teamWhy = team ? team.whyNot('undo') : '';
       set('[data-board-tool="undo"]', { disabled: !canUndo, title: teamWhy || reason(canUndo, jt('board.undo.nothing', 'Nothing to undo.')) || jt('board.toolbar.undoTitle', 'Undo the last change') });
       set('[data-board-tool="redo"]', { disabled: !canRedo, title: teamWhy || reason(canRedo, jt('board.redo.nothing', 'Nothing to redo.')) || jt('board.toolbar.redoTitle', 'Redo the change you undid') });
+      // Every tool in the menu would be disabled for the same reason, so the menu button says it once.
+      set('[data-board-more]', { disabled: !edit, title: edit ? moreTitle : readOnly });
       if (!edit && !form.hidden) closeForm(false);
 
       const showing = ids.length > 0 || connectorId !== '';
@@ -264,6 +343,9 @@
       set('[data-board-sel="label"]', { disabled: !edit, title: edit ? '' : readOnly, text: connector && connector.label ? jt('board.bar.editLabel', 'Edit label') : jt('board.bar.addLabel', 'Add label') });
       set('[data-board-sel="style"]', { disabled: !edit, title: edit ? '' : readOnly, text: connector && connector.style === 'dashed' ? jt('board.bar.solid', 'Solid line') : jt('board.bar.dashed', 'Dashed line') });
       if (!connectorId) closeLabel();
+      // The bar's labels are fixed today, but a changed one would change what fits.
+      const key = toolEls.map((el) => el.textContent).join('|');
+      if (key !== labelKey) { labelKey = key; layout(); }
     }
 
     /* ---------------------------------------------------------------- clicks */
@@ -324,9 +406,10 @@
 
     refresh();
     return {
-      element, toolbar, bar, slot, refresh, editConnectorLabel,
+      element, toolbar, bar, slot, refresh, layout, editConnectorLabel,
       setVisible(on) { element.hidden = !on; },
       dispose() {
+        if (menuOpen) { const menu = resolveMenu(); if (menu) menu.hide({ restoreFocus: false }); }
         removers.splice(0).forEach((remove) => remove());
         element.remove();
       },

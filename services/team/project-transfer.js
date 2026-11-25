@@ -97,12 +97,19 @@ function createProjectTransfers({
     }
   }
 
+  // E69: a refused plan names the blocked folder or file segment (the member's own local name) for the UI.
+  function refusedPlan(planned) {
+    const refused = invalidRequest(planned.reason);
+    if (typeof planned.name === 'string' && planned.name !== '') refused.error.name = planned.name;
+    return refused;
+  }
+
   async function beginUpload(entry, projectId) {
     const folder = await picked();
     if (!folder) return { ok: true, started: false };
     const early = interrupted(entry); if (early) return early;
     const planned = await planUpload(folder).catch(() => ({ ok: false, reason: 'team_upload_unreadable' }));
-    if (!planned.ok) return invalidRequest(planned.reason);
+    if (!planned.ok) return refusedPlan(planned);
     const late = interrupted(entry); if (late) return late;
     start('upload', entry, async ({ signal, progress }) => {
       try {

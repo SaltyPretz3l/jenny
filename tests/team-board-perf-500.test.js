@@ -209,7 +209,7 @@ test('page: other members\' pointers and the "is typing" label touch no card ele
   const ctx = { document: m.doc, canvas: { surface: { layer: m.layer, element: m.surface, toBoard: (x, y) => ({ x, y }) } },
     editor: { getBoard: () => m.board, getSelection: () => [], onChange: () => () => {} }, getTeamSource: () => source, getOpenBoardId: () => m.board.id };
   const jt = (_key, fallback, params) => String(fallback).replace('{name}', params.name);
-  const part = createTeamPresence({ ctx, windowRef: m.dom.window, jt, data: { selfId: () => SELF, nameOrFormer: (id) => names[id] || id, iso: (name) => name } });
+  const part = createTeamPresence({ ctx, windowRef: m.dom.window, jt, data: { selfId: () => SELF, nameOrFormer: (id) => names[id] || id, iso: (name) => name, ctxOf: () => ({ roster: Object.keys(names).map((member_id) => ({ member_id })) }) } });
   part.sync();
   t.after(() => part.dispose());
   const cards = [...m.layer.querySelectorAll('.board-card')];

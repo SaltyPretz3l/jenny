@@ -12,7 +12,6 @@ from sidecar.ai.mcp import (
     builtin_server_startup,
     client,
     client_reconnect,
-    client_resources,
     transport_stdio,
     transport_stdio_channel,
 )
@@ -137,10 +136,4 @@ def test_client_mixins_and_shared_constants() -> None:
     assert client.MCP_COOLDOWN_NAMESPACE is client_reconnect.MCP_COOLDOWN_NAMESPACE
     assert client.MCP_FAILURE_HISTORY_LIMIT == client_reconnect.MCP_FAILURE_HISTORY_LIMIT
     bases = client.MCPClient.__mro__
-    assert client_resources.ClientResourcesMixin in bases
     assert client_reconnect.ClientReconnectMixin in bases
-
-    description, schema = client.MCPClient()._resource_tool_contract("read_resource")
-
-    assert "resource_id or uri" in description
-    assert set(schema["properties"]) == {"resource_id", "uri"}

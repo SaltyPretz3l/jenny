@@ -15,11 +15,22 @@ function classifyLoadFailure(message, { timedOut = false, unreachable = false } 
 }
 
 const MANAGED_KINDS = new Set(['ninfer', 'llama-server']);
+const LIVE_RUN_MAX = 200;
+
+// The Live-tab program that holds the GPU (row 197): both fields or nothing, so older records keep their shape.
+function validLiveRun(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const projectId = typeof value.project_id === 'string' ? value.project_id.trim() : '';
+  const program = typeof value.program === 'string' ? value.program.trim() : '';
+  if (!projectId || !program || projectId.length > LIVE_RUN_MAX || program.length > LIVE_RUN_MAX) return null;
+  return { project_id: projectId, program };
+}
 
 function buildLoadFailure(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
   const { cause, message, context, engine, model, at, managed } = value;
+  const liveRun = validLiveRun(value.live_run);
   if (!CAUSES.has(cause) || typeof message !== 'string'
     || typeof engine !== 'string' || typeof model !== 'string') return null;
   return {
@@ -32,6 +43,7 @@ function buildLoadFailure(value) {
     // The managed server an openai-compatible failure belonged to (row 54):
     // present only when one was involved, so older records keep their shape.
     ...(MANAGED_KINDS.has(managed) ? { managed } : {}),
+    ...(liveRun ? { live_run: liveRun } : {}),
   };
 }
 

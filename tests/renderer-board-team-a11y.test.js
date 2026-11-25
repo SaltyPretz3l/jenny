@@ -127,14 +127,14 @@ test('the chat column: labelled, the viewers announced politely once per change,
   assert.equal(changes(), 0, 'the same viewers again say nothing');
   K.pushPresence(m, { viewers: [DOT], cursors: [], locks: [] });
   assert.equal(changes() > 0 && region.textContent === '', true, 'someone leaving is one change');
-  const input = m.q('#teamConversationInput');
+  const input = m.q('[data-board-chat-host] .team-composer__input');
   const hint = m.q('.team-composer__hint');
   assert.ok(input && hint, 'the box and its sentence');
-  assert.equal(hint.id, 'teamConversationHint');
+  assert.ok(hint.id, 'the sentence has an id the box points at');
   assert.ok(input.getAttribute('aria-describedby').split(/\s+/).includes(hint.id), 'the box is described by the sentence');
   await m.captured.part.openConversation(K.S2);
   await m.flush();
-  assert.ok(m.q('#teamConversationInput').getAttribute('aria-describedby').split(/\s+/).includes(m.q('.team-composer__hint').id), 'still tied after another conversation is shown');
+  assert.ok(m.q('[data-board-chat-host] .team-composer__input').getAttribute('aria-describedby').split(/\s+/).includes(m.q('.team-composer__hint').id), 'still tied after another conversation is shown');
 });
 
 test('presence for someone who cannot see pointers: pointers are hidden, and a note being held or let go is announced once with its short name', async (t) => {
@@ -220,7 +220,7 @@ test('focus is not lost when the member role changes while the menu is open, nor
   assert.equal(m.menu() !== null && m.menu().contains(active(m)), true);
   key(m, active(m), 'Escape');
   assert.equal(active(m), m.button());
-  m.q('#teamConversationInput').focus();
+  m.q('[data-board-chat-host] .team-composer__input').focus();
   m.bridge.push('onProject', { team_id: TEAM, kind: 'projects', ...host.listAnswer({ projects: [host.project(PROJECT, 'jenny-site', 'writer'), host.project(K.P2, 'palette-tools', 'admin')] }) });
   await K.settle(m);
   assert.equal(onBody(m), false, 'with the cursor in the box');
@@ -229,7 +229,7 @@ test('focus is not lost when the member role changes while the menu is open, nor
 test('focus is not lost when the conversation shown is deleted by someone else, with the cursor in its box or with the picker open', async (t) => {
   const rows = { list: host.listAnswer().conversations };
   const m = await K.teamChat(t, { answers: { projectList: () => host.listAnswer({ conversations: rows.list }) } });
-  m.q('#teamConversationInput').focus();
+  m.q('[data-board-chat-host] .team-composer__input').focus();
   rows.list = rows.list.filter((row) => row.session_id !== K.S1);
   m.window.rendererTeamProjectStore.getProjectStore().reread(TEAM);
   await K.settle(m);

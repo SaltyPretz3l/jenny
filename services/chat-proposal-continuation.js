@@ -23,7 +23,7 @@ const TERMINAL_STREAM_TYPES = new Set(['complete', 'error', 'question_batch', 'p
 // Quoted proposal text is data from the model's own earlier turn: it scopes the
 // task, it does not widen it.
 function buildContinuationPrompt(record) {
-  const { summary, paths } = record.normalized_input;
+  const { summary, paths, not_checked: notChecked } = record.normalized_input;
   const choice = record.decision?.choice;
   const scope = [
     'The user chose an option on your earlier proposal. Work only on the changes described here.',
@@ -34,11 +34,14 @@ function buildContinuationPrompt(record) {
     'Files in scope (exact paths, nothing else):',
     ...paths.map((path) => `- ${path}`),
     '',
+    ...(Array.isArray(notChecked) && notChecked.length
+      ? ['Not checked when proposed:', ...notChecked.map((item) => `- ${item}`), ''] : []),
   ];
   const rules = choice === 'test_first'
     ? [
       'Task: run the checks relevant to these changes first (the tests, type checks and linters the repository documents), and report the results plainly: what ran, pass or fail counts, and any failure.',
       '- Follow the repository instructions for how to run checks.',
+      '- If the repository documents a way to start the app or capture its screen, run that too and look at the result (if you can see images, open a screenshot with read_file).',
       '- Do not commit, stage, push or merge. Do not edit files to make a check pass; report the failure instead.',
       '- If a check cannot run, say why.',
     ]

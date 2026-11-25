@@ -45,8 +45,12 @@ function createAffinityMap({ max, idleMs }) {
   };
 }
 
+// A conversation's exclusions: the newest few failed nodes, so two broken nodes cannot take turns while a
+// healthy third idles. One expiry for the set, refreshed by each new failure.
+const EXCLUDED_PER_CONVERSATION = 4;
+
 function createExclusions({ max, ttlMs }) {
-  // conversation key -> { node_id, until }; at most `max` entries.
+  // conversation key -> { node_ids (oldest first, at most EXCLUDED_PER_CONVERSATION), until }; at most `max` entries.
   const entries = new Map();
 
   function live(key, now) {
@@ -61,13 +65,15 @@ function createExclusions({ max, ttlMs }) {
 
   return {
     exclude(key, nodeId, now) {
+      const kept = (live(key, now)?.node_ids ?? []).filter((id) => id !== nodeId);
       entries.delete(key);
       while (entries.size >= max) entries.delete(entries.keys().next().value);
-      entries.set(key, { node_id: nodeId, until: now + ttlMs });
+      entries.set(key, { node_ids: [...kept, nodeId].slice(-EXCLUDED_PER_CONVERSATION), until: now + ttlMs });
     },
-    get(key, now) {
+    // Every excluded node, oldest first.
+    getAll(key, now) {
       const entry = live(key, now);
-      return entry ? entry.node_id : null;
+      return entry ? [...entry.node_ids] : [];
     },
     clear(key) {
       entries.delete(key);

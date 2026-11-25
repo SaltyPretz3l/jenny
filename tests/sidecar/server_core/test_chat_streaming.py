@@ -558,44 +558,6 @@ def test_chat_send_delivers_the_personality_context_block_to_the_engine() -> Non
     assert "Step 1:" not in without_block
 
 
-def test_chat_send_emits_agent_progress_when_executor_flag_enabled() -> None:
-    initialize = {
-        "jsonrpc": "2.0",
-        "id": 22_1,
-        "method": "initialize",
-        "params": {
-            "accept_version": API_VERSION,
-            "config": {
-                "engine_type": "mock",
-                "model": "mock-v1",
-                "feature_flags": {"agent_executor": True},
-            },
-        },
-    }
-    _ = server.process_message(initialize, initialized=False)
-
-    chat_send = {
-        "jsonrpc": "2.0",
-        "id": 22_2,
-        "method": "chat.send",
-        "params": {
-            "accept_version": API_VERSION,
-            "request_id": "req_agent_executor",
-            "messages": [{"role": "user", "content": "Plan this task end-to-end"}],
-        },
-    }
-    outcome = server.process_message(chat_send, initialized=True)
-
-    methods = [item["method"] for item in outcome.notifications]
-    assert "agent.progress" in methods
-    assert methods.index("agent.progress") < methods.index("chat.thinking")
-    progress_payloads = [
-        item["params"] for item in outcome.notifications if item["method"] == "agent.progress"
-    ]
-    assert progress_payloads[0]["request_id"] == "req_agent_executor"
-    assert progress_payloads[-1]["percent"] == 100
-
-
 def test_process_message_chat_send_degrades_when_workspace_missing() -> None:
     # Tools enabled but no workspace root: the tool-contract assembly already drops
     # every workspace-requiring tool from the model's list, so the turn must DEGRADE

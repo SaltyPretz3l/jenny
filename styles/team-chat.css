@@ -78,7 +78,7 @@
 .inv-context-menu.team-notify-menu { min-width: 200px; }
 
 /* ---- a join request: the app's own notice (.inv-toast), centred over the top of the timeline ---- */
-.team-notice { position: absolute; top: 58px; inset-inline: 18px; z-index: 5; display: grid; justify-items: center; pointer-events: none; }
+.team-notice { position: absolute; top: 58px; inset-inline: 18px; z-index: 5; display: grid; justify-items: center; gap: var(--space-2); pointer-events: none; }
 .team-notice .inv-toast { width: min(460px, 100%); }
 .team-notice .inv-toast__actions { align-items: center; }
 .team-notice__pager { display: inline-flex; align-items: center; gap: 2px; margin-inline-start: auto; font-size: var(--font-size-caption); color: var(--text-muted); font-variant-numeric: tabular-nums; }
@@ -149,6 +149,14 @@
 .team-msg:hover .team-acts, .team-msg:focus-within .team-acts { display: flex; }
 .team-acts .team-icon-btn { height: 24px; padding: 0 5px; }
 .team-acts svg circle { fill: currentColor; stroke: none; }
+/* The toolbar floats 14px above its row: the first row of a log keeps that much room, also in the compact density, so it is not clipped. */
+.team-scroll > .team-msg:first-child, :root[data-team-density="compact"] .team-scroll > .team-msg:first-child { margin-block-start: var(--space-4); }
+/* A touch screen has no hover: what hover reveals is shown (the message toolbar, a project title's rename, a conversation row's menu).
+   The selectors are one class deeper than the rules in team-projects.css, so they win in either load order. */
+@media (hover: none) {
+  .team-msg .team-acts { display: flex; }
+  .team-head .team-head__rename, .team-row--conv .team-row__menu { opacity: 1; }
+}
 
 /* the two text areas size to their text (no script measures them); edit in place and the delete confirm sit in the row */
 .team-edit__input, .team-composer__input { display: block; width: 100%; box-sizing: border-box; min-height: 40px; field-sizing: content; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: var(--font-size-body); line-height: 1.45; }
@@ -223,7 +231,10 @@
    The names give way first: the standing line never shrinks, so its whole sentence shows (owner pick 2). */
 .team-head > .team-dot { margin-inline-end: -2px; }
 .team-head__name[title] { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.team-head__sub[data-standing="true"] { flex: 0 0 auto; min-width: max-content; overflow: visible; }
+/* The standing line keeps its whole sentence: beside the names when it fits, else on a row of its own (also in the 3-column layout
+   with a thread open, where the header is narrow although the view is not). */
+.team-head:has(> .team-head__sub[data-standing="true"]) { flex-wrap: wrap; row-gap: 2px; }
+.team-head__sub[data-standing="true"] { flex: 0 0 auto; min-width: 0; max-width: 100%; overflow: visible; white-space: normal; }
 .team-head__actions { margin-inline-start: auto; }
 /* The New message view: the To line and the people list take the place of the timeline and composer. */
 .team-pick-root { display: flex; flex: 1; flex-direction: column; min-height: 0; }

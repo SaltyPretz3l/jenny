@@ -2,6 +2,7 @@
 
 const { installDefaultSessionPermissionGuard } = require('./default-session-permission-guard');
 const { createDisplayMediaSourceHandler } = require('./display-media-source-handler');
+const { isMainFrameCaptureRequest } = require('./display-capture-slot');
 const { createArtifactFrameProtocol } = require('../artifact-frame-protocol');
 const { createSketchFrameProtocol } = require('../sketch-frame-protocol');
 const { buildFeatureFlags } = require('../feature-flags');
@@ -82,6 +83,8 @@ function installDefaultSessionWiring({
     sendToRenderer: (payload) => sendBridgeEvent('displayMediaPicker.onRequest', payload),
     sendCancel: (payload) => sendBridgeEvent('displayMediaPicker.onCancel', payload),
     log,
+    // The capture gate (row 197 S1): only the main window's main frame captures.
+    isTrustedRequest: (request) => isMainFrameCaptureRequest({ request, getMainWindow }),
   });
   displayMediaSourceHandler.installHandler(session);
   createArtifactFrameProtocol({ log }).install({ sessionRef: session, ipcMainLike: ipcMain, authorization });

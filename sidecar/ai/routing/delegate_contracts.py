@@ -15,18 +15,25 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_SUBAGENT_INVALID_GRANTS,
     CMP_TOOL_SUBAGENT_INVALID_PROMPT,
 )
-from sidecar.ai.routing.delegation_contract import MAX_DELEGATE_ANSWER_CHARS
+from sidecar.ai.routing.delegation_contract import (  # noqa: F401 - re-exported names
+    MAX_DELEGATE_ANSWER_CHARS,
+    MAX_DELEGATE_OUTPUT_CHARS,
+    MAX_DELEGATE_TASKS,
+    _positive_int,
+    _truncate_with_ellipsis,
+    delegate_answer_chars,
+    output_char_limit,
+    task_mode,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.sanitization import sanitize_tool_output
 
 DELEGATE_TOOL_NAME = "delegate"
 DELEGATE_EXECUTION_FAILURE_CODE = CMP_TOOL_EXECUTION_FAILED
-MAX_DELEGATE_TASKS = 3
 MAX_DELEGATE_TASK_BYTES = 16_000
 MAX_DELEGATE_TOTAL_BYTES = 32_000
 MAX_DELEGATE_EVIDENCE_ITEMS = 3
 MAX_DELEGATE_EVIDENCE_FIELD_CHARS = 300
-MAX_DELEGATE_OUTPUT_CHARS = 8_000
 MAX_DELEGATE_ERROR_CHARS = 300
 MAX_DELEGATE_LABEL_CHARS = 60
 MAX_DELEGATE_PROMPT_CHARS = 2_000
@@ -64,6 +71,7 @@ class DelegateTask:
     error: dict[str, Any] | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    mode: str = "read"  # row 184 W3: "write" runs the child in its own worktree (delegate_write.py)
 
 
 @dataclass(frozen=True)
@@ -205,10 +213,12 @@ def build_compact_delegate_settlement(
     *,
     execution: str,
     task_reports: Iterable[dict[str, Any]],
+    answer_chars: int = MAX_DELEGATE_ANSWER_CHARS,
 ) -> CompactDelegateSettlement:
-    """Build the only payload inserted into parent-model context."""
+    """Build the only payload inserted into parent-model context; each report's
+    ``parent_answer`` is taken out, so it never reaches the monitor, IPC or a file."""
 
-    results = [_compact_result(report) for report in task_reports]
+    results = [_compact_result(report, answer_chars) for report in task_reports]
     status = _aggregate_status(results)
     report: dict[str, Any] = {
         "status": status,
@@ -220,7 +230,7 @@ def build_compact_delegate_settlement(
     summary = _failure_summary(results)
     if summary:
         report["summary"] = summary
-    bounded, output = _bound_compact_report(report)
+    bounded, output = _bound_compact_report(report, answer_chars)
     return CompactDelegateSettlement(
         report=bounded,
         output=output,
@@ -239,6 +249,7 @@ def _normalize_task(raw_task: object, *, ordinal: int) -> DelegateTask:
             ordinal=ordinal, prompt=prompt,
             model=_task_route_field(raw_task, "model", ordinal=ordinal),
             reasoning_effort=_task_route_field(raw_task, "reasoning_effort", ordinal=ordinal),
+            mode=task_mode(_task_route_field(raw_task, "mode", ordinal=ordinal), ordinal=ordinal),
         )
     except ToolExecutionFailure as error:
         return DelegateTask(
@@ -251,12 +262,15 @@ def _normalize_task(raw_task: object, *, ordinal: int) -> DelegateTask:
         )
 
 
+_TASK_OBJECT_KEYS = frozenset({"task", "prompt", "model", "reasoning_effort", "mode"})
+
+
 def _task_prompt(raw_task: object, *, ordinal: int) -> str:
     value = raw_task
     if isinstance(raw_task, dict):
         keys = set(raw_task)
         prompt_keys = keys & {"task", "prompt"}
-        if len(prompt_keys) != 1 or not keys <= {"task", "prompt", "model", "reasoning_effort"}:
+        if len(prompt_keys) != 1 or not keys <= _TASK_OBJECT_KEYS:
             raise _item_failure(
                 f"task {ordinal} object must contain exactly one 'task' or 'prompt' field",
                 grants=True,
@@ -387,19 +401,17 @@ def _git_status_evidence(outcome: Any) -> dict[str, Any] | None:
     )
 
 
-def _compact_result(report: dict[str, Any]) -> dict[str, Any]:
+def _compact_result(report: dict[str, Any], answer_chars: int) -> dict[str, Any]:
     raw_status = str(report.get("status") or "failed").strip().lower()
     status = (
         raw_status if raw_status in {"completed", "partial", "failed", "cancelled"} else "failed"
     )
     # Prefer the child's full answer; summary is the monitor's 1_000-char card text.
-    answer = _truncate_with_ellipsis(
-        _safe_text(
-            report.get("answer") or report.get("summary"),
-            max_chars=MAX_DELEGATE_ANSWER_CHARS * 2,
-        ),
-        MAX_DELEGATE_ANSWER_CHARS,
+    parent_copy = report.pop("parent_answer", None)
+    source = _safe_text(
+        parent_copy or report.get("answer") or report.get("summary"), max_chars=answer_chars * 2
     )
+    answer = _truncate_with_ellipsis(source, answer_chars)
     evidence: list[dict[str, Any]] = []
     for raw_record in list(report.get("evidence") or ()):
         record = _normalize_evidence_record(raw_record)
@@ -413,9 +425,14 @@ def _compact_result(report: dict[str, Any]) -> dict[str, Any]:
         "answer": answer,
         "evidence": evidence,
     }
+    if len(source) > answer_chars or (not parent_copy and report.get("answer_truncated") is True):
+        # Said, not silent: the parent must not read a cut answer as the whole one.
+        item["answer_truncated"] = True
     error = _result_error(report, status)
     if error:
         item["error"] = error
+    if isinstance(report.get("worktree"), dict):
+        item["worktree"] = dict(report["worktree"])
     if status in _FAILED_STATUSES:
         # The model reads `answer` as findings; a failure is reported in `error` only.
         item["answer"] = ""
@@ -492,22 +509,26 @@ def _aggregate_status(results: list[dict[str, Any]]) -> str:
     return "failed"
 
 
-def _bound_compact_report(report: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def _bound_compact_report(report: dict[str, Any], answer_chars: int) -> tuple[dict[str, Any], str]:
+    max_output = output_char_limit(answer_chars)
     bounded = copy.deepcopy(report)
     output = _serialize(bounded)
-    if len(output) <= MAX_DELEGATE_OUTPUT_CHARS:
+    if len(output) <= max_output:
         return bounded, output
     for result in reversed(bounded["results"]):
         while result["evidence"]:
             result["evidence"].pop()
             output = _serialize(bounded)
-            if len(output) <= MAX_DELEGATE_OUTPUT_CHARS:
+            if len(output) <= max_output:
                 return bounded, output
-    for limit in range(MAX_DELEGATE_ANSWER_CHARS - 100, 0, -100):
+    step = max(100, answer_chars // 25)
+    for limit in range(answer_chars - step, 0, -step):
         for result in reversed(bounded["results"]):
-            result["answer"] = _truncate_with_ellipsis(result["answer"], limit)
+            if len(result["answer"]) > limit:
+                result["answer"] = _truncate_with_ellipsis(result["answer"], limit)
+                result["answer_truncated"] = True
             output = _serialize(bounded)
-            if len(output) <= MAX_DELEGATE_OUTPUT_CHARS:
+            if len(output) <= max_output:
                 return bounded, output
     for result in bounded["results"]:
         result["answer"] = ""
@@ -539,29 +560,8 @@ def _safe_relative_path(value: object) -> str:
     return text
 
 
-def _positive_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if not isinstance(value, (int, float, str)):
-        return None
-    try:
-        candidate = int(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return candidate if candidate > 0 else None
-
-
 def _safe_text(value: object, *, max_chars: int) -> str:
     return sanitize_tool_output(value, max_chars=max_chars, tool_name=DELEGATE_TOOL_NAME).strip()
-
-
-def _truncate_with_ellipsis(value: object, limit: int) -> str:
-    text = str(value or "")
-    if len(text) <= limit:
-        return text
-    if limit <= 1:
-        return "\u2026"[:limit]
-    return f"{text[: limit - 1]}\u2026"
 
 
 def _serialize(report: dict[str, Any]) -> str:

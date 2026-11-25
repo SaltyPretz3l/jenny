@@ -1,0 +1,60 @@
+/* Mockup blocks in rendered markdown. Loaded by renderer/features/renderer-mockup-block.js with the first
+   ```mockup block, never at startup. A mockup block is the reply's page shown live in the sandboxed HTML frame,
+   with its code kept behind a text toggle. It sits on the same surface as the chat's code blocks. */
+
+.markdown-mockup-block {
+  margin: var(--markdown-block-gap, 1.15em) 0;
+}
+
+.markdown-mockup-block [hidden] {
+  display: none;
+}
+
+.markdown-mockup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 28px;
+  margin-block-end: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.markdown-mockup-label {
+  font-size: var(--tl-font-meta, var(--font-size-caption));
+  font-weight: var(--tl-weight-label);
+  color: var(--text-secondary);
+}
+
+.markdown-mockup-frame {
+  width: 100%;
+  min-height: 120px;
+  overflow: hidden;
+  border-radius: var(--tl-radius-panel);
+  background: var(--tl-code-bg);
+}
+
+.markdown-mockup-frame > iframe {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* A frame handed back: the block keeps its height, and the way to show it again sits in the middle. */
+.markdown-mockup-block[data-mockup-state="parked"] > .markdown-mockup-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.markdown-mockup-note {
+  margin: var(--space-2) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.markdown-mockup-block > .markdown-code-block {
+  margin-block: var(--space-2) 0;
+}

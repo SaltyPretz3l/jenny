@@ -25,7 +25,9 @@ names, counts and fixed words only. The binary exits when its standard input end
 
 The host closes a connection it turns away with a QUIC application code (`src/pipe.rs`): 0 closed,
 1 refused by the host application (a `null` admit answer or a `drop`), 3 the bridge's own refused-key
-cooldown, 4 no admit answer in time. The member reports them as `closed`, `host_refused`,
+cooldown, 4 no admit answer in time. The parent's `known_keys` line (at most 128 public keys, replacing the last
+set) names the keys it admits, so a key new to the set leaves its cooldown at once (`src/admission.rs`). A relay
+URL names a DNS host only (never `localhost` or an IP literal), and its token is a 1 to 48 character b64token. The member reports them as `closed`, `host_refused`,
 `host_cooldown` and `host_admit_timeout`; a member built before codes 3 and 4 reads them as unreachable
 or closed. A member accepts no incoming connection: each is dropped at once.
 

@@ -139,7 +139,7 @@ class ChatProposalService {
         return { abort: rec.canonicalJson(existing.normalized_input) === rec.canonicalJson(input)
           ? { existing } : { reason: 'idempotency_conflict', revision: existing.revision } };
       }
-      const live = records.map((entry) => rec.expireIfDue(entry, nowDate) || entry);
+      const live = support.withdrawSupersededGit(rec, records.map((entry) => rec.expireIfDue(entry, nowDate) || entry), created.record);
       if (live.filter(rec.isUnresolved).length >= rec.PROPOSAL_LIMITS.unresolved_per_source
         || profileUnresolved >= rec.PROPOSAL_LIMITS.unresolved_per_profile) {
         return { abort: { reason: 'capacity' } };

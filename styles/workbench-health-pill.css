@@ -415,6 +415,53 @@
   line-height: 1.5;
 }
 
+/* The control names the loaded model; the dot keeps its tone. */
+.workbench-health-pill--named[data-health-tone="success"] .workbench-health-pill-label {
+  color: var(--text-secondary);
+}
+
+.workbench-health-pill--named .workbench-health-pill-label {
+  max-inline-size: 22ch;
+}
+
+/* The engine and graphics-memory popover: the Running now bar at popover width. */
+.workbench-health-popover--engine {
+  width: 340px;
+}
+
+.workbench-health-popover--engine .mm-bar {
+  margin-block: var(--space-3) var(--space-2);
+}
+
+.workbench-health-popover--engine .mm-legend {
+  font-size: var(--font-size-footnote);
+}
+
+.workbench-health-popover--engine .workbench-health-popover-gpu-caveat .workbench-health-popover-action {
+  display: inline;
+  padding: 0;
+}
+
+.workbench-health-popover-tech > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.workbench-health-popover-tech > summary:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+}
+
+.workbench-health-popover-tech .workbench-health-popover-facts {
+  margin-block-start: var(--space-2);
+}
+
+.workbench-health-popover-tech .workbench-health-popover-fact {
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .workbench-health-pill[data-health-tone="pending"] .workbench-health-pill-dot,
   .workbench-health-popover[data-health-tone="pending"] .workbench-health-pill-dot {

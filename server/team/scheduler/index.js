@@ -7,7 +7,6 @@
 // The route token is never logged, never in an error and never in a listing.
 
 const { hostFailure } = require('../../api-contract');
-const { isId } = require('../ids');
 const { safeLogger } = require('../safe-logger');
 const { createAffinityMap, createExclusions } = require('./affinity');
 const { createFeed } = require('./feed');
@@ -15,17 +14,22 @@ const {
   JOB_LIVE, JOB_RUNNING, JOB_TERMINAL, claimDescriptor, createJobTable, jobView, scanChunk,
 } = require('./jobs');
 const { CANCEL_REASONS, NODE_FAIL_REASONS, NON_EXCLUDING_REASONS, resolveLimits } = require('./limits');
+const { readLeaseRequest } = require('./lease-request');
 const { orderWaiting } = require('./queue');
 const { chooseNode, isEligible, modelEntry, onlineSlots, poolSummary } = require('./selection');
 const {
-  createLeaseTable, createMemberServed, createNodeTable, isPrintable, leaseView, nodeView, normalizeAllowedNodes,
+  createLeaseTable, createMemberServed, createNodeTable, leaseView, nodeView,
 } = require('./state');
 
 const BARE_REFUSAL = Object.freeze({ ok: false });
 
-function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } = {}) {
+// `mayServe(subject, node)`, optional: the host's last word on whether a node may serve a lease (`subject` is the
+// lease record, or the request that has no record yet). Asked of nodes that pass every other test, at each dispatch;
+// a throw or any answer but `true` refuses the node.
+function createPoolScheduler({ clock, randomBytes, limits: overrides, logger, mayServe = null } = {}) {
   if (typeof clock !== 'function') throw new TypeError('Pool scheduler requires a clock function.');
   if (typeof randomBytes !== 'function') throw new TypeError('Pool scheduler requires a randomBytes function.');
+  if (mayServe !== null && typeof mayServe !== 'function') throw new TypeError('Pool scheduler mayServe must be a function.');
   const limits = resolveLimits(overrides);
   const log = safeLogger(logger);
   const nodes = createNodeTable({ limits });
@@ -57,7 +61,10 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
   const want = (lease, now) => ({
     model: lease.model, wantsVision: lease.wants_vision, allowedNodes: lease.allowed_nodes,
     affinityNodeId: affinity.get(lease.conversation_key, now),
-    excludedNodeId: exclusions.get(lease.conversation_key, now),
+    excludedNodeIds: exclusions.getAll(lease.conversation_key, now),
+  });
+  const permitFor = (subject) => (mayServe === null ? null : (node) => {
+    try { return mayServe(subject, node) === true; } catch (_error) { return false; }
   });
 
   // -------------------------------------------------------------------------
@@ -120,6 +127,10 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
     moveLease(batch, lease, 'active', to, trigger, reason, now, { exclude });
   }
 
+  const expireLease = (batch, lease, trigger, now, exclude = true) => endActiveLease(batch, lease, {
+    to: 'expired', trigger, reason: trigger, runningJob: { to: 'failed', trigger: 'node_lost' }, exclude,
+  }, now);
+
   const stopLease = (batch, lease, now) => endActiveLease(batch, lease, {
     to: 'failed', trigger: 'node_stopped', reason: 'user_stopped_sharing',
     runningJob: { to: 'failed', trigger: 'node_stopped' },
@@ -152,18 +163,41 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
     return true;
   }
 
+  // A queued lease no node can serve fails as no_eligible_node, not at its queue timeout (review H13, H2): at once
+  // when the host refuses every node advertising its model; after the nodes' contact timeout when none advertises it
+  // (so a node that restarts and registers again keeps the queue). Offline, paused and unlisted nodes still count.
+  function failStranded(batch, now) {
+    for (const lease of leases.all()) {
+      if (lease.state !== 'queued') continue;
+      const permit = permitFor(lease);
+      const advertising = nodes.all().filter((node) => {
+        const entry = modelEntry(node, lease.model);
+        return entry !== null && (!lease.wants_vision || entry.vision === true);
+      });
+      if (advertising.length > 0) lease.stranded_at = null;
+      else if (lease.stranded_at === null) lease.stranded_at = now;
+      const refused = advertising.length > 0 && permit !== null && !advertising.some(permit);
+      if (refused || (advertising.length === 0 && now - lease.stranded_at >= limits.nodeContactMs)) {
+        moveLease(batch, lease, 'queued', 'failed', 'no_eligible_node', 'no_eligible_node', now, { exclude: false });
+      }
+    }
+  }
+
   // Gives free slots to waiting leases: each waiting lease's choice is computed
   // once; then, for the free nodes oldest served first, the first lease in the
   // wait order for that node whose choice is that node. Repeats until nothing
-  // moves. Bounded by the queue and slot limits.
+  // moves. Bounded by the queue and slot limits; a lease whose activation is
+  // refused is not tried again in this pass, so the loop always ends.
   function dispatch(batch, now) {
+    failStranded(batch, now);
+    const refused = new Set();
     for (;;) {
-      const waiting = leases.all().filter((l) => l.state === 'queued');
+      const waiting = leases.all().filter((l) => l.state === 'queued' && !refused.has(l));
       if (waiting.length === 0) return;
       const views = nodeViews().sort((a, b) => a.last_served_at - b.last_served_at || a.order - b.order);
       const choices = new Map(waiting.map((lease) => {
         const w = want(lease, now);
-        return [lease, chooseNode(views, w, w)?.node_id ?? null];
+        return [lease, chooseNode(views, w, { ...w, permit: permitFor(lease) })?.node_id ?? null];
       }));
       let moved = false;
       for (const view of views) {
@@ -176,7 +210,7 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
         if (activate(batch, chosen, node, now)) {
           nodes.setNodeFields(node, { owner_went_ahead: chosen.member_id === node.member_id
             && mine.some((lease) => lease.member_id !== node.member_id) });
-        }
+        } else refused.add(chosen);
         moved = true;
         break;
       }
@@ -262,29 +296,23 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
   // -------------------------------------------------------------------------
   // Leases.
 
-  function readLeaseRequest(input) {
-    if (!input || typeof input !== 'object') return null;
-    const { conversationKey, memberId, model, wantsVision, retryAnyway = false } = input;
-    const allowedNodes = normalizeAllowedNodes(input.allowedNodes, limits);
-    if (!isPrintable(conversationKey, limits.maxConversationKeyLength) || !isId('member', memberId)) return null;
-    if (!isPrintable(model, limits.maxModelIdLength) || typeof wantsVision !== 'boolean') return null;
-    if (typeof retryAnyway !== 'boolean' || allowedNodes === undefined) return null;
-    return { conversationKey, memberId, model, wantsVision, retryAnyway, allowedNodes };
-  }
-
   function requestLease(input) {
-    const request = readLeaseRequest(input);
+    const request = readLeaseRequest(input, limits);
     if (!request) return fail('invalid', 'lease_request_invalid');
     const now = clock();
     const views = nodeViews();
     const advertised = views.filter((v) => v.online).map((v) => modelEntry(v, request.model)).filter(Boolean);
     if (advertised.length === 0) return fail('limit', 'model_not_in_pool');
     if (request.wantsVision && !advertised.some((entry) => entry.vision)) return fail('limit', 'model_lacks_vision');
-    const excludedNodeId = request.retryAnyway ? null : exclusions.get(request.conversationKey, now);
-    if (!views.some((v) => isEligible(v, request, { excludedNodeId, ignoreSlots: true }))) {
+    const options = { excludedNodeIds: request.retryAnyway ? null : exclusions.getAll(request.conversationKey, now),
+      permit: permitFor(request) };
+    if (!views.some((v) => isEligible(v, request, { ...options, ignoreSlots: true }))) {
       return fail('limit', 'no_eligible_node');
     }
-    if (queuedLeases().length >= limits.maxQueued) return fail('limit', 'pool_queue_full');
+    // A free node that can take the request now means it does not wait, so a full queue refuses only what must queue.
+    if (!views.some((v) => isEligible(v, request, options)) && queuedLeases().length >= limits.maxQueued) {
+      return fail('limit', 'pool_queue_full');
+    }
     return mutate((batch) => {
       if (request.retryAnyway) exclusions.clear(request.conversationKey);
       const { record, transition } = leases.create(request, now);
@@ -353,6 +381,10 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
     if (nodes.get(lease.node_id)?.paused) {
       return mutate((batch, now) => { busyLease(batch, lease, now); dispatch(batch, now); return fail('unavailable', 'node_busy'); });
     }
+    // A job for an offline node would wait for a claim that cannot come: the lease ends now (review H13).
+    if (!nodes.get(lease.node_id)?.online) {
+      return mutate((batch, now) => { expireLease(batch, lease, 'node_contact_timeout', now); dispatch(batch, now); return fail('unavailable', 'node_lost'); });
+    }
     return mutate((batch, now) => {
       const { record, transition } = jobs.create(lease, requestBytes, stream, now);
       batch.transitions.push({ ...transition, id: record.job_id, job: record });
@@ -403,6 +435,10 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
   function acceptChunk(jobId, nodeId, seq, bytes, final) {
     const job = jobs.get(jobId);
     const node = nodes.get(nodeId);
+    // The caller closed after [DONE]: the job is complete; what its node still sends is acknowledged and dropped.
+    if (job && node && job.node_id === nodeId && job.closed_after_done) {
+      return { ok: true, next_seq: job.next_seq, cancel: final !== true };
+    }
     if (!job || !node || job.node_id !== nodeId || !JOB_RUNNING.has(job.state)) return BARE_REFUSAL;
     if (!Number.isSafeInteger(seq) || seq !== job.next_seq) {
       return { ...fail('invalid', 'node_chunk_seq_invalid'), next_seq: job.next_seq };
@@ -459,7 +495,7 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
     const leaseActive = Boolean(lease && lease.state === 'active');
     return mutate((batch, now) => {
       if (job.state === 'streaming' && job.saw_done) {
-        moveJob(batch, job, 'streaming', 'done', 'closed_after_done', null, now);
+        if (moveJob(batch, job, 'streaming', 'done', 'closed_after_done', null, now)) job.closed_after_done = true;
       } else if (job.state === 'queued') {
         moveJob(batch, job, 'queued', 'failed', 'lease_terminal', 'cancelled', now);
         if (leaseActive) moveLease(batch, lease, 'active', 'failed', 'cancelled', 'cancelled', now);
@@ -515,13 +551,11 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
     const node = nodes.get(lease.node_id);
     const contactAt = Math.max(lease.active_at, node ? node.last_contact_at : -Infinity);
     let trigger = null;
-    if (now - contactAt >= limits.nodeContactMs) trigger = 'node_contact_timeout';
+    // A node already found offline ends its leases at once; the 30 s are the node's silence, not a grace for its lease.
+    if (!node || !node.online || now - contactAt >= limits.nodeContactMs) trigger = 'node_contact_timeout';
     else if (!liveJob(lease) && now - Math.max(lease.active_at, lease.last_job_at ?? 0) >= limits.leaseIdleMs) trigger = 'idle_timeout';
-    if (trigger) {
-      // R16-F02: a lease whose job its node never claimed is no fault of that node's work: no exclusion.
-      endActiveLease(batch, lease, { to: 'expired', trigger, reason: trigger,
-        runningJob: { to: 'failed', trigger: 'node_lost' }, exclude: liveJob(lease)?.state !== 'queued' }, now);
-    }
+    // R16-F02: a lease whose job its node never claimed is no fault of that node's work: no exclusion.
+    if (trigger) expireLease(batch, lease, trigger, now, liveJob(lease)?.state !== 'queued');
   }
 
   function sweep(now) {
@@ -547,6 +581,8 @@ function createPoolScheduler({ clock, randomBytes, limits: overrides, logger } =
   return Object.freeze({
     limits,
     registerNode, unregisterNode, touchNode, setNodePaused,
+    // Dispatches again after something outside the scheduler changed (who may serve whom).
+    rebalance: () => mutate((batch, now) => { batch.dirty = true; dispatch(batch, now); return { ok: true }; }),
     listNodes: nodeViews,
     nodeIdForDevice: (deviceId) => nodes.byDevice(deviceId)?.node_id || null,
     poolSummary: () => poolSummary(nodes.all()),

@@ -114,10 +114,15 @@
   gap: var(--space-1);
 }
 
-/* Shared 30px header icon-button base. The collapse toggle (mounted by
-   renderer-top-nav-shell.js) rests at full opacity: the sole collapse affordance. */
-.chats-tool-button,
-.chats-panel-collapse-toggle {
+/* The overflow menu is a low-frequency maintenance affordance sitting hard
+   against the panel's border-right, so at full weight it reads as clutter on
+   the seam. Rest it invisible and fade it in on approach -- opacity only, never
+   display/visibility: the button must stay focusable and in the accessibility
+   tree (same pattern as .workspace-rail-close-button). --transition-fast
+   composes --motion-duration-fast, which foundation.css already zeroes under
+   prefers-reduced-motion. */
+.chats-tool-button {
+  opacity: 0;
   display: grid;
   place-items: center;
   width: 30px;
@@ -134,23 +139,6 @@
     color var(--transition-fast);
 }
 
-/* An author display beats the UA [hidden] rule; honour syncPanelToggle()'s
-   hidden attribute (guarded by chats-panel-toggle-hidden-css.test.js). */
-.chats-panel-collapse-toggle[hidden] {
-  display: none;
-}
-
-/* The overflow menu is a low-frequency maintenance affordance sitting hard
-   against the panel's border-right, so at full weight it reads as clutter on
-   the seam. Rest it invisible and fade it in on approach -- opacity only, never
-   display/visibility: the button must stay focusable and in the accessibility
-   tree (same pattern as .workspace-rail-close-button). --transition-fast
-   composes --motion-duration-fast, which foundation.css already zeroes under
-   prefers-reduced-motion. */
-.chats-tool-button {
-  opacity: 0;
-}
-
 /* [data-menu-open] is set by openPanelOverflowMenu(): without it the dots fade
    out the instant the pointer leaves the sidebar for the menu they opened. */
 .view-panel:hover .chats-tool-button,
@@ -159,14 +147,12 @@
   opacity: 1;
 }
 
-.chats-tool-button:is(:hover, :focus-visible),
-.chats-panel-collapse-toggle:is(:hover, :focus-visible) {
+.chats-tool-button:is(:hover, :focus-visible) {
   background: var(--rail-hover-bg);
   color: var(--text-primary);
 }
 
-.chats-tool-button:focus-visible,
-.chats-panel-collapse-toggle:focus-visible {
+.chats-tool-button:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }

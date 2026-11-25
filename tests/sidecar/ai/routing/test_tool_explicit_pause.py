@@ -102,3 +102,50 @@ def test_unsafe_boundary_does_not_probe_or_claim_a_checkpoint(options) -> None:
     execute()
     assert callback.probes == []
     assert len(client.executions) == 1
+
+
+class _RealPositionProbe(_Checkpoint):
+    """Runs the checkpoint's own position checks, as the request to Electron would."""
+
+    def probe_pause(self, continuation: Any) -> dict[str, Any] | None:
+        from sidecar.runtime import continuation_checkpoint
+
+        self.probes.append(continuation)
+        continuation_checkpoint._position(continuation)
+        return None
+
+
+@pytest.mark.parametrize("setting", [200, 400, 500])
+def test_any_tools_per_turn_setting_passes_the_first_batch_probe(setting) -> None:
+    # Settings offer 1..500 tool calls per turn; a checkpoint cap of 256 failed every
+    # first batch above it with continuation_tool_call_limit_invalid.
+    from dataclasses import replace
+
+    from sidecar.ai.config import parse_runtime_config
+
+    parsed = parse_runtime_config({"engine_type": "api-provider", "cloud_max_tools_per_turn": setting})
+    descriptor = MCPToolDescriptor(
+        name="read_metric", description="Read a metric", side_effecting=False,
+        input_schema={"type": "object", "properties": {"value": {"type": "integer"}},
+                      "required": ["value"]}, server_name="tools")
+    engine = _ToolLoopEngine([
+        _ToolPlan(GenerationResult(content="", tool_calls=(ToolCallRequest(
+            call_id="call_1", tool_id="read_metric", arguments={"value": 7}),),
+            finish_reason="tool_calls")),
+        _ToolPlan(GenerationResult(content="Done.", finish_reason="stop")),
+    ])
+    router = _build_router(engine=engine, mcp_client=_StubMCPClient((descriptor,)),
+                           engine_type="api-provider")
+    router._config = replace(router._config, cloud_max_tools_per_turn=parsed.cloud_max_tools_per_turn)
+    context = ChatRequestContext(request_id="stream_1", session_id="session_1", mode="assist",
+                                 workspace_root_present=True, trace_id="trace_1",
+                                 approvals_pre_granted=False)
+    probe = _RealPositionProbe(paused=False)
+    runtime = LoopRuntime(request_id="stream_1", session_id="session_1", streaming=True,
+                          emit=lambda _e: None, continuation_checkpoint=probe,
+                          logical_turn_id="turn_1", request_context=context)
+    router.build_chat_decision(
+        request_id="stream_1", messages=[{"role": "user", "content": "Read."}],
+        latest_user_content="Read.", mode="assist", approvals_pre_granted=False,
+        request_context=context, runtime=runtime)
+    assert [item.tool_call_limit for item in probe.probes] == [setting]

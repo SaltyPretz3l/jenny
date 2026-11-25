@@ -165,7 +165,7 @@ test('dock: the workbench Changes tab counts the changes waiting for a decision'
   const changesViewModule = require('../renderer/features/renderer-changes-view');
   const dom = new JSDOM(`<!doctype html><body>
     <section id="chatView"><div id="chatThreadStage"><div id="chatThreadScroll"><div id="chatTimeline"></div></div></div>
-      <div id="composerWrap"><textarea id="chatInput"></textarea></div><div id="artifactReviewResizer"></div></section>
+      <div id="composerWrap"><textarea id="chatInput"></textarea></div><aside id="artifactReviewPanel"></aside></section>
     <div id="ideShell"><div id="ideMain"><div id="ideEditorHost" tabindex="0"></div></div>
       <aside id="ideChatDock" class="hidden"><header id="ideChatDockHeader"></header><div id="ideChatDockBody"></div></aside>
       <div id="changesHost"></div></div></body>`);

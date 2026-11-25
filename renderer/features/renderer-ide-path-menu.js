@@ -17,8 +17,14 @@
 
   function noop() {}
 
-  // Outside-Workspace documents (row 137) keep a registry of their real display path.
-  const outsideDocs = () => globalThis.rendererIdeOutsideFiles || (typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
+  // Outside-Workspace documents (row 137) keep a registry of their real display path. It loads
+  // with the IDE (renderer-ide-script-manifest.js), but this menu loads eagerly and the chat's
+  // right-click reaches it first; in the page `require` is then Monaco's AMD loader, which throws
+  // for a module it has never seen. No IDE yet means no outside documents, so the page reads
+  // the global only; require is for Node (tests), where this file is a CommonJS module.
+  const IS_COMMONJS = typeof module === 'object' && Boolean(module && module.exports);
+  const outsideDocs = () => globalThis.rendererIdeOutsideFiles
+    || (IS_COMMONJS && typeof require === 'function' ? require('./renderer-ide-outside-files') : null);
 
   /**
    * @param {Object} deps

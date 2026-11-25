@@ -100,9 +100,11 @@ test('a request that did not arrive intact has no Allow and says why', () => {
 });
 
 test('a decided ask leaves a receipt that names what was decided', () => {
-  const root = render(riskyClick(), { cardState: 'resolved', decision: 'approved' });
+  // Row 192 D2 A: the chat's inline row renders empty (the step carries the answer); the card keeps the receipt line.
+  const root = render(riskyClick(), { cardState: 'resolved', decision: 'approved', mode: 'card' });
   assert.match(text(root, '.tool-approval-receipt-subject'), /Place order/u);
-  assert.match(text(render(newSite(), { cardState: 'resolved', decision: 'denied' }), '.tool-approval-receipt-subject'), /shop\.example/u);
+  assert.match(text(render(newSite(), { cardState: 'resolved', decision: 'denied', mode: 'card' }), '.tool-approval-receipt-subject'), /shop\.example/u);
+  assert.match(text(render(newSite(), { cardState: 'resolved', decision: 'denied' }), '.sr-only'), /shop\.example/u);
 });
 
 test('the turn-row approval gap hands the field to the card', () => {

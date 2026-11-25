@@ -47,11 +47,14 @@ test('moving a chat re-stamps its agent tasks and deleting a project re-homes ta
     backend.sidecarClient = { connected: true, dispose() {}, request: async () => ({ moved: 0, merged: 0, pending_moved: 0 }) };
     const deletedNotes = [];
     backend.projectNotesService = { deleteProjectNotes: (id) => { deletedNotes.push(id); return { ok: true }; } };
+    const deletedRuns = []; // row 197: the Live tab's run stops and its saved command goes
+    backend.runView = { onProjectDeleted: async (id) => { deletedRuns.push(id); return { ok: true }; } };
     const deleted = await application.deleteProject({ project_id: projectId });
     assert.equal(deleted.ok, true, JSON.stringify(deleted));
     assert.equal(stampOf(configService, 'chat-task'), GENERAL_PROJECT_ID);
     assert.equal(stampOf(configService, 'rail-task'), GENERAL_PROJECT_ID);
     assert.deepEqual(deletedNotes, [projectId]);
+    assert.deepEqual(deletedRuns, [projectId]);
   } finally {
     backend.dispose();
   }

@@ -23,7 +23,7 @@
   // E64: what would host, join, reach a team or share the GPU is greyed while Force local is on, the state line its reason.
   const HELD_ACTIONS = new Set(['deploy', 'start', 'join', 'recover', 'confirm-recover', 'restore-open', 'restore-pick', 'restore-go',
     'new-open', 'new-go', 'net-save', 'net-on', 'net-code', 'share-start', 'leave', 'confirm-leave', 'cancel-request', 'enter-code',
-    'reconnect', 'device-invite', 'leave-export']);
+    'reconnect', 'device-invite', 'leave-export', 'net-clear-token']);
 
   // One inventory button carrying its action and ids as data attributes; disabled while busy.
   function button(vm, action, label, { variant = 'secondary', ids = {}, busyKey = action, disabled = false, ariaLabel = '', title = '' } = {}) {
@@ -84,6 +84,54 @@
     const still = Boolean(win && typeof win.matchMedia === 'function' && win.matchMedia('(prefers-reduced-motion: reduce)').matches);
     if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start', behavior: still ? 'auto' : 'smooth' });
     return opened;
+  }
+
+  // Where focus was, as a selector that outlives a redraw: a control without an id is found again by its data attributes
+  // (an action and the ids it carries), inside its segmented control when it is one of its choices.
+  const FOCUS_ATTRS = ['data-team-action', 'data-team-id', 'data-member-id', 'data-device-id', 'data-invite-id', 'data-set-aside-id',
+    'data-team-net-fold', 'data-team-jump', 'data-inv-toggle', 'data-value'];
+  const attrSelector = (el, name) => '[' + name + '="' + el.getAttribute(name).replace(/["\\]/g, '\\$&') + '"]';
+  function focusSelector(el) {
+    const own = FOCUS_ATTRS.filter((name) => el.hasAttribute(name)).map((name) => attrSelector(el, name)).join('');
+    if (!own) return '';
+    const segmented = el.closest('[data-inv-segmented]');
+    return (segmented ? attrSelector(segmented, 'data-inv-segmented') + ' ' : '') + el.localName + own;
+  }
+
+  // Remembers the focused control (and the selection in a text field) inside `target`; the function it returns puts focus
+  // back after `target.innerHTML` was rewritten.
+  function keepFocus(target) {
+    const doc = target.ownerDocument;
+    const active = doc && doc.activeElement && target.contains(doc.activeElement) ? doc.activeElement : null;
+    if (!active) return () => {};
+    const id = active.id;
+    const selector = id ? '' : focusSelector(active);
+    const selection = typeof active.selectionStart === 'number' ? [active.selectionStart, active.selectionEnd] : null;
+    return () => {
+      const again = id ? doc.getElementById(id) : selector ? target.querySelector(selector) : null;
+      if (!again || typeof again.focus !== 'function') return;
+      again.focus({ preventScroll: true });
+      if (selection && typeof again.setSelectionRange === 'function') { try { again.setSelectionRange(selection[0], selection[1]); } catch (_error) { /* not a text field */ } }
+    };
+  }
+
+  // Enter in a form's text field presses that form's own button: the field's id, then the actions to look for in its form.
+  const ENTER_ACTIONS = Object.freeze({ teamNewName: ['deploy'], teamInviteCode: ['join'], teamTeamName: ['rename'], teamExportPass: ['export-go'],
+    teamExportPass2: ['export-go'], teamDeleteName: ['del-go', 'old-del-go'], teamRestoreName: ['restore-go'], teamRestorePass: ['restore-go'],
+    teamStartNewName: ['new-go'], teamReconnectInput: ['reconnect'], teamNetAddr: ['net-save'], teamNetRelay: ['net-save'], teamNetToken: ['net-save'] });
+  function submitOnEnter(event) {
+    const field = event.target;
+    const actions = event.key === 'Enter' && !event.isComposing && !event.shiftKey && field && field.tagName === 'INPUT' ? ENTER_ACTIONS[field.id] : null;
+    if (!actions) return false;
+    const form = field.closest('.team-set-confirm') || field.closest('[data-team-group]');
+    for (const action of actions) {
+      const go = form && form.querySelector('[data-team-action="' + action + '"]');
+      if (!go) continue;
+      event.preventDefault();
+      if (!go.disabled) go.click();
+      return true;
+    }
+    return false;
   }
 
   function note(text, attrs = '') {
@@ -178,6 +226,12 @@
   }
 
   function hostGroup(vm) {
+    // OD-7: where desktop hosting cannot run (macOS, a packaged Linux) the form gives way to the reason and the other route.
+    if (vm.platformBlocked) {
+      return group('host', jt('settings.team.host.heading', 'Host a team'), {
+        copy: jt('settings.team.host.platform', 'Hosting a team from the desktop app works only on Windows for now. To host one from another computer, run the headless server: see docs/operations/team-host-docker.md in the Jenny repository.'),
+        body: vm.restoreHtml || '' });
+    }
     return group('host', jt('settings.team.host.heading', 'Host a team'), {
       copy: jt('settings.team.host.copy', 'This PC becomes the team’s server. Up to eight people, you included. It runs while Jenny is open.'),
       body: fieldRow('teamNewNameRow', jt('settings.team.host.name', 'Team name'), jt('settings.team.host.nameHelp', 'Members see this name.'),
@@ -223,6 +277,13 @@
     }
   }
 
+  // H20: the owner's own device on the PC that runs the server can get back in from here; any other member needs a new invite.
+  function revokedFact(vm, team) {
+    return vm.revokedHostedId === team.team_id
+      ? jt('settings.team.joined.revokedOwner', 'This PC lost its place in the team. You can get back in from this PC: use Get back in as the owner above.')
+      : words.revokedText();
+  }
+
   function joinedGroup(vm, revealHtml) {
     if (!vm.joined.length) return '';
     const rows = vm.joined.map((team) => {
@@ -232,7 +293,7 @@
       const extra = vm.memberRow ? vm.memberRow(team) : {};
       const fact = team.state === 'needs_repair' ? words.connectionText(team.state) + ' · ' + words.repairText(team.reason)
         : team.state === 'deleted' || team.state === 'force_local' ? words.connectionText(team.state)
-          : words.roleText(team.role) + ' · ' + (team.state === 'revoked' ? words.revokedText() : extra.fact || words.connectionText(team.state));
+          : words.roleText(team.role) + ' · ' + (team.state === 'revoked' ? revokedFact(vm, team) : extra.fact || words.connectionText(team.state));
       const ids = { teamId: team.team_id };
       let confirm = '';
       if (vm.confirm === 'leave:' + team.team_id) {
@@ -280,5 +341,5 @@
       + '<p class="team-set-code__note">' + escapeHtml(noteText) + '</p></div>';
   }
 
-  return { button, group, fold, foldLast, summaryLine, revealGroup, note, textInput, fieldRow, confirmBlock, row, codeBlock, statusLine, stopConfirm, ownDevicesOf, youGroup, hostGroup, joinGroup, joinedGroup, reclaimGroup, HELD_ACTIONS };
+  return { button, group, fold, foldLast, summaryLine, revealGroup, keepFocus, submitOnEnter, note, textInput, fieldRow, confirmBlock, row, codeBlock, statusLine, stopConfirm, ownDevicesOf, youGroup, hostGroup, joinGroup, joinedGroup, reclaimGroup, HELD_ACTIONS };
 });

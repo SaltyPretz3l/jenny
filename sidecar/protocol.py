@@ -260,7 +260,7 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
 # sidecar/ai/routing/route_policy_runtime.py (``with_request_safety``).
 # Row 59 cp6 additive chat.send field, following WO-26 / D3:
 # params.inference_performance = {live: bool, provider_kind:
-# "ninfer"|"llama-server"|"ollama"|"other"}. Closed object; invalid fields
+# "ninfer"|"llama-server"|"strata"|"ollama"|"other"}. Closed object; invalid fields
 # (including unknown keys) are ignored, never a turn failure. Only live=True
 # with provider_kind "ninfer" or "llama-server" requests timings_per_token /
 # return_progress.
@@ -354,6 +354,9 @@ RUNTIME_OPERATION_METHOD = "runtime.operation"
 # Row 102: the only legal value of the tool check's optional ``grant`` key, sent for a
 # builtin run_command the shell classifier proved read-only inside the request root.
 RUNTIME_OPERATION_READ_ONLY_COMMAND_GRANT = "read_only_command"
+# Row 184 W3: the ``kind`` of a runtime.operation that issues or settles a writing
+# helper's worktree (actions ``create`` and ``settle``); Electron owns the worktree.
+RUNTIME_OPERATION_HELPER_WORKTREE_KIND = "helper_worktree"
 MONITOR_EVENT_METHOD = "monitor.event"
 # delegate child frames additionally carry reasoning_effort and child_activity:
 # cumulative sequence, <=40 sanitized steps, <=4000 visible-text characters,

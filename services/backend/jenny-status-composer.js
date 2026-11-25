@@ -6,6 +6,7 @@ const { buildResourceBudgetFacet } = require('./resource-budget-facade');
 const { buildTurnDiagnosticIndex } = require('./turn-diagnostic-index');
 const { buildToolPolicyStatusFacet } = require('../tools/tool-policy-status');
 const { normalizeText: normalizeString } = require('../shared/normalize');
+const { buildLlamaServerFacet, buildManagedServerFacet } = require('./managed-server-facet');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 
 const JENNY_STATUS_SCHEMA_VERSION = 4;
@@ -378,70 +379,6 @@ function buildRuntimeFacet(service, backendStatus = {}, redactor = null, executi
     tools_status_scope: 'runtime',
     ...(trusted ? trusted.describeToolAvailability(cloneJsonSafe(source.tools_status, {})) : {}),
     lifecycle: buildRuntimeLifecycleFacet(service, backendStatus, source, redactor),
-  };
-}
-
-const RUNTIME_LABEL_PATTERN = /^[A-Za-z0-9 ._-]{0,32}$/;
-const MANAGED_SERVER_STATES = ['stopped', 'starting', 'ready', 'stopping', 'crashed'];
-const managedInteger = (value) => (Number.isInteger(Number(value)) && Number(value) >= 0 ? Number(value) : 0);
-const managedState = (value) => MANAGED_SERVER_STATES.find((state) => state === normalizeString(value).toLowerCase()) || 'unknown';
-// model_path / last_error can carry the user's home directory.
-const managedText = (redactor, value) => (redactor?.text ? redactor.text(value) : normalizeString(value));
-// A bounded build/version token ('bundled', 'env', 'build 10683', '0.9.1'); never a path.
-const managedRuntimeLabel = (value) => (typeof value === 'string' && RUNTIME_LABEL_PATTERN.test(value) ? value : '');
-
-function buildLlamaServerFacet(service, redactor) {
-  const manager = service?.options?.getLlamaServerManager?.();
-  if (!manager || typeof manager.getStatus !== 'function') return null;
-  try {
-    const status = manager.getStatus() || {};
-    // Wire-shaped like local_runtime; an allowlist so the api key (or any
-    // future field on the manager status) can never leak through diagnostics.
-    return {
-      state: managedState(status.state),
-      pid: managedInteger(status.pid),
-      port: managedInteger(status.port),
-      alias: normalizeString(status.alias),
-      model_path: managedText(redactor, status.modelPath),
-      profile_id: normalizeString(status.profileId),
-      acceleration_mode: normalizeString(status.accelerationMode),
-      acceleration_reason: normalizeString(status.accelerationReason),
-      reused: normalizeBoolean(status.reused),
-      last_error: managedText(redactor, status.lastError),
-      runtime_label: managedRuntimeLabel(status.runtimeLabel),
-      changed_at: managedInteger(status.changedAt),
-    };
-  } catch (_error) {
-    return null;
-  }
-}
-
-// One managed server is up at a time: NInfer wins unless it is cleanly stopped,
-// else llama-server. The same allowlist: never a key, a path or a raw object.
-function buildManagedServerFacet(service, redactor, llama) {
-  let status;
-  try { status = service?.options?.getNinferManager?.()?.getStatus?.() || null; } catch (_error) { status = null; }
-  const lastError = status ? managedText(redactor, status.lastError) : '';
-  const ninferState = status ? managedState(status.state) : '';
-  const live = (state) => ['starting', 'ready', 'stopping'].includes(state);
-  // The serving or launching manager wins; a retained NInfer failure shows only
-  // while nothing else serves, so a live llama-server is never hidden behind it.
-  const ninferWins = live(ninferState) || (!live(llama?.state) && !(ninferState === 'stopped' && !lastError));
-  if (!status || !ninferWins) {
-    return llama ? {
-      kind: 'llama-server', state: llama.state, alias: llama.alias, port: llama.port,
-      acceleration_mode: llama.acceleration_mode, last_error: llama.last_error, runtime_label: llama.runtime_label,
-      stopped_by: '', watchdog_watts: 0, changed_at: llama.changed_at,
-    } : null;
-  }
-  const watts = Number(status.watchdogWatts);
-  return {
-    kind: 'ninfer', state: managedState(status.state), alias: normalizeString(status.alias),
-    port: managedInteger(status.port), acceleration_mode: status.mtp === true ? 'mtp' : 'off',
-    last_error: lastError, runtime_label: managedRuntimeLabel(status.runtimeLabel),
-    stopped_by: normalizeString(status.stoppedBy) === 'watchdog' ? 'watchdog' : '',
-    watchdog_watts: Number.isFinite(watts) && watts > 0 ? Math.round(watts) : 0,
-    changed_at: managedInteger(status.changedAt),
   };
 }
 
@@ -1004,7 +941,7 @@ async function getJennyStatus(service, options = {}) {
       ...buildUnavailableFacet(error, redactor),
     };
   }
-  payload.budgets = buildResourceBudgetFacet(payload);
+  payload.budgets = buildResourceBudgetFacet(payload, { service, sessionId: options.sessionId || options.session_id });
   payload.memory_reflection = require('./memory-reflection-status').buildMemoryReflectionFacet(service);
   return payload;
 }

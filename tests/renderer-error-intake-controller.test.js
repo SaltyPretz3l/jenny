@@ -204,6 +204,7 @@ test('lifecycle composition installs live flag-gated error wrappers', async () =
     get(_target, key) {
       if (key === 'then' || key === Symbol.unscopables) return undefined;
       if (key === Symbol.iterator) return function* () {};
+      if (key === Symbol.toPrimitive) return () => 0;
       return placeholder;
     },
   });
@@ -223,12 +224,12 @@ test('lifecycle composition installs live flag-gated error wrappers', async () =
     }) },
   };
   const ctx = new Proxy(bag, {
-    // `ctx` stays the composition's own parameter: it hands `{ __proto__: ctx }` to its sections.
-    has(_target, key) { return key !== 'result' && key !== 'ctx' && key !== Symbol.unscopables; },
-    get(target, key) { return key === Symbol.unscopables ? undefined : key in target ? target[key] : placeholder; },
+    // Every name a composition reads from its ctx resolves: the bag's own entry, else the placeholder.
+    has() { return true; },
+    get(target, key) { return key in target ? target[key] : placeholder; },
   });
   const sandbox = { window, console };
-  // The lifecycle composition and the with(ctx) sections it calls (the error wrappers live in the notices section).
+  // The lifecycle composition and the sections it hands its ctx to (the error wrappers live in the notices section).
   for (const file of ['boot-preferences', 'shell-services', 'notices', 'navigation', 'lifecycle']) {
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', `renderer/app/renderer-app-${file}-composition.js`), 'utf8'), sandbox);
   }

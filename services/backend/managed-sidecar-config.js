@@ -1,5 +1,4 @@
 const path = require('path');
-const { sameLocalOrigin } = require('../local-origin');
 const { resolveManagedServerOwner } = require('./managed-server-owner');
 const { buildApiProviderSidecarConfig } = require('./api-provider-sidecar-config');
 const { buildLocalSubagentSidecarConfig } = require('./local-subagent-engine');
@@ -52,6 +51,7 @@ const {
   getConfiguredStreamInactivity,
   getConfiguredTelemetrySettings,
   getConfiguredToolPolicySnapshot,
+  getConfiguredToolsComputerUseEnabled,
   getConfiguredToolsImageReadEnabled,
   getConfiguredToolsLspEnabled,
   getConfiguredToolsPythonRuntimeEnabled,
@@ -108,11 +108,12 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_distill_enabled: false,
   tools_worktree_enabled: false,
   tools_subagents_enabled: false,
-  tools_mcp_resources_enabled: false,
   tools_automations_enabled: false,
   tools_workspace_present_enabled: false,
   tools_preview_test_enabled: false,
   tools_browser_use_enabled: false,
+  tools_run_view_enabled: false,
+  tools_computer_use_enabled: false,
   tools_verify_enabled: false,
   tools_image_generate_enabled: false,
   tools_home_enabled: false, tools_next_step_enabled: false,
@@ -129,7 +130,6 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_todo_enabled: false,
   tools_connections_enabled: false,
   tools_workspace_manifest_enabled: false,
-  tools_task_capsule_enabled: false,
   tools_python_runtime_enabled: false,
   tools_load_skill_enabled: false,
 });
@@ -172,9 +172,14 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   const configuredContextLengthOverride = getConfiguredContextLengthOverride(
     compactionTuning, configuredModel, engineType
   );
-  const managedLlamaServerContextLength = Number(
+  // The managed llama-server profile's window is a fallback for llama-server or
+  // a user's own server, never for an endpoint another managed server owns
+  // (Strata, NInfer, the team port report their own window).
+  const endpointOwner = engineType === 'openai-compatible' && !hostedEndpoint
+    ? resolveManagedServerOwner(service, resolveOpenAICompatibleApiUrl(service)) : null;
+  const managedLlamaServerContextLength = !endpointOwner || endpointOwner.kind === 'llama-server' ? Number(
     service.options?.managedLlamaServerProfile?.contextSize
-  );
+  ) : NaN;
   const openAiCompatibleContextLength = engineType === 'openai-compatible'
     ? (configuredContextLengthOverride ?? (
       Number.isSafeInteger(managedLlamaServerContextLength)
@@ -190,11 +195,11 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
   const cloudLoopProfile = getConfiguredCloudLoopProfile(service);
   const config = {
     engine_type: engineType,
-    managed_prefill_progress: !hostedEndpoint && engineType === 'openai-compatible'
+    // Only the owning manager can promise prefill progress: today llama-server.
+    // Strata never sends prompt_progress for Inkling (row 200 F10).
+    managed_prefill_progress: endpointOwner?.kind === 'llama-server'
       && service.featureFlags?.prefill_progress === true
-      && service.options?.getLlamaServerManager?.()?.supportsPrefillProgress?.() === true
-      && sameLocalOrigin(resolveOpenAICompatibleApiUrl(service),
-        service.options?.getLlamaServerManager?.()?.getBaseUrl?.()),
+      && endpointOwner.manager.supportsPrefillProgress?.() === true,
     model: configuredModel,
     ...buildApiProviderSidecarConfig(service, engineType, configuredModel), // row 78: descriptor + limits
     ...buildLocalSubagentSidecarConfig(service), // row 179: a ready helper under a cloud primary only
@@ -221,12 +226,12 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     electron_tool_bridge_enabled: Boolean(service.toolExecutor),
     tools_workspace_manifest_enabled: service.featureFlags?.workspace_manifest === true,
     repo_delta_resume_enabled: service.featureFlags?.repo_delta_resume === true,
-    tools_task_capsule_enabled: service.featureFlags?.task_capsule === true,
-    tools_mcp_resources_enabled: service.featureFlags?.mcp_resources === true,
     tools_automations_enabled: service.featureFlags?.tools_automations_enabled === true,
     tools_workspace_present_enabled: service.featureFlags?.tools_workspace_present_enabled === true,
     tools_preview_test_enabled: service.featureFlags?.tools_preview_test_enabled === true,
     tools_browser_use_enabled: service.featureFlags?.tools_browser_use_enabled === true,
+    tools_run_view_enabled: service.featureFlags?.tools_run_view_enabled === true && service.featureFlags?.live_run_view !== false, // row 197
+    tools_computer_use_enabled: service.featureFlags?.tools_computer_use_enabled === true && process.platform === 'win32' && getConfiguredToolsComputerUseEnabled(service), // row 196
     tools_verify_enabled: service.featureFlags?.tools_verify_enabled === true,
     tools_image_generate_enabled: service.featureFlags?.tools_image_generate_enabled === true,
     tools_home_enabled: service.featureFlags?.tools_home_enabled === true, tools_next_step_enabled: service.featureFlags?.tools_next_step_enabled === true,
@@ -237,7 +242,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     tools_memory_enabled: service.featureFlags?.memory_v2_enabled === true,
     tools_conversations_enabled: service.featureFlags?.memory_v2_enabled === true,
     memory_hybrid_recall_enabled: service.featureFlags?.memory_hybrid_recall === true,
-    json_schema_response_format: engineType === 'openai-compatible' && resolveManagedServerOwner(service, resolveOpenAICompatibleApiUrl(service))?.kind === 'llama-server', // Reflection's json_schema: managed llama-server only, never NInfer.
+    json_schema_response_format: endpointOwner?.kind === 'llama-server', // Reflection's json_schema: managed llama-server only, never NInfer or Strata.
     tools_subagents_enabled: getConfiguredToolsSubagentsEnabled(service),
     tools_rich_files_enabled: getConfiguredToolsRichFilesEnabled(service),
     tools_image_read_enabled: getConfiguredToolsImageReadEnabled(service),

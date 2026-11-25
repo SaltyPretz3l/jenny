@@ -52,12 +52,6 @@
       typeof settings.escapeSelectorValue === 'function'
         ? settings.escapeSelectorValue
         : (value) => String(value || '');
-    // chat_stream_paint_v2 (Ht-C): read live off renderer state so the flag
-    // survives late hydration; absent state (legacy callers) = OFF path.
-    const isStreamPaintV2Enabled = () =>
-      settings.state?.features?.featureFlags?.chat_stream_paint_v2 === true;
-    const isTokenFadeEnabled = () =>
-      settings.state?.features?.featureFlags?.chat_stream_token_fade === true;
     const recordChatTimelineRolloutSignal = typeof settings.recordChatTimelineRolloutSignal === 'function'
       ? settings.recordChatTimelineRolloutSignal
       : () => ({ logged: false, count: 0 });
@@ -228,11 +222,11 @@
       return message;
     }
 
-    // chat_stream_token_fade: a `(el, html, index)` writer that fades a tail
-    // unit's new text through the runtime tracker in `slot` (scoped by
-    // `scopeKey`), or null when the flag is off or motion is reduced.
+    // A `(el, html, index)` writer that fades a tail unit's new text through
+    // the runtime tracker in `slot` (scoped by `scopeKey`), or null when
+    // motion is reduced.
     function makeTailFadeWriter(slot, scopeKey) {
-      if (!isTokenFadeEnabled() || reducedMotionQuery.matches
+      if (reducedMotionQuery.matches
         || typeof tokenFadeUtils.createStreamTokenFadeTracker !== 'function') {
         return null;
       }
@@ -270,9 +264,9 @@
       // Update changed existing units in place.
       for (let i = changedStart; i < units.length; i++) {
         const unitData = units[i];
-        // chat_stream_token_fade: only the growing tail unit fades its new
-        // text (a fresh tail unit fades its first line once); every other
-        // write stays the plain innerHTML path.
+        // Only the growing tail unit fades its new text (a fresh tail unit
+        // fades its first line once); every other write stays the plain
+        // innerHTML path.
         const fadeTail = i === units.length - 1 ? makeTailFadeWriter('tokenFadeTracker', runtime.streamingMessageId) : null;
         const writeUnit = (el, plainWrite) => (fadeTail ? fadeTail(el, unitData.html, i) : plainWrite());
         if (i < existingUnits.length) {
@@ -313,16 +307,13 @@
     // so it must not share the bubble's), reset per reasoning block.
     const getReasoningTailWriter = (blockKey) => makeTailFadeWriter('reasoningTokenFadeTracker', `${runtime.streamingMessageId}:${blockKey}`);
     const { patchReasoningStack } = reasoningPatchUtils.createReasoningStackPatcher({
-      getRuntime: () => runtime, isStreamPaintV2Enabled, noteHeaderPatch, buildAutoCollapseOptions, getReasoningTailWriter,
+      getRuntime: () => runtime, noteHeaderPatch, buildAutoCollapseOptions, getReasoningTailWriter,
     });
-    // Row 101 Phase 2: a capped live reasoning body follows its own bottom
-    // (flag reasoning_live_box). Resolved here, not at factory time, so the
+    // Row 101 Phase 2: a capped live reasoning body follows its own bottom.
+    // Resolved here, not at factory time, so the
     // script order in index.html cannot leave it unresolved.
     const liveBoxFollow = resolveStreamRevealModule('rendererReasoningLiveBoxFollow', './renderer-reasoning-live-box-follow')
-      .createReasoningLiveBoxFollow?.({
-        reducedMotionQuery,
-        isEnabled: () => settings.state?.features?.featureFlags?.reasoning_live_box === true,
-      }) || { sync() {}, dispose() {} };
+      .createReasoningLiveBoxFollow?.({ reducedMotionQuery }) || { sync() {}, dispose() {} };
 
     function buildStreamingBubbleMarkup(message) {
       const messageId = String(message && message.id || '');
@@ -528,7 +519,10 @@
       ) {
         const rowMarkup = String(patchOptions.buildRowNodeMarkup() || '').trim();
         if (rowMarkup) {
+          // Built without the steps heading and runs: keep their stamps (row 192, C15).
+          const stamps = [...patchTarget.attributes].filter((a) => /^data-(ledger|run)-/.test(a.name)).map((a) => [a.name, a.value]);
           setOuterHtmlPreservingCodeScroll(patchTarget, rowMarkup);
+          stamps.forEach(([name, value]) => patchTarget.setAttribute(name, value));
           rowNodeRewritten = true;
         }
       }
@@ -562,18 +556,12 @@
         }
       }
 
-      // Targeted patch: update only the streaming bubble and thinking body,
-      // preserving the thinking toggle/panel DOM to prevent hover flicker,
-      // click failure, and max-height re-animation.
-      //
-      // A row-model turn-article interleaves EVERY segment's reasoning
-      // stack; the first `.reasoning-row-stack` in the article belongs to
-      // segment 0, so an article-wide first-match anchor mirrors the live
-      // stream into the TOP of the turn on multi-segment turns. Scope the
-      // reasoning patch to the LIVE segment's reasoning row (source-id or
-      // source-id-list match, falling back to the last stack — segments
-      // append in order). Legacy single-message articles keep the article
-      // scope unchanged.
+      // Targeted patch: only the streaming bubble and thinking body, keeping the
+      // thinking toggle/panel DOM (no hover flicker, lost clicks or re-animation).
+      // A row-model article holds every segment's reasoning stack, so the patch
+      // is scoped to the LIVE segment's row (source id, else the last stack);
+      // a first match would mirror the stream into segment 0. Legacy articles
+      // keep the article scope.
       const segmentScope = rowModelList
         ? streamPatchTargetUtils.resolveLiveReasoningScope(rowModelList, message.id, escapeSelectorValue)
         : article;

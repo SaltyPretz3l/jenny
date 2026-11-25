@@ -38,7 +38,7 @@
     defaultRunModeSelect: {
       label: jt('settings.fieldCopy.defaultRunModeSelect.label', 'Default run mode'),
       description: jt('settings.fieldCopy.defaultRunModeSelect.description', 'For new chats. Ask checks before changes, Auto runs without asking, Plan stays read-only until you approve the plan.'),
-      detail: jt('settings.runMode.detail', 'In Auto, Python and explicit denies still ask and blocked commands are refused. The composer switcher changes the current chat.'),
+      detail: jt('settings.runMode.detail', 'In Auto, Python outside a project and denies ask; blocked commands are refused. The composer switcher changes this chat.'),
       sectionId: 'permissions',
       keywords: [jt('settings.fieldCopy.defaultRunModeSelect.keywords.runMode', 'run mode'), 'ask', 'auto', 'plan', jt('settings.fieldCopy.defaultRunModeSelect.keywords.newChat', 'new chat'), jt('settings.fieldCopy.defaultRunModeSelect.keywords.toolApproval', 'tool approval')],
     },
@@ -252,7 +252,7 @@
       sectionId: 'appearance',
       keywords: ['zoom', jt('settings.fieldCopy.appearanceAppZoomSelect.keywords.uiScale', 'ui scale'), jt('settings.fieldCopy.appearanceAppZoomSelect.keywords.appSize', 'app size'), 'magnify'],
     },
-    appearanceTeamDensitySelect: { label: jt('settings.fieldCopy.appearanceTeamDensitySelect.label', 'Team chat density'), sectionId: 'appearance',
+    appearanceTeamDensitySelect: { label: jt('settings.fieldCopy.appearanceTeamDensitySelect.label', 'Team chat density'), sectionId: 'team',
       description: jt('settings.fieldCopy.appearanceTeamDensitySelect.description', 'How close messages sit in the Team tab. Compact drops the pictures and puts the time, name and text on one line.'),
       keywords: [jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.team', 'team'), jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.compact', 'compact'), jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.density', 'density')] },
     appearanceResetButton: {

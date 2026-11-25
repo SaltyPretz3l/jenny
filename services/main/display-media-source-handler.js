@@ -22,12 +22,22 @@
  * and only once — the delete-before-callback ordering in _resolve() is what
  * keeps a timeout racing a late user pick from double-firing.
  *
+ * The capture gate (row 197 S1): a request is answered only when
+ * isTrustedRequest(request) says it comes from the main window's main frame
+ * (fails closed when no check is given), and a capture without the picker
+ * happens only through the one-use slot main arms with armWindowCapture()
+ * (services/main/display-capture-slot.js). An armed request lists window
+ * sources with no thumbnails, so nothing else on the desktop is photographed.
+ *
  * Redaction (AGENTS.md §7): window/screen titles (source.name) and
  * thumbnail image bytes are never logged — only counts, requestId, and
  * kind ('screen'/'window').
  */
 
+const { createDisplayCaptureSlot, isWindowSourceId } = require('./display-capture-slot');
+
 const DEFAULT_TIMEOUT_MS = 25000;
+const NO_THUMBNAIL = Object.freeze({ width: 0, height: 0 });
 const DEFAULT_THUMBNAIL_SIZE = Object.freeze({ width: 192, height: 108 });
 
 function serializeSource(source) {
@@ -66,7 +76,11 @@ function serializeSource(source) {
  * @param {function(string,string,object=):void} [options.log] Redacted logger.
  * @param {number} [options.timeoutMs] How long to wait for a renderer pick before cancelling.
  * @param {{width:number,height:number}} [options.thumbnailSize] Passed through to getSources().
- * @returns {{installHandler(session):boolean, resolvePick(number,string):boolean, dispose():void}}
+ * @param {function(object):boolean} [options.isTrustedRequest] True when Electron's request comes
+ *   from the main window's main frame; without it every request is refused.
+ * @param {object} [options.slot] The one-use capture slot (createDisplayCaptureSlot()).
+ * @returns {{installHandler(session):boolean, resolvePick(number,string):boolean,
+ *   armWindowCapture(string):{ok:boolean, reason?:string}, dispose():void}}
  */
 function createDisplayMediaSourceHandler({
   desktopCapturer,
@@ -75,6 +89,8 @@ function createDisplayMediaSourceHandler({
   log = () => {},
   timeoutMs = DEFAULT_TIMEOUT_MS,
   thumbnailSize = DEFAULT_THUMBNAIL_SIZE,
+  isTrustedRequest = null,
+  slot = createDisplayCaptureSlot(),
 } = {}) {
   const capturer =
     desktopCapturer && typeof desktopCapturer.getSources === 'function' ? desktopCapturer : null;
@@ -85,6 +101,7 @@ function createDisplayMediaSourceHandler({
   let installationGeneration = 0;
   let nextRequestId = 1;
   const pending = new Map(); // requestId -> { callback, timer, grants }
+  let listing = 0; // picker requests still listing sources (not yet in `pending`)
 
   function _resolve(requestId, sourceId) {
     const entry = pending.get(requestId);
@@ -113,6 +130,47 @@ function createDisplayMediaSourceHandler({
     return true;
   }
 
+  function isTrusted(request) {
+    try {
+      return typeof isTrustedRequest === 'function' && isTrustedRequest(request) === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  // An Electron callback that throws (a session torn down mid-request) must not escape the async handler.
+  function answer(callback, streams) {
+    try {
+      callback(streams);
+    } catch (error) {
+      log('ERROR', 'display_media.callback_threw', { message: error && error.message });
+    }
+  }
+
+  // `stillInstalled` says whether the handler that took the slot is still the installed one after the await.
+  async function answerArmed(sourceId, callback, stillInstalled) {
+    let sources;
+    try {
+      sources = await capturer.getSources({ types: ['window'], thumbnailSize: NO_THUMBNAIL });
+    } catch (error) {
+      log('ERROR', 'display_media.get_sources_failed', { message: error && error.message });
+      answer(callback, {});
+      return;
+    }
+    if (!stillInstalled()) {
+      answer(callback, {});
+      return;
+    }
+    const source = Array.isArray(sources) ? sources.find((entry) => String(entry?.id) === sourceId) : null;
+    if (!source) {
+      log('WARN', 'display_media.armed_source_missing', {});
+      answer(callback, {});
+      return;
+    }
+    log('INFO', 'display_media.armed_capture_granted', {});
+    answer(callback, { video: { id: String(source.id), name: String(source.name || '') } });
+  }
+
   function installHandler(session) {
     const targetSession =
       session && typeof session.setDisplayMediaRequestHandler === 'function' ? session : null;
@@ -122,26 +180,40 @@ function createDisplayMediaSourceHandler({
 
     installationGeneration += 1;
     const installedGeneration = installationGeneration;
-    targetSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const stillInstalled = () => installedSession === targetSession && installationGeneration === installedGeneration;
+    targetSession.setDisplayMediaRequestHandler(async (request, callback) => {
+      if (!isTrusted(request)) {
+        log('WARN', 'display_media.request_refused', { reason: 'untrusted_frame' });
+        answer(callback, {});
+        return;
+      }
+      const armed = slot.take();
+      if (armed) {
+        await answerArmed(armed.sourceId, callback, stillInstalled);
+        return;
+      }
       let sources;
+      listing += 1; // an arm made while the picker lists its sources is refused as picker_open
       try {
         sources = await capturer.getSources({ types: ['screen', 'window'], thumbnailSize });
       } catch (error) {
         log('ERROR', 'display_media.get_sources_failed', {
           message: error && error.message,
         });
-        callback({});
+        answer(callback, {});
         return;
+      } finally {
+        listing -= 1;
       }
 
-      if (installedSession !== targetSession || installationGeneration !== installedGeneration) {
-        callback({});
+      if (!stillInstalled()) {
+        answer(callback, {});
         return;
       }
 
       if (!Array.isArray(sources) || sources.length === 0) {
         log('WARN', 'display_media.no_sources', {});
-        callback({});
+        answer(callback, {});
         return;
       }
 
@@ -192,8 +264,19 @@ function createDisplayMediaSourceHandler({
     return resolved;
   }
 
+  // Arm a capture without the picker for one window source. Main chooses the
+  // source; the renderer only asks for the run's picture.
+  function armWindowCapture(sourceId) {
+    if (!installedSession) return { ok: false, reason: 'unavailable' };
+    if (!isWindowSourceId(sourceId)) return { ok: false, reason: 'invalid_source' };
+    if (pending.size > 0 || listing > 0) return { ok: false, reason: 'picker_open' };
+    if (!slot.arm(sourceId)) return { ok: false, reason: 'already_armed' };
+    return { ok: true };
+  }
+
   function dispose() {
     installationGeneration += 1;
+    slot.disarm();
     if (installedSession && typeof installedSession.setDisplayMediaRequestHandler === 'function') {
       try {
         installedSession.setDisplayMediaRequestHandler(null);
@@ -212,7 +295,7 @@ function createDisplayMediaSourceHandler({
     log('INFO', 'display_media.disposed', {});
   }
 
-  return { installHandler, resolvePick, dispose };
+  return { installHandler, resolvePick, armWindowCapture, dispose };
 }
 
 module.exports = { createDisplayMediaSourceHandler };

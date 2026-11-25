@@ -460,6 +460,34 @@ test('newChatInProject creates a chat and assigns it when the project is not the
 
 // ---- Move engine -----------------------------------------------------------------
 
+test('a local draft (made while another chat streams) moves by a local edit; Undo puts it back the same way', async (t) => {
+  const state = {
+    ui: {},
+    workspaceRoot: { path: 'D:\\Projects\\Ascend' },
+    activeStreamSessionId: 's_stream',
+    sessions: [
+      { id: 'session_local_1', local_draft: true, optimistic_local: true },
+      { id: 's_stream', project_id: 'project_ascend' },
+    ],
+  };
+  const { switcher, calls } = makeSwitcher(t, { state });
+  await switcher.refreshProjects();
+  const result = await switcher.moveSessionsToProject(['session_local_1'], 'project_ascend', { source: 'composer' });
+  assert.deepEqual(calls.assign, [], 'a draft has no backend record to assign');
+  assert.deepEqual(result.moved, ['session_local_1']);
+  assert.deepEqual(result.failed, []);
+  assert.equal(state.sessions[0].project_id, 'project_ascend');
+  assert.equal(calls.toasts.at(-1).message, 'Moved this chat to Ascend.');
+  await calls.toasts.at(-1).options.actions[0].onClick();
+  assert.deepEqual(calls.assign, [], 'Undo of a still-local draft stays local');
+  assert.equal(state.sessions[0].project_id, 'project_general');
+  // Sent since: the chat has a record now, so a later Undo goes to the backend.
+  await switcher.moveSessionsToProject(['session_local_1'], 'project_budget');
+  state.sessions[0].local_draft = false;
+  await calls.toasts.at(-1).options.actions[0].onClick();
+  assert.deepEqual(calls.assign, [{ session_id: 'session_local_1', project_id: 'project_general' }]);
+});
+
 test('the move engine assigns idle chats one by one, skips busy ones, refreshes once, and Undo sends each chat back', async (t) => {
   const state = {
     ui: {},

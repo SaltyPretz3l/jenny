@@ -1,6 +1,6 @@
 .memory-settings-card { container-type: inline-size; }
 
-/* Header: the export action sits after the badge without growing the header. */
+/* The export action sits at the right end of the Your memories heading bar. */
 .memory-header-actions {
   margin-inline-start: auto;
   display: flex;

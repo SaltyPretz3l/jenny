@@ -188,7 +188,6 @@
     });
     const { resolveFollowUpDisabledReason } = prelude;
     const { patchStreamingArticle, isRowlessShellOfVisibleTurn } = streamingArticleUtils.createStreamingArticlePatcher({
-      state,
       chatTimeline,
       uiRuntime,
       streamClientMetrics,

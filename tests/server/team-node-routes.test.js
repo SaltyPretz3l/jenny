@@ -121,6 +121,21 @@ test('after the gateway side cancels, the next chunk answers cancel', async (t) 
   assert.equal(h.m.scheduler.getJob(job.job_id).state, 'cancelled');
 });
 
+test('H14: after the caller closed on [DONE], the final chunk of the node is acknowledged, not job_not_found', async (t) => {
+  const h = await startNodeHost(t);
+  await h.register(h.seats.member);
+  const { job } = h.queueJob();
+  await h.claimed(h.seats.member);
+  const node = await h.as(h.seats.member);
+  assert.equal((await node.chunk(job.job_id, { seq: 0, body: Buffer.concat([sse('a'), DONE]) })).json.cancel, false);
+  assert.equal(h.m.scheduler.cancelJob(job.job_id).ok, true);
+  assert.equal(h.m.scheduler.getJob(job.job_id).state, 'done', 'a close after [DONE] completes the job');
+  const final = await node.chunk(job.job_id, { seq: 1, final: true });
+  assert.deepEqual([final.status, final.json.ok, final.json.next_seq], [200, true, 1]);
+  const stray = await node.chunk(job.job_id, { seq: 2, body: sse('late') });
+  assert.deepEqual([stray.status, stray.json.ok, stray.json.cancel], [200, true, true], 'more output is told to stop');
+});
+
 test('a member demoted while the chunk body arrives is refused and the chunk changes nothing', async (t) => {
   const rates = countedRates();
   const h = await startNodeHost(t, { rates });

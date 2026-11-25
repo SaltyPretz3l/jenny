@@ -23,6 +23,7 @@ from sidecar.ai.engines.base import EngineMessage
 from sidecar.ai.engines.local_server_props import ThinkingControl, cap_thinking_budget
 from sidecar.ai.engines.model_name import (
     is_bonsai2_model,
+    is_inkling_model,
     is_ornith15_model,
     uses_qwen38_chat_contract,
 )
@@ -81,6 +82,22 @@ _BONSAI2_LLAMA_EFFORT_MAP = {
     "max": "xhigh",
 }
 
+
+# Inkling 2 Mini's graded thinking levels: Jenny effort -> (wire reasoning_effort,
+# thinking_budget_tokens). `auto` and `default` map to `medium` and are never
+# sent: a server that reads them as "high" would turn every default turn into
+# the longest think. `none` sends no budget.
+_INKLING_EFFORT_LEVELS: dict[str, tuple[str, int | None]] = {
+    "none": ("none", None),
+    "minimal": ("minimal", 1_024),
+    "low": ("low", 2_048),
+    "medium": ("medium", 4_096),
+    "default": ("medium", 4_096),
+    "auto": ("medium", 4_096),
+    "high": ("high", 8_192),
+    "xhigh": ("xhigh", 16_384),
+    "max": ("xhigh", 16_384),
+}
 
 # Graded levels for a template that reads enable_thinking but no effort level
 # (FG-010): llama-server ends thinking at the per-request token budget and the
@@ -203,6 +220,7 @@ class OpenAICompatibleEngine(VLLMEngine):
             VLLMEngine._detect_thinking(model_name)
             or uses_qwen38_chat_contract(model_name)
             or is_ornith15_model(model_name)
+            or is_inkling_model(model_name)
         )
 
     def get_model_max_output_tokens(self) -> int | None:
@@ -216,10 +234,7 @@ class OpenAICompatibleEngine(VLLMEngine):
         if final_tokens is None:
             return None
         requested = str(reasoning_effort or "default").strip().lower() or "default"
-        contract_name = self._contract_model_name()
-        if not uses_qwen38_chat_contract(contract_name) or _thinking_disabled(
-            contract_name, requested
-        ):
+        if not _reserves_thinking_headroom(self._contract_model_name(), requested):
             return final_tokens
         return final_tokens + self._profile_thinking_headroom
 
@@ -247,6 +262,9 @@ class OpenAICompatibleEngine(VLLMEngine):
         )
         requested = str(reasoning_effort or "default").strip().lower() or "default"
         contract_name = self._contract_model_name()
+        if is_inkling_model(contract_name):
+            self._apply_inkling_thinking(payload, requested, max_tokens)
+            return payload
         if not uses_qwen38_chat_contract(contract_name):
             self._apply_thinking_control(payload, requested, max_tokens)
             return payload
@@ -283,6 +301,30 @@ class OpenAICompatibleEngine(VLLMEngine):
             payload["max_tokens"] = int(max_tokens) + self._profile_thinking_headroom
         payload["chat_template_kwargs"] = template_kwargs
         return payload
+
+    def _apply_inkling_thinking(
+        self, payload: dict[str, Any], requested: str, max_tokens: int
+    ) -> None:
+        """Send Inkling 2 Mini's graded level and its thinking budget.
+
+        The level and the budget are explicit for every thinking request, with
+        the profile's thinking headroom added to ``max_tokens``. The model reads
+        no ``chat_template_kwargs``, and a falsy ``enable_thinking`` there would
+        override the level, so none is sent; a budget the cap collapses is sent
+        as level ``none`` instead.
+        """
+        resolved = _INKLING_EFFORT_LEVELS.get(requested)
+        if resolved is None:
+            raise ValueError(f"Unsupported Inkling 2 reasoning effort: {requested}")
+        level, budget = resolved
+        payload["reasoning_effort"] = level
+        if budget is None:
+            return
+        payload["thinking_budget_tokens"] = budget
+        if self._profile_thinking_headroom:
+            # Fitted to the prompt's leftover room once the payload is final.
+            payload["max_tokens"] = int(max_tokens) + self._profile_thinking_headroom
+        cap_thinking_budget(payload, payload["max_tokens"], off_effort="none")
 
     def _thinking_control(self) -> ThinkingControl | None:
         control = self._served_thinking_control
@@ -343,7 +385,8 @@ class OpenAICompatibleEngine(VLLMEngine):
         fitted = min(requested, max(room, _MIN_OUTPUT_ROOM_TOKENS), window)
         payload["max_tokens"] = fitted
         # The budget follows the fitted output, not the requested one.
-        cap_thinking_budget(payload, fitted)
+        off_effort = "none" if is_inkling_model(self._contract_model_name()) else None
+        cap_thinking_budget(payload, fitted, off_effort=off_effort)
         return fitted
 
     def _prompt_tokens_for_fit(
@@ -447,6 +490,13 @@ def _thinking_disabled(model_name: str | None, requested: str) -> bool:
     if is_bonsai2_model(model_name):
         return requested in _BONSAI2_THINKING_OFF_EFFORTS
     return requested == "none"
+
+
+def _reserves_thinking_headroom(model_name: str | None, requested: str) -> bool:
+    """Return whether a request at ``requested`` may think past its visible answer."""
+    if is_inkling_model(model_name):
+        return requested != "none"
+    return uses_qwen38_chat_contract(model_name) and not _thinking_disabled(model_name, requested)
 
 
 def _resolve_llama_effort(model_name: str | None, requested: str) -> str:

@@ -28,6 +28,9 @@
   // Row 53: the rea row's readiness copy (S9) and Installation section (S8b) live beside this file.
   var reaModule = root.rendererMcpServersRea || (typeof require === 'function' ? require('./renderer-mcp-servers-rea') : null);
   var readinessCopy = reaModule.readinessCopy;
+  var SERVICES_READY_EVENT = 'model-library-services-ready', DOT_TONES = { ok: 'ready', error: 'failed', warn: 'warn', muted: 'off' };
+  // The record row is built by the Models services module, which loads with the Settings scripts.
+  function recordRowBuilder() { var services = root.modelLibraryServices || (typeof module === 'object' && module.exports && typeof require === 'function' ? require('./model-library/model-library-services') : null); return services && services.recordRowHtml; } // the app's `require` is Monaco's AMD loader
   // Row 53 S9: the readiness probe is preset-owned (services/mcp-readiness-probe.js keys it by the
   // same exact names as PRESETS); only those rows render the Check action or a readiness line.
   function hasReadinessProbe(name) { return Object.prototype.hasOwnProperty.call(PRESETS, name); }
@@ -337,32 +340,26 @@
       var id = event.target && event.target.id;
       if (id === 'mcpServerTransport' || id === 'mcpServerAuthKind') syncEditorFields();
     }
-    function rowMarkup(server) {
-      if (server.builtin) return '<div class="settings-field-row mcp-servers-row" data-mcp-server-row="'
-        + escapeHtml(server.name) + '"><span class="settings-field-row-text"><strong>'
-        + escapeHtml(server.name) + '</strong><small>Built-in</small></span></div>';
+    function rowMarkup(server, recordRow) {
+      var base = { attr: 'data-mcp-server-row', id: server.name, name: server.name, className: 'record-row' };
+      if (server.builtin) return recordRow(Object.assign(base, { what: 'Built-in' }));
       var pending = server.trustStatus !== 'approved';
-      var secondary = [server.transport === 'sse' ? 'remote' : 'local', server.toolsCount + ' tools',
-        resolveMcpServerBadge(server).text.toLowerCase()];
-      if (server.readiness) {
-        secondary = [secondary[0], server.readiness.tools + ' tools'];
-        secondary.push(resolveMcpServerBadge(server).text.toLowerCase(), readinessCopy(server.readiness).summary);
-      }
+      var secondary = [server.transport === 'sse' ? 'remote' : 'local', server.toolsCount + ' tools'];
+      if (server.readiness) secondary = [secondary[0], server.readiness.tools + ' tools', readinessCopy(server.readiness).summary];
       var promptsCount = server.promptsCount || Number(server.readiness?.prompts) || 0; if (promptsCount > 0) secondary.splice(2, 0, jt('mcp.servers.promptsCount', '{count} prompts', { count: promptsCount }));
       if (!server.enabled && pending) secondary.push(jt('mcp.servers.turnOnUnavailablePendingReview', 'turn on unavailable until its tools are reviewed'));
       if (busy) secondary.push(jt('mcp.servers.operationInProgress', 'operation in progress'));
       if (server.failure) secondary.push(mapMcpFailureMessage(server.failure.message));
-      var disabled = discovery.readOnly || Boolean(busy) || (!server.enabled && pending);
-      return '<div class="settings-field-row mcp-servers-row" data-mcp-server-row="' + escapeHtml(server.name) + '">'
-        + '<span class="status-dot status-dot--' + resolveMcpServerStatusDot(server) + '"></span>'
-        + '<span class="settings-field-row-text"><strong>' + escapeHtml(server.name) + '</strong><small>'
-        + escapeHtml(secondary.join(' · ')) + '</small></span><span class="mcp-servers-row-actions">'
-        + actionButton({ label: pending ? jt('mcp.servers.review', 'Review') : jt('mcp.servers.details', 'Details'), variant: 'ghost', size: 'sm', ariaHaspopup: 'dialog',
-          dataset: { 'mcp-servers-action': 'details', 'mcp-server-name': server.name } })
-        + (root.inventoryToggleSwitch?.toggleSwitch?.({ id: toggleId(server.name), label: jt('mcp.servers.enabledLabel', '{name} enabled', { name: server.name }),
-          checked: server.enabled, disabled: disabled, className: 'mcp-servers-row-toggle' }) || '') + '</span></div>';
+      var label = pending ? jt('mcp.servers.review', 'Review') : jt('mcp.servers.manage', 'Manage');
+      var full = jt('mcp.servers.actionFor', '{action}: {name}', { action: label, name: server.name });
+      return recordRow(Object.assign(base, { what: secondary.join(' · '), tone: DOT_TONES[resolveMcpServerStatusDot(server)],
+        statusText: resolveMcpServerBadge(server).text,
+        actionsHtml: (root.inventoryToggleSwitch?.toggleSwitch?.({ id: toggleId(server.name), label: jt('mcp.servers.enabledLabel', '{name} enabled', { name: server.name }),
+          checked: server.enabled, disabled: discovery.readOnly || Boolean(busy) || (!server.enabled && pending), className: 'mcp-servers-row-toggle' }) || '')
+          + actionButton({ label: label, variant: pending ? 'secondary' : 'ghost', size: 'sm', ariaHaspopup: 'dialog', ariaLabel: full, title: full,
+            dataset: { 'mcp-servers-action': 'details', 'mcp-server-name': server.name } }) }));
     }
-    function groupMarkup() {
+    function groupMarkup(recordRow) {
       var readonly = discovery.readOnly ? '<div class="settings-note extensions-settings-error" data-mcp-read-only>'
         + escapeHtml(jt('mcp.servers.configurationPreserved', 'This MCP configuration was preserved unchanged.')) + ' ' + escapeHtml(discovery.remediationReason) + '.</div>' : '';
       var operation = busy ? '<p class="settings-note" role="status">Working…</p>' : '';
@@ -372,14 +369,15 @@
         + '<p class="settings-group-copy">' + escapeHtml(jt('mcp.servers.trustReviewRequirement', 'Standalone connections require an explicit tool-surface trust review before they can be enabled.')) + '</p></div>'
         + actionButton({ label: jt('mcp.servers.addConnectionShort', 'Add connection'), size: 'sm', disabled: discovery.readOnly || Boolean(busy),
           ariaHaspopup: 'dialog', dataset: { 'mcp-servers-action': 'add' } }) + '</div>' + readonly + operation
-        + '<div class="mcp-servers-list">' + (discovery.servers.map(rowMarkup).join('') + (discovery.servers.some(function (server) { return !server.builtin; }) ? ''
+        + '<div class="mrow-list srow-list mcp-servers-list">' + (!recordRow ? '' : discovery.servers.map(function (server) { return rowMarkup(server, recordRow); }).join('') + (discovery.servers.some(function (server) { return !server.builtin; }) ? ''
           : '<div class="settings-note">' + escapeHtml(jt('mcp.servers.noneConfigured', 'No standalone MCP connections.')) + '</div>')) + '</div></div>';
     }
     function render() {
       var target = host(); if (!target || disposed) return;
       var focus = captureFocus() || pendingFocusIdentity;
       if (focus) pendingFocusIdentity = focus;
-      target.innerHTML = actionButton ? groupMarkup() : '';
+      var build = recordRowBuilder(); // until the Settings scripts load, the group shows without rows
+      target.innerHTML = actionButton ? groupMarkup(build && function (spec) { return build(escapeHtml, spec); }) : '';
       restoreFocus(focus);
       if (!busy) pendingFocusIdentity = null;
     }
@@ -579,6 +577,7 @@
       documentRef.addEventListener('click', handleClick);
       documentRef.addEventListener('inv-toggle-change', handleToggle);
       documentRef.addEventListener('change', handleChange);
+      documentRef.addEventListener(SERVICES_READY_EVENT, render);
       installSection.subscribe();
       syncFeatureState();
     }
@@ -588,6 +587,7 @@
       documentRef.removeEventListener('click', handleClick);
       documentRef.removeEventListener('inv-toggle-change', handleToggle);
       documentRef.removeEventListener('change', handleChange);
+      documentRef.removeEventListener(SERVICES_READY_EVENT, render);
       drawer.dispose(); confirmDialog?.dispose?.();
     }
     return { bind: bind, dispose: dispose, render: render, refresh: load, syncFeatureState: syncFeatureState,

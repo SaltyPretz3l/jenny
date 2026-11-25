@@ -85,10 +85,8 @@ async function mountPanel(t, options = {}) {
     features: { featureFlags: options.flags || {} },
   };
   const inserts = [];
-  const frames = [];
   const clips = [];
   const closed = [];
-  let maximized = false;
   const switcher = options.switcher === undefined ? {
     refresh: async () => {},
     projectById: (id) => (id === 'p1' ? { id, name: 'jenny-site', rootPath: options.projectRoot || 'D:\\Work\\jenny-site' } : null),
@@ -112,13 +110,9 @@ async function mountPanel(t, options = {}) {
     claimOwner: () => {},
     getPanelSessionId: () => state.currentSessionId,
     getProjectSwitcher: async () => switcher,
-    toggleMaximize: () => { maximized = !maximized; return maximized; },
-    isMaximized: () => maximized,
     insertIntoComposer: (payload) => { inserts.push(payload); return true; },
     copyText: async (text) => { clips.push(text); },
     appendClientLog: () => {},
-    requestFrame: (cb) => { frames.push(cb); return frames.length; },
-    cancelFrame: () => {},
   });
   controller.bind();
   t.after(() => controller.dispose());
@@ -127,8 +121,8 @@ async function mountPanel(t, options = {}) {
   const tab = (slot) => panelEl.querySelector(`[data-ct-tab="${slot}"]`);
   const mount = () => panelEl.querySelector('[data-chat-terminal-mount]');
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-  return { win, doc: win.document, panelEl, content, controller, pool, state, inserts, frames, clips, closed, switcher, head, tabs, tab, mount, flush, doRender,
-    setMaximized: (v) => { maximized = v; }, text: () => panelEl.textContent };
+  return { win, doc: win.document, panelEl, content, controller, pool, state, inserts, clips, closed, switcher, head, tabs, tab, mount, flush, doRender,
+    text: () => panelEl.textContent };
 }
 
 test('the panel says terminals are unavailable when the pool cannot load', async (t) => {
@@ -153,17 +147,13 @@ test('while the pool loads the panel shows a quiet loading line, then the termin
   assert.doesNotMatch(h.text(), /Loading terminals/);
 });
 
-test('with no terminal yet the panel offers Start in the open project, and Start starts the first terminal and hosts it', async (t) => {
+test('opening the tab with no terminal yet starts the first one and hosts it, with no empty panel in between', async (t) => {
   const h = await mountPanel(t, { entries: [entry(1, { running: false, cwd: '' })] });
   await h.controller.open({ sessionId: 's1' });
-  assert.match(h.text(), /Start a terminal in jenny/);
-  assert.equal(h.tabs().length, 0, 'no tabs before a terminal exists');
-  assert.ok(h.head().querySelector('[data-ct-max]'), 'only Maximize on the header');
-  assert.equal(h.head().querySelector('[data-ct-more]'), null);
-  h.panelEl.querySelector('[data-ct-start]').click();
-  await h.flush();
   assert.deepEqual(names(h.pool, 'start'), [['start', 1]], 'slot 1 is started; create only adds slots 2-4');
   assert.equal(names(h.pool, 'create').length, 0);
+  assert.doesNotMatch(h.text(), /Start a terminal/);
+  assert.equal(h.panelEl.querySelector('[data-ct-start]'), null);
   assert.equal(h.tabs().length, 1);
   assert.equal(h.tab(1).getAttribute('aria-selected'), 'true', 'the started terminal is selected');
   const hosts = names(h.pool, 'host');
@@ -173,6 +163,18 @@ test('with no terminal yet the panel offers Start in the open project, and Start
   await h.flush();
   assert.deepEqual(names(h.pool, 'create'), [['create', undefined]], 'with slot 1 running, + adds another');
   assert.equal(h.tab(2).getAttribute('aria-selected'), 'true');
+});
+
+test('opening the tab keeps the empty state with its Start button when the terminal cannot be started', async (t) => {
+  const pool = makePool({ entries: [entry(1, { running: false, cwd: '' })] });
+  pool.start = async (slot) => { pool.calls.push(['start', slot]); return false; };
+  const h = await mountPanel(t, { pool });
+  await h.controller.open({ sessionId: 's1' });
+  assert.deepEqual(names(pool, 'start'), [['start', 1]], 'one attempt, no retry loop');
+  assert.match(h.text(), /Start a terminal in jenny/);
+  assert.match(h.text(), /Could not start a terminal\./);
+  assert.ok(h.panelEl.querySelector('[data-ct-start]'));
+  assert.equal(h.tabs().length, 0);
 });
 
 test('with no project open the empty state names the terminal start folder', async (t) => {
@@ -223,6 +225,29 @@ test('tabs come from the pool list, the plus greys out at four, and the cross cl
   assert.deepEqual(names(h.pool, 'close'), [['close', 3]]);
   assert.equal(h.tabs().length, 3);
   assert.equal(h.head().querySelector('[data-ct-add]').disabled, false);
+});
+
+test('at the limit the plus stays disabled and says why; below it, it says New terminal', async (t) => {
+  const h = await mountPanel(t, { entries: [entry(1), entry(2), entry(3)] });
+  await h.controller.open({ sessionId: 's1' });
+  const add = () => h.head().querySelector('[data-ct-add]');
+  assert.equal(add().getAttribute('title'), 'New terminal');
+  assert.equal(add().getAttribute('aria-label'), 'New terminal');
+  h.pool.entries.push(entry(4));
+  h.pool.emit({ type: 'changed' });
+  assert.equal(add().disabled, true);
+  assert.equal(add().getAttribute('title'), 'Four terminals is the limit. Close one to open another.');
+  assert.equal(add().getAttribute('aria-label'), 'Four terminals is the limit. Close one to open another.');
+});
+
+test('a pool limit other than four is named in the plus tooltip', async (t) => {
+  const pool = makePool({ entries: [entry(1), entry(2), entry(3), entry(4), entry(5, { viewId: 'terminal-5' })] });
+  pool.maxTerminals = 5;
+  const h = await mountPanel(t, { pool });
+  await h.controller.open({ sessionId: 's1' });
+  const add = h.head().querySelector('[data-ct-add]');
+  assert.equal(add.disabled, true);
+  assert.equal(add.getAttribute('title'), '5 terminals is the limit. Close one to open another.');
 });
 
 test('selecting a tab hosts that terminal, and a head re-render keeps the same mount element', async (t) => {
@@ -322,16 +347,9 @@ test('leaving the terminal mode releases the hosted terminal', async (t) => {
   assert.equal(h.pool.hosted, 0);
 });
 
-test('Maximize drives the panel maximize state and Show in Workspace hands the terminal over and closes the panel', async (t) => {
+test('Show in Workspace hands the terminal over and closes the panel', async (t) => {
   const h = await mountPanel(t, { entries: [entry(1), entry(2)] });
   await h.controller.open({ sessionId: 's1' });
-  const max = h.head().querySelector('[data-ct-max]');
-  assert.equal(max.getAttribute('aria-pressed'), 'false');
-  max.click();
-  await h.flush();
-  assert.equal(h.head().querySelector('[data-ct-max]').getAttribute('aria-pressed'), 'true');
-  h.frames.splice(0).forEach((cb) => cb());
-  assert.ok(names(h.pool, 'refit').length >= 1, 'a maximize re-fits the terminal');
   h.tab(2).click();
   await h.flush();
   h.head().querySelector('[data-ct-workspace]').click();

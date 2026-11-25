@@ -44,9 +44,6 @@
     } = deps || {};
 
     const {
-      workspace = null,
-      sidebar = null,
-      sidebarResizer = null,
       chatView = null,
       chatTimeline = null,
       artifactReviewPanel = null,
@@ -99,12 +96,9 @@
       if (artifactSurfaceController?.isArtifactReviewVisible) {
         return artifactSurfaceController.isArtifactReviewVisible();
       }
-      // No width clause (W1-5): stage width only picks split-vs-overlay inside
-      // the surface (syncArtifactReviewLayout); gating lazy-init on it would
-      // leave narrow windows with no artifact surface at all now that the
-      // studio fallback is gone.
       const prefs = getArtifactReviewPreferenceState();
-      return state.ui?.activeView === 'chat'
+      // Row 190 Wave 4: or the room on screen has a view for the panel's mode (Workspace and Board Artifacts).
+      return (state.ui?.activeView === 'chat' || callbacks.getChatLayoutHost?.()?.serves?.(prefs.mode) === true)
         && prefs.enabled === true;
     }
 
@@ -258,9 +252,6 @@
         artifactSurfaceController = artifactsUtils.createArtifactManager?.({
           state,
           dom: {
-            workspace,
-            sidebar,
-            sidebarResizer,
             chatView,
             chatTimeline,
             ...getArtifactsDom(),
@@ -290,11 +281,12 @@
             renderBackgroundTasksSurface: (surface) => rails.renderBackgroundTasksSurface(surface),
             renderTerminalSurface: (surface) => rails.renderTerminalSurface(surface), // row 178
             renderBrowserSurface: (surface) => rails.getBrowserPanel()?.renderRailContent?.(surface) === true,
+            renderLiveSurface: (surface) => rails.renderLiveSurface(surface), // row 197
             resetFilePreview: () => rails.getFilePreviewController()?.reset?.(),
             panelV2: panelV2Controller,
             sidePanel,
             getRunStartedAt: () => runStartedAt,
-            getScrollCoordinators: () => callbacks.getScrollCoordinators?.() || [], // the side-panel column motion's reader anchor
+            getLayoutHost: () => callbacks.getChatLayoutHost?.() || null, // the right stack of the room on screen
           },
         }) || null;
         if (artifactSurfaceController && !artifactSurfaceBound) {
@@ -322,8 +314,6 @@
               const session = getPanelSession();
               return session ? artifactSurfaceController?.getArtifactsForSession?.(session.id) || [] : [];
             },
-            toggleMaximize: () => artifactSurfaceController?.toggleArtifactReviewMaximized?.(),
-            isMaximized: () => artifactSurfaceController?.isArtifactReviewMaximized?.() === true,
             isSelectedArtifactMarkdownGenerated: () => artifactSurfaceController?.isSelectedArtifactMarkdownGenerated?.() === true,
           });
           registerCleanup(() => panelV2Controller?.dispose?.());
@@ -426,8 +416,6 @@
       if (getArtifactReviewPreferenceState().dismissedForSession?.[sessionId] === true) {
         return false;
       }
-      // No width clause (W1-5): narrow stages auto-open into the overlay
-      // drawer instead of being skipped (the studio fallback is gone).
       return getArtifactsForSession(sessionId).length > 0;
     }
 
@@ -506,7 +494,51 @@
       });
     }
 
+    // Row 190: a right-stack tab opens its mode with its content, as the old toolbar buttons did. Changes opens the
+    // working tree for the panel's chat; Artifacts selects one; every other mode renders through its rail.
+    function openRailMode(mode) {
+      const surface = ensureArtifactSurface();
+      if (!surface) return false;
+      if (mode === 'code_review') {
+        return ensureCodeReviewRail()?.openWorkingTree?.({ ownerSessionId: String(sidePanel.getSessionId() || '') }) === true;
+      }
+      if (mode === 'artifact') {
+        const liveMode = surface.getArtifactReviewMode?.() || getArtifactReviewPreferenceState?.()?.mode;
+        if (surface.isArtifactReviewVisible?.() === true && liveMode === 'artifact') return true;
+        surface.toggleArtifactReview?.({ artifactsOnly: true, focus: false }); // a tab or a saved layout opens it: the composer keeps the keyboard
+        return true;
+      }
+      // Notes loads its rail modules on first open; its entry owns that.
+      if (mode === 'notes') {
+        const entry = rails?.ensureProjectNotesEntry?.();
+        if (entry?.open) { void entry.open(); return true; }
+      }
+      surface.openArtifactRail?.(mode, { focus: false });
+      surface.renderArtifactReviewPanel?.();
+      return true;
+    }
+    // A mode whose view was folded or collapsed away shows again as it was left: the same review, preview or page,
+    // not a fresh open. Notes still goes through its entry, which loads the rail's modules.
+    function resumeRailMode(mode) {
+      if (mode === 'notes') return openRailMode(mode);
+      const surface = ensureArtifactSurface();
+      if (!surface) return false;
+      surface.openArtifactRail?.(mode, { focus: false });
+      surface.renderArtifactReviewPanel?.();
+      return true;
+    }
+    function getRailState() {
+      const surface = artifactSurfaceController;
+      if (!surface) return null;
+      // The live mode: a non-artifact mode is not always persisted, so the stored prefs can lag behind it.
+      const mode = surface.getArtifactReviewMode?.() || getArtifactReviewPreferenceState?.()?.mode;
+      return { visible: surface.isArtifactReviewVisible?.() === true, mode: String(mode || 'artifact'), collapse: () => surface.collapseArtifactReview?.() };
+    }
+
     return {
+      openRailMode,
+      resumeRailMode,
+      getRailState,
       getArtifactReviewPreferenceState,
       isArtifactReviewVisible,
       getArtifactsForSession,

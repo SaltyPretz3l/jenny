@@ -182,6 +182,31 @@
     return copy.url ? `<pre class="tool-approval-command"><code>${escapeHtml(copy.url)}</code></pre>` : '';
   }
 
+  // Computer asks (row 196): rebuilt from the app's own grant payload, never from the model's input.
+  const computerText = (v, max) => (typeof v === 'string' && v.trim() && Array.from(v).length <= max && !/[\p{Cc}\p{Cf}]/u.test(v) ? v : '');
+
+  function normalizeComputerApproval(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema_version !== 1) return null;
+    const out = { kind: value.kind, name: computerText(value.program_name, 120), path: computerText(value.program_path, 512), viewOnly: value.view_only };
+    const valid = ['grant', 'open', 'file_dialog'].includes(out.kind) && out.name && out.path && typeof out.viewOnly === 'boolean';
+    return valid && !(out.kind === 'file_dialog' && out.viewOnly) ? out : null;
+  }
+
+  function computerApprovalCopy({ kind, name, path, viewOnly }) {
+    const until = jt('approval.block.computer.untilEnd', 'Until the chat ends');
+    const view = jt('approval.block.computer.viewOnly', 'View only');
+    const allow = viewOnly ? jt('approval.block.computer.allowView', 'Allow viewing') : jt('approval.block.computer.allow', 'Allow in this chat');
+    const viewNote = jt('approval.block.computer.viewNote', 'View only: Jenny can see this window but cannot click or type in it.');
+    if (kind === 'file_dialog') return { path, allow, facts: [jt('approval.block.computer.fileDialog', 'File dialog'), until], prompt: jt('approval.block.computer.fileDialogPrompt', 'Let Jenny use the Open and Save dialog in {name}?', { name }),
+      consequence: jt('approval.block.computer.fileDialogNote', 'From that dialog Jenny can open or save any file {name} can reach. Jenny asks once for each program in this chat.', { name }) };
+    if (kind === 'open') return { path, allow, facts: [jt('approval.block.computer.starts', 'Starts a program'), viewOnly ? view : until],
+      prompt: viewOnly ? jt('approval.block.computer.openViewPrompt', 'Start {name} and let Jenny see it in this chat?', { name }) : jt('approval.block.computer.openPrompt', 'Start {name} and let Jenny use it in this chat?', { name }),
+      consequence: viewOnly ? viewNote : jt('approval.block.computer.openNote', 'Jenny will start this program, see its window, and click and type in it until the chat ends.') };
+    return { path, allow, facts: viewOnly ? [view, until] : [until],
+      prompt: viewOnly ? jt('approval.block.computer.grantViewPrompt', 'Let Jenny see {name} in this chat?', { name }) : jt('approval.block.computer.grantPrompt', 'Let Jenny use {name} in this chat?', { name }),
+      consequence: viewOnly ? viewNote : jt('approval.block.computer.grantNote', "Jenny will see this program's window, and click and type in it until the chat ends.") };
+  }
+
   // Row 88: the words for a settings change Jenny asks for, shared by the settings_change card and
   // the Activity entry (renderer-primary-activity.js). A setting's name comes from the catalog by its
   // key; a value is translated where the app owns the word and otherwise shows the label the app
@@ -546,8 +571,10 @@
     SCHEDULE_CHANGE_TOOL,
     bindTerminalOpenLinks,
     browserApprovalCopy,
+    computerApprovalCopy,
     handleTerminalOpenClick,
     normalizeBrowserApproval,
+    normalizeComputerApproval,
     normalizeExactApproval,
     normalizeRoundApproval,
     normalizeScheduleChangeApproval,

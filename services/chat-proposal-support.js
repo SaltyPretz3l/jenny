@@ -85,4 +85,15 @@ async function recheckGitRetry(svc, req, record) {
   return { record: current };
 }
 
-module.exports = { listPage, reconcileContinuation, recheckGitRetry };
+// A new git card replaces the session's older pending git cards that name any of its files (row 199 C5):
+// each moves to 'withdrawn' in the publish's own mutation, so the cap counts only what is still unresolved.
+// A pending card for other files stays.
+function withdrawSupersededGit(rec, records, created) {
+  if (created.kind !== 'git') return records;
+  const paths = new Set(created.normalized_input?.paths || []);
+  return records.map((entry) => (entry.kind === 'git' && entry.decision_state === 'pending'
+    && (entry.normalized_input?.paths || []).some((path) => paths.has(path))
+    ? rec.nextRevision(entry, { decision_state: 'withdrawn' }) : entry));
+}
+
+module.exports = { listPage, reconcileContinuation, recheckGitRetry, withdrawSupersededGit };

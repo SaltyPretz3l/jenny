@@ -43,12 +43,15 @@
     function setHeroHint(text, action) {
       if (!heroRuntimeHint) return;
       heroRuntimeHint.classList.toggle('hidden', !text);
-      const key = action ? [action.action, action.lead, action.label, action.tail].join('\u0000') : '';
+      const key = action?.parts ? JSON.stringify(action.parts) : '';
       if (!key) setHeroText(heroRuntimeHint, text);
       else if (hintLinkKey !== key) {
-        const template = heroRuntimeHint.ownerDocument.createElement('template');
-        template.innerHTML = action.html; // the inventory button, label escaped there
-        heroRuntimeHint.replaceChildren(action.lead, template.content, action.tail);
+        heroRuntimeHint.replaceChildren(...action.parts.map((part) => {
+          if (typeof part === 'string') return part;
+          const template = heroRuntimeHint.ownerDocument.createElement('template');
+          template.innerHTML = part.html; // the inventory button, label escaped there
+          return template.content;
+        }));
       }
       hintLinkKey = key;
     }
@@ -83,17 +86,10 @@
 
     function setupHeroSubtitle(snapshot) {
       const steps = snapshot.steps;
-      if (!steps || typeof steps.workspaceRoot !== 'string'
-        || (typeof steps.localModel !== 'string' && typeof steps.endpoint !== 'string')) {
-        return jt('chat.pipelineChrome.setupModelAndFolder', 'Choose a model route and a workspace folder to finish.');
+      // The folder is optional: only a missing model route holds setup back.
+      if (!steps || (steps.localModel !== 'done' && steps.endpoint !== 'done')) {
+        return jt('chat.pipelineChrome.setupModel', 'Choose a model route to finish.');
       }
-      const modelMissing = steps.localModel !== 'done' && steps.endpoint !== 'done';
-      const folderMissing = steps.workspaceRoot !== 'done';
-      if (modelMissing && folderMissing) {
-        return jt('chat.pipelineChrome.setupModelAndFolder', 'Choose a model route and a workspace folder to finish.');
-      }
-      if (modelMissing) return jt('chat.pipelineChrome.setupModel', 'Choose a model route to finish.');
-      if (folderMissing) return jt('chat.pipelineChrome.setupFolder', 'Choose a workspace folder so file tools can work.');
       return jt('chat.pipelineChrome.setupOptionalSteps', 'A few optional steps are left.');
     }
 
@@ -106,9 +102,11 @@
       const pluginSession = activeSession?.session_type === 'plugin';
       const setupSnapshot = state.setup || {};
       const setupIncomplete = setupSnapshot.loaded === true && setupSnapshot.setupComplete === false;
-      const showSetup = !pluginSession && !hasMessages && setupIncomplete;
-      heroStage?.classList.toggle('hero-setup-incomplete', showSetup);
       const view = !pluginSession && !hasMessages ? heroModelState.deriveHeroView(state) : null;
+      // A failed load or a missing model blocks every reply, so its fix outranks the setup hero.
+      const modelBlocked = view?.kind === 'failed' || view?.kind === 'noModel';
+      const showSetup = !pluginSession && !hasMessages && setupIncomplete && !modelBlocked;
+      heroStage?.classList.toggle('hero-setup-incomplete', showSetup);
       syncHeroSetupAction(showSetup, showSetup ? heroModelState.setupFootnote(view) : '');
       const copy = view && !showSetup
         ? heroModelState.heroCopy(view.kind === 'ready' ? { ...view, project: getSessionProject(activeSession) } : view)
@@ -137,7 +135,7 @@
         setHeroSubtitle(hasMessages
           ? jt('chat.pipelineChrome.pluginTranscriptReadOnly', 'This saved plugin transcript is read-only in Jenny.')
           : jt('chat.pipelineChrome.openProviderWorkspace', 'Open the provider workspace to begin.'));
-      } else if (setupIncomplete && !hasMessages) {
+      } else if (showSetup) {
         setHeroText(heroTitle, jt('chat.pipelineChrome.finishSetup', "Let's finish setting up Jenny"));
         setHeroSubtitle(setupHeroSubtitle(setupSnapshot));
       } else if (copy) {

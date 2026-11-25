@@ -22,8 +22,7 @@
    * artifacts, pulse and logs, so with two sessions side by side it is per
    * pane, and its own ids are reached by traversal inside it.
    *
-   * W1-1 adds `chatPaneKicker`, the one-line pane header host (hidden with one
-   * pane). `#chatPane0`, the pane wrapper itself, is absent for the same
+   * `#chatPane0`, the pane wrapper itself, is absent for the same
    * reason as `chatView`: it is the pane ROOT a resolver is handed, not a node
    * inside it.
    *
@@ -38,7 +37,6 @@
    * its own session into its own inspector.
    */
   const CHAT_PANE_NODE_NAMES = Object.freeze([
-    'chatPaneKicker',
     'heroStage',
     'chatThreadStage',
     'chatSelectionOverlayHost',
@@ -59,7 +57,6 @@
     'chatInput',
     'sendButton',
     'stopStreamButton',
-    'artifactReviewResizer',
     'artifactReviewPanel',
     'chatContextPanel',
     'attachmentTray',
@@ -217,7 +214,6 @@
       sendButton: $('sendButton'),
       composerAttachShortcut: $('composerAttachShortcut'),
       searchInput: $('conversationSearch'),
-      sidebarResizer: $('sidebarResizer'),
       heroTitle: $('heroTitle'),
       heroSubtitle: $('heroSubtitle'),
       heroRuntimeHint: $('heroRuntimeHint'),
@@ -282,6 +278,7 @@
       toolsConfigFieldList: $('toolsConfigFieldList'),
       toolsFilesList: $('toolsFilesList'),
       toolsWebList: $('toolsWebList'),
+      toolsComputerList: $('toolsComputerList'),
       toolsTerminalList: $('toolsTerminalList'),
       toolsCodeList: $('toolsCodeList'),
       toolsCommandSandboxHost: $('toolsCommandSandboxHost'),
@@ -299,7 +296,6 @@
       notificationsStatus: $('notificationsStatus'),
       accountSummary: $('accountSummary'),
       localProfileSettingsMount: $('localProfileSettingsMount'),
-      backendSummary: $('backendSummary'),
       setupSettingsSummary: $('setupSettingsSummary'),
       setupSettingsActions: $('setupSettingsActions'),
       setupProgressContainer: $('setupProgressContainer'),
@@ -361,6 +357,7 @@
         toolsConfigFieldList: dom.toolsConfigFieldList,
         toolsFilesList: dom.toolsFilesList,
         toolsWebList: dom.toolsWebList,
+        toolsComputerList: dom.toolsComputerList,
         toolsTerminalList: dom.toolsTerminalList,
         toolsCodeList: dom.toolsCodeList,
         toolsCommandSandboxHost: dom.toolsCommandSandboxHost,
@@ -378,7 +375,6 @@
         notificationsStatus: dom.notificationsStatus,
         accountSummary: dom.accountSummary,
         localProfileSettingsMount: dom.localProfileSettingsMount,
-        backendSummary: dom.backendSummary,
         setupSettingsSummary: dom.setupSettingsSummary,
         setupSettingsActions: dom.setupSettingsActions,
         setupProgressContainer: dom.setupProgressContainer,
