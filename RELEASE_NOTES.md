@@ -65,6 +65,29 @@ local engines, and the Team review fixes harden team hosting.
 - Not yet covered by a person: computer use's long run and its interface steps, the Live tab with a real program and the folded right rail at 700 px; a Strata A/B against NInfer (stopped partway); the Team fixes' two-member real-app run; the Chat workbench, the right-hand panel and the chat turn at the review widths in light and dark; the Settings and Models owner-run checks; first run on a clean profile; the live cloud checks for compaction (an Anthropic chat past 250k) and helpers (a write-mode helper, a model describing a chart it drew). The 1.8.7 list of owed checks still stands.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
 
+### 1.9.0 download checksums
+
+Published 2026-11-25 from public `abeb92da` (private `984276ff8`, tag `v1.9.0`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 108f6374d9c2bb835b2300b1fd0c8fd95fa53fd2f603d838fcaf96a71af2f6ee |
+| dist/Jenny-Setup-x64.exe.blockmap | eee00237b752a782cb4f6a841b71102b703dde80f3adbb2b150ed954d5a4e409 |
+| dist/Jenny-amd64.deb | cad50bb145ec9a76a19eff852471a2a1f417104f523807e739afe95cd5bef6f0 |
+| dist/Jenny-arm64.dmg | a9276932f37fdc4e9f383028b5389288053091e0a43b36f29de1ba45f2adb697 |
+| dist/Jenny-arm64.zip | 9b9216abb1268b5be932b386c009512a1eb43d7013b28d15a140ac5179c8c1e6 |
+| dist/Jenny-x86_64.AppImage | 2b3f05fd8b9998085e51ad58ac15d2fc72a20c11043dc830b9b17c02f960283f |
+| dist/SHA256SUMS-linux.txt | 8501649683f2982dfdf14f8bd73d4fead2d7151a0c9ee207858de1fe4bf451df |
+| dist/SHA256SUMS-mac.txt | 9f996af6ed7ed9fba3cc7231c9a3e8fc4a974bbd2b439dfc9e3287229398d862 |
+| dist/SHA256SUMS-windows.txt | d80e934a9d5bdefa809d2df8c2d456eeea50109d5adce4ae15368f2286237b0a |
+| dist/latest-linux.yml | dd80e55dd6c233a06c17184a7088ccef9430a21bbe5aee36a638ac2ce27dcf04 |
+| dist/latest-mac.yml | f94da19beee5d77362409bb63377f01eec368d8a445c7196fcb63e9f18a4aec3 |
+| dist/latest.yml | a5c78f3211bd6037dc9621e22f16e127c6765b0cc15899af3a36d93030b51966 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.8.7 - 2026-11-18
 
 Everything landed since 1.8.6, through private `main` on 2026-11-18: a short
@@ -104,7 +127,6 @@ Published 2026-11-18 from public `402b9c84` (private `1ba700bcd`, cut `e05333be2
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the build-only run and the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 1e2444ff80afd48302fca2a83c8e7240937cfa58cb4a95495523a74650ff1834 |
@@ -119,7 +141,6 @@ release jobs were green on the build-only run and the tagged run.
 | dist/latest-linux.yml | df7d4bf3c7fde14d67383a350350c977535ed3dda9bbda52d1dbb8fb56f027f9 |
 | dist/latest-mac.yml | ed77a1bc2a02a2098869bce75bf9b84f768e786ee764618080b569dc5cadce54 |
 | dist/latest.yml | b968ba2b6daedb773898cb4e085daf33bfb897cf3b5d26fa6d58def5389dbe98 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.8.6 - 2026-11-17
 
