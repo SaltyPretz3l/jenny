@@ -26,13 +26,14 @@ const { samePath } = require('../../server/team/file-checks');
 const { isCleanText } = require('../../server/team/member-schema');
 const { createModelReceiver } = require('./model-receive');
 const { freeBytesOf, placedAnywhere } = require('./model-receive-checks');
-const { INCOMING_DIR, transferIdFor } = require('./model-receive-journal');
+const { INCOMING_DIR, readJournal, transferIdFor, verifiedBytes } = require('./model-receive-journal');
 const { offerWithManifest } = require('./model-answers');
 const { modelRefusal, rowReason } = require('./model-reasons');
 
 const L = MODEL_TRANSFER_LIMITS;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PROBE_READS = 8;
+const JOURNAL_BYTES = 80 * 1024; // model-receive.js's default journal bound
 // The accept screens remembered (offer id -> the roots and the manifest it showed): at most one per open offer.
 const MAX_READS = L.maxOffersPerHost;
 const SHA = /^[0-9a-f]{64}$/u;
@@ -42,6 +43,8 @@ const LINE_CONTROL = /(?![\n\t])\p{Cc}/gu;
 const fingerprintOf = (manifest) => crypto.createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
 // Host words that mean the offer cannot be taken now: the fresh staging of an accept that pulled nothing goes.
 const KEEP_STAGING = new Set(['team_not_connected', 'team_connection_stopped', 'model_transfer_interrupted']);
+// What can end an offer without its sender choosing to (server/team/model-relay-core.js): the row says which.
+const OFFER_ENDS = new Set(['expired', 'member_gone', 'role_changed', 'sender_offline', 'sharing_off', 'host_stopping']);
 const RUNNING = new Set(['pulling', 'verifying', 'placing']);
 
 /**
@@ -84,6 +87,7 @@ function createModelIncoming({
     onEvent: (event) => {
       const take = current;
       if (!take) return;
+      const moved = take.state !== event.state || take.reason !== event.reason;
       take.state = event.state;
       take.reason = event.reason;
       take.doneBytes = event.doneBytes;
@@ -94,7 +98,7 @@ function createModelIncoming({
       // the run's outcome instead (a host refusal at accept arrives as an interrupted pause).
       if (RUNNING.has(event.state)) { take.ran = true; take.onFirst?.(); }
       if (event.state === 'pulling' || event.state === 'verifying') onProgress(take);
-      onChange();
+      if (moved) onChange(); // bytes travel on onProgress
     },
   });
 
@@ -337,6 +341,14 @@ function createModelIncoming({
     });
   }
 
+  // The verified bytes of a staging folder's journal; 0 when it does not read.
+  function stagedBytes(stagingDir, id) {
+    try {
+      const read = readJournal(stagingDir, { id, segmentBytes: receiveLimits.segmentBytes ?? L.segmentBytes, maxBytes: receiveLimits.journalBytes ?? JOURNAL_BYTES });
+      return read.ok && read.journal ? verifiedBytes(read.journal, receiveLimits.segmentBytes ?? L.segmentBytes) : 0;
+    } catch { return 0; }
+  }
+
   /** Staging under a root for an open incoming offer (a restart): listed as `interrupted`, resumed by retry. */
   async function probe(incomingOffers) {
     const rootsNow = roots();
@@ -356,8 +368,9 @@ function createModelIncoming({
       const id = transferIdFor({ teamId, senderId: summary.sender_member_id, manifest: read.manifest });
       if (!staged.has(id)) continue;
       const rootIndex = staged.get(id);
+      const doneBytes = stagedBytes(path.join(rootsNow[rootIndex].path, INCOMING_DIR, id), id);
       takes.set(summary.offer_id, { offerId: summary.offer_id, senderId: summary.sender_member_id, manifest: read.manifest, rootIndex,
-        rootPath: rootsNow[rootIndex].path, state: 'interrupted', reason: 'model_transfer_interrupted', doneBytes: 0,
+        rootPath: rootsNow[rootIndex].path, state: 'interrupted', reason: 'model_transfer_interrupted', doneBytes,
         totalBytes: summary.total_bytes, hostReason: null, userPaused: false, onFirst: null });
       say('INFO', 'team.model.staging_found', { offer_id: summary.offer_id });
     }
@@ -377,11 +390,17 @@ function createModelIncoming({
     void claim(() => drive(take, () => receiver.resume()));
   }
 
-  /** An offer ended on the host: a take that never ran is forgotten, and so is its accept screen. */
-  function offerEnded(offerId) {
+  /**
+   * An offer ended on the host: a take that never ran is forgotten, a paused or staged one is kept as failed with
+   * what ended the offer (the host's word when it is one of OFFER_ENDS, else `withdrawn`).
+   */
+  function offerEnded(offerId, reason) {
     reads.delete(offerId);
     const take = takes.get(offerId);
-    if (take && take !== current && take.state !== 'interrupted') { takes.delete(offerId); onChange(); }
+    if (!take) return;
+    if (take.state === 'paused' || take.state === 'interrupted') { take.state = 'failed'; take.reason = OFFER_ENDS.has(reason) ? reason : 'withdrawn'; take.offerGone = true; take.userPaused = false; onChange(); return; }
+    if (take.state === 'failed' && take.offerGone) return; // already shown as ended: Dismiss removes it
+    if (take !== current) { takes.delete(offerId); onChange(); }
   }
 
   /** A received model's provenance file, read bounded and rebuilt field by field. */

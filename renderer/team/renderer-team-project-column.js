@@ -203,9 +203,9 @@
     return inv().actionButton({ plain: true, className: 'team-icon-btn', ariaLabel: label, title: label, dataset: { 'team-tab-action': action, ...dataset }, trustedHtml: svg });
   }
 
-  function rowButton(action, { name, title, current = false, muted = false, trailing = '', dataset = {}, extraClass = '', plus = false }) {
+  function rowButton(action, { name, title, current = false, muted = false, trailing = '', dataset = {}, extraClass = '', plus = false, disabled = false }) {
     const html = inv().actionButton({
-      plain: true, className: 'team-row team-row--link' + extraClass, ariaLabel: title, title,
+      plain: true, className: 'team-row team-row--link' + extraClass, ariaLabel: title, title, disabled,
       dataset: { 'team-tab-action': action, 'team-project-row': 'true', ...dataset },
       trustedHtml: '<span class="team-row__name"' + (muted ? ' data-muted="true"' : '') + ' dir="auto">' + (plus ? '<span aria-hidden="true">+</span> ' : '') + escapeHtml(name) + '</span>' + trailing,
     });
@@ -292,7 +292,8 @@
     const channel = listed ? helpers.channelRow(listed, { name, title: '#' + name }) : loadingChannelRow(channelId, name);
     const writes = row.role === 'admin' || row.role === 'writer' || row.role === 'owner';
     const kids = channel + pv.conversationsOf(row.id).map((conversation) => conversationRow(pv, conversation, row)).join('')
-      + (writes && !deleting ? rowButton('conv-new', { name: jt('team.projects.newConversation', 'New conversation'), title: jt('team.projects.newConversationIn', 'New conversation in {project}', { project: name }),
+      + (writes && !deleting ? rowButton('conv-new', { name: jt('team.projects.newConversation', 'New conversation'), disabled: pv.making === true,
+        title: pv.making ? jt('team.projects.creatingConversation', 'A conversation is being created.') : jt('team.projects.newConversationIn', 'New conversation in {project}', { project: name }),
         extraClass: ' team-proj__new', plus: true, dataset: { 'project-id': row.id } }) : '');
     return '<div class="team-proj" data-open="' + open + '" data-team-project="' + escapeHtml(row.id) + '"><div class="team-proj__head">' + chevron
       + rowButton('project-open', { name, title: label, current: pv.current === projectPage(row.id), trailing, dataset: { 'project-id': row.id } })
@@ -339,7 +340,7 @@
   // The section's view model for one team from the project store's state, or null when the team is not online (Force
   // local takes the team out of `online`, so the section goes with it). `channelRows`: the chat store's rows of the
   // team (a project channel row may not be there yet: `channelRowOf` answers null for it).
-  function columnView({ team, state, current = '', channelRows = [], errorText = () => '' }) {
+  function columnView({ team, state, current = '', channelRows = [], errorText = () => '', making = false }) {
     if (!team || team.state !== 'online') return null;
     const mayCreate = team.role === 'owner' || team.role === 'member';
     if (!state) return { teamId: team.team_id, mayCreate, loaded: false };
@@ -349,7 +350,7 @@
     let open = rowOf(team.team_id);
     if (open && !(state.conversations || []).some((row) => row.session_id === open.sessionId)) { closeRow(team.team_id); open = null; }
     return {
-      teamId: team.team_id, me: team.member_id, mayCreate, current, loaded: Array.isArray(state.projects),
+      teamId: team.team_id, me: team.member_id, mayCreate, current, making, loaded: Array.isArray(state.projects),
       error: state.error && !state.projects ? errorText(state.error) : '',
       projects: state.projects || [], unjoined: team.role === 'owner' ? state.unjoined.filter((row) => !joined.has(row.project_id)) : [],
       activity: state.activity || {}, requests: state.requests || {}, deleting: state.deleting || new Set(), create: createOf(team.team_id), rowing: open,

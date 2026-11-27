@@ -66,6 +66,7 @@ test('an unavailable Codex integration is omitted from the Ollama model list', a
       engine_type: 'ollama',
       available: ollamaAvailable,
       primary_available: ollamaAvailable,
+      default_local_fallback: ollamaAvailable ? 'qwen3:8b' : '', // the default model, once a local engine lists it
       data: ollamaAvailable ? [{ id: 'qwen3:8b', available: true, engine_type: 'ollama' }] : [],
     });
     assert.equal(svc.currentEngineType, 'ollama');

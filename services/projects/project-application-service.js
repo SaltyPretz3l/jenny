@@ -65,6 +65,10 @@ function projectFailure(reason, details = {}) {
       'projects.application.generalProtected',
       'The General project cannot be deleted.'
     ),
+    [PRIMARY_PROTECTED]: t(
+      'projects.application.primaryProtected',
+      'The Jenny chat stays in General and cannot be moved to a project.'
+    ),
     project_sessions_busy: t(
       'projects.application.projectSessionsBusy',
       'A chat in this project is still working. Wait for it to finish, then try again.'

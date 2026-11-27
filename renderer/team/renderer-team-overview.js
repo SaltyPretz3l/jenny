@@ -98,7 +98,7 @@
       const { team, data, vm } = m;
       const out = [];
       const readOnly = team.role === 'read_only';
-      const mine = data.sharing && data.sharing.team_id === teamId ? data.sharing : null;
+      const mine = data.sharing && data.sharing.team_id === teamId && data.sharing.state !== 'finishing' ? data.sharing : null;
       const reason = store.forceLocal() ? words.forceLocalText() : readOnly ? jt('settings.team.gpu.readOnly', 'Read-only members cannot share a GPU. The owner can change your role.') : '';
       const toggle = inv().toggleSwitch({ id: SHARE_ID, domId: SHARE_ID, bare: true, labelledBy: 'teamOvGpuLabel', checked: !readOnly && Boolean(mine),
         disabled: Boolean(reason) || s.busy.has('share'), ...(reason ? { tooltip: reason } : {}) });
@@ -353,8 +353,8 @@
       const m = model();
       if (!m || m.team.role === 'read_only' || store.forceLocal() || s.busy.has('share')) return;
       const { sharing } = m.data;
-      const here = sharing && sharing.team_id === teamId ? sharing : null;
-      if ((sharing && !here) || (here && here.state === 'serving')) { gpus.openShareSettings(openSettings()); return; }
+      const here = sharing && sharing.team_id === teamId && sharing.state !== 'finishing' ? sharing : null;
+      if ((sharing && sharing.team_id !== teamId) || (here && here.state === 'serving')) { gpus.openShareSettings(openSettings()); return; }
       let ask = false;
       await act('share', 'share', async () => {
         const answer = await store.call('shareSet', here ? { team_id: teamId, on: false } : { team_id: teamId, on: true, confirmed: false });
@@ -407,9 +407,11 @@
           return true;
         case 'confirm-stop': if (m.owner) void stop(); return true;
         case 'confirm-cancel': s.confirm = ''; update(); return true;
+        case 'decline': if (m.owner && memberId) { s.confirm = 'decline:' + memberId; update(); } return true;
         case 'admit':
-        case 'decline':
-          if (m.owner && memberId) void act(action + ':' + memberId, 'needs', () => store.call(action === 'admit' ? 'memberAdmit' : 'memberRevoke', { team_id: teamId, member_id: memberId }));
+        case 'confirm-decline':
+          if (action !== 'admit') s.confirm = '';
+          if (m.owner && memberId) void act((action === 'admit' ? 'admit:' : 'decline:') + memberId, 'needs', () => store.call(action === 'admit' ? 'memberAdmit' : 'memberRevoke', { team_id: teamId, member_id: memberId }));
           return true;
         default: return false;
       }

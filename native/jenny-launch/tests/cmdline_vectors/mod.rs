@@ -23,15 +23,40 @@ pub const VECTORS: &[(&[&str], &str)] = &[
     (&["prog", "a\\\\\\\"b"], "prog a\\\\\\\\\\\\\\\"b"),
     (&["prog", "\\\""], "prog \\\\\\\""),
     (&["prog", "a b\\\"c"], "prog \"a b\\\\\\\"c\""),
-    (&["prog", "C:\\Program Files\\x y\\z.exe"], "prog \"C:\\Program Files\\x y\\z.exe\""),
-    (&["prog", "C:\\Program Files\\x y\\"], "prog \"C:\\Program Files\\x y\\\\\""),
-    (&["prog", "--flag=\"quoted value\""], "prog \"--flag=\\\"quoted value\\\"\""),
-    (&["prog", "tab\tsep", "next arg", ""], "prog \"tab\tsep\" \"next arg\" \"\""),
-    (&["C:\\Program Files\\Git\\cmd\\git.exe", "status", "--porcelain"], "\"C:\\Program Files\\Git\\cmd\\git.exe\" status --porcelain"),
+    (
+        &["prog", "C:\\Program Files\\x y\\z.exe"],
+        "prog \"C:\\Program Files\\x y\\z.exe\"",
+    ),
+    (
+        &["prog", "C:\\Program Files\\x y\\"],
+        "prog \"C:\\Program Files\\x y\\\\\"",
+    ),
+    (
+        &["prog", "--flag=\"quoted value\""],
+        "prog \"--flag=\\\"quoted value\\\"\"",
+    ),
+    (
+        &["prog", "tab\tsep", "next arg", ""],
+        "prog \"tab\tsep\" \"next arg\" \"\"",
+    ),
+    (
+        &[
+            "C:\\Program Files\\Git\\cmd\\git.exe",
+            "status",
+            "--porcelain",
+        ],
+        "\"C:\\Program Files\\Git\\cmd\\git.exe\" status --porcelain",
+    ),
     (&["prog", "caf\u{e9} \u{fc}"], "prog \"caf\u{e9} \u{fc}\""),
-    (&["prog", "\u{65e5}\u{672c} \u{8a9e}"], "prog \"\u{65e5}\u{672c} \u{8a9e}\""),
+    (
+        &["prog", "\u{65e5}\u{672c} \u{8a9e}"],
+        "prog \"\u{65e5}\u{672c} \u{8a9e}\"",
+    ),
     (&["prog", "line1\nline2"], "prog line1\nline2"),
     (&["prog", "a&b|c<d>e^f%g"], "prog a&b|c<d>e^f%g"),
     (&["", "x"], "\"\" x"),
-    (&["cmd.exe", "/d", "/s", "/c", "echo hi"], "cmd.exe /d /s /c \"echo hi\""),
+    (
+        &["cmd.exe", "/d", "/s", "/c", "echo hi"],
+        "cmd.exe /d /s /c \"echo hi\"",
+    ),
 ];

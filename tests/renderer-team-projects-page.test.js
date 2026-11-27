@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { P1, P2, P3, S1, S2, OTHER, DOT, MAYA, LENA, project, listAnswer, request, rulesAnswer, members, openProjects, projectRow, pageSection, region, flush, memberTeam } = require('./helpers/team-project-renderer-host');
+const { P1, P2, P3, S1, S2, OTHER, DOT, MAYA, LENA, project, listAnswer, rule, request, rulesAnswer, members, openProjects, projectRow, pageSection, region, flush, memberTeam } = require('./helpers/team-project-renderer-host');
 const words = require('../renderer/shell/renderer-settings-team-strings');
 
 const sections = (h) => [...region(h).querySelectorAll('[data-team-project-section]')].map((el) => el.dataset.teamProjectSection);
@@ -102,7 +102,8 @@ test('H21.1: Remove and Leave this project ask first with an inline confirm; Can
 });
 
 test('Add someone offers the team members not in the project; Leave as the last admin shows the refusal', async (t) => {
-  const { h } = await openPage(P2, { answers: { projectMembers: members([[DOT, 'admin'], [MAYA, 'writer']]), projectLeave: { ok: false, error: { reason: 'team_project_last_admin' } } } });
+  // Two admins are listed here, so Leave is offered (C20 greys it for the only admin); the host still refuses a race.
+  const { h } = await openPage(P2, { answers: { projectMembers: members([[DOT, 'admin'], [MAYA, 'admin']]), projectLeave: { ok: false, error: { reason: 'team_project_last_admin' } } } });
   t.after(h.restore);
   const who = region(h).querySelector('#teamProjectAddWho');
   assert.deepEqual([...who.options].map((o) => o.textContent).sort(), ['Lena', 'Olive Owner']);
@@ -493,4 +494,106 @@ test('the Boards line: while the team is offline its boards are greyed with the 
   const open = act(h, 'board-open', '[data-board-id="board_0"]');
   assert.deepEqual([open.disabled, open.title], [true, 'Boards open when the team is online.']);
   assert.match(text(pageSection(h, 'boards')), /Boards open when the team is online\./);
+});
+
+test('C20: a reader\'s Upload is greyed with its reason, never hidden; Leave is greyed with its reason for the only admin and not for anyone else', async (t) => {
+  const reader = await openPage(P1, { list: listAnswer({ projects: [project(P1, 'jenny-site', 'reader'), project(P2, 'palette-tools', 'admin')] }) });
+  t.after(reader.h.restore);
+  const upload = act(reader.h, 'upload');
+  assert.deepEqual([upload.disabled, upload.title], [true, 'Only writers can upload.']);
+  upload.dispatchEvent(new reader.h.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(reader.h.sent('uploadFolder').length, 0);
+  const only = await openPage(P2, { answers: { projectMembers: members([[DOT, 'admin'], [MAYA, 'writer']]) } });
+  t.after(only.h.restore);
+  const leave = act(only.h, 'leave');
+  assert.deepEqual([leave.disabled, leave.title], [true, 'A project always has an admin.']);
+  leave.dispatchEvent(new only.h.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(pageSection(only.h, 'members').querySelector('.team-set-confirm'), null, 'no confirm opens');
+  const shared = await openPage(P2, { answers: { projectMembers: members([[DOT, 'admin'], [MAYA, 'admin']]) } });
+  t.after(shared.h.restore);
+  assert.equal(act(shared.h, 'leave').disabled, false, 'a second admin: Leave as before');
+});
+
+test('C19: Remove takes effect at once and leaves "Rule removed." with Undo in the row\'s place; Undo sets the same rule again; the next change to the list drops it', async (t) => {
+  let rules = [{ ...rule({ rule_seq: 1, tool_name: 'edit_file', folder: 'docs' }) }, { ...rule({ rule_seq: 2, tool_name: 'write_file', folder: null }) }];
+  const { h, push } = await openPage(P2, { answers: { projectRules: () => rulesAnswer({ project_id: P2, rules }),
+    projectRuleRemove: (p) => { rules = rules.filter((r) => r.rule_seq !== p.rule_seq); return { ok: true }; },
+    projectRuleAdd: (p) => { rules = [...rules, rule({ rule_seq: 9, tool_name: p.tool_name, folder: p.folder })]; return { ok: true }; } } });
+  t.after(h.restore);
+  const list = () => [...pageSection(h, 'rules').querySelectorAll('.team-set-person')].map((el) => text(el));
+  assert.equal(list().length, 2);
+  act(h, 'rule-remove', '[data-rule-seq="1"]').click();
+  await flush();
+  assert.equal(h.sent('projectRuleRemove').length, 1, 'removed at once, nothing asked first');
+  assert.match(list()[0], /^Rule removed\.\s?Undo$/, 'the row is replaced where it stood');
+  assert.match(list()[1], /^write_file/);
+  act(h, 'rule-undo').click();
+  await flush();
+  assert.deepEqual(h.sent('projectRuleAdd').map((c) => c.payload), [{ team_id: OTHER, project_id: P2, tool_name: 'edit_file', folder: 'docs' }], 'the same tool and folder');
+  assert.equal(act(h, 'rule-undo'), null, 'Undo is spent');
+  assert.equal(list().length, 2, 'the rule is back');
+  act(h, 'rule-remove', '[data-rule-seq="2"]').click();
+  await flush();
+  assert.match(list()[0], /^Rule removed\.\s?Undo$/);
+  rules = [...rules, rule({ rule_seq: 12, tool_name: 'edit_file', folder: 'posts' })];
+  push({ kind: 'rules_changed', project_id: P2, revision: 12 });
+  await flush();
+  assert.equal(act(h, 'rule-undo'), null, 'another change to the list drops it');
+});
+
+const fold = (h, id) => region(h).querySelector(`details[data-team-fold="${id}"]`);
+const summary = (h) => [...region(h).querySelectorAll('.team-set-summary a')].map((a) => `${a.querySelector('span').textContent}: ${a.querySelector('b').textContent}`).join(' | ');
+
+test('D2: an admin\'s page opens with a summary of three facts; Always allowed, Activity and Delete are folds, closed; Files and Members stay open', async (t) => {
+  const { h } = await openPage(P2);
+  t.after(h.restore);
+  assert.equal(summary(h), 'Members: 3 · you are an admin | Always allowed: 1 rule | Activity: Nothing yet');
+  assert.deepEqual(['rules', 'activity', 'delete'].map((id) => [id, Boolean(fold(h, id)), fold(h, id) && fold(h, id).open]), [['rules', true, false], ['activity', true, false], ['delete', true, false]]);
+  assert.deepEqual([...fold(h, 'rules').querySelector('summary').childNodes].map((n) => n.textContent), ['Always allowed', '1 rule'], 'the rule count sits beside the heading');
+  assert.equal(pageSection(h, 'files').closest('details'), null);
+  assert.equal(pageSection(h, 'members').closest('details'), null);
+  const reads = ['projectRules', 'projectAudit'].map((m) => h.sent(m).length);
+  region(h).querySelector('[data-project-action="summary-jump"][data-jump="rules"]').click();
+  await flush();
+  assert.equal(fold(h, 'rules').open, true, 'the fact opens its section');
+  assert.equal(h.window.document.activeElement, fold(h, 'rules').querySelector('summary'), 'and moves the focus to its visible heading');
+  assert.deepEqual(['projectRules', 'projectAudit'].map((m) => h.sent(m).length), reads, 'opening asks the host for nothing');
+  assert.match(fold(h, 'rules').outerHTML, /rule-add/);
+});
+
+test('D2: a fold stays as the person left it through redraws; a confirm, an error note or an undo row opens its fold by itself', async (t) => {
+  const answers = { projectDelete: { ok: false, error: { reason: 'team_project_busy' } } };
+  const { h, push } = await openPage(P2, { answers });
+  t.after(h.restore);
+  fold(h, 'activity').open = true;
+  fold(h, 'activity').dispatchEvent(new h.window.Event('toggle'));
+  push({ type: 'projects' });
+  await flush();
+  assert.equal(fold(h, 'activity').open, true, 'opened by the person, kept across a redraw');
+  assert.equal(fold(h, 'delete').open, false);
+  act(h, 'delete').click();
+  assert.equal(fold(h, 'delete').open, true, 'the confirm opens Delete by itself');
+  act(h, 'delete-cancel').click();
+  fold(h, 'delete').open = false;
+  fold(h, 'delete').dispatchEvent(new h.window.Event('toggle'));
+  act(h, 'delete').click();
+  act(h, 'delete-go').click();
+  await flush();
+  assert.match(text(fold(h, 'delete')), /cannot be deleted while a turn is running/, 'the refusal note shows');
+  assert.equal(fold(h, 'delete').open, true, 'the error note opens it');
+  fold(h, 'rules').open = true;
+  fold(h, 'rules').dispatchEvent(new h.window.Event('toggle'));
+  act(h, 'rule-remove', '[data-rule-seq="1"]').click();
+  await flush();
+  assert.ok(act(h, 'rule-undo') && fold(h, 'rules').open, 'the undo row is in an open fold');
+});
+
+test('D2: a writer\'s page has no summary line and no fold; a waiting request opens Always allowed for the admin', async (t) => {
+  const asked = await openPage(P2, { answers: { projectRules: rulesAnswer({ project_id: P2, requests: [request()] }) } });
+  assert.equal(fold(asked.h, 'rules').open, true, 'a request an admin must answer is not left in a closed fold');
+  asked.h.restore();
+  const { h } = await openPage(P1);
+  t.after(h.restore);
+  assert.equal(region(h).querySelector('.team-set-summary'), null);
+  assert.equal(region(h).querySelector('details'), null);
 });

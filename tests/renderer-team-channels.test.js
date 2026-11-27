@@ -422,7 +422,7 @@ test('change lines sit after the message they follow: made, renamed, topic, arch
   const flow = [...log.children].filter((el) => el.classList.contains('team-msg') || el.classList.contains('team-chan-event'))
     .map((el) => (el.classList.contains('team-msg') ? 'msg' + el.dataset.seq : el.textContent));
   assert.deepEqual(flow, [
-    'Maya made #design · Everyone on this team can read it', 'msg1',
+    'Maya made #a · Everyone on this team can read it', 'msg1', // row 173: the name it was made with, not today's
     'You renamed the channel from #a to #design', 'msg2',
     'Dot changed the topic', 'You archived the channel',
     'msg3', 'You brought the channel back',

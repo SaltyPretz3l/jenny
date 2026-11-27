@@ -56,6 +56,7 @@
   }
   // A push's new bytes on the bar already drawn: its width, value and text, nothing else. The bar is found by comparing
   // the attribute (an id from main is never built into a selector).
+  function removeAsk(t) { return jt('settings.models.share.removeAsk', 'Remove the {size} received so far?', { size: size(count(t.bytes_done)) }); }
   function patchProgress(container, key, t) {
     var want = String(key);
     var bar = container ? Array.prototype.find.call(container.querySelectorAll('[data-mshare-progress]'), function (el) { return el.getAttribute('data-mshare-progress') === want; }) : null;
@@ -126,10 +127,16 @@
     if (row.state === 'reading' || row.state === 'offering') {
       // How much of the files has been read (`read_done`, bytes), on the transfers' bar.
       var read = { bytes_done: Math.min(count(row.read_done), count(row.total_bytes)), bytes_total: count(row.total_bytes), rate_bps: 0 };
-      return block({ line: row.audience === 'team' ? jt('settings.models.share.readingTeam', 'Reading the file before offering it to everyone in {team}.', { team: team })
-        : jt('settings.models.share.reading', 'Reading the file before offering it to {name}.', { name: who }),
+      // Read, but the offer has not reached the host yet: say so, and the Cancel withdraws it.
+      var sending = row.state === 'offering' && count(row.read_done) >= count(row.total_bytes);
+      var line = sending
+        ? (row.audience === 'team' ? jt('settings.models.share.offeringToTeam', 'Offering to everyone in {team}. Waiting to reach the host.', { team: team })
+          : jt('settings.models.share.offeringTo', 'Offering to {name}. Waiting to reach {team}.', { name: who, team: team }))
+        : (row.audience === 'team' ? jt('settings.models.share.readingTeam', 'Reading the file before offering it to everyone in {team}.', { team: team })
+          : jt('settings.models.share.reading', 'Reading the file before offering it to {name}.', { name: who }));
+      return block({ line: line,
         progress: read.bytes_total > 0 ? progressHtml('read:' + row.request_id, read, name, false) : '',
-        acts: act(jt('settings.models.share.cancel', 'Cancel'), 'withdraw', ids, 'danger', jt('settings.models.share.cancelOfferTip', 'Stop reading and offer nothing')) });
+        acts: act(jt('settings.models.share.cancel', 'Cancel'), 'withdraw', ids, 'danger', sending ? jt('settings.models.share.withdrawTip', 'Withdraw this offer') : jt('settings.models.share.cancelOfferTip', 'Stop reading and offer nothing')) });
     }
     if (row.state === 'failed') {
       var failed = row.reason === 'model_source_changed' ? jt('settings.models.share.changed', 'This file changed while it was being sent, so sending stopped. Offer it again to send the new file.')
@@ -196,6 +203,13 @@
         model_staging_failed: [jt('settings.models.share.failedWrite', 'Jenny could not write to {root}. Check the folder, then try again.', { root: path || jt('settings.models.share.thatFolder', 'that folder') }), true],
         cancelled_by_sender: [jt('settings.models.share.failedStopped', '{sender} stopped sending. Dismiss removes what had arrived.', { sender: sender }), false],
         withdrawn: [jt('settings.models.share.failedStopped', '{sender} stopped sending. Dismiss removes what had arrived.', { sender: sender }), false],
+        // The offer ended without the sender choosing to (services/team/model-incoming.js OFFER_ENDS).
+        expired: [jt('settings.models.share.endedExpired', 'The offer from {sender} ran out before this finished. Dismiss removes what had arrived.', { sender: sender }), false],
+        member_gone: [jt('settings.models.share.endedGone', '{sender} is no longer in the team, so this stopped. Dismiss removes what had arrived.', { sender: sender }), false],
+        role_changed: [jt('settings.models.share.endedRole', '{sender} can no longer share models, so this stopped. Dismiss removes what had arrived.', { sender: sender }), false],
+        sender_offline: [jt('settings.models.share.endedOffline', '{sender} went offline and the offer ended. Dismiss removes what had arrived.', { sender: sender }), false],
+        sharing_off: [jt('settings.models.share.endedSharingOff', 'Model sharing was turned off, so this stopped. Dismiss removes what had arrived.'), false],
+        host_stopping: [jt('settings.models.share.endedHost', 'The team’s server stopped, so the offer ended. Dismiss removes what had arrived.'), false],
       }[t.reason] || [reasonText(t.reason), true];
       o = { line: failed[0], tone: 'danger', acts: (failed[1] ? retry : '') + dismiss };
     } else if (t.queued) {
@@ -214,6 +228,11 @@
     } else {
       o = { progress: bar(false), acts: act(jt('settings.models.share.pause', 'Pause'), 'receive-pause', ids, 'secondary', jt('settings.models.share.pauseInTip', 'Pause receiving {model}', { model: name })) + cancel };
     }
+    if (ctx.asking && t && count(t.bytes_done) > 0) { // C22: the question in place of the buttons, the bar kept
+      o = { line: removeAsk(t), tone: 'warn', progress: o.progress,
+        acts: act(jt('settings.models.share.removeYes', 'Remove'), 'ask-remove', ids, 'danger', jt('settings.models.share.removeYesTip', 'Remove {model} and the {size} received', { model: name, size: size(count(t.bytes_done)) }))
+          + act(t.state === 'failed' ? jt('settings.models.share.keep', 'Keep') : jt('settings.models.share.keepDownloading', 'Keep downloading'), 'ask-keep', ids, 'secondary', jt('settings.models.share.keepTip', 'Keep what has arrived')) };
+    }
     var html = '<div class="mrow" data-model-key=":offer:' + escapeHtml(row.offer_id) + '" data-active="false" data-pending="false" data-load-failed="false">'
       + '<div class="mrow-main"><div class="mrow-title"><span class="mrow-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span></div>'
       + '<div class="mrow-meta">' + escapeHtml(meta) + '</div>' + block(o) + '</div>'
@@ -222,10 +241,9 @@
     return { key: ':offer:' + row.offer_id, html: html };
   }
 
-  // Whether an incoming offer has a row: open, or taken here (a transfer), and not dismissed.
+  // Whether an incoming offer has a row: open, or taken here (a transfer, even after its offer ended), and not dismissed.
   function showsIncoming(row) {
-    if (row.transfer) return row.transfer.state === 'failed' || row.state !== 'ended';
-    return row.state === 'open';
+    return Boolean(row.transfer) || row.state === 'open';
   }
 
   function separator(key, text) { return { key: key, html: '<div class="mrow-sep" data-item="sep">' + escapeHtml(text) + '</div>' }; }
@@ -299,7 +317,7 @@
   };
 
   return {
-    parts: parts, words: words, clean: clean, cleanBlock: words.cleanBlock, size: size, filesText: filesText, patchProgress: patchProgress, act: act,
+    parts: parts, words: words, clean: clean, cleanBlock: words.cleanBlock, size: size, filesText: filesText, patchProgress: patchProgress, removeAsk: removeAsk, act: act,
     reasonText: reasonText, outgoingBlock: outgoingBlock, incomingRow: incomingRow, showsIncoming: showsIncoming,
     fromTeamSeparator: fromTeamSeparator, onThisPcSeparator: onThisPcSeparator, receivedFlag: receivedFlag, arrivedBlock: arrivedBlock,
   };

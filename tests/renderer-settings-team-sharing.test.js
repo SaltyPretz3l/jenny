@@ -235,6 +235,22 @@ test('switching off mid-request asks once with three buttons; idle switches off 
   assert.deepEqual(h.sent('shareSet').map((c) => c.payload).at(-1), { team_id: OTHER, on: false });
 });
 
+test('C1: finishing: the line says so, Stop now calls shareStop, the switch reads off and can turn sharing on again', async (t) => {
+  const h = memberPage(t);
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('finishing'), pools: {} });
+  assert.equal(text(h.q('.team-share-state .inv-status-row')), 'Finishing a request, then sharing stops');
+  assert.deepEqual(buttons(h.q('.team-share-state')), ['Stop now']);
+  assert.equal(h.q('#teamShareGpu').getAttribute('aria-checked'), 'false');
+  h.click('[data-team-action="share-stop"]');
+  await flush();
+  assert.deepEqual(h.sent('shareStop').map((c) => c.payload), [{ team_id: OTHER }]);
+  await push(h, { teams: [member()], sharing: sharing('finishing'), pools: {} });
+  h.click('#teamShareGpu');
+  await flush();
+  assert.deepEqual(h.sent('shareSet').map((c) => c.payload), [{ team_id: OTHER, on: true, confirmed: false }]);
+});
+
 test('a read-only member sees the switch disabled with the approved sentence and no state line', async (t) => {
   const h = memberPage(t, { teams: [member({ role: 'read_only' })] });
   await flush();
@@ -361,6 +377,31 @@ test('OD-4: Ollama not running: the row says so and no saved set is read', async
   assert.equal(text(none.q('#teamOllamaHelp')), 'Ollama has no models installed on this PC.');
 });
 
+test('C3: Ollama not running offers Try again, which reads again', async (t) => {
+  let tags = { available: false, data: [] };
+  const h = ollamaPage(t, { tags: () => tags });
+  await flush();
+  await push(h, { teams: [member()], sharing: null, pools: {} });
+  assert.deepEqual(buttons(h.q('[data-settings-field="teamOllamaRow"]')), ['Try again']);
+  tags = { available: true, data: TAGS.map(tag) };
+  h.click('[data-team-action="ollama-retry"]');
+  await flush();
+  assert.equal(h.reads.length, 2);
+  assert.deepEqual(boxes(h).map((box) => box.dataset.ollamaName), TAGS);
+});
+
+test('C3: a saved set that cannot be read offers Try again, which reads it again', async (t) => {
+  let saved = { ok: false, error: { code: 'invalid_request', reason: 'team_sharing_invalid' } };
+  const h = ollamaPage(t, { answers: { shareOllamaModels: () => saved } });
+  await flush();
+  await push(h, { teams: [member()], sharing: sharing('idle', { engine: 'Ollama' }), pools: {} });
+  assert.deepEqual(buttons(h.q('[data-settings-field="teamOllamaRow"]')), ['Try again']);
+  saved = { ok: true, ollama_models: null };
+  h.click('[data-team-action="ollama-retry"]');
+  await flush();
+  assert.equal(boxes(h).length, TAGS.length);
+});
+
 test('OD-4: a saved set that cannot be read leaves the list out, with its sentence, so a save cannot overwrite what was not seen', async (t) => {
   const h = ollamaPage(t, { answers: { shareOllamaModels: { ok: false, error: { code: 'invalid_request', reason: 'team_sharing_invalid' } } } });
   await flush();
@@ -447,18 +488,20 @@ test('Team model: Automatic first, then every online model; the help names Autom
   h.choose('#teamModel', 'auto');
   await flush();
   assert.deepEqual(h.sent('teamModelSet').map((c) => c.payload), [{ team_id: TEAM, model: M8 }, { team_id: TEAM, model: null }]);
-  // A stored model that is not online reads as Automatic.
+  // C2: a stored model that is not online is a disabled "(offline)" option and the selected one.
   await push(h, { teams: [snapshot({ label: 'Desk' })], sharing: null, pools: { [TEAM]: { ...POOL[TEAM], team_model: 'gone-model' } } });
-  assert.equal(h.q('#teamModel').value, 'auto');
-  // Paused hardware answers nothing: its models are not offered and a stored one on it reads as Automatic.
+  assert.deepEqual([...h.q('#teamModel').options].map((o) => [o.textContent, o.disabled]), [['Automatic', false], ['gone-model (offline)', true], [M27, false], [M8, false]]);
+  assert.equal(h.q('#teamModel').value, 'gone-model');
+  // Paused hardware answers nothing: its models are not offered and a stored one on it is listed offline.
   const paused = { [TEAM]: { ...POOL[TEAM], team_model: M8, nodes: [POOL[TEAM].nodes[0], { ...POOL[TEAM].nodes[1], paused: true }] } };
   await push(h, { teams: [snapshot({ label: 'Desk' })], sharing: null, pools: paused });
-  assert.deepEqual([...h.q('#teamModel').options].map((o) => o.textContent), ['Automatic', M27]);
-  assert.equal(h.q('#teamModel').value, 'auto');
-  // With nothing online there is no Team GPUs group.
+  assert.deepEqual([...h.q('#teamModel').options].map((o) => o.textContent), ['Automatic', `${M8} (offline)`, M27]);
+  assert.equal(h.q('#teamModel').value, M8);
+  // C4: with nothing online the group is drawn, the select disabled, and the help says why.
   await push(h, { teams: [snapshot({ label: 'Desk' })], sharing: null, pools: { [TEAM]: { nodes: [node({ online: false })], team_model: null, automatic_model: null } } });
-  assert.equal(h.q('#teamModel'), null);
-  assert.equal(h.headings().includes('Team GPUs'), false);
+  assert.equal(h.q('#teamModel').disabled, true);
+  assert.equal(text(h.q('#teamModelHelp')), 'No shared GPU is online.');
+  assert.equal(h.headings().includes('Team GPUs'), true);
 });
 
 test('GPU use: totals per person, every request behind the fold, Show more with a cursor', async (t) => {
@@ -490,9 +533,23 @@ test('GPU use: a refused or degraded log shows Unavailable, not an empty list', 
   const h = ownerPage(t, { gpuUse: { ok: false, error: { code: 'CMP-TEAM-0001', reason: 'team_pool_unavailable' } } });
   await flush();
   const group = h.q('[data-team-group="use"]');
-  assert.match(text(group), /Unavailable/);
+  assert.match(text(group), /The team server could not be reached\./);
   assert.equal(group.querySelector('[data-team-use]'), null);
   assert.doesNotMatch(text(group), /Nothing has happened yet/);
+});
+
+test('C3: a failed GPU use read shows its reason and Try again, which reads again', async (t) => {
+  let answer = { ok: false, error: { code: 'CMP-TEAM-0001', reason: 'team_pool_unavailable' } };
+  const h = ownerPage(t, { gpuUse: () => answer });
+  await flush();
+  const group = () => h.q('[data-team-group="use"]');
+  assert.match(text(group()), /The team server could not be reached\./);
+  assert.deepEqual(buttons(group()), ['Try again']);
+  answer = USAGE;
+  h.click('[data-team-action="use-retry"]');
+  await flush();
+  assert.equal(h.sent('gpuUse').length, 2);
+  assert.notEqual(group().querySelector('[data-team-use]'), null);
 });
 
 test('a member page never shows the owner groups or reads GPU use', async (t) => {

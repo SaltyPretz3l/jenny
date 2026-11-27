@@ -233,3 +233,9 @@ test('E73: an export over a member list that does not read says only the readabl
   assert.equal(strings.exportLeftOutText(),
     'The member list is damaged, so only the readable copy was saved. This export cannot be restored.');
 });
+
+test('an invite made on the server’s own PC says where it was made; one a member made names the member', () => {
+  const nameOf = (id) => (id === 'member_a' ? 'Arjun' : '');
+  assert.equal(strings.activityText({ kind: 'invite_created', actor_member_id: null }, nameOf), 'An invite was created on the server’s PC');
+  assert.equal(strings.activityText({ kind: 'invite_created', actor_member_id: 'member_a' }, nameOf), 'Arjun created an invite');
+});

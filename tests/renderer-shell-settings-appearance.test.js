@@ -849,10 +849,10 @@ test('the JS-mounted Chat width control keeps a stable node and carries the shar
   assert.equal(segmentedGroup(doc, 'appearanceChatWidthSelect'), widthGroup);
 });
 
-// Team chat density (row 193 C14): it lives on the Team page now, never on Appearance, with the Team flag on or off.
+// Team chat density (row 123 layout D5): it lives in Settings > Chat > Layout, never on Appearance, with the Team flag on or off.
 test('Team chat density is not an Appearance row, with the Team flag off or on', async (t) => {
   const off = await loadRendererTestApp(t);
-  assert.equal(off.window.document.querySelector('[data-settings-field="appearanceTeamDensitySelect"]'), null, 'no row with the flag off');
+  assert.equal(off.window.document.querySelector('[data-settings-section="appearance"] [data-settings-field="appearanceTeamDensitySelect"]'), null, 'not on Appearance with the flag off');
   const { window } = await loadRendererTestApp(t, { shell: { features: { state: { featureFlags: { team: true } } } } });
   const doc = window.document;
   assert.equal(doc.querySelector('[data-settings-section="appearance"] [data-settings-field="appearanceTeamDensitySelect"]'), null, 'the Team flag does not put it on Appearance');

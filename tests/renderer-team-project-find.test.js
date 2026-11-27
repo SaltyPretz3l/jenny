@@ -182,3 +182,54 @@ test("the Team tab sends Ctrl+F to the open conversation's find and to its own s
   tab(null).onKeydown(press());
   assert.deepEqual(calls, ['prevent', 'find', 'prevent', 'search', 'prevent', 'search']);
 });
+
+test('F1: a new query paints once, not twice; matches are counted from text and the count stops at 5000+', async (t) => {
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ messages: [ask('u1', 'a '.repeat(6000), 'turn_1'), said('a1', 'Done', 'turn_1')] }) } });
+  const registry = withHighlights(m);
+  await flush();
+  key(m, field(m), 'f', { ctrlKey: true });
+  let sets = 0;
+  const set = registry.set.bind(registry);
+  registry.set = (...args) => { sets += 1; return set(...args); };
+  typeFind(m, 'a');
+  assert.equal(sets, 2, 'one paint (all and current), not two');
+  assert.equal(count(m), '1 of 5000+');
+  assert.equal(painted(registry, 'chat-search-match').length, 5000, 'at most 5000 ranges are painted');
+});
+
+test('F2: a conversation holding only its newest messages shows "+" and says so, with no Load earlier button (F2)', async (t) => {
+  const pairs = Array.from({ length: 200 }, (_, i) => [ask('u' + i, 'note ' + i, 'turn_' + i), said('a' + i, 'ok', 'turn_' + i)]).flat();
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ messages: pairs, has_more: true, next_before_message_id: 'u0' }) } });
+  withHighlights(m);
+  await flush();
+  key(m, field(m), 'f', { ctrlKey: true });
+  typeFind(m, 'zzz');
+  assert.equal(count(m), 'No matches');
+  assert.equal(m.q('.team-find-note').textContent.trim(), 'Searched the newest messages held here. Older ones are not in this view.');
+  assert.equal(m.q('.team-find-note [data-find-action="earlier"]'), null, 'nothing to load: the view cannot hold more');
+  typeFind(m, 'note');
+  assert.equal(count(m), '1 of 200+');
+});
+
+test('G1: the count and the painted ranges agree: a match whose last character is on no text segment is neither counted nor painted', async (t) => {
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ messages: [ask('u1', 'cat and cat', 'turn_1'), said('a1', 'Done', 'turn_1')] }) } });
+  const registry = withHighlights(m);
+  await flush();
+  // The real walker, except that the visible text of the first message has a gap: its last character is behind no segment.
+  const real = require('../renderer/chat/renderer-chat-search-highlight');
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'rendererChatSearchHighlight');
+  const before = globalThis.rendererChatSearchHighlight;
+  globalThis.rendererChatSearchHighlight = { ...real, collectSearchableText(el) {
+    const out = real.collectSearchableText(el);
+    return out.text === 'cat and cat' ? { text: out.text, segments: [{ node: out.segments[0].node, start: 0, end: 9 }] } : out;
+  } };
+  t.after(() => { if (had) globalThis.rendererChatSearchHighlight = before; else delete globalThis.rendererChatSearchHighlight; });
+  key(m, field(m), 'f', { ctrlKey: true });
+  typeFind(m, 'cat');
+  assert.equal(count(m), '1 of 1', 'only the match that can be painted is counted');
+  assert.deepEqual(painted(registry, 'chat-search-match'), ['cat'], 'one range is painted');
+  key(m, input(m), 'Enter');
+  assert.equal(count(m), '1 of 1', 'stepping wraps on the one match');
+  assert.deepEqual(painted(registry, 'chat-search-current'), ['cat'], 'and the current match is painted');
+  assert.equal(painted(registry, 'chat-search-match').length, 1);
+});

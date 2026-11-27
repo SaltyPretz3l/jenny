@@ -1,3 +1,4 @@
+/* global document, window, getComputedStyle */
 'use strict';
 
 const assert = require('node:assert/strict');
@@ -5,6 +6,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { JSDOM } = require('jsdom');
+const { SKIP } = require('./helpers/composer-layout-harness');
+const { withSharedBrowser, closeSharedBrowser } = require('./helpers/layout-shared-browser');
+
+test.after(closeSharedBrowser);
 
 const repoRoot = path.join(__dirname, '..');
 
@@ -78,4 +83,74 @@ test('composer model popover contains the picker before hidden select carriers',
   }
 
   dom.window.close();
+});
+
+/* The real stylesheets in headless Chromium: the open model menu in the composer, filled like the picker fills it
+ * (search, a list with team headings and their notes, a seven-step thinking ladder, the footer). */
+async function openModelMenu(browser, { width, height }) {
+  const page = await browser.newPage({ viewport: { width, height }, bypassCSP: true });
+  await page.route('**/*', (route) => (/\.m?js(\?|$)/.test(route.request().url()) ? route.abort() : route.continue()));
+  await page.goto(require('node:url').pathToFileURL(path.join(repoRoot, 'index.html')).href);
+  for (const file of ['renderer/shared/string-utils.js', 'renderer/inventory/chip.js']) {
+    await page.addScriptTag({ content: readRepoFile(file) });
+  }
+  await page.evaluate(() => {
+    document.getElementById('startupOverlay')?.remove();
+    document.documentElement.dataset.palette = 'darkroom';
+    document.getElementById('composerModelPillSlot').insertAdjacentHTML('afterbegin',
+      window.inventoryChip({ id: 'composer-model', label: 'Qwen3.8-27B', hasPopup: true, className: 'composer-model-pill' }));
+    const option = (name) => '<button type="button" class="composer-model-picker-option"><span class="composer-model-picker-name">'
+      + `<span class="composer-model-picker-family">${name}</span><span class="composer-model-picker-tag"> \u00b7 Q4_K_M</span></span></button>`;
+    const group = (title, count) => `<div class="composer-model-picker-group">${title}</div>`
+      + '<div class="composer-model-picker-group-note">The host and the answering PC can read your prompts, so keep private work on your own models.</div>'
+      + Array.from({ length: count }, (_, index) => option(`${title} ${index}`)).join('');
+    const efforts = ['Default', 'Off', 'Minimal', 'Low', 'Medium', 'High', 'Max']
+      .map((name) => `<button type="button" class="composer-model-picker-segment">${name}</button>`).join('');
+    document.querySelector('[data-composer-model-picker]').innerHTML = '<div class="composer-model-picker-search">'
+      + '<input type="search" id="probeSearch" class="composer-model-picker-search-field" placeholder="Search models"></div>'
+      + `<div class="composer-model-picker-list" role="listbox">${option('Default')}${group('On this PC', 8)}${group('From your teams', 6)}${group('Cloud', 6)}</div>`
+      + `<div class="composer-model-picker-thinking"><span class="composer-model-picker-thinking-label">Thinking</span><div class="composer-model-picker-segments">${efforts}</div></div>`
+      + '<div class="inv-popover-footer">Applies to this chat. Defaults live in Settings.</div>';
+    document.getElementById('composerModelPopover').hidden = false;
+  });
+  return page;
+}
+
+const measureModelMenu = (page) => page.evaluate(() => {
+  const top = (node) => node.getBoundingClientRect().top;
+  const list = document.querySelector('.composer-model-picker-list');
+  return {
+    railBottom: document.querySelector('.titlebar').getBoundingClientRect().bottom,
+    searchTop: top(document.getElementById('probeSearch')),
+    popoverTop: top(document.getElementById('composerModelPopover')),
+    listHeight: list.getBoundingClientRect().height,
+    listCap: Number.parseFloat(getComputedStyle(list).maxHeight),
+    listScrolls: list.scrollHeight > list.clientHeight,
+    footerBottom: document.querySelector('#composerModelPopover .inv-popover-footer').getBoundingClientRect().bottom,
+    popoverBottom: document.getElementById('composerModelPopover').getBoundingClientRect().bottom,
+  };
+});
+
+// Seen live (2026-11-25, 1024 by 720): the menu's search field sat under the top rail.
+test('the model menu stays below the top rail and its list scrolls in what is left', { skip: SKIP }, async () => {
+  await withSharedBrowser(async (browser) => {
+    for (const height of [720, 600]) {
+      const page = await openModelMenu(browser, { width: 1024, height });
+      const m = await measureModelMenu(page);
+      assert.ok(m.popoverTop >= m.railBottom, `${height}px tall: the menu top (${m.popoverTop}) is below the top rail (${m.railBottom})`);
+      assert.ok(m.searchTop >= m.railBottom, `${height}px tall: the search field (${m.searchTop}) is below the top rail (${m.railBottom})`);
+      assert.ok(m.listScrolls, `${height}px tall: the list scrolls inside the menu`);
+      assert.ok(m.footerBottom <= m.popoverBottom, `${height}px tall: the footer stays inside the menu`);
+    }
+  });
+});
+
+test('a tall window leaves the model menu as it was: the list keeps its 320px cap', { skip: SKIP }, async () => {
+  await withSharedBrowser(async (browser) => {
+    const page = await openModelMenu(browser, { width: 1024, height: 1400 });
+    const m = await measureModelMenu(page);
+    assert.equal(m.listCap, 320);
+    assert.ok(m.listHeight > 300 && m.listHeight <= m.listCap, `the list is ${m.listHeight}px tall, not squeezed`);
+    assert.ok(m.searchTop >= m.railBottom);
+  });
 });

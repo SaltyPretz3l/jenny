@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { flush, snapshot, memberTeam, hostState, harness } = require('./helpers/team-settings-harness');
+const { OTHER, flush, snapshot, memberTeam, hostState, harness } = require('./helpers/team-settings-harness');
 
 const FOLDED = ['GPU use', 'Activity', 'Join another team', 'Ownership and shutdown', 'Delete'];
 const ownerPage = (t, over = {}) => { const h = harness({ host: hostState(over.host), teams: [snapshot()], answers: over.answers }); t.after(h.restore); return h; };
@@ -71,4 +71,49 @@ test('a summary fact focuses its group heading; a group in a closed fold opens f
   jump.click();
   assert.equal(h.q('details[data-team-fold="activity"]').open, true);
   assert.equal(h.window.document.activeElement.id, 'teamGroup-activity');
+});
+
+// Team polish (C9): a fold is forced open only where a confirm or note first shows, then follows the person's toggle.
+test('a fold the person closes stays closed while its confirm is still shown, and opens again for a new one', async (t) => {
+  const h = ownerPage(t);
+  await flush();
+  h.click('[data-team-group="ownership"] [data-team-action="stop"]');
+  const fold = () => h.q('details[data-team-fold="ownership"]');
+  assert.equal(fold().open, true, 'forced open where the confirm first shows');
+  fold().open = false;
+  fold().dispatchEvent(new h.window.Event('toggle'));
+  h.listeners.state({ teams: [snapshot({ team_name: 'Studio 2' })] });
+  await flush();
+  assert.match(fold().textContent, /Everyone else in the team is disconnected now/, 'the confirm is still there');
+  assert.equal(fold().open, false, 'the redraw does not open it again');
+  h.click('[data-team-action="confirm-cancel"]');
+  await flush();
+  h.click('[data-team-group="ownership"] [data-team-action="stop"]');
+  assert.equal(fold().open, true, 'a new confirm opens it again');
+});
+
+test('Hand over ownership jumps to People', async (t) => {
+  const h = ownerPage(t);
+  await flush();
+  const jump = h.q('[data-team-group="ownership"] [data-team-jump="people"]');
+  assert.ok(jump, 'the row has a way to People');
+  assert.equal(jump.textContent.trim(), 'Go to People');
+  jump.click();
+  assert.equal(h.window.document.activeElement.id, 'teamGroup-people');
+});
+
+// Team polish (C9): the stop-sharing question goes when nothing is serving.
+test('the stop-sharing question is cleared when sharing is no longer serving', async (t) => {
+  const sharing = (state) => ({ team_id: OTHER, state, serving_since: state === 'serving' ? Date.now() : null, models: ['m1'], engine: 'llama-server' });
+  const h = harness({ teams: [memberTeam({ label: 'Tower' })] });
+  t.after(h.restore);
+  await flush();
+  h.listeners.state({ teams: [memberTeam({ label: 'Tower' })], sharing: sharing('serving'), pools: {} });
+  await flush();
+  h.click('#teamShareGpu');
+  await flush();
+  assert.ok(h.q('[data-team-action="share-after"]'), 'the question is open while a request runs');
+  h.listeners.state({ teams: [memberTeam({ label: 'Tower' })], sharing: sharing('idle'), pools: {} });
+  await flush();
+  assert.equal(h.q('[data-team-action="share-after"]'), null, 'the request ended: nothing to ask');
 });

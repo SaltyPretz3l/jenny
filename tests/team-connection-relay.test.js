@@ -195,6 +195,22 @@ test('relay_unreachable is offline, and retried with the relay on the next attem
   assert.deepEqual(dials[1].shown, ['offline', 'relay_unreachable']);
 });
 
+// Live check 2026-11-12: after Start the owner's own connection read "offline" for 42 s. The host came up while a dial was
+// in flight, the ask to dial again was dropped, and the dial's failure then waited out a grown backoff.
+test('retryNow during a dial in flight: when that dial fails the next one runs at once, with no wait scheduled', async (t) => {
+  const member = await relayMember(t);
+  let waits = 0;
+  const timers = { setTimeout: () => { waits += 1; return { unref() {} }; }, clearTimeout: () => {} }; // a wait that never ends
+  const asked = [];
+  const { manager, dials } = relayManager(t, member, { replies: ['host_unreachable', 'host_unreachable'], timers,
+    onDial: (n) => { if (n === 1) asked.push(manager.retryNow()); } });
+  manager.start();
+  assert.ok(await waitUntil(() => dials.length === 2), 'the second dial ran without a timer firing');
+  assert.deepEqual(asked, [true]);
+  assert.ok(await waitUntil(() => waits === 1), 'the second failure, not asked about, waits as before');
+  assert.equal(dials.length, 2);
+});
+
 // Fault (slice 5-6): the member row's Connection line has nothing to say how this Jenny reaches the host, or it
 // says a path while offline.
 test('the snapshot carries the live bridge path while online and null otherwise', async (t) => {

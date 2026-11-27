@@ -365,6 +365,8 @@
 /* A confirm that lists things: plain lines, no box. */
 .team-set-confirm ul { margin: 0 0 var(--space-4); padding-inline-start: 18px; max-width: 640px; color: var(--text-secondary); font-size: var(--font-size-body); line-height: 1.55; }
 .team-set-confirm li + li { margin-top: var(--space-2); }
+/* Layout D6: the two sentences, then the six facts behind "What this changes". */
+.team-set-confirm .team-net-changes { margin: 0 0 var(--space-5); }
 
 /* Delete this team: what goes, by name and number. A label column and a text column; hierarchy by alignment only. */
 .team-del__lead strong { color: var(--text-primary); }

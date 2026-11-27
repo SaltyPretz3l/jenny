@@ -267,3 +267,20 @@ test('a stopped server whose key is lost, or under Force local, has no working S
   const start = button(held.h, 'start-server');
   assert.ok(start === null || start.disabled === true, 'never pressable while Force local is on');
 });
+
+test('a throw while Join is being sent gives the button back: the next press sends again', async () => {
+  const start = require('../renderer/team/renderer-team-start');
+  start.reset();
+  let calls = 0;
+  let renders = 0;
+  const store = { forceLocal: () => false, wake: () => false, call: async () => { calls += 1; return { ok: false, error: { reason: 'team_unavailable' } }; },
+    seed() {}, snapshot: () => ({ host: null, teams: [] }), refreshAll: async () => {} };
+  const ctx = { store, render() { renders += 1; if (renders === 1) throw new Error('redraw failed'); }, target: null };
+  await assert.rejects(start.send('join', 'join', {}, ctx, () => {}), /redraw failed/);
+  assert.equal(calls, 0, 'the first redraw threw before the call');
+  for (const [id, value] of [['teamStartName', 'Olive'], ['teamStartPc', 'Desk'], ['teamStartInvite', 'jteam2_code']]) start.onInput({ target: { id, value } });
+  assert.equal(start.action('start-join', ctx), true);
+  await flush();
+  assert.equal(calls, 1, 'Join is not left busy by the throw');
+  start.reset();
+});

@@ -165,6 +165,8 @@ test('Needs you lists who waits, Admit and Decline send what the tab’s Wants t
   assert.equal(h.sent('memberAdmit').length, 1, 'one call');
   assert.deepEqual(h.sent('memberAdmit')[0].payload, { team_id: TEAM, member_id: MAYA });
   act(h, 'decline', { q: (s) => sec(h, 'needs').querySelector(s) }).click();
+  assert.equal(h.sent('memberRevoke').length, 0, 'Decline asks first');
+  act(h, 'confirm-decline', { q: (s) => sec(h, 'needs').querySelector(s) }).click();
   await flush();
   assert.deepEqual(h.sent('memberRevoke')[0].payload, { team_id: TEAM, member_id: MAYA });
   assert.ok(h.sent('members').length >= 2, 'the roster is read again after an answer');

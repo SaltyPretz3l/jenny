@@ -94,11 +94,12 @@ test('Team and the Team-only density row are offered only while the Team flag is
   controller.bind();
   const ids = (query) => { controller.runQuery(query); return controller.getActiveHits().map((hit) => hit.id); };
   const index = buildSettingsSearchIndex();
-  assert.ok(index.some((entry) => entry.id === 'appearanceTeamDensitySelect'), 'the density row is in the index');
+  const density = index.find((entry) => entry.id === 'appearanceTeamDensitySelect');
+  assert.equal(density && density.sectionId, 'chat', 'the density row is in the index, on Chat');
+  assert.ok(ids('density').includes('appearanceTeamDensitySelect'), 'and it is found with the Team flag off: the row is greyed there, not hidden');
   for (const word of ['team', 'invite', 'host', 'server', 'members']) {
     const off = ids(word);
     assert.equal(off.includes('section:team'), false, `"${word}" offers no Team page with the flag off`);
-    assert.equal(off.includes('appearanceTeamDensitySelect'), false, `"${word}" offers no density row with the flag off`);
     assert.equal(searchSettingsIndex(index, word).some((hit) => hit.id === 'section:team'), false, `"${word}": no flag source, no Team`);
   }
   // The flag turns on after the index was built and the controller bound: the next search sees it.

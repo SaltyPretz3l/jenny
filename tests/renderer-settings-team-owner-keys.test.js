@@ -92,11 +92,11 @@ test('OD-7: where desktop hosting cannot run, the Deploy form is a notice about 
   assert.ok(h.q('#teamNewName') && h.q('[data-team-action="deploy"]'), 'on Windows the form stays');
 });
 
-test('OD-11: Team chat density is hidden until there is a team', async () => {
-  for (const [teams, shown] of [[[], false], [[memberTeam()], true]]) {
+test('Team chat density is never drawn on the Team page, with or without a team (it moved to Chat > Layout)', async () => {
+  for (const teams of [[], [memberTeam()]]) {
     const h = harness({ teams });
     await flush();
-    assert.equal(Boolean(h.q('[data-settings-field="appearanceTeamDensitySelect"]')), shown, `${teams.length} teams`);
+    assert.equal(h.q('[data-settings-field="appearanceTeamDensitySelect"]'), null, `${teams.length} teams`);
     h.restore();
   }
 });

@@ -2,8 +2,8 @@
   "schema": 1,
   "totals": {
     "pending": 111,
-    "migrated": 15856,
-    "excluded": 14322,
+    "migrated": 15944,
+    "excluded": 14358,
     "by_kind": {
       "config_copy": {
         "pending": 6,
@@ -23,7 +23,7 @@
       "dom_identity": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 6008
+        "excluded": 6032
       },
       "dom_text": {
         "pending": 2,
@@ -43,7 +43,7 @@
       "ipc_message": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 1241
+        "excluded": 1244
       },
       "prose": {
         "pending": 101,
@@ -53,11 +53,11 @@
       "structural": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 4071
+        "excluded": 4080
       },
       "translation": {
         "pending": 0,
-        "migrated": 15588,
+        "migrated": 15676,
         "excluded": 0
       }
     },
@@ -69,13 +69,13 @@
       },
       "renderer/shell": {
         "pending": 9,
-        "migrated": 5053,
-        "excluded": 3409
+        "migrated": 5086,
+        "excluded": 3425
       },
       "renderer/chat": {
         "pending": 20,
         "migrated": 3037,
-        "excluded": 3154
+        "excluded": 3156
       },
       "renderer/features/setup-scenes": {
         "pending": 0,
@@ -84,7 +84,7 @@
       },
       "renderer/features": {
         "pending": 68,
-        "migrated": 4607,
+        "migrated": 4615,
         "excluded": 4399
       },
       "renderer/shared": {
@@ -99,13 +99,13 @@
       },
       "renderer/app": {
         "pending": 4,
-        "migrated": 1637,
-        "excluded": 1288
+        "migrated": 1683,
+        "excluded": 1303
       },
       "services": {
         "pending": 0,
-        "migrated": 302,
-        "excluded": 1242
+        "migrated": 303,
+        "excluded": 1245
       }
     }
   },
@@ -11568,6 +11568,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/chat/renderer-browser-use-bar.js|dom_identity|ab7f6ac6fb2f|1",
+      "file": "renderer/chat/renderer-browser-use-bar.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".bu-shell",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/chat/renderer-browser-use-bar.js|dom_identity|ae7ee169a4a2|1",
       "file": "renderer/chat/renderer-browser-use-bar.js",
       "kind": "dom_identity",
@@ -19909,6 +19917,14 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": "[data-tool-run-toggle]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/chat/renderer-chat-search-overlay.js|dom_identity|ab7f6ac6fb2f|1",
+      "file": "renderer/chat/renderer-chat-search-overlay.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".bu-shell",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -63848,6 +63864,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/features/board/board-proposal-text.js|translation|0e7629279488|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "image",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/features/board/board-proposal-text.js|translation|10bf5f81e77c|1",
       "file": "renderer/features/board/board-proposal-text.js",
       "kind": "translation",
@@ -63869,6 +63893,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Rejected",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/board/board-proposal-text.js|translation|2ab0591dbcf5|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "card",
       "disposition": "migrated"
     },
     {
@@ -63944,6 +63976,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/features/board/board-proposal-text.js|translation|4f0aa52d656a|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "link",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/features/board/board-proposal-text.js|translation|5eae7045f743|1",
       "file": "renderer/features/board/board-proposal-text.js",
       "kind": "translation",
@@ -63965,6 +64005,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "asked by {name}",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/board/board-proposal-text.js|translation|64292b1c2b2e|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "group",
       "disposition": "migrated"
     },
     {
@@ -64048,11 +64096,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/features/board/board-proposal-text.js|translation|8456b7be9c2e|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "chat card",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/features/board/board-proposal-text.js|translation|84e9e7fc20d4|1",
       "file": "renderer/features/board/board-proposal-text.js",
       "kind": "translation",
       "via": "literal",
       "text": "This line is not a board change.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/board/board-proposal-text.js|translation|8737093597f4|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "diagram",
       "disposition": "migrated"
     },
     {
@@ -64184,6 +64248,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/features/board/board-proposal-text.js|translation|c51048b7325d|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "note",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/features/board/board-proposal-text.js|translation|c5dc90e6e560|1",
       "file": "renderer/features/board/board-proposal-text.js",
       "kind": "translation",
@@ -64293,6 +64365,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Jenny proposes 1 change that needs your review",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/features/board/board-proposal-text.js|translation|fddd2b8b7945|1",
+      "file": "renderer/features/board/board-proposal-text.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "file card",
       "disposition": "migrated"
     },
     {
@@ -151296,6 +151376,22 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|structural|4c8ea4760fcb|9",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "warn",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|032fdc17f648|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Keep downloading",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|033e18eecfd8|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
@@ -151352,11 +151448,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|266fce5b38a3|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Offering to {name}. Waiting to reach {team}.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|2db12812ed07|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
       "via": "literal",
       "text": "Sending to {name}.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|2ffc7373755c|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Keep what has arrived",
       "disposition": "migrated"
     },
     {
@@ -151416,6 +151528,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|466fc492747c|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Keep",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|47e564194604|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
@@ -151453,6 +151573,22 @@
       "kind": "translation",
       "via": "literal",
       "text": "The host",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|51c0aa969983|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The offer from {sender} ran out before this finished. Dismiss removes what had arrived.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|559c640f723d|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The team’s server stopped, so the offer ended. Dismiss removes what had arrived.",
       "disposition": "migrated"
     },
     {
@@ -151624,11 +151760,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|7d389a82388b|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Offering to everyone in {team}. Waiting to reach the host.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|7d6724ad719f|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
       "via": "literal",
       "text": "Progress for {model}",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|86b43b9aa700|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{sender} is no longer in the team, so this stopped. Dismiss removes what had arrived.",
       "disposition": "migrated"
     },
     {
@@ -151704,11 +151856,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|a26125646ae7|2",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Withdraw this offer",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|a3cd0af90a8b|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
       "via": "literal",
       "text": "Reading the file before offering it to everyone in {team}.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|a62c7bb1cfa5|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Remove the {size} received so far?",
       "disposition": "migrated"
     },
     {
@@ -151725,6 +151893,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "From {sender} · {files} · arriving in {root}",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|ae900c6b9b9a|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{sender} went offline and the offer ended. Dismiss removes what had arrived.",
       "disposition": "migrated"
     },
     {
@@ -151813,6 +151989,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "{sender} paused it. What has arrived is kept.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|c6a50933d4f7|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{sender} can no longer share models, so this stopped. Dismiss removes what had arrived.",
       "disposition": "migrated"
     },
     {
@@ -151920,6 +152104,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|dbfcc22c4125|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Remove {model} and the {size} received",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|dca1cff0e3b0|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
@@ -151952,11 +152144,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|e963907dac5c|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Remove",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/model-library/model-library-share-rows.js|translation|ea884c02be81|1",
       "file": "renderer/shell/model-library/model-library-share-rows.js",
       "kind": "translation",
       "via": "literal",
       "text": "Stop receiving {model} and remove what arrived",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-rows.js|translation|ef8ce77bcd01|1",
+      "file": "renderer/shell/model-library/model-library-share-rows.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Model sharing was turned off, so this stopped. Dismiss removes what had arrived.",
       "disposition": "migrated"
     },
     {
@@ -152013,6 +152221,54 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": "[data-mshare-action]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-section.js|dom_identity|10bb42d0552d|2",
+      "file": "renderer/shell/model-library/model-library-share-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-mshare-action]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-section.js|dom_identity|1cb16a2f6113|1",
+      "file": "renderer/shell/model-library/model-library-share-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-model-key]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-section.js|dom_identity|1cb16a2f6113|2",
+      "file": "renderer/shell/model-library/model-library-share-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-model-key]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-section.js|dom_identity|62c8782f7d07|1",
+      "file": "renderer/shell/model-library/model-library-share-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-mshare-action=\"ask-keep\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-section.js|dom_identity|62c8782f7d07|2",
+      "file": "renderer/shell/model-library/model-library-share-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-mshare-action=\"ask-keep\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-share-section.js|dom_identity|c6c760df21f0|1",
+      "file": "renderer/shell/model-library/model-library-share-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".mrow-share .model-card-note",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -153853,6 +154109,14 @@
       "kind": "structural",
       "via": "literal",
       "text": "danger",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/shell/model-library/model-library-view.js|structural|2558834c1cd5|1",
+      "file": "renderer/shell/model-library/model-library-view.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": ":team-note",
       "disposition": "excluded:wire"
     },
     {
@@ -197240,6 +197504,14 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|structural|c4745785181d|3",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "ghost",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-gpu.js|structural|c5d2b17ee410|1",
       "file": "renderer/shell/renderer-settings-team-gpu.js",
       "kind": "structural",
@@ -197334,6 +197606,22 @@
       "via": "literal",
       "text": "literal",
       "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|042c862e4467|1",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Try again",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|042c862e4467|2",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Try again",
+      "disposition": "migrated"
     },
     {
       "id": "renderer/shell/renderer-settings-team-gpu.js|translation|05af7a69606c|1",
@@ -197432,14 +197720,6 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|2c9c1f79142d|1",
-      "file": "renderer/shell/renderer-settings-team-gpu.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Unavailable",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/shell/renderer-settings-team-gpu.js|translation|2c9e1dcede35|1",
       "file": "renderer/shell/renderer-settings-team-gpu.js",
       "kind": "translation",
@@ -197512,11 +197792,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|43719e09ba7f|3",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Stop now",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-gpu.js|translation|48ecf530b2cb|1",
       "file": "renderer/shell/renderer-settings-team-gpu.js",
       "kind": "translation",
       "via": "literal",
       "text": "Nothing has happened yet.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|516fdee10879|1",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Finishing a request, then sharing stops",
       "disposition": "migrated"
     },
     {
@@ -197669,6 +197965,22 @@
       "kind": "translation",
       "via": "literal",
       "text": "Team to share with",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|a3675b95ae9d|1",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "No shared GPU is online.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-gpu.js|translation|a6d923f6e226|1",
+      "file": "renderer/shell/renderer-settings-team-gpu.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{name} (offline)",
       "disposition": "migrated"
     },
     {
@@ -198904,6 +199216,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-lifecycle.js|translation|de46e1e5e8dd|1",
+      "file": "renderer/shell/renderer-settings-team-lifecycle.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Export cancelled. Nothing was kept.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-lifecycle.js|translation|dff7e6b3a266|1",
       "file": "renderer/shell/renderer-settings-team-lifecycle.js",
       "kind": "translation",
@@ -199496,6 +199816,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-network.js|dom_identity|800e5e4c005d|1",
+      "file": "renderer/shell/renderer-settings-team-network.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-team-net-changes]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-network.js|dom_identity|9fec7783c41a|1",
       "file": "renderer/shell/renderer-settings-team-network.js",
       "kind": "dom_identity",
@@ -199768,6 +200096,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-network.js|translation|1cd78c29e89f|1",
+      "file": "renderer/shell/renderer-settings-team-network.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The server restarts now. It disconnects {names} for a moment; they reconnect by themselves.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-network.js|translation|1ed6af2eec5b|1",
       "file": "renderer/shell/renderer-settings-team-network.js",
       "kind": "translation",
@@ -199837,6 +200173,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "That code is for a different team. Ask the owner of {team} for theirs.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-network.js|translation|2f75c24e254a|1",
+      "file": "renderer/shell/renderer-settings-team-network.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "What this changes",
       "disposition": "migrated"
     },
     {
@@ -200013,6 +200357,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Someone has connected",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-network.js|translation|678e694409bd|1",
+      "file": "renderer/shell/renderer-settings-team-network.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Jenny asks your router to open one port for this team, and the server restarts now.",
       "disposition": "migrated"
     },
     {
@@ -200336,6 +200688,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-network.js|translation|b35e32c7980f|1",
+      "file": "renderer/shell/renderer-settings-team-network.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Only people you invited get in. They, and anyone holding an invite, learn this network’s public address.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-network.js|translation|b473487c97d3|1",
       "file": "renderer/shell/renderer-settings-team-network.js",
       "kind": "translation",
@@ -200496,14 +200856,6 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/shell/renderer-settings-team-network.js|translation|f40df69057ef|1",
-      "file": "renderer/shell/renderer-settings-team-network.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "The server restarts now. {names} are disconnected for a moment and reconnect by themselves.",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/shell/renderer-settings-team-network.js|translation|f6d85fc6c427|1",
       "file": "renderer/shell/renderer-settings-team-network.js",
       "kind": "translation",
@@ -200561,6 +200913,14 @@
     },
     {
       "id": "renderer/shell/renderer-settings-team-owner-view.js|structural|222b3e11200d|2",
+      "file": "renderer/shell/renderer-settings-team-owner-view.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "danger",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-owner-view.js|structural|222b3e11200d|3",
       "file": "renderer/shell/renderer-settings-team-owner-view.js",
       "kind": "structural",
       "via": "literal",
@@ -200652,6 +201012,14 @@
       "file": "renderer/shell/renderer-settings-team-owner-view.js",
       "kind": "structural",
       "via": "conditional",
+      "text": "secondary",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-owner-view.js|structural|e059fc6904f0|2",
+      "file": "renderer/shell/renderer-settings-team-owner-view.js",
+      "kind": "structural",
+      "via": "literal",
       "text": "secondary",
       "disposition": "excluded:wire"
     },
@@ -200784,6 +201152,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-owner-view.js|translation|2ae0dd0ecb0e|1",
+      "file": "renderer/shell/renderer-settings-team-owner-view.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Decline {name}",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-owner-view.js|translation|300652660f02|1",
       "file": "renderer/shell/renderer-settings-team-owner-view.js",
       "kind": "translation",
@@ -200904,6 +201280,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-owner-view.js|translation|749fcd1a44fe|1",
+      "file": "renderer/shell/renderer-settings-team-owner-view.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Go to People",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-owner-view.js|translation|78600f2c9be3|1",
       "file": "renderer/shell/renderer-settings-team-owner-view.js",
       "kind": "translation",
@@ -201013,6 +201397,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "This device leaves the team at once. To use the team on it again, add it from one of your other devices.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-owner-view.js|translation|a1863132b9b0|1",
+      "file": "renderer/shell/renderer-settings-team-owner-view.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Decline {name}? Their invite is used up; invite them again to let them in.",
       "disposition": "migrated"
     },
     {
@@ -201240,6 +201632,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-section.js|dom_identity|94a8094ff091|1",
+      "file": "renderer/shell/renderer-settings-team-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".settings-field-reason",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-section.js|dom_identity|a0b17d89927e|1",
       "file": "renderer/shell/renderer-settings-team-section.js",
       "kind": "dom_identity",
@@ -201248,11 +201648,27 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-section.js|dom_identity|b396b1498bcc|1",
+      "file": "renderer/shell/renderer-settings-team-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-setting-mount=\"appearanceTeamDensitySelect\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-section.js|dom_identity|da505858fb60|1",
       "file": "renderer/shell/renderer-settings-team-section.js",
       "kind": "dom_identity",
       "via": "literal",
       "text": "#teamSettingsBody",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-section.js|dom_identity|fdbde04a83f3|1",
+      "file": "renderer/shell/renderer-settings-team-section.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-value][aria-checked=\"true\"]",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -201496,6 +201912,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-strings.js|translation|0d8b367defc2|1",
+      "file": "renderer/shell/renderer-settings-team-strings.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Jenny takes one model at a time from this team. Cancel or finish the one in Settings, Models first.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-strings.js|translation|0eaba6dfb8a9|1",
       "file": "renderer/shell/renderer-settings-team-strings.js",
       "kind": "translation",
@@ -201629,6 +202053,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "The team’s host refused that request. Try again.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-strings.js|translation|181418d5d522|1",
+      "file": "renderer/shell/renderer-settings-team-strings.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "An invite was created on the server’s PC",
       "disposition": "migrated"
     },
     {
@@ -203176,14 +203608,6 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/shell/renderer-settings-team-strings.js|translation|ae3b25035ae1|1",
-      "file": "renderer/shell/renderer-settings-team-strings.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Jenny is already receiving a model from this team. Wait for it to finish.",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/shell/renderer-settings-team-strings.js|translation|afa35b341c62|1",
       "file": "renderer/shell/renderer-settings-team-strings.js",
       "kind": "translation",
@@ -204184,6 +204608,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-team-view.js|translation|1cb89a94c56c|1",
+      "file": "renderer/shell/renderer-settings-team-view.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Saved as {id}",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-team-view.js|translation|1ed6af2eec5b|1",
       "file": "renderer/shell/renderer-settings-team-view.js",
       "kind": "translation",
@@ -204229,6 +204661,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Signs this Jenny in as the owner again and disconnects the owner’s other devices. It is written to the team’s activity log. It works only here, on the PC that runs the server.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-team-view.js|translation|3baafb0de8b0|1",
+      "file": "renderer/shell/renderer-settings-team-view.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Unreadable team",
       "disposition": "migrated"
     },
     {
@@ -204800,6 +205240,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/shell/renderer-settings-utils.js|dom_identity|3c0c482c7f48|1",
+      "file": "renderer/shell/renderer-settings-utils.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "#contextSourcesHeading",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/shell/renderer-settings-utils.js|dom_identity|4f0aa52d656a|1",
       "file": "renderer/shell/renderer-settings-utils.js",
       "kind": "dom_identity",
@@ -205008,14 +205456,6 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/shell/renderer-settings-utils.js|translation|071e89243b70|1",
-      "file": "renderer/shell/renderer-settings-utils.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "No chat is open. These apply to the next chat you start.",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/shell/renderer-settings-utils.js|translation|081ae3fdc403|1",
       "file": "renderer/shell/renderer-settings-utils.js",
       "kind": "translation",
@@ -205064,6 +205504,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/shell/renderer-settings-utils.js|translation|429ef8510010|1",
+      "file": "renderer/shell/renderer-settings-utils.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "This chat",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/shell/renderer-settings-utils.js|translation|4374aaee247f|1",
       "file": "renderer/shell/renderer-settings-utils.js",
       "kind": "translation",
@@ -205077,6 +205525,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "No workspace root is configured yet.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-utils.js|translation|6ae3c8b063d5|1",
+      "file": "renderer/shell/renderer-settings-utils.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "This chat: {title}",
       "disposition": "migrated"
     },
     {
@@ -205109,6 +205565,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Context controls are available only when the managed sidecar backend is active.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-utils.js|translation|83b66db0b668|1",
+      "file": "renderer/shell/renderer-settings-utils.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Open a chat to change its settings.",
       "disposition": "migrated"
     },
     {
@@ -205157,6 +205621,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "On",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/shell/renderer-settings-utils.js|translation|e0559404e641|1",
+      "file": "renderer/shell/renderer-settings-utils.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Join or host a team to use this.",
       "disposition": "migrated"
     },
     {
@@ -214760,6 +215232,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-composer.js|translation|31e41e7b3abb|1",
+      "file": "renderer/team/renderer-team-composer.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Files need the team online",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-composer.js|translation|35e71c29f118|1",
       "file": "renderer/team/renderer-team-composer.js",
       "kind": "translation",
@@ -215024,6 +215504,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-conversation-controls.js|translation|11b1b5ec9167|1",
+      "file": "renderer/team/renderer-team-conversation-controls.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "paused",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-conversation-controls.js|translation|14c681ea167a|1",
       "file": "renderer/team/renderer-team-conversation-controls.js",
       "kind": "translation",
@@ -215200,6 +215688,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-conversation-controls.js|translation|8020a5511703|1",
+      "file": "renderer/team/renderer-team-conversation-controls.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{model} is paused. Pick another model or use the team default.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-conversation-controls.js|translation|808d7dca8a74|1",
       "file": "renderer/team/renderer-team-conversation-controls.js",
       "kind": "translation",
@@ -215288,6 +215784,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-conversation-controls.js|translation|ab0d43cf23f4|1",
+      "file": "renderer/team/renderer-team-conversation-controls.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Each change asks a writer first.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-conversation-controls.js|translation|ac9041e76816|1",
       "file": "renderer/team/renderer-team-conversation-controls.js",
       "kind": "translation",
@@ -215357,6 +215861,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "{on} of {total} on",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-conversation-controls.js|translation|ca76c195213c|1",
+      "file": "renderer/team/renderer-team-conversation-controls.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The team default, {model}, is not available now. Pick another model.",
       "disposition": "migrated"
     },
     {
@@ -216568,14 +217080,6 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/team/renderer-team-gpus.js|translation|247e86f70933|1",
-      "file": "renderer/team/renderer-team-gpus.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "{owner} is using it. It takes requests again when they are done.",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/team/renderer-team-gpus.js|translation|2f93c151c6be|1",
       "file": "renderer/team/renderer-team-gpus.js",
       "kind": "translation",
@@ -216672,11 +217176,11 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/team/renderer-team-gpus.js|translation|b3c15e54a65a|1",
+      "id": "renderer/team/renderer-team-gpus.js|translation|bbf270bd352f|1",
       "file": "renderer/team/renderer-team-gpus.js",
       "kind": "translation",
       "via": "literal",
-      "text": "{owner} has paused it. Requests only it can answer wait up to 10 minutes.",
+      "text": "{owner} is using it. It takes requests again when they are done. Requests for its models fail meanwhile.",
       "disposition": "migrated"
     },
     {
@@ -216693,6 +217197,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "busy",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-gpus.js|translation|eb8d67bc98d7|1",
+      "file": "renderer/team/renderer-team-gpus.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{owner} has paused it. It answers nothing until they resume.",
       "disposition": "migrated"
     },
     {
@@ -217040,6 +217552,22 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|0ae2b0349ac4|3",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".team-main",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|0c9b4cf34208|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "conditional",
+      "text": "[data-team-region=\"thread-composer\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|dom_identity|12c505aca369|1",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "dom_identity",
@@ -217072,6 +217600,22 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|3445be59b3ea|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".team-edit",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|3445be59b3ea|2",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".team-edit",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|dom_identity|35775a84734e|1",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "dom_identity",
@@ -217096,6 +217640,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|3b915602162b|3",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".team-thread",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|dom_identity|4184d3679bbe|1",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "dom_identity",
@@ -217104,7 +217656,23 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|7053159e56f3|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "concat",
+      "text": "[data-team-msg-action=\"",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|dom_identity|9ddb5da7a3ea|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "team-edit__input",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|9ddb5da7a3ea|2",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "dom_identity",
       "via": "literal",
@@ -217125,6 +217693,22 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": "[data-team-msg-action=\"edit-save\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|b76463a07cd3|2",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-team-msg-action=\"edit-save\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|dom_identity|c0fb866bb25b|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "dom_identity",
+      "via": "conditional",
+      "text": "[data-team-region=\"composer\"]",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -217200,6 +217784,14 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|structural|222b3e11200d|2",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "danger",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|structural|a5dfd1e2a154|1",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "structural",
@@ -217232,6 +217824,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|translation|16f3507f81c8|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Discard this unsent message?",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|translation|26404ef7f4fd|1",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "translation",
@@ -217253,6 +217853,22 @@
       "kind": "translation",
       "via": "literal",
       "text": "Copy link",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|translation|36fff63ccbcd|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Discard",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|translation|3a18cb8c4560|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Type a message first.",
       "disposition": "migrated"
     },
     {
@@ -217328,6 +217944,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-message-actions.js|translation|77dfd2135f4d|3",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Cancel",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-message-actions.js|translation|7f16c8d4cb89|1",
       "file": "renderer/team/renderer-team-message-actions.js",
       "kind": "translation",
@@ -217381,6 +218005,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Edit message",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-message-actions.js|translation|994a0e159160|1",
+      "file": "renderer/team/renderer-team-message-actions.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Delete this message? Its edits, reactions, files and pin go with it. This cannot be undone.",
       "disposition": "migrated"
     },
     {
@@ -217445,14 +218077,6 @@
       "kind": "translation",
       "via": "literal",
       "text": "Sending",
-      "disposition": "migrated"
-    },
-    {
-      "id": "renderer/team/renderer-team-message-actions.js|translation|e0a26141796c|1",
-      "file": "renderer/team/renderer-team-message-actions.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Delete this message?",
       "disposition": "migrated"
     },
     {
@@ -217776,6 +218400,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-notice.js|translation|2ae0dd0ecb0e|1",
+      "file": "renderer/team/renderer-team-notice.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Decline {name}",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-notice.js|translation|2ba02c8bc93e|1",
       "file": "renderer/team/renderer-team-notice.js",
       "kind": "translation",
@@ -217848,11 +218480,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-notice.js|translation|77dfd2135f4d|1",
+      "file": "renderer/team/renderer-team-notice.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Cancel",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-notice.js|translation|93d349481a58|1",
       "file": "renderer/team/renderer-team-notice.js",
       "kind": "translation",
       "via": "literal",
       "text": "Later: the offer waits in Settings, Models",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-notice.js|translation|a1863132b9b0|1",
+      "file": "renderer/team/renderer-team-notice.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Decline {name}? Their invite is used up; invite them again to let them in.",
       "disposition": "migrated"
     },
     {
@@ -219840,6 +220488,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-actions.js|translation|1414a0193c4d|2",
+      "file": "renderer/team/renderer-team-project-actions.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Wait for the last action to finish.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-actions.js|translation|18a874a053e4|1",
       "file": "renderer/team/renderer-team-project-actions.js",
       "kind": "translation",
@@ -220568,19 +221224,11 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/team/renderer-team-project-box.js|dom_identity|0f400122e37d|1",
+      "id": "renderer/team/renderer-team-project-box.js|dom_identity|2ba8c37de982|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "dom_identity",
-      "via": "conditional",
-      "text": "rule",
-      "disposition": "excluded:dom_identity"
-    },
-    {
-      "id": "renderer/team/renderer-team-project-box.js|dom_identity|1c8f09270fc3|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "dom_identity",
-      "via": "conditional",
-      "text": "ask",
+      "via": "literal",
+      "text": "tool-approve-split",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -220608,14 +221256,6 @@
       "disposition": "excluded:dom_identity"
     },
     {
-      "id": "renderer/team/renderer-team-project-box.js|dom_identity|516b9783fca5|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "dom_identity",
-      "via": "literal",
-      "text": "p",
-      "disposition": "excluded:dom_identity"
-    },
-    {
       "id": "renderer/team/renderer-team-project-box.js|dom_identity|5446b88e263c|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "dom_identity",
@@ -220624,19 +221264,11 @@
       "disposition": "excluded:dom_identity"
     },
     {
-      "id": "renderer/team/renderer-team-project-box.js|dom_identity|6656018ac96d|1",
+      "id": "renderer/team/renderer-team-project-box.js|dom_identity|6325f8c63097|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "dom_identity",
       "via": "literal",
-      "text": "always",
-      "disposition": "excluded:dom_identity"
-    },
-    {
-      "id": "renderer/team/renderer-team-project-box.js|dom_identity|85a0aa3f840b|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "dom_identity",
-      "via": "literal",
-      "text": "tool-approval-scope-note",
+      "text": "span",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -220645,14 +221277,6 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": ".tool-approve-btn[data-approval-scope=\"once\"]",
-      "disposition": "excluded:dom_identity"
-    },
-    {
-      "id": "renderer/team/renderer-team-project-box.js|dom_identity|efe4c4c12a44|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "dom_identity",
-      "via": "literal",
-      "text": "tool-approve-always-btn",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -220688,6 +221312,14 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "renderer/team/renderer-team-project-box.js|structural|e7c95b4c2824|1",
+      "file": "renderer/team/renderer-team-project-box.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "more",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "renderer/team/renderer-team-project-box.js|translation|02e72c84c908|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "translation",
@@ -220709,6 +221341,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Deny all",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-box.js|translation|0ddb1c40aa8b|1",
+      "file": "renderer/team/renderer-team-project-box.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Allow once and ask an admin for always",
       "disposition": "migrated"
     },
     {
@@ -220840,19 +221480,19 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-box.js|translation|3ad0e3698278|1",
+      "file": "renderer/team/renderer-team-project-box.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Allow",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-box.js|translation|3eaff69c9844|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "translation",
       "via": "literal",
       "text": "Dictate",
-      "disposition": "migrated"
-    },
-    {
-      "id": "renderer/team/renderer-team-project-box.js|translation|41325daae407|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Always allow",
       "disposition": "migrated"
     },
     {
@@ -220912,19 +221552,19 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/team/renderer-team-project-box.js|translation|54311ac3cb6d|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Allow once, ask for always",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/team/renderer-team-project-box.js|translation|5beb3fca69cc|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "translation",
       "via": "literal",
       "text": "Sending makes you the driver",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-box.js|translation|5f7f2bdd4ea5|1",
+      "file": "renderer/team/renderer-team-project-box.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "More ways to allow",
       "disposition": "migrated"
     },
     {
@@ -221045,14 +221685,6 @@
       "kind": "translation",
       "via": "literal",
       "text": "A turn asked. Anyone who can write in this project and is viewing this conversation can answer.",
-      "disposition": "migrated"
-    },
-    {
-      "id": "renderer/team/renderer-team-project-box.js|translation|a142c1627a70|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Allow this once and ask the project’s admins to always allow {tool} here",
       "disposition": "migrated"
     },
     {
@@ -221216,19 +221848,19 @@
       "disposition": "migrated"
     },
     {
-      "id": "renderer/team/renderer-team-project-box.js|translation|e9b206357da8|1",
-      "file": "renderer/team/renderer-team-project-box.js",
-      "kind": "translation",
-      "via": "literal",
-      "text": "Always allow {tool} in {project}, for everyone’s turns",
-      "disposition": "migrated"
-    },
-    {
       "id": "renderer/team/renderer-team-project-box.js|translation|e9e213e4b840|1",
       "file": "renderer/team/renderer-team-project-box.js",
       "kind": "translation",
       "via": "literal",
       "text": "Pending tool approvals",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-box.js|translation|eb374bbe34b3|1",
+      "file": "renderer/team/renderer-team-project-box.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Always allow edits in this project",
       "disposition": "migrated"
     },
     {
@@ -221744,11 +222376,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-column.js|translation|feeb95c78bf4|1",
+      "file": "renderer/team/renderer-team-project-column.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "A conversation is being created.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-conversation-parts.js|dom_identity|22407f01a54f|1",
       "file": "renderer/team/renderer-team-project-conversation-parts.js",
       "kind": "dom_identity",
       "via": "literal",
       "text": "[data-user-question-other-input]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|dom_identity|26021f1f4700|1",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "div",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -221829,6 +222477,14 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": "true",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|dom_identity|6325f8c63097|1",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "span",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -221931,9 +222587,25 @@
       "id": "renderer/team/renderer-team-project-conversation-parts.js|structural|e4788b8afee6|1",
       "file": "renderer/team/renderer-team-project-conversation-parts.js",
       "kind": "structural",
+      "via": "literal",
+      "text": "approve",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|structural|e4788b8afee6|2",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "structural",
       "via": "conditional",
       "text": "approve",
       "disposition": "excluded:wire"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|translation|07afe36d7c13|1",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Cannot send again yet.",
+      "disposition": "migrated"
     },
     {
       "id": "renderer/team/renderer-team-project-conversation-parts.js|translation|35bb097abc2d|1",
@@ -221960,11 +222632,35 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|translation|6ea1cf46ce71|1",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Sends when the host is back",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|translation|85284c63f8f8|1",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The message could not be copied.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-conversation-parts.js|translation|863c0e783858|1",
       "file": "renderer/team/renderer-team-project-conversation-parts.js",
       "kind": "translation",
       "via": "literal",
       "text": "Conversation name",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-conversation-parts.js|translation|8ae330e61fd5|1",
+      "file": "renderer/team/renderer-team-project-conversation-parts.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Sends when reconnected",
       "disposition": "migrated"
     },
     {
@@ -222480,6 +223176,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-file-pane.js|translation|56e3badc4e6c|1",
+      "file": "renderer/team/renderer-team-project-file-pane.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Refresh",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-file-pane.js|translation|594cae967f3e|1",
       "file": "renderer/team/renderer-team-project-file-pane.js",
       "kind": "translation",
@@ -222525,6 +223229,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Source",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-file-pane.js|translation|759cf6b5a28b|1",
+      "file": "renderer/team/renderer-team-project-file-pane.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{project} · 1 entry",
       "disposition": "migrated"
     },
     {
@@ -223064,6 +223776,14 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "renderer/team/renderer-team-project-find.js|translation|2fcd6c463829|1",
+      "file": "renderer/team/renderer-team-project-find.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Searched the newest messages held here. Older ones are not in this view.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-find.js|translation|5de963a4d625|1",
       "file": "renderer/team/renderer-team-project-find.js",
       "kind": "translation",
@@ -223136,6 +223856,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|dom_identity|3840a532e6a2|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "dom_identity",
+      "via": "concat",
+      "text": "\"] > summary",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|dom_identity|39d85e446bba|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "dom_identity",
@@ -223157,6 +223885,14 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": ".team-page button:not([disabled]), .team-back",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|dom_identity|6113a6e05696|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "dom_identity",
+      "via": "concat",
+      "text": "[data-team-fold=\"",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -223216,6 +223952,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|dom_identity|a993559ffb31|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "dom_identity",
+      "via": "concat",
+      "text": "[data-team-project-section=\"",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|dom_identity|ceafaa36217a|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "dom_identity",
@@ -223229,6 +223973,14 @@
       "kind": "dom_identity",
       "via": "concat",
       "text": "[data-page-part=\"",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|dom_identity|eba91c8c580d|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-project-action=\"summary-jump\"]",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -223392,6 +224144,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|translation|1cb449c11266|2",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Members",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|translation|222a004fb992|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "translation",
@@ -223424,11 +224184,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|translation|2850f8aeada6|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "No rules",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|translation|2905722ac99b|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "translation",
       "via": "literal",
       "text": "Copy a folder from this PC into the project",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|297470ed3758|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Always allowed",
       "disposition": "migrated"
     },
     {
@@ -223536,6 +224312,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|translation|3f676efdf74f|2",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "you are an admin",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|translation|43845eb63bb5|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "translation",
@@ -223632,6 +224416,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|translation|61d25d146a6c|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "A project always has an admin.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|translation|6282f4bad716|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "translation",
@@ -223664,11 +224456,35 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|translation|6ea19b045ef4|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Nothing to download yet.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|translation|717bb5c68de6|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "translation",
       "via": "literal",
       "text": "Open {board} in the Board tab",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|72910f0cc818|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Only writers can upload.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|76eb7251c0ac|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Nothing yet",
       "disposition": "migrated"
     },
     {
@@ -223712,6 +224528,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-page.js|translation|7b22ed37fc96|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{count} rule",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-page.js|translation|7f031b1a1a17|1",
       "file": "renderer/team/renderer-team-project-page.js",
       "kind": "translation",
@@ -223725,6 +224549,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Join {project} as an admin",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|81c0d915fa6d|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Activity",
       "disposition": "migrated"
     },
     {
@@ -223805,6 +224637,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Everyone in this project sees its conversations, its channel and its files. Jenny’s file tools reach only this project’s folder on the team’s host.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|914d5c8c5085|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "latest {time}",
       "disposition": "migrated"
     },
     {
@@ -223949,6 +224789,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Open",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|d137c1c25e1a|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "{count} rules",
       "disposition": "migrated"
     },
     {
@@ -224117,6 +224965,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Remove {name} from the project",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-page.js|translation|feeb95c78bf4|1",
+      "file": "renderer/team/renderer-team-project-page.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "A conversation is being created.",
       "disposition": "migrated"
     },
     {
@@ -224536,6 +225392,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-plan.js|translation|355c6c3ca669|1",
+      "file": "renderer/team/renderer-team-project-plan.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Reconnecting. Build it when the team is back.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-plan.js|translation|35bb097abc2d|1",
       "file": "renderer/team/renderer-team-project-plan.js",
       "kind": "translation",
@@ -224565,6 +225429,22 @@
       "kind": "translation",
       "via": "literal",
       "text": "Build it starts a turn as you and makes you the driver.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-plan.js|translation|5c90ccd9fb5c|1",
+      "file": "renderer/team/renderer-team-project-plan.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The picked model is offline. Pick another model or use the team default.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-plan.js|translation|643e18605a3f|1",
+      "file": "renderer/team/renderer-team-project-plan.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The team is offline. Build it when the host is back.",
       "disposition": "migrated"
     },
     {
@@ -224672,6 +225552,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-plan.js|translation|edaff525616b|1",
+      "file": "renderer/team/renderer-team-project-plan.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "No shared GPU can answer now. Build it when one is online.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-plan.js|translation|efeb5521576b|1",
       "file": "renderer/team/renderer-team-project-plan.js",
       "kind": "translation",
@@ -224725,6 +225613,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Not sent",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-queue.js|translation|973324ac423d|1",
+      "file": "renderer/team/renderer-team-project-queue.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Waits until Jenny’s turn ends.",
       "disposition": "migrated"
     },
     {
@@ -224896,6 +225792,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-rules.js|translation|39fc72124884|1",
+      "file": "renderer/team/renderer-team-project-rules.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Undo",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-rules.js|translation|3ad0e3698278|1",
       "file": "renderer/team/renderer-team-project-rules.js",
       "kind": "translation",
@@ -224976,6 +225880,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-project-rules.js|translation|810ef2fe1c5b|1",
+      "file": "renderer/team/renderer-team-project-rules.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Always allow {tool} {where} again",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-project-rules.js|translation|887967f98735|1",
       "file": "renderer/team/renderer-team-project-rules.js",
       "kind": "translation",
@@ -225005,6 +225917,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "always allow {tool} · {time}",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-rules.js|translation|97951536d0ce|1",
+      "file": "renderer/team/renderer-team-project-rules.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Rule removed.",
       "disposition": "migrated"
     },
     {
@@ -225280,6 +226200,14 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/team/renderer-team-project-tab.js|structural|44312f5ea8f4|1",
+      "file": "renderer/team/renderer-team-project-tab.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "roster",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "renderer/team/renderer-team-project-tab.js|structural|6467baa3b187|1",
       "file": "renderer/team/renderer-team-project-tab.js",
       "kind": "structural",
@@ -225525,6 +226453,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "The model returned an error.",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-project-timeline.js|translation|2c1e51209e91|1",
+      "file": "renderer/team/renderer-team-project-timeline.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Stopped before Jenny finished",
       "disposition": "migrated"
     },
     {
@@ -226144,6 +227080,22 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/team/renderer-team-search.js|translation|6e20515a1fc8|1",
+      "file": "renderer/team/renderer-team-search.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "In this conversation",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-search.js|translation|8c88fbf1fbf7|1",
+      "file": "renderer/team/renderer-team-search.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "No messages match \"{query}\" in this conversation.",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/team/renderer-team-search.js|translation|9ce1a97c31c7|1",
       "file": "renderer/team/renderer-team-search.js",
       "kind": "translation",
@@ -226189,6 +227141,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Go to this message",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/team/renderer-team-search.js|translation|b2dbb46a3714|1",
+      "file": "renderer/team/renderer-team-search.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Deleted messages are left out.",
       "disposition": "migrated"
     },
     {
@@ -238088,6 +239048,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "services/projects/project-application-service.js|translation|bd1dd3a8d604|1",
+      "file": "services/projects/project-application-service.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "The Jenny chat stays in General and cannot be moved to a project.",
+      "disposition": "migrated"
+    },
+    {
       "id": "services/projects/project-application-service.js|translation|c47f9bb42e13|1",
       "file": "services/projects/project-application-service.js",
       "kind": "translation",
@@ -239952,10 +240920,34 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "services/team/host/host-export.js|ipc_message|eb697b60135b|1",
+      "file": "services/team/host/host-export.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "team_export_cancelled",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/team/host/host-export.js|ipc_message|eb697b60135b|2",
+      "file": "services/team/host/host-export.js",
+      "kind": "ipc_message",
+      "via": "conditional",
+      "text": "team_export_cancelled",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "services/team/host/host-export.js|ipc_message|f9a6fb1ff708|1",
       "file": "services/team/host/host-export.js",
       "kind": "ipc_message",
       "via": "literal",
+      "text": "team_export_write_failed",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/team/host/host-export.js|ipc_message|f9a6fb1ff708|2",
+      "file": "services/team/host/host-export.js",
+      "kind": "ipc_message",
+      "via": "conditional",
       "text": "team_export_write_failed",
       "disposition": "excluded:wire"
     },

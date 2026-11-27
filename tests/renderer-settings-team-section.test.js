@@ -228,7 +228,7 @@ for (const [state, words] of Object.entries(MEMBER_STATES)) {
     const actions = [...row.querySelectorAll('[data-team-action]')].map((button) => button.dataset.teamAction);
     if (state === 'pending') assert.deepEqual(actions, ['cancel-request']);
     else if (state === 'revoked') assert.deepEqual(actions, ['remove-team']);
-    else if (state === 'update_required') assert.deepEqual(actions, []);
+    else if (state === 'update_required') assert.deepEqual(actions, ['leave']);
     else if (state === 'online') assert.deepEqual(actions, ['device-invite', 'leave']);
     else assert.deepEqual(actions, ['leave']);
   });
@@ -257,8 +257,8 @@ for (const [reason, sentence] of Object.entries(REPAIR_SENTENCES)) {
     t.after(h.restore);
     await flush();
     const row = h.q('[data-team-joined] .team-set-person');
-    assert.equal(row.querySelector('.team-set-person__name').textContent, 'team_RepairAA…', 'the id\'s short form');
-    assert.equal(row.querySelector('.team-set-person__fact').textContent, `Needs repair · ${sentence}`);
+    assert.equal(row.querySelector('.team-set-person__name').textContent, 'Unreadable team', 'not headed by a raw id');
+    assert.equal(row.querySelector('.team-set-person__fact').textContent, `Needs repair · ${sentence} · Saved as team_RepairAA…`, 'the id\'s short form is in the detail');
     assert.doesNotMatch(row.textContent, /Member|Owner|connected|unavailable|Unnamed/);
     const actions = () => [...row.querySelectorAll('[data-team-action]')].map((button) => button.dataset.teamAction);
     assert.deepEqual(actions(), ['remove-team']);
@@ -317,7 +317,8 @@ test('a needs-repair row draws a hostile id as text', async (t) => {
   t.after(h.restore);
   await flush();
   assert.equal(h.q('[data-team-joined] img'), null, 'no markup drawn');
-  assert.equal(h.q('[data-team-joined] .team-set-person__name').textContent, 'team_<img src…');
+  assert.equal(h.q('[data-team-joined] .team-set-person__name').textContent, 'Unreadable team');
+  assert.match(h.q('[data-team-joined] .team-set-person__fact').textContent, /Saved as team_<img src…$/);
 });
 
 test('four teams: the join group is replaced by one line saying why', async (t) => {
@@ -580,15 +581,10 @@ test('E50 no team data: a join that times out with no answer still wakes the sto
 
 // ------------------------------------------------------- row 193 C14
 
-test('Team chat density is a row on the Team page, showing the applied density and with no heading of its own', async (t) => {
+test('Team chat density is not on the Team page any more: it lives in Settings > Chat > Layout', async (t) => {
   const h = harness({ teams: [memberTeam()] });
   t.after(h.restore);
-  h.window.document.documentElement.dataset.teamDensity = 'compact';
   await flush();
-  const row = h.q('[data-settings-field="appearanceTeamDensitySelect"]');
-  assert.ok(row, 'the density row is on the Team page');
-  assert.equal(row.querySelector('.settings-field-title').textContent, 'Team chat density');
-  assert.deepEqual([...row.querySelectorAll('[data-value]')].map((o) => o.dataset.value), ['comfortable', 'compact']);
-  assert.equal(row.querySelector('[aria-checked="true"]').dataset.value, 'compact', 'it reads the density applied to the page');
-  assert.equal(h.headings().includes('Team chat density'), false, 'a row, not a new group heading');
+  assert.equal(h.q('[data-settings-field="appearanceTeamDensitySelect"]'), null);
+  assert.equal(h.q('[data-team-group="density"]'), null);
 });

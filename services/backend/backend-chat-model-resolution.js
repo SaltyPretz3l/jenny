@@ -18,12 +18,27 @@ const CLOUD_ENGINE_TYPES = new Set(['chatgpt', 'codex-cli', 'api-provider']);
 // the renderer's picker label.
 function resolveDefaultChatModel(service) {
   if (!service || service.hostMode === 'server') return '';
-  const model = String(service.offlineIntelligenceService?.getPreferredLocalModel?.() || '').trim();
-  if (!model) return '';
+  const saved = String(service.offlineIntelligenceService?.getPreferredLocalModel?.() || '').trim();
   // Row 201 C1: a saved team id (a teammate's GPU) is no default on this PC; it reads as unset.
-  if (isReservedTeamModelId(service, model)) return '';
+  const model = saved && !isReservedTeamModelId(service, saved) ? saved : '';
+  if (!model) {
+    return CLOUD_ENGINE_TYPES.has(String(service.currentEngineType || '').trim().toLowerCase()) ? defaultChatLocalFallback(service) : '';
+  }
   if (model === String(service.currentModel || '').trim() || service._modelEngineHints?.get?.(model)) return model;
   return managedServerKindForModel(service, model, { routing: true }) ? model : '';
+}
+
+// With no Settings default and a cloud engine active, a Default chat takes the built-in default on this
+// PC when it can be served (owner 2026-11-26); '' when none can, and the turn keeps the loaded (cloud)
+// model, which the pill then names. The model list carries this as default_local_fallback so the
+// renderer's pill names the same route.
+function defaultChatLocalFallback(service) {
+  if (!service || service.hostMode === 'server') return '';
+  const builtIn = String(service.defaultModel || '').trim() || DEFAULT_MANAGED_SHELL_MODEL;
+  if (isReservedTeamModelId(service, builtIn) || CLOUD_ENGINE_TYPES.has(inferEngineTypeFromModel(builtIn))) return '';
+  const hint = String(service._modelEngineHints?.get?.(builtIn) || '').trim().toLowerCase();
+  if (hint) return CLOUD_ENGINE_TYPES.has(hint) ? '' : builtIn;
+  return managedServerKindForModel(service, builtIn, { routing: true }) ? builtIn : '';
 }
 
 function resolveManagedDefaultModel(service) {
@@ -221,4 +236,4 @@ async function resolveModel(service, preferredModel = '', preferredEngineType = 
   throw new Error('No model is available for chat.');
 }
 
-module.exports = { modelInstallState, pickInstalledDefaultModel, resolveDefaultChatModel, resolveModel };
+module.exports = { defaultChatLocalFallback, modelInstallState, pickInstalledDefaultModel, resolveDefaultChatModel, resolveModel };

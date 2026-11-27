@@ -292,7 +292,8 @@
     function onMouseDown(event) { if (near(event, '.team-menu--files')) event.preventDefault(); }
 
     const listeners = [['click', onClick, true], ['keydown', onKeydown, true], ['contextmenu', onContextMenu, true], ['mouseover', onHover, false], ['focusin', onHover, false],
-      ['input', onInputEvent, false], ['focusout', onFocusOut, false], ['mousedown', onMouseDown, false]];
+      ['input', onInputEvent, false], ['focusout', onFocusOut, false], ['mousedown', onMouseDown, false],
+      ['team:files-changed', () => { data.at = 0; }, false]]; // a turn wrote
     for (const [type, handler, capture] of listeners) o.root.addEventListener(type, handler, capture);
 
     return {

@@ -111,7 +111,10 @@
 .team-avatar { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; margin-top: 2px; font-size: var(--font-size-caption); font-weight: 600; color: var(--text-secondary); background: color-mix(in srgb, var(--text-muted) 18%, transparent); }
 .team-avatar[data-jenny="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .team-avatar[data-former="true"] { color: var(--text-muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
-.team-msg__gutter-time { font-size: var(--font-size-caption); color: transparent; text-align: end; line-height: 22px; font-variant-numeric: tabular-nums; }
+/* One line always: a time wider than the 30 px gutter ("12:17 PM", about 55 px with proportional digits) uses the row
+   padding and part of the 12 px column gap; the scroll box clips anything past the row edge, so rows with less padding
+   (the thread, a narrow window) take more of the gap. */
+.team-msg__gutter-time { justify-self: end; margin-inline-end: -10px; white-space: nowrap; font-size: var(--font-size-caption); color: transparent; text-align: end; line-height: 22px; }
 .team-msg:hover .team-msg__gutter-time, .team-msg:focus-within .team-msg__gutter-time, .team-msg:focus .team-msg__gutter-time { color: var(--text-decorative); }
 .team-msg__body { min-width: 0; }
 /* The app root is user-select: none; a message's words, names, times and file lines can be selected and copied, as in the chat. Controls stay unselectable. */
@@ -187,15 +190,20 @@
 .team-row__note { margin-inline-start: auto; font-size: var(--font-size-caption); color: var(--text-muted); }
 
 /* compact density: one line per message, no avatars */
-:root[data-team-density="compact"] .team-msg { grid-template-columns: 44px minmax(0, 1fr); column-gap: 8px; padding-block: 0; }
+/* The time column holds "12:17 PM" (live run 2026-11-25: 56px held "7:33 PM" with nothing to spare). */
+:root[data-team-density="compact"] .team-msg { grid-template-columns: 64px minmax(0, 1fr); column-gap: 8px; padding-block: 0; }
+/* The avatar is gone, so a first row has no gutter cell: its body still takes the second column. */
+:root[data-team-density="compact"] .team-msg__body { grid-column: 2; }
 :root[data-team-density="compact"] .team-msg[data-first="true"] { margin-block-start: 2px; }
 :root[data-team-density="compact"] .team-avatar { display: none; }
 :root[data-team-density="compact"] .team-acts { inset-inline-end: 18px; }
-:root[data-team-density="compact"] .team-msg__gutter-time { color: var(--text-decorative); }
+:root[data-team-density="compact"] .team-msg__gutter-time { margin-inline-end: 0; color: var(--text-decorative); white-space: nowrap; font-variant-numeric: tabular-nums; }
 :root[data-team-density="compact"] .team-msg__meta { display: inline; margin-inline-end: 6px; }
+/* Inline, the meta's flex gap is gone: the name and the time keep a space between them. */
+:root[data-team-density="compact"] .team-msg__meta > * + * { margin-inline-start: 6px; }
 :root[data-team-density="compact"] .team-msg__role { display: none; }
 :root[data-team-density="compact"] .team-msg__text, :root[data-team-density="compact"] .team-msg__text > p:first-child { display: inline; }
-:root[data-team-density="compact"] .team-pruned, :root[data-team-density="compact"] .team-timeline-error, :root[data-team-density="compact"] .team-empty { margin-inline-start: 70px; }
+:root[data-team-density="compact"] .team-pruned, :root[data-team-density="compact"] .team-timeline-error, :root[data-team-density="compact"] .team-empty { margin-inline-start: 78px; }
 
 /* empty channel: words at the foot of the timeline, where the first message will land */
 .team-empty { margin-block: auto 10px; margin-inline: 60px 18px; max-width: 560px; font-size: var(--font-size-body); line-height: 1.5; color: var(--text-muted); }
@@ -213,6 +221,7 @@
 .team-thread__error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-block: 8px; margin-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-danger-soft); }
 .team-thread__error p { margin: 0; }
 .team-thread .team-msg { padding-inline: 14px; }
+.team-thread .team-msg__gutter-time { margin-inline-end: -11px; }
 .team-thread .team-acts { inset-inline-end: 14px; }
 .team-thread .team-typing, .team-thread .team-composer { margin-inline: 14px; }
 
@@ -269,6 +278,7 @@
   .team-shell[data-screen="preview"] > .team-main, .team-shell[data-screen="preview"] > .team-thread { display: none; }
   .team-shell[data-screen="preview"] > .team-preview { position: relative; display: flex; flex: 1; width: auto; border-inline-start: 0; box-shadow: none; }
   .team-msg { padding-inline: 12px; }
+  .team-msg__gutter-time { margin-inline-end: -12px; }
   .team-head__sub { display: none; }
   /* The standing line of a direct conversation stays (owner pick 2), on a row of its own under the names. */
   .team-head:has(> .team-head__sub[data-standing="true"]) { flex-wrap: wrap; row-gap: 2px; }
@@ -469,7 +479,7 @@ button.team-msg__edited:disabled, button.team-seen:disabled { cursor: default; t
 /* A change to the channel itself, as one quiet line in the timeline (like the pruned line). */
 .team-chan-event { margin-block: 8px 4px; margin-inline: 60px 18px; font-size: var(--font-size-footnote); color: var(--text-muted); }
 .team-chan-event b { font-weight: 600; color: var(--text-secondary); }
-:root[data-team-density="compact"] .team-chan-event { margin-inline-start: 70px; }
+:root[data-team-density="compact"] .team-chan-event { margin-inline-start: 78px; }
 /* The New channel view: the New message view's frame, one column of fields at reading width. The # before the name is drawn here. */
 .team-newchan { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-8) var(--space-9); }
 .team-newchan__form { display: grid; gap: var(--space-6); max-width: 520px; }

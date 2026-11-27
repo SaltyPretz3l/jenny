@@ -164,14 +164,26 @@
         teamId: source.team_id,
         teamName: source.team_name,
       }),
-      hint: apiProviderHint(engineType, source) || teamEngineHint(source),
+      hint: apiProviderHint(engineType, source),
     };
   }
 
-  // The notice (D7) under every team row: who can read what a team model is sent.
-  function teamEngineHint(source) {
-    if (!source.team_id) return '';
+  // The notice (D7): who can read what a team model is sent. The picker draws it once per team (groupSectionHtml), not per row.
+  function teamNotice() {
     return jt('team.engine.notice', 'The team’s host and the person whose hardware responds can read your prompts and replies.');
+  }
+
+  // A group's heading, plus (layout D4) a team group's one notice, wrapped as a labelled group the note describes.
+  function groupSectionHtml(group, optionsHtml, opts) {
+    var esc = opts.escapeHtml;
+    var heading = opts.showHeading
+      ? '<div class="composer-model-picker-group" role="presentation" id="' + opts.id + '-h">' + esc(group.label) + '</div>'
+      : '';
+    if (!/^team:/.test(group.key) || !group.entries.length) return heading + optionsHtml;
+    return '<div role="group" aria-label="' + esc(group.label) + '" aria-describedby="' + opts.id + '-n">' + heading
+      + '<div class="composer-model-picker-group-note" role="note" id="' + opts.id + '-n">'
+      + esc(teamNotice())
+      + '</div>' + optionsHtml + '</div>';
   }
 
   // One line under an API-key provider row that cannot run as listed.
@@ -282,6 +294,9 @@
     var loadedEngine = String(status.engine || status.engine_type || modelList.engine_type || '').trim().toLowerCase();
     var preferred = String((source.offline && source.offline.preferredLocalModel) || '').trim();
     if (isTeamModel(preferred)) preferred = ''; // row 201: a saved team id is no default on this PC; it reads as unset
+    // No default under a cloud engine: the backend names the local model it takes (owner 2026-11-26).
+    var fallback = String(modelList.default_local_fallback || '').trim();
+    if (!preferred && fallback && CLOUD_ENGINES[loadedEngine] === 1) preferred = fallback;
     if (!preferred || preferred === loaded) return { model: loaded, engineType: loadedEngine };
     // The catalog lists one engine family at a time, so an unlisted default (NInfer while Ollama
     // runs) is still the default; its engine is known only when listed.
@@ -412,6 +427,7 @@
     resolveModelGroup: resolveModelGroup,
     normalizeCatalogEntry: normalizeCatalogEntry,
     groupCatalogEntries: groupCatalogEntries,
+    groupSectionHtml: groupSectionHtml,
     filterGroups: filterGroups,
     effortSegmentLabel: effortSegmentLabel,
     formatComposerModelPillLabel: formatComposerModelPillLabel,

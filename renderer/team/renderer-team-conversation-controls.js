@@ -11,7 +11,7 @@
  *
  * `foldLog(log, stamps, { nameOf, timeText })` is the pure part: the host's `preference_log` as quiet channel lines.
  * `createControls(o)`: o = { root, nameOf(id), projectName(), role(), mayDrive(), driver() (member id or null), running(),
- * busy(), session() (the snapshot's session or null), pool() ({ nodes, team_model, automatic_model } or null), change(patch)
+ * busy(), paused() (the project's rules are paused: no rule allows a change), session() (the snapshot's session or null), pool() ({ nodes, team_model, automatic_model } or null), change(patch)
  * (a promise of the host's answer), redraw(), timeText } -> { box, offline, notes, click, key, dispose }. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -50,8 +50,8 @@
     { id: 'write', icon: PEN, members: ['write_file', 'edit_file', 'propose_change'] },
   ]);
   const familyLabel = (id) => (id === 'read' ? jt('team.conv.prefs.readLabel', 'Read and search files') : jt('team.conv.prefs.writeLabel', 'Write and edit files'));
-  const familySub = (id) => (id === 'read' ? jt('team.conv.prefs.readSub', 'Look through this project’s team files')
-    : jt('team.conv.prefs.writeSub', 'Each change asks a writer first, unless a project rule allows it'));
+  const familySub = (id, paused) => (id === 'read' ? jt('team.conv.prefs.readSub', 'Look through this project’s team files')
+    : paused ? jt('team.conv.prefs.writeSubPaused', 'Each change asks a writer first.') : jt('team.conv.prefs.writeSub', 'Each change asks a writer first, unless a project rule allows it'));
   function effortLabel(value) {
     if (value === 'low') return jt('team.conv.prefs.effortLow', 'Low');
     if (value === 'medium') return jt('team.conv.prefs.effortMedium', 'Medium');
@@ -141,18 +141,21 @@
       const nodes = read && Array.isArray(read.nodes) ? read.nodes : null;
       const groups = [];
       const thinking = new Map();
+      const ready = new Set(); // models an online, unpaused PC offers
       for (const node of nodes || []) {
         if (!node || node.online !== true || !Array.isArray(node.models)) continue;
         const key = String(node.member_id || node.node_id || '');
         let group = groups.find((g) => g.key === key);
         if (!group) { group = { key, owner: typeof node.member_id === 'string' ? node.member_id : '', pc: text(node.label || '', 64), models: [] }; groups.push(group); }
         for (const m of node.models) {
-          if (!m || typeof m.name !== 'string' || !MODEL_NAME.test(m.name) || thinking.has(m.name)) continue;
+          if (!m || typeof m.name !== 'string' || !MODEL_NAME.test(m.name)) continue;
+          if (node.paused !== true) ready.add(m.name);
+          if (thinking.has(m.name)) continue;
           thinking.set(m.name, m.thinking === true);
           group.models.push({ name: text(m.name, MODEL_MAX), key: m.name, thinking: m.thinking === true });
         }
       }
-      return { known: nodes !== null, groups: groups.filter((g) => g.models.length), thinking, team: read ? text(read.team_model, 64) : '', automatic: read ? text(read.automatic_model, 64) : '' };
+      return { known: nodes !== null, groups: groups.filter((g) => g.models.length), thinking, ready, team: read ? text(read.team_model, 64) : '', automatic: read ? text(read.automatic_model, 64) : '' };
     }
 
     function view() {
@@ -167,14 +170,20 @@
       const available = s.file_tools === 'available';
       const on = { read: available && switches.read !== false, write: available && switches.write !== false };
       const only = offer.thinking.size === 1 ? [...offer.thinking.keys()][0] : '';
-      const defaultName = offer.team || offer.automatic || text(only, 64) || jt('team.conv.prefs.automatic', 'Automatic');
+      const named = offer.team || offer.automatic || text(only, 64);
+      const defaultName = named || jt('team.conv.prefs.automatic', 'Automatic');
       const shown = model || defaultName;
-      const offline = model !== null && offer.known && !offer.thinking.has(model);
+      const gone = model !== null && offer.known && !offer.thinking.has(model);
+      const stalled = model !== null && offer.known && !gone && !offer.ready.has(model); // listed, but every PC that offers it is paused
+      const offline = gone || stalled;
+      // The team default (no pick) that no ready PC offers; a default named by no model (Automatic) needs any ready PC.
+      const defaultDown = model === null && offer.known && !(named ? offer.ready.has(named) : offer.ready.size > 0);
       const gate = gateOf();
       // The team default named by no offered model (Automatic, or a model not listed): the pool picks, so the segments show
       // while any offered model thinks (the gateway drops the effort for one that does not).
-      const thinks = !offline && (offer.thinking.has(shown) ? offer.thinking.get(shown) === true : model === null && [...offer.thinking.values()].some(Boolean));
-      return { model, effort, available, on, offer, defaultName, shown, offline, thinks, locked: gate.locked, line: gate.line,
+      const thinks = !gone && (offer.thinking.has(shown) ? offer.thinking.get(shown) === true : model === null && [...offer.thinking.values()].some(Boolean));
+      const paused = typeof o.paused === 'function' && o.paused() === true;
+      return { model, effort, available, paused, on, offer, defaultName, shown, offline, gone, stalled, defaultDown, thinks, locked: gate.locked, line: gate.line,
         count: FAMILIES.filter((f) => on[f.id]).length, off: FAMILIES.filter((f) => available && !on[f.id]).length };
     }
 
@@ -209,7 +218,7 @@
       const disabled = v.locked || !v.available;
       const label = familyLabel(id);
       const names = jtn('team.conv.prefs.toolCount', family.members.length, { count: family.members.length }, '{count} tool', '{count} tools');
-      const sub = v.available ? escapeHtml(familySub(id))
+      const sub = v.available ? escapeHtml(familySub(id, v.paused))
         : '<span class="composer-tool-warn">' + escapeHtml(jt('team.conv.prefs.hostReason', 'Off on this host: file access on this team host is not available yet')) + '</span>';
       const shown = members === id;
       return '<div class="composer-tool-row" data-on="' + checked + '" data-blocked="' + !v.available + '"><span class="composer-tool-icon" aria-hidden="true">' + family.icon + '</span>'
@@ -237,7 +246,7 @@
     function pillHtml(v) {
       const label = v.shown + (v.effort !== 'default' ? ' · ' + effortLabel(v.effort) : '');
       const title = v.model ? jt('team.conv.prefs.pickedTitle', 'Picked for this conversation') : jt('team.conv.prefs.defaultTitle', 'The team default, set by the host in Settings › Team');
-      const dot = v.offline ? 'error' : v.offer.thinking.has(v.shown) ? 'ok' : '';
+      const dot = v.offline || v.defaultDown ? 'error' : v.offer.ready.has(v.shown) ? 'ok' : '';
       const opened = open === 'model';
       const button = chipOf({ domId: ids.pill, label, iconHtml: dot ? '<span class="composer-model-pill-dot status-dot status-dot--' + dot + '" aria-hidden="true"></span>' : '', hasPopup: true,
         ariaControls: opened ? ids.model : '', title, ariaLabel: jt('team.conv.prefs.pillLabel', 'Model and thinking: {model}. {title}', { model: label, title }),
@@ -247,21 +256,21 @@
     }
 
     const nameHtml = (family, tag) => '<span class="composer-model-picker-name"><span class="composer-model-picker-family">' + escapeHtml(family) + '</span><span class="composer-model-picker-tag">' + escapeHtml(tag) + '</span></span>';
-    function optionHtml({ name, family, tag, active, offline, loaded, id }, v) {
-      const meta = offline ? '<span class="composer-model-picker-size">' + escapeHtml(jt('team.conv.prefs.offline', 'offline')) + '</span>'
+    function optionHtml({ name, family, tag, active, offline, stalled, loaded, id }, v) {
+      const meta = offline || stalled ? '<span class="composer-model-picker-size">' + escapeHtml(offline ? jt('team.conv.prefs.offline', 'offline') : jt('team.conv.prefs.pausedMeta', 'paused')) + '</span>'
         : loaded ? '<span class="composer-model-picker-loaded status-dot status-dot--ok" role="img" title="' + escapeHtml(jt('team.conv.prefs.available', 'Available now')) + '" aria-label="' + escapeHtml(jt('team.conv.prefs.available', 'Available now')) + '"></span>' : '';
-      return buttonOf({ plain: true, role: 'option', className: 'composer-model-picker-option' + (active ? ' is-active' : '') + (offline ? ' is-unavailable' : ''), ariaSelected: active, disabled: v.locked || offline,
+      return buttonOf({ plain: true, role: 'option', className: 'composer-model-picker-option' + (active ? ' is-active' : '') + (offline || stalled ? ' is-unavailable' : ''), ariaSelected: active, disabled: v.locked || offline || stalled,
         domId: id, title: name || family, dataset: { 'pref-model': name }, trustedHtml: nameHtml(family, tag) + '<span class="composer-model-picker-meta">' + meta + '</span>' });
     }
 
     function pickerHtml(v) {
       const split = (name) => { const at = name.indexOf(':'); return at > 0 ? [name.slice(0, at), name.slice(at)] : [name, '']; };
-      const items = [optionHtml({ name: '', family: jt('team.conv.prefs.teamDefault', 'Team default'), tag: ' · ' + v.defaultName, active: v.model === null, loaded: v.offer.thinking.has(v.defaultName), id: pref('Model-default') }, v)];
-      if (v.offline) { const [family, tag] = split(v.model); items.push(optionHtml({ name: v.model, family, tag, active: true, offline: true, id: pref('Model-picked') }, v)); }
+      const items = [optionHtml({ name: '', family: jt('team.conv.prefs.teamDefault', 'Team default'), tag: ' · ' + v.defaultName, active: v.model === null, loaded: v.offer.ready.has(v.defaultName), id: pref('Model-default') }, v)];
+      if (v.gone) { const [family, tag] = split(v.model); items.push(optionHtml({ name: v.model, family, tag, active: true, offline: true, id: pref('Model-picked') }, v)); }
       v.offer.groups.forEach((group, g) => {
         const who = (group.owner && column.clean(o.nameOf(group.owner), 64)) || group.pc;
         items.push('<div class="composer-model-picker-group" role="presentation" dir="auto">' + escapeHtml(jt('team.conv.prefs.onPc', 'On {name}’s PC', { name: who })) + '</div>');
-        group.models.forEach((m, i) => { const [family, tag] = split(m.name); items.push(optionHtml({ name: m.key, family, tag, active: v.model === m.key, loaded: true, id: pref('Model-' + g + '-' + i) }, v)); });
+        group.models.forEach((m, i) => { const [family, tag] = split(m.name); items.push(optionHtml({ name: m.key, family, tag, active: v.model === m.key, stalled: !v.offer.ready.has(m.key), loaded: true, id: pref('Model-' + g + '-' + i) }, v)); });
       });
       const segments = v.thinks ? '<div class="composer-model-picker-thinking"><span class="composer-model-picker-thinking-label">' + escapeHtml(jt('team.conv.prefs.thinking', 'Thinking')) + '</span>'
         + '<div class="composer-model-picker-segments" role="radiogroup" aria-label="' + escapeHtml(jt('team.conv.prefs.thinkingEffort', 'Thinking effort')) + '">'
@@ -272,13 +281,16 @@
       return withAttrs(popoverOf({ domId: ids.model, ariaLabel: jt('team.conv.prefs.modelPopover', 'Model and thinking'), trustedHtml: inner, className: 'composer-model-popover' }).replace(' hidden>', '>'), 'tabindex="-1"');
     }
 
-    // The line above the field while the picked model's PC is gone; Send waits for it (the box reads `offline`).
+    // The line above the field while the picked model's PC is gone or paused; Send waits for it (the box reads `offline`).
     function offlineHtml(v) {
       const model = column.clean(v.model, 64);
       const use = column.button('pref-default', jt('team.conv.prefs.useDefault', 'Use the team default'), { disabled: v.locked,
         title: v.locked ? v.line : jt('team.conv.prefs.useDefaultTitle', 'Go back to the team default ({model})', { model: v.defaultName }) });
-      return '<div class="team-drive team-drive--above" role="status"><span dir="auto">' + escapeHtml(jt('team.conv.prefs.offlineLine', '{model} is offline. Pick another model or use the team default.', { model })) + '</span>' + use + '</div>';
+      return '<div class="team-drive team-drive--above" role="status"><span dir="auto">' + escapeHtml((v.stalled ? jt('team.conv.prefs.pausedLine', '{model} is paused. Pick another model or use the team default.', { model })
+      : jt('team.conv.prefs.offlineLine', '{model} is offline. Pick another model or use the team default.', { model }))) + '</span>' + use + '</div>';
     }
+    // The team default no ready PC offers: said, but Send is not held (with no ready PC at all the box's own "nobody shares" line says it).
+    const defaultDownHtml = (v) => '<div class="team-drive team-drive--above" role="status"><span dir="auto">' + escapeHtml(jt('team.conv.prefs.defaultDownLine', 'The team default, {model}, is not available now. Pick another model.', { model: column.clean(v.shown, 64) })) + '</span></div>';
 
     // ---------------------------------------------------------- opening, closing, writing
 
@@ -385,8 +397,10 @@
 
     return {
       // The box's three pieces and whether a send must wait: the Tools chip, the model pill, the line above the field.
-      box() { const v = view(); return { tools: toolsHtml(v), model: pillHtml(v), above: v.offline ? offlineHtml(v) : '', offline: v.offline }; },
+      box() { const v = view(); return { tools: toolsHtml(v), model: pillHtml(v), above: v.offline ? offlineHtml(v) : v.defaultDown && v.offer.ready.size ? defaultDownHtml(v) : '', offline: v.offline }; },
       offline: () => view().offline,
+      // True when the pool is read and no ready PC offers the model this conversation would use; the caller decides what that blocks.
+      unanswerable() { const v = view(); return v.offline || v.defaultDown; },
       // The folded log for the channel: `messages` are the held ones (a message or a turn of Jenny's ends a group).
       // The same array while the log and the held messages are the same (the channel's memo keys on it).
       notes(messages) {

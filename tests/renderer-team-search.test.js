@@ -7,7 +7,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { OTHER, CHAN, DOT, ME, MAYA, CHAT_MEMBERS, micro, flush, msgId, message, memberTeam, snapshot, openChat, heldAnswers, liveTimers, type, key,
-  pushMessages, chatPush, chatMember, searchField: field, searchMatch: match } = require('./helpers/team-settings-harness');
+  pushMessages, chatPush, chatMember, searchField: field, searchMatch: match, harness, layout, chatChannel, overview } = require('./helpers/team-settings-harness');
+const { dmChannelId } = require('../services/host/team-chat-schema');
 
 const clearButton = (h) => h.view.q('.team-search__clear');
 const region = (h) => h.view.q('.team-results');
@@ -198,6 +199,37 @@ test('searching keeps the previous results dimmed; no matches says so with the q
   assert.deepEqual(ids(h), []);
   assert.equal(note(h), 'No messages match "second". Search looks at the text of messages in the channels you can read. Deleted messages are left out.');
   assert.equal(h.view.q('.team-results__note').getAttribute('aria-live'), 'polite');
+});
+
+test('in a direct conversation the list says so, the empty note names it, and a switch to #team asks again there', async () => {
+  const dm = dmChannelId([DOT, ME]);
+  const h = harness({ show: false, teams: [memberTeam()], answers: {
+    chatOverview: overview({ channels: [chatChannel(), chatChannel({ channel_id: dm, kind: 'dm', participants: [DOT, ME].sort() })], members: CHAT_MEMBERS }),
+    chatHistory: { ok: true, messages: [], has_more: false },
+    chatSearch: (p) => found(p.channel_id ? [] : [match(1)]),
+  } });
+  layout(h);
+  h.cleanups.push(h.chat.use());
+  h.showTab();
+  await flush();
+  const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  try {
+    h.view.q(`[data-team-channel="${dm}"]`).click();
+    await flush();
+    type(h, 'zzz', field(h));
+    await wait(350);
+    await flush();
+    assert.equal(h.view.q('.team-results__scope').textContent, 'In this conversation');
+    assert.match(note(h), /^No messages match "zzz" in this conversation\./);
+    h.view.q(`[data-team-channel="${CHAN}"]`).click();
+    await flush();
+    await wait(350);
+    await flush();
+    assert.equal(searches(h).length, 2, 'the same query was asked again');
+    assert.equal(Object.hasOwn(searches(h)[1], 'channel_id'), false, 'in the new scope');
+    assert.deepEqual(ids(h), [msgId(1)]);
+    assert.equal(h.view.q('.team-results__scope'), null, 'no scope label in a channel');
+  } finally { h.restore(); }
 });
 
 test('too fast: the results stay, one retry after 3 s, and the timer goes on clear and on dispose', async (t) => {

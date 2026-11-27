@@ -80,6 +80,7 @@
   function createActions({ root, chat, teamId, channelId, ctx, writes, redraw, holdRead = () => false, focusComposer, list = null, inThread = false, onReply = null, pop = null }) {
     let editing = null; // { id, rev, names }
     let confirming = null; // message id
+    let discarding = null; // entry id of a failed post whose discard is being asked
     let menuOpen = false;
     let disposed = false;
     const actsMarkup = new Map();
@@ -123,6 +124,7 @@
             : jt('team.out.notSent', 'Not sent. {reason}', { reason: why });
         const busy = writes.isBusy('retry:' + id) || writes.isBusy('discard:' + id);
         const resent = writes.wasResent(id); // sent again already: only its discard is owed
+        if (discarding === id) return failed(text) + discardHtml(id, busy);
         html = failed(text) + (resent ? '' : button(jt('team.out.retry', 'Retry'), 'retry', { entryId: id, busy }))
           + button(entry.operation === 'post' && !resent ? jt('team.out.delete', 'Delete') : jt('team.out.dismiss', 'Dismiss'), 'discard', { entryId: id, busy });
       }
@@ -161,6 +163,15 @@
       return html;
     }
 
+    // Save is greyed with its reason while the box is empty.
+    function syncSave(box) {
+      const save = box.closest('.team-edit') && box.closest('.team-edit').querySelector('[data-team-msg-action="edit-save"]');
+      if (!save) return;
+      const empty = !box.value.trim();
+      save.disabled = empty;
+      if (empty) save.title = jt('team.edit.saveEmpty', 'Type a message first.'); else save.removeAttribute('title');
+    }
+
     function editHtml() {
       return '<div class="team-edit"><textarea class="team-edit__input" rows="2" dir="auto" aria-label="'
         + escapeHtml(jt('team.edit.label', 'Edit message')) + '"></textarea><div class="team-edit__bar">'
@@ -169,8 +180,15 @@
         + '</div></div>';
     }
 
+    function discardHtml(id, busy) {
+      const ask = jt('team.out.discardConfirm', 'Discard this unsent message?');
+      return '<span class="team-confirm" role="group" aria-label="' + escapeHtml(ask) + '">' + escapeHtml(ask)
+        + button(jt('team.out.discard', 'Discard'), 'discard-confirm', { entryId: id, variant: 'danger', busy })
+        + button(jt('settings.team.cancel', 'Cancel'), 'discard-cancel', { entryId: id }) + '</span>';
+    }
+
     function confirmHtml(id) {
-      const ask = jt('team.delete.confirm', 'Delete this message?');
+      const ask = jt('team.delete.confirm', 'Delete this message? Its edits, reactions, files and pin go with it. This cannot be undone.');
       return '<span class="team-confirm" role="group" aria-label="' + escapeHtml(ask) + '">' + escapeHtml(ask)
         + button(jt('team.out.delete', 'Delete'), 'delete-confirm', { variant: 'danger', busy: writes.isBusy('delete:' + id) })
         + button(jt('settings.team.cancel', 'Cancel'), 'delete-cancel') + '</span>';
@@ -217,6 +235,7 @@
       const box = rowOf(id) && rowOf(id).querySelector('.team-edit__input');
       if (!box) { editing = null; return false; }
       box.value = chatWrites.toDisplay(message.text, c.knownName, names);
+      syncSave(box);
       box.focus();
       box.setSelectionRange(box.value.length, box.value.length);
       return true;
@@ -244,9 +263,10 @@
       if (text === message.text) { closeEdit({ toComposer: false }); return; }
       const save = row.querySelector('[data-team-msg-action="edit-save"]');
       if (save) save.disabled = true;
-      const answer = await writes.edit(channelId, id, text, rev);
+      let answer;
+      // Save comes back on every path (no answer, a throw), so an edit still open can be sent again.
+      try { answer = await writes.edit(channelId, id, text, rev); } finally { if (save && save.isConnected) syncSave(box); }
       if (answer === null || disposed || !editing || editing.id !== id) return;
-      if (save && save.isConnected) save.disabled = false;
       if (answer.ok) { closeEdit({ toComposer: false }); return; }
       const hint = row.querySelector('.team-edit__hint');
       if (hint) hint.textContent = reason(answer);
@@ -301,7 +321,7 @@
       const held = holdRead(true);
       const answer = await chat.markUnread(teamId, channelId, message.seq);
       if (disposed) return;
-      if (answer.ok) notes.delete('msg:' + id);
+      if (answer.ok) { notes.delete('msg:' + id); holdRead(true, message.seq - 1); } // the timeline draws its New line here
       else {
         holdRead(held); // the channel was not marked unread: it may be marked read again
         notes.set('msg:' + id, jt('team.out.unreadFailed', 'Could not mark this unread. {reason}', { reason: reason(answer) }));
@@ -311,14 +331,30 @@
 
     function entryOf(entryId) { return chat.pending(teamId).find((e) => e.entry_id === entryId) || null; }
 
-    async function outboxAction(action, entryId) {
+    // A failed post's text back into an empty composer (its team-restore hook); false when the composer cannot take it.
+    function putBack(entry, probe = false) {
+      const host = inThread ? root.closest('.team-thread') : root.closest('.team-main');
+      const slot = host && host.querySelector(inThread ? '[data-team-region="thread-composer"]' : '[data-team-region="composer"]');
+      if (!slot) return false;
+      const detail = { text: entry.text, done: false, probe };
+      slot.dispatchEvent(new (root.ownerDocument.defaultView.CustomEvent)('team-restore', { detail }));
+      return detail.done;
+    }
+
+    function focusAct(action) { const el = root.querySelector('[data-team-msg-action="' + action + '"]'); if (el) el.focus(); }
+    function endDiscard() { discarding = null; redraw(); focusAct('discard'); }
+
+    async function outboxAction(action, entryId, confirmed = false) {
       const entry = entryOf(entryId);
       if (!entry) return;
       notes.delete('entry:' + entryId);
+      const back = action === 'discard' && !confirmed && entry.operation === 'post' && !writes.wasResent(entryId);
+      if (back && !putBack(entry, true)) { discarding = entryId; redraw(); focusAct('discard-cancel'); return; }
+      discarding = null;
       const target = entry.message_id ? messageOf(entry.message_id) : null;
       const answer = action === 'retry' ? await writes.retry(entry, target ? target.rev : 1) : await writes.discard(entryId);
       if (answer === null || disposed) return;
-      if (!answer.ok) notes.set('entry:' + entryId, reason(answer));
+      if (!answer.ok) notes.set('entry:' + entryId, reason(answer)); else if (back) putBack(entry); // the text goes back only once the post is gone
       redraw();
     }
 
@@ -443,8 +479,14 @@
         case 'delete-cancel': if (id) endConfirm(id); return;
         case 'retry':
         case 'discard': void outboxAction(target.dataset.teamMsgAction, target.dataset.entryId); return;
+        case 'discard-confirm': void outboxAction('discard', target.dataset.entryId, true); return;
+        case 'discard-cancel': endDiscard(); return;
         default:
       }
+    }
+
+    function onInput(event) {
+      if (event.target && event.target.classList && event.target.classList.contains('team-edit__input')) syncSave(event.target);
     }
 
     function onKeydown(event) {
@@ -457,7 +499,7 @@
       if (event.key === 'Escape') {
         if (!chatWrites.isCloseKey(event) || menuOpen) return;
         if (pops.isOpen()) { event.preventDefault(); pops.close(); return; }
-        if (editing) { event.preventDefault(); closeEdit(); } else if (confirming) { event.preventDefault(); endConfirm(confirming); }
+        if (editing) { event.preventDefault(); closeEdit(); } else if (confirming) { event.preventDefault(); endConfirm(confirming); } else if (discarding) { event.preventDefault(); endDiscard(); }
         return;
       }
       const row = target && target.classList && target.classList.contains('team-msg') && target.dataset.messageId ? target : null;
@@ -473,6 +515,7 @@
 
     root.addEventListener('click', onClick);
     root.addEventListener('keydown', onKeydown);
+    root.addEventListener('input', onInput);
     root.addEventListener('contextmenu', onContextMenu);
 
     return {
@@ -484,6 +527,7 @@
         disposed = true;
         root.removeEventListener('click', onClick);
         root.removeEventListener('keydown', onKeydown);
+        root.removeEventListener('input', onInput);
         root.removeEventListener('contextmenu', onContextMenu);
         if (menuOpen) { const menu = menuApi(); if (menu && typeof menu.hide === 'function') menu.hide({ restoreFocus: false }); }
         if (copied) { clearTimeout(copied.timer); copied.el.remove(); copied = null; }

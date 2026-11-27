@@ -63,6 +63,7 @@
     var tagOf = new Map(); // Library row key -> discovery tag ('' for none), this Library load
     var keysOf = new Map(); // discovery tag -> the Library row keys that show it, this Library load
     var disposed = false;
+    var asking = new Map(); // offer id -> the button that asked ('receive-cancel' or 'in-dismiss'): its row shows the remove question
 
     var storeModule = function () { return root.rendererTeamModelStore || null; };
     var modelStore = function () { var mod = storeModule(); return mod && typeof mod.peekModelStore === 'function' ? mod.peekModelStore() : null; };
@@ -79,6 +80,7 @@
       if (release || !store || disposed) return store;
       release = store.use();
       unsubscribe = store.subscribe(onChange);
+      d.documentRef.addEventListener('keydown', onKey);
       return store;
     }
 
@@ -93,6 +95,7 @@
         return;
       }
       if (change.type === 'review') { void openReview(); return; }
+      asking.forEach(function (opener, id) { if (!receivedBytes(id)) asking.delete(id); });
       // A tag found received: its own rows (the flag and the ⋯ item), once per frame, an open menu kept.
       if (change.type === 'provenance') { (keysOf.get(change.tag) || []).forEach(function (key) { d.queueRow(key); }); return; }
       d.renderRows();
@@ -109,7 +112,12 @@
         return;
       }
       var row = state.incoming.find(function (r) { return r.transfer && (r.transfer.transfer_id === change.transfer_id || r.offer_id === change.offer_id); });
-      if (row) rows.patchProgress(target, 'in:' + row.offer_id, row.transfer);
+      if (!row) return;
+      rows.patchProgress(target, 'in:' + row.offer_id, row.transfer);
+      if (!asking.has(row.offer_id)) return;
+      var el = Array.prototype.find.call(target.querySelectorAll('[data-model-key]'), function (x) { return x.getAttribute('data-model-key') === ':offer:' + row.offer_id; });
+      var ask = el && el.querySelector('.mrow-share .model-card-note');
+      if (ask) ask.textContent = rows.removeAsk(row.transfer);
     }
 
     // ------------------------------------------------------------------ per Library load
@@ -228,7 +236,7 @@
       return { share: share, flag: received ? rows.receivedFlag(received.provenance, teamName(received.team_id)) : '' };
     }
     function incomingCtx(state, row) {
-      return { teamId: state.teamId, teamName: teamName(state.teamId), hostName: (ownerOf(state.teamId) || {}).display_name, online: state.online !== false, path: modelStore().pathOf(row.offer_id) };
+      return { teamId: state.teamId, teamName: teamName(state.teamId), hostName: (ownerOf(state.teamId) || {}).display_name, online: state.online !== false, path: modelStore().pathOf(row.offer_id), asking: asking.has(row.offer_id) };
     }
     function before(view) {
       var store = attach();
@@ -276,6 +284,29 @@
           anchor: anchor || null, onRefused: d.setStatusMessage });
       });
     }
+    // The bytes received so far for an incoming offer (0 when it has no transfer or is gone).
+    function receivedBytes(offerId) {
+      var store = modelStore();
+      var found = null;
+      (store ? store.teams() : []).forEach(function (state) { state.incoming.forEach(function (r) { if (r.offer_id === offerId && r.transfer) found = r.transfer; }); });
+      return found && Number.isFinite(found.bytes_done) && found.bytes_done > 0 ? found.bytes_done : 0;
+    }
+    // Back to the row's buttons, focus on the one that asked.
+    function keep(offerId) {
+      var opener = asking.get(offerId);
+      if (!asking.delete(offerId)) return;
+      d.renderRows();
+      var again = Array.prototype.find.call(d.host() ? d.host().querySelectorAll('[data-mshare-action]') : [], function (el) {
+        return el.getAttribute('data-mshare-action') === opener && el.getAttribute('data-mshare-offer') === offerId;
+      });
+      if (again) again.focus();
+    }
+    function onKey(event) {
+      if (disposed || !event || event.key !== 'Escape' || !event.target || !event.target.closest) return;
+      var row = event.target.closest('[data-model-key]');
+      var no = row && row.querySelector('[data-mshare-action="ask-keep"]');
+      if (no) { event.preventDefault(); keep(no.getAttribute('data-mshare-offer')); }
+    }
     var CALLS = { withdraw: 'modelWithdraw', 'send-pause': 'modelSendPause', 'send-resume': 'modelSendResume', 'send-stop': 'modelSendStop', decline: 'modelDecline',
       'receive-pause': 'modelReceivePause', 'receive-resume': 'modelReceiveResume', 'receive-cancel': 'modelReceiveCancel', 'receive-retry': 'modelReceiveRetry', 'in-dismiss': 'modelReceiveCancel' };
     function handleClick(event) {
@@ -286,6 +317,18 @@
       var store = modelStore();
       if (!store) return true;
       var settle = function () { if (button.isConnected) button.disabled = false; };
+      var offerId = button.getAttribute('data-mshare-offer');
+      if (action === 'ask-keep') { keep(offerId); return true; }
+      if (action === 'receive-cancel' || action === 'in-dismiss') {
+        if (receivedBytes(offerId) > 0) { // C22: data would go: ask first, on the safe choice
+          asking.set(offerId, action);
+          d.renderRows();
+          var no = d.host() && Array.prototype.find.call(d.host().querySelectorAll('[data-mshare-action="ask-keep"]'), function (el) { return el.getAttribute('data-mshare-offer') === offerId; });
+          if (no) no.focus();
+          return true;
+        }
+      }
+      if (action === 'ask-remove') action = asking.get(offerId) || 'receive-cancel';
       if (action === 'arrived-ok') { arrived.delete(button.getAttribute('data-mshare-tag')); d.renderRows(); return true; }
       if (action === 'out-dismiss') { store.dismiss(button.getAttribute('data-mshare-request')); return true; }
       if (action === 'review') { button.disabled = true; void openReview(button.getAttribute('data-mshare-offer'), teamId, button).then(settle, settle); return true; }
@@ -301,6 +344,7 @@
         // Dismiss removes the row only once what had arrived is gone; a refusal keeps it and says why.
         if (answer.ok && action === 'in-dismiss') store.dismiss(payload.offer_id);
         else if (!answer.ok) d.setStatusMessage(W.reasonText(answer.error && answer.error.reason));
+        if (asking.delete(payload.offer_id)) d.renderRows();
         settle();
       });
       return true;
@@ -312,6 +356,8 @@
         if (disposed) return;
         disposed = true;
         if (unsubscribe) unsubscribe();
+        d.documentRef.removeEventListener('keydown', onKey);
+        asking.clear();
         if (release) release();
         unsubscribe = null;
         release = null;

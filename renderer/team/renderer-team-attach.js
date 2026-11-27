@@ -346,7 +346,8 @@
       const pasted = event.clipboardData && event.clipboardData.files ? Array.from(event.clipboardData.files) : [];
       if (!pasted.length) return false; // pasted text stays text
       event.preventDefault();
-      if (ctx().online) addFiles(pasted);
+      if (!ctx().online) return 'offline'; // the composer says so in its hint
+      addFiles(pasted);
       return true;
     }
     async function pick() {

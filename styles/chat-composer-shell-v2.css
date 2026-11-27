@@ -598,7 +598,14 @@
   inset-inline-end: 0;
   min-width: 300px;
   max-width: 340px;
+  /* Opens upward: never above the top rail (190px is the composer and window edge below it); the list scrolls. */
+  display: flex;
+  flex-direction: column;
+  max-block-size: calc(100dvh - var(--titlebar-height) - 190px);
 }
+
+.composer-model-popover > .composer-model-picker { display: flex; flex: 1 1 auto; flex-direction: column; min-block-size: 0; }
+.composer-model-picker > :not(.composer-model-picker-list) { flex: none; }
 
 /* An author display beats the UA [hidden] rule; keep the attribute meaningful. */
 .composer-model-carriers[hidden],
@@ -616,6 +623,8 @@
 }
 
 .composer-model-picker-list {
+  flex: 1 1 auto;
+  min-block-size: 0;
   max-height: 320px;
   overflow-y: auto;
   margin: 0 calc(-1 * var(--space-4));
@@ -626,6 +635,13 @@
   font-size: var(--font-size-caption);
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.composer-model-picker-group-note {
+  padding: 0 var(--space-4) var(--space-2);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  white-space: normal;
 }
 
 .composer-model-picker-option {

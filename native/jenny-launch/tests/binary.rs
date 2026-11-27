@@ -181,7 +181,12 @@ fn large_exit_codes_are_mirrored_bit_for_bit() {
 #[test]
 fn input_bytes_reach_the_targets_stdin() {
     let done = bootstrap(
-        request(&["findstr", "^"], &cwd_default(), Value::Null, Some(b"hello\r\nworld\r\n")),
+        request(
+            &["findstr", "^"],
+            &cwd_default(),
+            Value::Null,
+            Some(b"hello\r\nworld\r\n"),
+        ),
         false,
     );
     assert_eq!(done.code, Some(0));
@@ -194,7 +199,12 @@ fn two_hundred_thousand_input_bytes_arrive_complete() {
     let input = line.repeat(2000);
     assert_eq!(input.len(), 200_000);
     let done = bootstrap(
-        request(&["find", "/v", "/c", ""], &cwd_default(), Value::Null, Some(input.as_bytes())),
+        request(
+            &["find", "/v", "/c", ""],
+            &cwd_default(),
+            Value::Null,
+            Some(input.as_bytes()),
+        ),
         false,
     );
     assert_eq!(done.code, Some(0), "{}", text(&done.stderr));
@@ -208,7 +218,11 @@ fn a_target_that_never_reads_its_stdin_still_exits_cleanly() {
     // launcher is blocked in its write until the target exits and the pipe
     // breaks. A second case exits at once.
     let done = bootstrap(
-        cmd_c("ping -n 2 127.0.0.1 >nul & exit 3", Value::Null, Some(&input)),
+        cmd_c(
+            "ping -n 2 127.0.0.1 >nul & exit 3",
+            Value::Null,
+            Some(&input),
+        ),
         false,
     );
     assert_eq!(done.code, Some(3));
@@ -277,7 +291,11 @@ fn env_given_replaces_the_environment() {
 #[test]
 fn env_pairs_reach_the_target_including_a_leading_equals_and_empty_object() {
     let done = bootstrap(
-        cmd_c("echo %A_VALUE%", json!({"A_VALUE": "seen", "=C:": "C:\\x"}), None),
+        cmd_c(
+            "echo %A_VALUE%",
+            json!({"A_VALUE": "seen", "=C:": "C:\\x"}),
+            None,
+        ),
         false,
     );
     assert_eq!(done.code, Some(0));
@@ -319,7 +337,12 @@ fn cwd_is_honoured() {
 #[test]
 fn missing_executable_and_bad_cwd_exit_126_with_the_exact_message() {
     let missing = bootstrap(
-        request(&["Z:\\no\\such\\prog.exe"], &cwd_default(), Value::Null, None),
+        request(
+            &["Z:\\no\\such\\prog.exe"],
+            &cwd_default(),
+            Value::Null,
+            None,
+        ),
         false,
     );
     assert_eq!(missing.code, Some(126));

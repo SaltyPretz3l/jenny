@@ -29,8 +29,8 @@
  * team's GPU list ride the `team.onState` push; no answer carries a device id, key or token.
  *
  * Slice 5-6 adds the owner's whole-team operations: hostInventory, hostDelete, hostStartNew, hostOldDelete,
- * hostOldShow, hostExport { password }, hostRestorePick and hostRestore { password, ... }. A password is never
- * answered or logged; the export folder and the backup file are picked in main.
+ * hostOldShow, hostExport { password }, hostExportCancel, hostRestorePick and hostRestore { password, ... }. A
+ * password is never answered or logged; the export folder and the backup file are picked in main.
  *
  * Slice 3-9 adds shared projects: one method per host operation (services/team/ipc-methods.js PROJECT_OPERATIONS),
  * and one push channel (`team.onProject`) for the project list, an open conversation's rebuilt events, viewers,
@@ -156,6 +156,7 @@ module.exports = Object.freeze({
   'team.hostOldDelete': invokeMethod('team:host-old-delete'),
   'team.hostOldShow': invokeMethod('team:host-old-show'),
   'team.hostExport': invokeMethod('team:host-export'),
+  'team.hostExportCancel': invokeMethod('team:host-export-cancel'),
   'team.hostRestorePick': invokeMethod('team:host-restore-pick'),
   'team.hostRestore': invokeMethod('team:host-restore'),
   // Row 170: the server page (services/team/host/host-lifecycle.js, host-autostart.js).

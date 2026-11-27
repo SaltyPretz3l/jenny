@@ -51,8 +51,10 @@
   let wantOllama = '';
 
   function freshOllama(teamId = '') { return { teamId, loaded: false, available: false, readable: true, installed: [], saved: null, draft: null }; }
-  function freshUsage(teamId = '') { return { teamId, loaded: false, failed: false, totals: [], rows: [], next: null, open: false }; }
+  function freshUsage(teamId = '') { return { teamId, loaded: false, failed: false, error: null, totals: [], rows: [], next: null, open: false }; }
   function inv() { return globalThis.inventory || {}; }
+  // Layout D3: the Pool context length row is the Network module's (its field, Save and drafts); drawn here under Team model.
+  function network() { return globalThis.rendererSettingsTeamNetwork || require('./renderer-settings-team-network'); }
   function tag() { try { return globalThis.jennyI18n?.tag?.() || undefined; } catch (_error) { return undefined; } }
 
   // The Intl formatters, built once per page language.
@@ -126,6 +128,8 @@
         return ['success', servingText(sharing),
           vm.confirm === 'share-off' ? '' : pause + act('teamShareStopNow', 'share-stop-running', jt('settings.team.gpu.stopNow', 'Stop now'), id, 'secondary', vm)];
       }
+      case 'finishing': return ['warning', jt('settings.team.gpu.finishing', 'Finishing a request, then sharing stops'),
+        act('teamShareStopNow', 'share-stop', jt('settings.team.gpu.stopNow', 'Stop now'), id, 'secondary', vm)];
       case 'busy_own': return ['warning', jt('settings.team.gpu.busyOwn', 'Waiting while you use the model. The team’s requests go to other hardware or wait.'), ''];
       case 'paused': return ['warning', jt('settings.team.gpu.paused', 'Paused. The team sees this PC as paused.'),
         act('teamShareResume', 'share-resume', jt('settings.team.gpu.resume', 'Resume'), id, 'primary', vm)];
@@ -217,10 +221,13 @@
     let help = jt('settings.team.ollama.reading', 'Reading the models on this PC…');
     let list = '';
     let save = '';
+    const retry = () => view.button(vm, 'ollama-retry', jt('settings.team.retry', 'Try again'), { ids: { teamId: team.team_id }, busyKey: 'ollama' });
     if (state && !state.available) {
       help = jt('settings.team.ollama.off', 'Ollama is not running on this PC, so there is nothing to choose.');
+      save = retry();
     } else if (state && !state.readable) {
       help = jt('settings.team.ollama.unreadable', 'Jenny could not read the models this PC shares. Try again later.');
+      save = retry();
     } else if (state && ollamaListing().length === 0) {
       help = jt('settings.team.ollama.none', 'Ollama has no models installed on this PC.');
     } else if (state) {
@@ -232,6 +239,12 @@
     }
     return inv().settingsField({ id: 'teamOllamaRow', variant: 'row', titleId: 'teamOllamaTitle', helpId: 'teamOllamaHelp', label: jt('settings.team.ollama.label', 'Models to share from Ollama'),
       help, controlHtml: save }) + list;
+  }
+
+  function retryOllama(ctx, teamId) {
+    ollama = freshOllama(teamId);
+    void loadOllama(ctx, teamId);
+    ctx.render();
   }
 
   function toggleOllama(name, on) {
@@ -265,7 +278,7 @@
     const readOnly = team.role === 'read_only';
     const id = team.team_id;
     const toggle = inv().toggleSwitch({ id: 'teamShareGpu', domId: 'teamShareGpu', bare: true, labelledBy: 'teamShareTitle', describedBy: 'teamShareHelp',
-      checked: !readOnly && (Boolean(sharing) || vm.confirm === 'share-on'), disabled: readOnly || vm.isBusy('share') || vm.forceLocal === true,
+      checked: !readOnly && (Boolean(sharing && sharing.state !== 'finishing') || vm.confirm === 'share-on'), disabled: readOnly || vm.isBusy('share') || vm.forceLocal === true,
       ...(vm.forceLocal === true ? { tooltip: words.forceLocalText() } : {}) });
     const picker = teams.length > 1 ? inv().selectField({ id: 'teamShareTeam', ariaLabel: jt('settings.team.gpu.pickTeam', 'Team to share with'), value: id,
       options: teams.map((t) => ({ value: t.team_id, label: words.teamName(t) })) }) : '';
@@ -320,7 +333,10 @@
 
   function useBody(vm, hosted) {
     if (usage.teamId !== hosted.team.team_id || !(usage.loaded || usage.failed)) return '';
-    if (usage.failed) return inv().emptyNote({ text: jt('settings.team.status.unknown', 'Unavailable') });
+    if (usage.failed) {
+      return inv().emptyNote({ text: words.errorText(usage.error || {}) })
+        + '<div class="team-set-after">' + view.button(vm, 'use-retry', jt('settings.team.retry', 'Try again'), { variant: 'ghost', busyKey: 'use' }) + '</div>';
+    }
     const someone = jt('settings.team.activity.someone', 'Someone');
     const nameOf = (id) => (id && (hosted.roster || []).find((member) => member.member_id === id)?.display_name) || someone;
     if (!usage.totals.length) return inv().emptyNote({ text: jt('settings.team.activity.empty', 'Nothing has happened yet.') });
@@ -339,15 +355,19 @@
     const list = (data.pools || {})[hosted.team.team_id] || null;
     const models = onlineModels(list);
     let html = '';
-    // Hidden while no hardware is online: Automatic would name nothing and the select would offer nothing.
-    if (list && list.automatic_model && models.length) {
-      const value = list.team_model && models.includes(list.team_model) ? list.team_model : 'auto';
+    if (list) {
+      // A saved model that is not online stays visible, disabled and selected, so the select tells the truth.
+      const gone = list.team_model && !models.includes(list.team_model) ? list.team_model : '';
+      const value = list.team_model || 'auto';
       const select = inv().selectField({ id: 'teamModel', ariaLabel: jt('settings.team.gpu.teamModel', 'Team model'), value, describedBy: 'teamModelHelp',
-        disabled: vm.isBusy('team-model'), options: [{ value: 'auto', label: jt('settings.team.gpu.automatic', 'Automatic') }, ...models.map((name) => ({ value: name, label: name }))] });
+        disabled: vm.isBusy('team-model') || !models.length, options: [{ value: 'auto', label: jt('settings.team.gpu.automatic', 'Automatic') },
+          ...(gone ? [{ value: gone, label: jt('settings.team.gpu.offline', '{name} (offline)', { name: gone }), disabled: true }] : []),
+          ...models.map((name) => ({ value: name, label: name }))] });
       html += view.group('gpus', jt('settings.team.gpu.teamGpus', 'Team GPUs'), {
         body: inv().settingsField({ id: 'teamModelRow', variant: 'row', label: jt('settings.team.gpu.teamModel', 'Team model'), labelFor: 'teamModel', helpId: 'teamModelHelp',
-          help: jt('settings.team.gpu.teamModelHelp', 'New conversations start on it. Anyone can pick another model in their own conversation. Automatic picks the model offered by the most connected hardware (now {model}).', { model: list.automatic_model }),
-          controlHtml: select }) + view.note(vm.errors.gpus) });
+          help: !models.length ? jt('settings.team.gpu.noneOnline', 'No shared GPU is online.')
+            : jt('settings.team.gpu.teamModelHelp', 'New conversations start on it. Anyone can pick another model in their own conversation. Automatic picks the model offered by the most connected hardware (now {model}).', { model: list.automatic_model || models[0] }),
+          controlHtml: select }) + network().poolRowHtml(vm, data, 'gpus') + view.note(vm.errors.gpus) });
     }
     return html + view.group('use', jt('settings.team.gpu.use', 'GPU use'), { extra: jt('settings.team.gpu.lastWeek', 'last 7 days'),
       copy: jt('settings.team.gpu.useCopy', 'Requests people sent from their own chats through the team. Jenny records who, when, the model, the hardware and the token count, never the words.'),
@@ -390,7 +410,7 @@
     const sharing = sharingOf(data, team);
     const asking = ctx.confirm();
     if (asking === 'share-on' || asking === 'share-off') { ctx.setConfirm(''); return; }
-    if (!sharing) { void setShare(ctx, team.team_id, true); return; }
+    if (!sharing || sharing.state === 'finishing') { void setShare(ctx, team.team_id, true); return; }
     if (sharing.state === 'serving') { ctx.setConfirm('share-off'); return; }
     void setShare(ctx, team.team_id, false);
   }
@@ -404,7 +424,7 @@
     const answer = more ? await ctx.run('use', 'use', () => ctx.call('gpuUse', payload)) : await ctx.call('gpuUse', payload);
     if (usage !== state) return;
     if (!answer || answer.ok !== true || !Array.isArray(answer.rows) || !Array.isArray(answer.totals)) {
-      if (!more) { state.failed = true; ctx.render(); }
+      if (!more) { state.failed = true; state.error = (answer && answer.error) || null; ctx.render(); }
       return;
     }
     state.loaded = true;
@@ -440,6 +460,8 @@
       case 'share-resume': void share(ctx, 'sharePause', { team_id: teamId, on: false }); return true;
       case 'share-stop-running': void share(ctx, 'sharePause', { team_id: teamId, on: true, stop_running: true }); return true;
       case 'ollama-save': void saveOllama(ctx, teamId); return true;
+      case 'ollama-retry': retryOllama(ctx, teamId); return true;
+      case 'use-retry': usage = { ...freshUsage(usage.teamId), open: usage.open }; void loadUsage(ctx, false); ctx.render(); return true;
       case 'open-models': openModels(); return true;
       case 'use-toggle': usage.open = !usage.open; ctx.render(); return true;
       case 'use-more': if (usage.next !== null) void loadUsage(ctx, true); return true;

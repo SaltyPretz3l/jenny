@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { flush, harness, shell } = require('./helpers/team-settings-harness');
+const { flush, harness, shell, snapshot } = require('./helpers/team-settings-harness');
 
 const SHELL_DIR = path.join(__dirname, '..', 'renderer', 'shell');
 const SOURCE = fs.readFileSync(path.join(SHELL_DIR, 'renderer-settings-utils.js'), 'utf8');
@@ -145,4 +145,28 @@ test('top nav: after a settings render on a teamData false state, a view switch 
   await flush();
   assert.equal(s.requested.includes(GATE_SRC), false, 'the gate stays unrequested');
   assert.deepEqual(s.tabs().includes('team'), true, 'row 168: the tab is in the rail; the gate loads only when it is opened');
+});
+
+test('the first team gives Team chat density back on Settings > Chat at once; a row with no reason is left alone', async (t) => {
+  const h = harness();
+  t.after(h.restore);
+  await flush();
+  const mount = h.window.document.createElement('div');
+  mount.dataset.settingMount = 'appearanceTeamDensitySelect';
+  mount.innerHTML = '<p class="settings-field-reason">Join or host a team to use this.</p>'
+    + '<button data-value="comfortable" aria-checked="false" disabled></button><button data-value="compact" aria-checked="true" disabled></button>';
+  h.window.document.body.appendChild(mount);
+  const mounted = [];
+  globalThis.rendererSettingsFieldDescriptors = { getSettingDescriptor: (id) => ({ id, default: 'comfortable' }) };
+  globalThis.rendererSettingsFieldBinding = { mountSettingRow: (el, descriptor, value, opts) => { mounted.push([descriptor.id, value, opts.disabledReason]); el.innerHTML = ''; } };
+  t.after(() => { delete globalThis.rendererSettingsFieldDescriptors; delete globalThis.rendererSettingsFieldBinding; });
+  h.listeners.state({ teams: [] });
+  await flush();
+  assert.deepEqual(mounted, [], 'still no team: the row stays greyed');
+  h.listeners.state({ teams: [snapshot()] });
+  await flush();
+  assert.deepEqual(mounted, [['appearanceTeamDensitySelect', 'compact', '']], 'drawn again with no reason, keeping what was chosen');
+  h.listeners.state({ teams: [snapshot()] });
+  await flush();
+  assert.equal(mounted.length, 1, 'a row with no reason is not drawn again');
 });

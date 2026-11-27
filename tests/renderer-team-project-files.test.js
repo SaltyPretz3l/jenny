@@ -300,3 +300,44 @@ test('H23.3: switching Rendered and Source keeps the focus on the segment contro
   globalThis.inventory.segmentedControl.select(segment(), 'rendered');
   assert.equal(active(h), segment().querySelector('[role="radio"][aria-checked="true"]'), 'back again, still there');
 });
+
+test('C18: Refresh, a turn ending or a file tool writing reads the tree again and drops the kept file answers; another project\'s event does nothing', async (t) => {
+  let list = ENTRIES;
+  const { h } = await openTree(t, { projectFiles: () => page(list), projectFileRead: (p) => textRead(p.path, 'const a = 1;\n') });
+  const changed = (detail) => h.window.document.dispatchEvent(new h.window.CustomEvent('team:files-changed', { bubbles: true, detail }));
+  const reads = () => h.sent('projectFiles').length;
+  assert.equal(rows(h).length, 3);
+  list = [...ENTRIES, file('notes.txt', 5)];
+  assert.ok(act(h, 'refresh'), 'a Refresh control in the Files column header');
+  act(h, 'refresh').click();
+  await flush();
+  assert.equal(reads(), 2);
+  assert.ok(rowOf(h, 'notes.txt'), 'the new file is listed without reopening');
+  list = [...list, file('later.txt', 5)];
+  changed({ teamId: OTHER, projectId: P2 });
+  await flush();
+  assert.equal(reads(), 2, 'another project\'s event reads nothing');
+  changed({ teamId: OTHER, projectId: P1 });
+  await flush();
+  assert.equal(reads(), 3);
+  assert.ok(rowOf(h, 'later.txt'));
+  rowOf(h, 'README.md').click();
+  await flush();
+  act(h, 'back').click();
+  await flush();
+  rowOf(h, 'README.md').click();
+  await flush();
+  assert.equal(h.sent('projectFileRead').length, 1, 'kept: a second look reads nothing');
+  act(h, 'back').click();
+  await flush();
+  changed({ teamId: OTHER, projectId: P1 });
+  await flush();
+  rowOf(h, 'README.md').click();
+  await flush();
+  assert.equal(h.sent('projectFileRead').length, 2, 'the kept answer was dropped: read again');
+});
+
+test('a project with one file says "1 entry"', async (t) => {
+  const { h } = await openTree(t, { projectFiles: page([file('README.md', 120)]) });
+  assert.equal(column(h).querySelector('.team-preview__meta').textContent, 'jenny-site · 1 entry');
+});

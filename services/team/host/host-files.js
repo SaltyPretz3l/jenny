@@ -222,12 +222,13 @@ function renameInside(root, from, to, { ops = fs } = {}) {
  * Copies the tree `from` to `to` (which must not exist), asynchronously, file by file. A link or an entry that
  * cannot be read is counted, not copied: the caller decides from the totals whether the copy stands.
  */
-async function copyTreeAsync(from, to, { limit = DEFAULT_LIMIT } = {}) {
+async function copyTreeAsync(from, to, { limit = DEFAULT_LIMIT, halt = () => {} } = {}) {
   await fs.promises.mkdir(to, { recursive: false });
   return walkTreeAsync(from, {
     limit,
-    onDir: (rel) => fs.promises.mkdir(path.join(to, rel), { recursive: true }),
-    onFile: (rel, abs) => fs.promises.copyFile(abs, path.join(to, rel), fs.constants.COPYFILE_EXCL),
+    // `halt()` throws to stop the copy between entries (a cancelled export).
+    onDir: (rel) => { halt(); return fs.promises.mkdir(path.join(to, rel), { recursive: true }); },
+    onFile: (rel, abs) => { halt(); return fs.promises.copyFile(abs, path.join(to, rel), fs.constants.COPYFILE_EXCL); },
   });
 }
 

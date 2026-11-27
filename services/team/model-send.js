@@ -114,7 +114,12 @@ function createModelSender({
       if (record.controller.signal.aborted) throw failed('aborted');
       try {
         return await hasher.hash(file.path, { signal: record.controller.signal,
-          onProgress: (bytes) => { record.read.done = base + bytes; changed(); } });
+          onProgress: (bytes) => {
+            const before = record.read.done;
+            record.read.done = base + bytes;
+            // The rows repaint when the whole percent moves, not on every tick of the hasher.
+            if (Math.floor((record.read.done * 100) / record.read.total) !== Math.floor((before * 100) / record.read.total)) changed();
+          } });
       } catch (error) {
         if (record.controller.signal.aborted) throw failed('aborted');
         if (error?.code !== 'model_hash_busy') throw failed(error?.code === 'model_hash_changed' ? 'model_source_changed' : 'model_read_failed');
@@ -173,7 +178,13 @@ function createModelSender({
     } finally {
       record.sending = false;
     }
-    if (stopped || !OPEN.has(record.state)) return;
+    if (stopped) return;
+    if (!OPEN.has(record.state)) {
+      // Ended while the first command was out: the host now holds an offer nobody knows, so it is withdrawn.
+      const late = answer?.ok === true ? answer.offer?.offer_id : null;
+      if (typeof late === 'string' && MODEL_RELAY_ID_PATTERNS.offer.test(late)) await link.command('team.model.withdraw', { offer_id: late }).catch(() => null);
+      return;
+    }
     if (answer?.ok === true) {
       const offerId = answer.offer?.offer_id;
       if (typeof offerId !== 'string' || !MODEL_RELAY_ID_PATTERNS.offer.test(offerId)) { end(record, 'failed', 'team_answer_invalid'); return; }

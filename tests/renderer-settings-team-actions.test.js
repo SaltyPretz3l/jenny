@@ -194,6 +194,16 @@ test('admit and decline, once for a double click; a role change sends the role',
   await flush();
   h.click(`[data-team-action="decline"][data-member-id="${MAYA}"]`);
   await flush();
+  assert.equal(h.sent('memberRevoke').length, 0, 'Decline asks first');
+  assert.match(h.q('[data-team-people] .team-set-confirm').textContent, /Decline Maya Okafor\? Their invite is used up; invite them again to let them in\./);
+  h.click('[data-team-people] [data-team-action="confirm-cancel"]');
+  await flush();
+  assert.equal(h.q('[data-team-people] .team-set-confirm'), null);
+  assert.equal(h.sent('memberRevoke').length, 0, 'Cancel sends nothing');
+  h.click(`[data-team-action="decline"][data-member-id="${MAYA}"]`);
+  await flush();
+  h.click(`[data-team-action="confirm-decline"][data-member-id="${MAYA}"]`);
+  await flush();
   assert.deepEqual(h.sent('memberRevoke').map((c) => c.payload), [{ team_id: TEAM, member_id: MAYA }]);
   h.choose(`select[data-member-id="${DOT}"]`, 'read_only');
   await flush();

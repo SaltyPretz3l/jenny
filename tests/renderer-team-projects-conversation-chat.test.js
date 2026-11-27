@@ -588,3 +588,13 @@ test('in the tab: what is typed and not sent is kept per conversation while the 
   await flush();
   assert.equal((await open()).value, '', 'sent: nothing is kept');
 });
+
+test('T3: Copy with no clipboard says the sentence on the button and in the box', async (t) => {
+  const m = mount(t);
+  await flush();
+  const copy = m.q('.team-msg[data-turn-id="after:m1"] .team-acts [data-project-action="copy"]');
+  copy.click();
+  await flush();
+  assert.equal(copy.getAttribute('aria-label'), 'The message could not be copied.');
+  assert.match(box(m), /The message could not be copied\./);
+});

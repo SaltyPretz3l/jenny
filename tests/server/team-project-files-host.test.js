@@ -452,7 +452,7 @@ test('row 175 round 2: the image answer keeps the read\'s authorization matrix a
   assert.equal(await h.reason(v.op('rae', 'team.project.files.read', { path: '../pic.png' })), 'team_project_path_invalid');
 });
 
-test('row 175 round 2: list pages reuse one walk for 30 seconds; a new file shows after it lapses', BOUNDED, async (t) => {
+test('row 175 round 2: later pages reuse one walk for 30 seconds; a first page takes a walk no older than 2 seconds', BOUNDED, async (t) => {
   let now = Date.now();
   const v = await readerView(t, { clock: () => now, viewLimits: { pageSize: 2 } });
   const { h } = v;
@@ -466,8 +466,14 @@ test('row 175 round 2: list pages reuse one walk for 30 seconds; a new file show
   v.write('aa.txt', 'x');
   const second = await h.ok(list({ cursor: 2 }));
   assert.deepEqual([second.entries.map((entry) => entry.path), second.total], [['c.txt'], 3]);
+  assert.equal((await h.ok(list({}))).total, 3, 'a first page inside 2 s shares the walk (a burst of folder reads)');
+  now += 2_500; // live run 2026-11-25: the reload after a turn wrote a file showed the old list
+  assert.equal((await h.ok(list({}))).total, 4, 'a new read sees the file a tool wrote');
+  v.write('ab.txt', 'y');
+  now += 2_500;
+  assert.equal((await h.ok(list({ cursor: 2 }))).total, 4, 'a later page keeps its walk');
   now += 31_000; // past the 30 s listing cache
-  assert.equal((await h.ok(list({}))).total, 4);
+  assert.equal((await h.ok(list({ cursor: 2 }))).total, 5);
 });
 
 test('row 175 round 2: an installed upload drops the kept listing at once', BOUNDED, async (t) => {

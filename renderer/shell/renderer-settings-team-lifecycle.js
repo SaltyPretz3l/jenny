@@ -34,7 +34,7 @@
 
   let ui = fresh();
   let asked = 0;
-  function fresh() { return { inv: null, invFailed: false, typed: '', newName: '', restoreTyped: '', banner: null, exportOpen: '', exported: null, picked: null }; }
+  function fresh() { return { inv: null, invFailed: false, typed: '', newName: '', restoreTyped: '', banner: null, exportOpen: '', exported: null, picked: null, exporting: false, stopAsked: false }; }
   function inv() { return globalThis.inventory || {}; }
   function input(opts) { return (globalThis.inventoryTextField || inv().textField)(opts); }
   const { tag, sizeText, dateText } = words;
@@ -118,7 +118,7 @@
       + input({ id: 'teamExportPass', type: 'password', maxLength: 1024, dataset: SECRET, describedBy: 'teamExportPassHint', ariaLabel: jt('settings.team.export.password', 'Password for the backup'), placeholder: jt('settings.team.export.password', 'Password for the backup') })
       + input({ id: 'teamExportPass2', type: 'password', maxLength: 1024, dataset: SECRET, ariaLabel: jt('settings.team.export.again', 'The same password again'), placeholder: jt('settings.team.export.again', 'The same password again') })
       + '</div><div class="team-set-after">' + view.button(vm, 'export-go', jt('settings.team.export.go', 'Choose a folder and export'), { variant: 'primary', busyKey: 'export' })
-      + view.button(vm, 'export-cancel', jt('settings.team.cancel', 'Cancel'), { busyKey: 'export', ids: { teamId: where } }) + '</div>' + view.note(vm.errors.export) + '</div>';
+      + view.button(vm, 'export-cancel', jt('settings.team.cancel', 'Cancel'), { busyKey: 'export-cancel', ids: { teamId: where } }) + '</div>' + view.note(vm.errors.export) + '</div>';
   }
 
   function exportedNote() {
@@ -345,15 +345,25 @@
     if (password !== ctx.secret('teamExportPass2')) { ctx.setNote('export', jt('settings.team.export.mismatch', 'The two passwords are not the same.')); ctx.render(); return; }
     let cancelled = false;
     const answer = await ctx.run('export', 'export', async () => {
-      const a = await ctx.call('hostExport', { password });
-      cancelled = Boolean(a && a.error && a.error.reason === 'team_export_cancelled');
-      return cancelled ? { ok: false } : a;
+      Object.assign(ui, { exporting: true, stopAsked: false });
+      try {
+        const a = await ctx.call('hostExport', { password });
+        cancelled = Boolean(a && a.error && a.error.reason === 'team_export_cancelled');
+        return cancelled ? { ok: false } : a;
+      } finally { ui.exporting = false; }
     });
-    if (cancelled) { ctx.setNote('export', ''); ctx.render(); return; }
+    // Stopped by Cancel: main removed what it wrote. A closed folder picker says nothing.
+    if (cancelled) { ctx.setNote('export', ui.stopAsked ? jt('settings.team.export.cancelled', 'Export cancelled. Nothing was kept.') : ''); ctx.render(); return; }
     if (!answer) return;
     ui.exported = { folder: answer.folder, bytes: answer.bytes, leftOut: answer.backup_left_out === true };
     ui.exportOpen = '';
     ctx.render();
+  }
+
+  // Cancel while this window's export runs: main stops it at its next safe point (owner decision 2026-11-25).
+  function stopExport(ctx) {
+    ui.stopAsked = true;
+    return ctx.run('export-cancel', 'export', () => ctx.call('hostExportCancel', {}));
   }
 
   async function pickBackup(ctx) {
@@ -411,6 +421,7 @@
   function onEscape(event, ctx) {
     const form = event.target.closest && event.target.closest('[data-team-export-form]');
     if (!form) return false;
+    if (ui.exporting) return true; // the form holds the only Cancel of a running export
     closeExport(ctx, form.getAttribute('data-team-export-form'), form.ownerDocument);
     return true;
   }
@@ -427,7 +438,7 @@
       case 'old-del-go': void removeOld(ctx, teamId); return true;
       case 'old-show': void ctx.run('old-show:' + teamId, 'old:' + teamId, () => ctx.call('hostOldShow', { set_aside_id: teamId })); return true;
       case 'export-open': ui.exportOpen = teamId; ui.exported = null; ctx.setNote('export', ''); ctx.render(); return true;
-      case 'export-cancel': closeExport(ctx, teamId, button.ownerDocument); return true;
+      case 'export-cancel': if (ui.exporting) void stopExport(ctx); else closeExport(ctx, teamId, button.ownerDocument); return true;
       case 'export-go': void exportTeam(ctx); return true;
       case 'new-open': ui.newName = ''; ctx.setConfirm('new-team'); ctx.render(); return true;
       case 'new-go': void startNew(ctx); return true;

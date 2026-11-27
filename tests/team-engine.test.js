@@ -32,7 +32,7 @@ const { buildManagedSidecarConfig } = require('../services/backend/managed-sidec
 const { generateCommitMessage } = require('../services/backend/backend-commit');
 const { parseTeamModelId, teamModelId } = require('../services/backend/team-engine-models');
 const { TeamError } = require('../services/team/team-errors');
-const { groupCatalogEntries } = require('../renderer/chat/renderer-composer-model-picker-utils');
+const { groupCatalogEntries, groupSectionHtml } = require('../renderer/chat/renderer-composer-model-picker-utils');
 const { ROUTE_TOKEN_HEADER } = require('../server/team/pool-gateway');
 
 const it = (name, fn) => test(name, { timeout: 30_000 }, fn);
@@ -206,7 +206,9 @@ it('two teams online: each lists its models under its name with the notice, besi
   const groups = groupCatalogEntries(list.data, {});
   const alpha = groups.find((group) => group.key === `team:${TEAM_A}`);
   assert.equal(alpha.label, 'Alpha crew');
-  assert.deepEqual(alpha.entries.map((entry) => [entry.family, entry.hint]), [['alpha', D7], ['beta', D7]]);
+  assert.deepEqual(alpha.entries.map((entry) => [entry.family, entry.hint]), [['alpha', ''], ['beta', '']], 'the notice is drawn once per team, not per row');
+  const section = groupSectionHtml(alpha, '', { escapeHtml: (value) => String(value), id: 'g1', showHeading: true });
+  assert.equal(section.split(D7).length - 1, 1, 'the team group carries the notice once');
   assert.equal(groups.find((group) => group.key === 'ollama').entries[0].hint, '');
   assert.notEqual(world.teams[TEAM_A].port().getApiKey(), world.teams[TEAM_B].port().getApiKey());
   assert.notEqual(world.teams[TEAM_A].port().getBaseUrl(), world.teams[TEAM_B].port().getBaseUrl());

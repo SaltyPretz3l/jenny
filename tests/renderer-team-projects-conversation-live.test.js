@@ -373,3 +373,52 @@ test('(15) no banner for a reader or for one approval; a writer sees it while an
   driven.event('decision_changed', { stream_id: 'stream_1', approval_id: 'appr_3', approver_member_id: MAYA, approved: false });
   assert.equal(banner(driven), null, 'two answered by others: one card is left');
 });
+
+// C17 (the no-GPU line follows who can serve, not only an empty list) and C18 (the Files pane hears once when a turn that wrote ends).
+const NODE_ON = { node_id: 'node_maya', member_id: MAYA, label: 'Maya PC', online: true, paused: false, busy_slots: 0, models: [{ name: 'qwen3' }] };
+
+test('C17: the no-GPU line shows when every listed GPU is offline or paused, and not while one is online and unpaused', async (t) => {
+  const nobody = (m) => /Nobody is sharing a GPU with Dot lab/.test(box(m)) || /Nobody is sharing a GPU with Dot lab/.test(m.q('[data-conv-box="above"]').textContent);
+  const cases = [[[{ ...NODE_ON, online: false }], true], [[{ ...NODE_ON, paused: true }], true], [[{ ...NODE_ON, online: false }, { ...NODE_ON, node_id: 'node_dot', paused: true }], true],
+    [[{ ...NODE_ON, online: false }, { ...NODE_ON, node_id: 'node_dot' }], false], [[NODE_ON], false]];
+  for (const [nodes, shown] of cases) {
+    const m = mount(t, { gpus: { nodes } });
+    await flush();
+    assert.equal(nobody(m), shown, JSON.stringify(nodes));
+    if (shown) assert.ok(m.q('[data-conv-box="above"] [data-team-tab-action="share-settings"]'), 'with its share button');
+    m.restore();
+  }
+});
+
+test('C18: a turn that wrote a file tells the Files pane once, when it ends; a turn that only read does not', async (t) => {
+  const m = mount(t);
+  await flush();
+  const heard = [];
+  m.window.document.addEventListener('team:files-changed', (e) => heard.push(e.detail));
+  stream(m, 'started');
+  stream(m, 'tool_result', { call_id: 'c0', tool_name: 'read_file', status: 'ok' });
+  stream(m, 'complete');
+  assert.equal(heard.length, 0, 'a read changes nothing');
+  stream(m, 'started');
+  stream(m, 'tool_result', { call_id: 'c1', tool_name: 'write_file', status: 'ok' });
+  stream(m, 'tool_result', { call_id: 'c2', tool_name: 'edit_file', status: 'ok' });
+  assert.equal(heard.length, 0, 'not during the turn');
+  stream(m, 'complete');
+  assert.deepEqual(heard, [{ teamId: OTHER, projectId: 'project_aaaaaaaaaaaa' }]);
+});
+
+test('T2: Send again while the team is offline or reconnecting, or the picked model is offline, says why in the box and sends nothing', async (t) => {
+  const failed = () => ({ ok: true, snapshot: snapshot({ messages: [ask('u1', 'Write the essay', 'turn_f'), said('a1', '', 'turn_f', { status: 'runtime_error' })] }) });
+  const again = async (state, over = {}) => {
+    const m = mount(t, { teamState: state, open: failed(), ...over });
+    await flush();
+    click(m, m.q('[data-project-action="send-again"]'));
+    return m;
+  };
+  assert.match(box(await again('offline')), /Cannot send again yet\. Sends when the host is back/);
+  assert.match(box(await again('reconnecting')), /Cannot send again yet\. Sends when reconnected/);
+  const gone = await again('online', { gpus: { nodes: [NODE_ON] }, open: { ok: true, snapshot: snapshot({ session: { session_id: S1, title: 'T', revision: 'r1', plan_mode: false, preferred_model: 'gone-model' },
+    messages: [ask('u1', 'Write the essay', 'turn_f'), said('a1', '', 'turn_f', { status: 'runtime_error' })] }) } });
+  assert.match(box(gone), /Cannot send again yet\. gone-model is offline\. Pick another model or use the team default\./);
+  assert.equal(gone.sent('conversationSend').length, 0);
+});

@@ -287,14 +287,9 @@
           + '</div>'
         : '';
       const showGroups = groups.length > 1;
-      const catalogOptions = visibleGroups.map((group) => (
-        (showGroups
-          ? `<div class="composer-model-picker-group" role="presentation">${escapeHtml(group.label)}</div>`
-          : '')
-        + group.entries.map((entry) => (
-          modelOptionHtml(entry, inputs.preferredModel, locked, inputs.pinned)
-        )).join('')
-      )).join('');
+      const catalogOptions = visibleGroups.map((group, index) => utils.groupSectionHtml(group,
+        group.entries.map((entry) => modelOptionHtml(entry, inputs.preferredModel, locked, inputs.pinned)).join(''),
+        { showHeading: showGroups, id: `${listId}-g${index}`, escapeHtml })).join('');
       const empty = query && visibleEntries.length === 0
         ? '<div class="composer-model-picker-empty" role="note">' + escapeHtml(jt('composer.modelPicker.noMatches', 'No models match')) + '</div>'
         : '';

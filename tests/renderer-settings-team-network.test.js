@@ -8,7 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { OTHER, flush, snapshot, memberTeam, hostState, harness, heldAnswers } = require('./helpers/team-settings-harness');
+const { TEAM, OTHER, flush, snapshot, memberTeam, hostState, harness, heldAnswers } = require('./helpers/team-settings-harness');
 
 const TOKEN = 'relaytoken_' + 'q'.repeat(32);
 const CODE = 'jteamaddr1_' + 'R'.repeat(60);
@@ -50,15 +50,22 @@ test('the switch asks first: nothing is sent until Turn on or Turn off; Cancel l
   assert.equal(h.sent('hostInternet').length, 0);
   const ask = text(h.q('[data-team-group="network"] .team-set-confirm'));
   assert.match(ask, /^Let people join Studio over the internet\?/);
-  assert.match(ask, /Jenny asks your router to open one port \(UDP 51820\) for this team, and closes it when you turn this off\./);
-  assert.match(ask, /The server restarts now\. Dot are disconnected for a moment and reconnect by themselves\./);
-  assert.match(ask, /Members need this version of Jenny or later to join over the internet\./);
+  assert.match(ask, /Jenny asks your router to open one port for this team, and the server restarts now\.Only people you invited get in\. They, and anyone holding an invite, learn this network’s public address\.What this changes/);
+  assert.equal(h.q('[data-team-group="network"] .team-set-confirm li'), null, 'no bullet until What this changes is pressed');
+  h.click('[data-team-group="network"] .team-set-confirm summary');
+  await flush();
+  const facts = text(h.q('[data-team-group="network"] .team-set-confirm ul'));
+  assert.equal(h.q('[data-team-group="network"] .team-set-confirm').querySelectorAll('li').length, 6);
+  assert.match(facts, /Jenny asks your router to open one port \(UDP 51820\) for this team, and closes it when you turn this off\./);
+  assert.match(facts, /The server restarts now\. It disconnects Dot for a moment; they reconnect by themselves\./);
+  assert.match(facts, /Members need this version of Jenny or later to join over the internet\./);
   h.click('[data-team-group="network"] [data-team-action="confirm-cancel"]');
   await flush();
   assert.equal(h.q('[data-team-group="network"] .team-set-confirm'), null);
   assert.equal(h.q('#teamNet').getAttribute('aria-checked'), 'false', 'still off');
   h.click('#teamNet');
   await flush();
+  assert.equal(h.q('[data-team-group="network"] .team-set-confirm summary').getAttribute('aria-expanded'), 'false', 'the disclosure closes with the confirm');
   h.click('[data-team-action="net-on"]');
   await flush();
   assert.deepEqual(h.sent('hostInternet').map((c) => c.payload), [{ enabled: true }]);
@@ -410,4 +417,142 @@ test('a cap out of range or not whole is refused in the page with its sentence, 
   poolSave(missing).click();
   await flush();
   assert.match(text(group(missing).querySelector('.team-set-note')), /has not hosted a team yet/);
+});
+
+// ------------------------------------------- Team polish (C5): a typed token and a shown code do not outlive their use
+
+test('C5: the relay token field is empty after a save and after Discard, so a later save sends no token unless typed again', async (t) => {
+  const saved = { public_address: null, relay_url: 'https://relay.example.net', has_token: true };
+  let current = on('relay_connected', { internet: saved });
+  const h = owner(t, current, {
+    hostInternet: (p) => { current = on('relay_connected', { internet: { ...saved, public_address: p.public_address || null } }); return { ok: true, host: current, restarted: true }; },
+    hostStatus: () => ({ ok: true, host: current }),
+  });
+  await flush();
+  h.type('#teamNetToken', TOKEN);
+  await flush();
+  h.click('[data-team-action="net-save"]');
+  await flush();
+  assert.equal(h.sent('hostInternet')[0].payload.token, TOKEN);
+  assert.equal(h.q('#teamNetToken').value, '', 'the field is empty after the save');
+  h.type('#teamNetAddr', 'home.example.net');
+  await flush();
+  h.click('[data-team-action="net-save"]');
+  await flush();
+  assert.equal('token' in h.sent('hostInternet')[1].payload, false, 'the second save carries no token');
+  h.type('#teamNetToken', TOKEN);
+  await flush();
+  h.click('[data-team-action="net-discard"]');
+  await flush();
+  assert.equal(h.q('#teamNetToken').value, '', 'Discard empties the field');
+  h.type('#teamNetAddr', 'other.example.net');
+  await flush();
+  h.click('[data-team-action="net-save"]');
+  await flush();
+  assert.equal('token' in h.sent('hostInternet')[2].payload, false, 'a discarded token is not sent');
+});
+
+test('C5: Clear token also empties the token field', async (t) => {
+  const saved = { public_address: null, relay_url: 'https://relay.example.net', has_token: true };
+  let current = on('relay_connected', { internet: saved });
+  const h = owner(t, current, {
+    hostInternet: () => { current = on('relay_connected', { internet: { ...saved, has_token: false } }); return { ok: true, host: current, restarted: true }; },
+    hostStatus: () => ({ ok: true, host: current }),
+  });
+  await flush();
+  h.type('#teamNetToken', TOKEN);
+  h.q('#teamNetToken').value = TOKEN;
+  h.click('[data-team-action="net-discard"]');
+  await flush();
+  h.q('#teamNetToken').value = TOKEN; // typed without an input event: the field alone holds it
+  h.click('[data-team-action="net-clear-token"]');
+  await flush();
+  assert.equal(h.q('#teamNetToken').value, '');
+});
+
+test('C5: the Reconnect code is cleared after an internet save and when the host state\'s addresses or setting change', async (t) => {
+  const saved = { public_address: 'home.example.net', relay_url: null, has_token: false };
+  let current = on('mapped', { internet: saved });
+  const h = owner(t, current, {
+    hostReconnectCode: { ok: true, code: CODE },
+    hostInternet: () => { current = on('mapped', { internet: { ...saved, public_address: 'new.example.net' } }); return { ok: true, host: current, restarted: true }; },
+    hostStatus: () => ({ ok: true, host: current }),
+  });
+  await flush();
+  h.click('[data-team-action="net-code"]');
+  await flush();
+  assert.equal(text(group(h).querySelector('.team-set-code code')), CODE);
+  await pushHost(h, on('direct_seen', { internet: saved }));
+  assert.equal(text(group(h).querySelector('.team-set-code code')), CODE, 'a push with the same addresses keeps it');
+  await pushHost(h, on('mapped', { internet: { ...saved, public_address: 'else.example.net' } }));
+  assert.equal(group(h).querySelector('.team-set-code'), null, 'a changed address clears it');
+  await pushHost(h, on('mapped', { internet: saved }));
+  h.click('[data-team-action="net-code"]');
+  await flush();
+  assert.equal(text(group(h).querySelector('.team-set-code code')), CODE);
+  await pushHost(h, off());
+  assert.equal(group(h).querySelector('.team-set-code'), null, 'turning joining off clears it');
+  await pushHost(h, on('mapped', { internet: saved }));
+  h.click('[data-team-action="net-code"]');
+  await flush();
+  h.type('#teamNetAddr', 'new.example.net');
+  await flush();
+  h.click('[data-team-action="net-save"]');
+  await flush();
+  assert.equal(group(h).querySelector('.team-set-code'), null, 'an internet save clears it');
+});
+
+// ------------------------------------------- Team layout D3 and D6
+
+test('D6: the confirm reads two sentences; What this changes is closed, toggles the six facts, and keeps the buttons', async (t) => {
+  const h = owner(t, off());
+  await flush();
+  h.click('#teamNet');
+  await flush();
+  const confirm = () => h.q('[data-team-group="network"] .team-set-confirm');
+  const summary = () => confirm().querySelector('summary');
+  assert.equal(text(summary()), 'What this changes');
+  assert.equal(summary().getAttribute('aria-expanded'), 'false');
+  assert.equal(confirm().querySelectorAll('li').length, 0);
+  assert.deepEqual([...confirm().querySelectorAll('button')].map(text), ['Turn on', 'Cancel']);
+  summary().click();
+  await flush();
+  assert.equal(summary().getAttribute('aria-expanded'), 'true');
+  assert.equal(confirm().querySelectorAll('li').length, 6);
+  assert.equal(h.sent('hostInternet').length, 0, 'opening the facts sends nothing');
+  summary().click();
+  await flush();
+  assert.equal(confirm().querySelectorAll('li').length, 0, 'pressed again, it closes');
+});
+
+const POOLS = { [TEAM]: { nodes: [{ node_id: 'node_AAAAAAAAAAAAAAAA', member_id: OTHER, label: 'Tower', online: true, paused: false, busy_slots: 0, slots: 1,
+  models: [{ name: 'qwen3.8-27b', context_length: 32768, vision: false, thinking: true }] }], team_model: null, automatic_model: 'qwen3.8-27b' } };
+
+test('D3: with a GPU pool the Pool context length row sits in Team GPUs under Team model, and saves and refuses as before', async (t) => {
+  let cap = null;
+  const h = owner(t, off({ pool_context_cap: null }), {
+    hostPoolContext: (p) => { cap = p.context_cap; return { ok: true, host: off({ pool_context_cap: cap }), restarted: false }; },
+    hostStatus: () => ({ ok: true, host: off({ pool_context_cap: cap }) }) });
+  await flush();
+  assert.ok(group(h).contains(h.q('#teamPoolCap')), 'no pool: the row stays in Network');
+  h.listeners.state({ teams: [snapshot()], sharing: null, pools: POOLS });
+  await flush();
+  const gpus = h.q('[data-team-group="gpus"]');
+  assert.ok(gpus.contains(h.q('#teamPoolCap')), 'a pool: the row is in Team GPUs');
+  assert.equal(group(h).querySelector('#teamPoolCap'), null, 'and only there');
+  assert.equal(h.q('[data-team-group="network"] [data-settings-field="teamPoolContextRow"]'), null);
+  assert.deepEqual([...gpus.querySelectorAll('[data-settings-field]')].map((el) => el.dataset.settingsField), ['teamModelRow', 'teamPoolContextRow']);
+  assert.equal(text(h.q('#teamPoolContextHelp')), POOL_HELP);
+  h.type('#teamPoolCap', '12.5');
+  poolSave(h).click();
+  await flush();
+  assert.equal(text(h.q('[data-team-group="gpus"] .team-set-note')), POOL_REFUSED, 'the sentence shows in Team GPUs');
+  assert.equal(h.sent('hostPoolContext').length, 0);
+  h.type('#teamPoolCap', '65536');
+  await flush();
+  poolSave(h).click();
+  await flush();
+  assert.deepEqual(h.sent('hostPoolContext').map((c) => c.payload), [{ context_cap: 65536 }]);
+  assert.equal(h.q('#teamPoolCap').value, '65536');
+  assert.equal(poolSave(h).disabled, true, 'saved');
 });

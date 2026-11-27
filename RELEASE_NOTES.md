@@ -1,5 +1,53 @@
 # Release Notes
 
+## 1.9.1 - 2026-11-26
+
+Everything landed since 1.9.0, through private `main` on 2026-11-26: a patch
+release that polishes Team. The Team screens took a product review and two
+real-window runs, and the fixes from both land here: the approval card has one
+Allow with its choices behind a caret, a project admin's page opens on a
+summary, a host export can be cancelled, model transfers say why they ended,
+and the Team bar keeps Send in view at any width. Outside Team, Ctrl+F in the
+browser panel finds in the page, Jenny names the programs holding graphics
+memory on any Windows language, and a Default chat under a cloud engine with
+no default chosen runs on this PC when it can.
+
+### Changelog
+
+**Features**
+
+- Team approval card: one Allow, with the "always" choice in a menu beside it, then Deny.
+- A project admin's page opens with a summary line and folds for Always allowed, Activity and Delete; a fold opens by itself when something in it needs an answer.
+- Host export can be cancelled: Cancel stays live while the export runs, stops it between files and removes the folder it made.
+- Ctrl+F with the focus in the browser panel finds in the page; elsewhere in Chat it stays chat search.
+- A Default chat with no default chosen, while a cloud engine is active, takes the built-in default model when this PC can serve it, and the composer pill says so ("on this PC"). With nothing local to serve it, the chat stays on the cloud engine as before.
+- Graphics memory: the programs holding it are named on a non-English Windows too, and each is counted on its own card, so the load check credits only what sits on the card the model loads on.
+
+**Reworks**
+
+- Team GPUs: Pool context length sits under Team model; the group shows when nothing is online; "Stop after it" keeps a line and Stop now until the request ends; an offline saved team model stays shown.
+- Team chat density moves to Settings > Chat > Layout (greyed with its reason until a team exists). The team model privacy notice shows once per group in the Library and the model menu.
+- Settings > Chat > This chat names the open chat; with no chat open its rows are disabled with the reason.
+- The internet-joining confirm is two sentences, with the details behind "What this changes".
+
+**Fixes**
+
+- Team: Start, Join, Delete channel and edit Save come back when their call fails; a Start that finds this PC's own host coming up mid-dial reconnects at once instead of showing offline for about 40 seconds.
+- Team conversations: a failed post's text returns to the composer; offline paste says why and clears when the team is back; Mark unread shows the New line; search says its scope in a direct conversation; Delete says what goes; Find's "k of n" matches its highlights; a restored plan names who accepted it.
+- Team projects: Build it checks before leaving plan mode and is greyed when no shared GPU can answer; a file a turn wrote shows in the open Files column; a rule's Remove can be undone; greyed Upload, Download and Leave say why.
+- Model sharing: Cancel on a transfer with data asks first; an ended offer keeps its partial receive with Dismiss and says what ended it; a model only paused PCs offer is disabled in the picker.
+- Team bar and Compact chat: Send stays inside a narrow conversation (the Tools chip goes to its icon before the model pill loses its name); the send hint shows whole or not at all; times no longer wrap.
+- Settings > Team: the relay token field empties after a save, the Reconnect code clears when the network changes, Decline asks first, and an update-required team can still be left.
+- Smaller fixes: "You made #x" uses the name the channel was made with; disabled settings dropdowns look unavailable; a board removal names its kind in your language; the composer model menu stays below the top rail; no listener warning at start.
+
+### Migration and qualification
+
+- No schema, configuration or API move: shell configuration stays at 60, canonical sessions at schema 29, the memory store at 10, and the sidecar `API_VERSION` at `2026-10-15`. No new flags.
+- A translation top-up brought all 18 shipped languages level with English for the new strings, with no native-speaker review.
+- The candidate passed the full local CI gate on the cut tree the first time: 47 policy checks, 3,502 Node test files, 18,274 Python tests, 283 backend contracts, lint, typing, 92.5% sidecar coverage and the packaged-flow smoke. The public-export probe was clean. The real-app GUI suite and the packaged smoke in a Linux container were not run for this cut.
+- Not yet covered by a person: the Team polish fixes in a two-member real-app run (one machine's live runs covered the layout faults); the graphics-memory holders on a non-English Windows. The 1.9.0 list of owed checks still stands.
+- Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
+
 ## 1.9.0 - 2026-11-25
 
 Everything landed since 1.8.7, through private `main` on 2026-11-25. Two

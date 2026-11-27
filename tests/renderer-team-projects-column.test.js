@@ -374,3 +374,40 @@ test('row 175 F9: the counts main seeded from the host list show at the first dr
   push({ kind: 'activity', session_id: S1, running: false, approvals: 0 });
   assert.equal(getProjectStore().team(OTHER).activity[S1], undefined);
 });
+
+// C20 (Download on a new project) and C23 (one conversation create out at a time, both buttons greyed meanwhile).
+test('a new project: Upload is offered, Download is greyed with its reason; New conversation is pressed once and both of its buttons are disabled while it is out', async (t) => {
+  const NEW = 'sess_' + 'n'.repeat(32);
+  const gate = heldAnswers();
+  const { h, push } = await openProjects({ answers: { projectCreate: (p) => ({ ok: true, project_id: P3, name: p.name, channel: true }), conversationCreate: gate.answer,
+    conversationOpen: { ok: true, snapshot: { cursor: 1, session: { session_id: NEW, title: '', revision: 'r1', plan_mode: false }, messages: [], message_count: 0, has_more: false, active_turn: null,
+      pending_approvals: [], pending_questions: [], live_projection: null, control: null } } } });
+  t.after(h.restore);
+  h.view.q('[data-team-tab-action="project-new"]').click();
+  const field = h.view.q('#teamProjectNewName');
+  field.value = 'docs-rewrite';
+  field.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+  field.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await flush();
+  push({ kind: 'projects', ...listAnswer({ projects: [project(P3, 'docs-rewrite', 'admin'), ...listAnswer().projects] }) });
+  await flush();
+  const download = region(h).querySelector('[data-project-action="download"]');
+  assert.deepEqual([download.disabled, download.title], [true, 'Nothing to download yet.']);
+  assert.equal(region(h).querySelector('[data-project-action="upload"]').disabled, false);
+  const start = () => region(h).querySelector('[data-project-action="conv-new"]');
+  const rowButtons = () => [...h.view.q('[data-team-region="lists"]').querySelectorAll('[data-team-tab-action="conv-new"]')];
+  assert.ok(rowButtons().length > 0 && rowButtons().every((b) => !b.disabled));
+  start().click();
+  await flush();
+  assert.equal(h.sent('conversationCreate').length, 1);
+  assert.equal(start().disabled, true, 'the page button is greyed');
+  assert.ok(rowButtons().every((b) => b.disabled), 'and so are the column buttons');
+  rowButtons()[0].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  start().dispatchEvent(new h.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.equal(h.sent('conversationCreate').length, 1, 'a second press while one is out does nothing');
+  gate.release({ ok: true, session: { session_id: NEW, title: '', project_id: P3 } });
+  await flush();
+  assert.ok(rowButtons().every((b) => !b.disabled), 'the column buttons are back');
+  assert.equal(h.sent('conversationCreate').length, 1);
+});

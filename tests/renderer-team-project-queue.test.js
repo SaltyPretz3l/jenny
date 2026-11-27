@@ -316,6 +316,8 @@ test('(l) footHtml: the words and the three buttons with their datasets', () => 
 
   const running = footHtml({ id: 'q2', state: 'failed', note: 'Refused.' }, { running: true });
   assert.deepEqual(actions(running)[0], ['queue-send', 'q2', true], 'Send now is disabled while a turn runs');
+  assert.equal(buttons(running)[0].title, 'Waits until Jenny’s turn ends.', 'C21: and says why');
+  assert.equal(buttons(paused)[0].title, '', 'no reason while it can go');
 
   const hostile = footHtml({ id: HOSTILE, state: 'failed', note: HOSTILE }, { running: false });
   const body = parse(hostile);

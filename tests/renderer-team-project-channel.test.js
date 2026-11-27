@@ -368,6 +368,7 @@ test('composerParts: the field has code, @ and attach (both greyed), the hint an
   const hint = left.querySelector('.team-composer__hint');
   assert.equal(hint.id, parse(box.composerFieldHtml('x')).querySelector('textarea').getAttribute('aria-describedby'));
   assert.equal(hint.textContent, 'Markdown · Enter to send', 'the model that answers is in the pill (row 172)');
+  assert.equal(hint.dataset.hint, 'send', 'how to send is dropped whole when the bar has no room for it');
   const bar = parse(p.bar);
   const send = bar.querySelector('[data-project-action="send"]');
   assert.ok(send.classList.contains('btn--primary'));
@@ -393,6 +394,7 @@ test('composerParts: the hint while Jenny answers, when nobody drives, and on th
   const hintOf = (s) => parse(box.composerParts(s).left).querySelector('.team-composer__hint').textContent;
   assert.equal(hintOf(state({ driver: 'member_dot', running: true })), 'Jenny is answering · what you send waits for her next turn');
   assert.equal(hintOf(state({ driver: null })), 'Sending makes you the driver');
+  assert.equal(parse(box.composerParts(state({ driver: null })).left).querySelector('.team-composer__hint').hasAttribute('data-hint'), false, 'a line that says something keeps its ellipsis');
   assert.equal(hintOf(state({ driver: 'member_dot' })), 'Markdown · Enter to send');
   const prefs = { tools: '<i id="tools"></i>', model: '<i id="pill"></i>', above: '<p id="above"></p>', offline: true };
   const placed = box.composerParts(state({ driver: 'member_dot', prefs }));
@@ -551,6 +553,13 @@ test('a stream that ended in an error carries its reason to the chip and the pop
   assert.equal(saved.end.text, 'Jenny could not finish this answer. The member sharing the model went offline.');
   const stopped = harness({ messages: [user('u1', 'Hi', { turn_id: TURN }), said('a1', '', { turn_id: TURN, status: 'cancelled', error_code: 'timeout' })] }).model();
   assert.deepEqual(stopped.end, { kind: 'stopped', text: 'Stopped before Jenny answered' }, 'a stopped turn takes no reason');
+});
+
+test('a stopped turn with saved words says Jenny did not finish; one without words keeps the old sentence (T1)', () => {
+  const stopped = (content) => harness({ messages: [user('u1', 'Hi', { turn_id: TURN }), said('a1', content, { turn_id: TURN, status: 'cancelled' })] }).model().end.text;
+  assert.equal(stopped('Here is half'), 'Stopped before Jenny finished');
+  assert.equal(stopped(''), 'Stopped before Jenny answered');
+  assert.equal(tl.chipState({ turn: { status: 'stopped' }, stream: { text: 'live words' } }).label, 'Stopped before Jenny finished', 'the live stream\'s words count too');
 });
 
 test('a compaction shows one quiet line per event, in the lead and in the popover tail (F14)', () => {

@@ -253,6 +253,13 @@
     }
 
     function onKeydown(event) {
+      // Row 117: Ctrl+F with the focus anywhere in the browser panel finds in the page, not in the chat.
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'f' || event.key === 'F') && event.target?.closest?.('.bu-shell')) {
+        event.preventDefault();
+        event.stopPropagation();
+        openFind();
+        return;
+      }
       const inAddress = event.target === bar.field();
       const inFind = event.target?.closest?.('.bu-find');
       if (!inAddress && !inFind) return;

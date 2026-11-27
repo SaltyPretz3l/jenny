@@ -145,7 +145,7 @@
       lastSeen: (value) => rows.lastSeenText(value),
       rosterError: team && team.state === 'online' && own.rosterRead ? own.rosterRead.error : null, restart: startPage.restart(store()), forceLocal: store().forceLocal(),
       errors: live.errors, menuOpen: live.menuOpen, notifyOpen: live.notifyOpen, screen: live.screen, searching: Boolean(frame && frame.search && frame.search.active()), channelUi: channelUi.read(team, listing.channelId, listing.row),
-      isBusy: (key) => live.busy.has(key),
+      isBusy: (key) => live.busy.has(key), confirm: live.declineId ? 'decline:' + live.declineId : '',
     };
   }
 
@@ -155,7 +155,7 @@
     live.noticeId = person ? person.member_id : '';
     live.noticeIndex = index;
     const error = person && live.noticeErrorId === person.member_id ? live.errors.notice : '';
-    return { person, index, total: vm.queue.length, isBusy: vm.isBusy, error };
+    return { person, index, total: vm.queue.length, isBusy: vm.isBusy, error, declining: Boolean(person) && live.declineId === person.member_id };
   }
 
   // ------------------------------------------------------------- focus keys
@@ -458,8 +458,11 @@
     if (teamChannel) { if (team) showChannel(team.team_id, teamChannel); return; }
     if ((team && channelUi.click(teamTabAction, target, team)) || startPage.action(teamTabAction, { store: store(), render: () => render(), target })) return;
     if (teamNotice) { if (!offers.action(teamNotice, target.dataset)) noticeAction(teamNotice, memberId); return; }
-    if (teamAction === 'admit' || teamAction === 'decline') {
+    if (teamAction === 'confirm-cancel' && live.declineId) { live.declineId = ''; render(); return; }
+    if (teamAction === 'admit' || teamAction === 'decline' || teamAction === 'confirm-decline') {
       if (!team || !memberId) return;
+      if (teamAction === 'decline') { live.declineId = memberId; render(); return; }
+      live.declineId = '';
       const place = target.closest('[data-team-region="notice"]') ? 'notice' : 'wants';
       void run(teamAction + ':' + memberId, place, teamAction === 'admit' ? 'memberAdmit' : 'memberRevoke', { team_id: team.team_id, member_id: memberId }, 'lists', memberId);
       return;
@@ -494,6 +497,7 @@
 
   function onChat(change) {
     const team = selectedTeam();
+    if (team && change && change.team_id && change.team_id !== team.team_id) return;
     render(team && change && change.team_id === team.team_id ? { change } : {});
   }
 

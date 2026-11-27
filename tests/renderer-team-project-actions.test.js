@@ -272,3 +272,26 @@ test('receipts with call_id sit under their turn; the client’s copy of the sam
   m.event('decision_changed', { stream_id: 's', approval_id: 'approval_other', approver_member_id: MAYA, approved: false });
   assert.match(m.q('[data-conv-region="live"] .team-conv__receipts').textContent, /Maya denied this/, 'one with nothing to place stays below');
 });
+
+test('T5: Esc and Cancel do nothing while Regenerate or Edit is out, a refusal is then said in the panel, and a busy host says to wait', async (t) => {
+  const shown = fakeMenu(t);
+  let release;
+  const held = () => new Promise((resolve) => { release = resolve; });
+  const m = mount(t, { answers: { projectRegenerate: held, projectBranch: held }, open: withMessages([mine('m1'), message('m2', 'assistant', 'x')]) });
+  await flush();
+  rightClick(m, rowOf(m, 'messageId', 'm1'));
+  item(shown[0], 'regenerate').action();
+  m.q('[data-conv-act="redo-go"]').click();
+  assert.equal(m.q('[data-conv-act="panel-cancel"]').disabled, true, 'Cancel is greyed while the call is out');
+  key(m, m.q('[data-conv-act-panel="redo"]'), 'Escape');
+  m.q('[data-conv-act="panel-cancel"]').click();
+  assert.ok(m.q('[data-conv-act-panel="redo"]'), 'the panel stays');
+  release({ ok: false, error: { reason: 'disk_pressure' } });
+  await flush();
+  assert.ok(m.q('[data-conv-act-panel="redo"] [role="status"]').textContent.length > 0, 'the refusal is not dropped');
+  rightClick(m, rowOf(m, 'messageId', 'm1'));
+  item(shown[1], 'branch').action();
+  m.q('[data-conv-act="redo-go"]').click();
+  assert.match(m.q('[data-conv-act-panel="redo"] [role="status"]').textContent, /Wait for the last action to finish\./);
+  assert.equal(m.sent('projectRegenerate').length, 1, 'nothing more was sent');
+});

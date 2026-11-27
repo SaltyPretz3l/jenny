@@ -189,6 +189,9 @@ class BackendService extends EventEmitter {
     // D1 (session review 2026-11-17): per-chat Python grants, in memory only.
     this.chatPythonGrants = createChatPythonGrants();
     this.pendingUserQuestions = new Map();
+    // 'chat-stream' fans out to one long-lived listener per subsystem (about 11 on desktop, more on a hosted or
+    // team host, plus one per CLI decision prompt); Node's default cap of 10 warned once per app start.
+    this.setMaxListeners(32);
     this.on('chat-stream', (event) => _handleChatStreamEnd(this, event));
     this.enableInteractiveStreamDebug = Boolean(options.enableInteractiveStreamDebug);
     this.personalityWorkspace = options.personalityWorkspace || null;

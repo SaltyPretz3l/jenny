@@ -27,6 +27,9 @@
 //
 // The work is asynchronous: file copies, walks that yield, and each conversation written one segment at a time,
 // never held whole. Nothing here logs a path or a name.
+//
+// Owner decision 2026-11-25: an aborted `signal` (hostExportCancel) stops the export between files, segments and
+// backup entries, removes the folder this export made, and answers `team_export_cancelled`.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -77,8 +80,13 @@ function stopOf({ links, unreadable, truncated }, limit) {
   return null;
 }
 
+// The backup's entries, with `halt()` before each one (writeBackup only iterates them).
+function* haltingEntries(entries, halt) {
+  for (const entry of entries) { halt(); yield entry; }
+}
+
 // One conversation as Markdown, written one segment at a time in order.
-async function writeConversation(file, dir, header, nameOf) {
+async function writeConversation(file, dir, header, nameOf, halt) {
   const segments = (await fs.promises.readdir(dir)).map((name) => SEGMENT.exec(name)).filter(Boolean)
     .sort((a, b) => Number(a[1]) - Number(b[1])).map((match) => match[0]);
   const handle = await fs.promises.open(file, 'wx');
@@ -86,6 +94,7 @@ async function writeConversation(file, dir, header, nameOf) {
     await handle.write(header);
     for (const name of segments) {
       await tick();
+      halt();
       const messages = list(readJsonFile(path.join(dir, name))?.messages)
         .filter((m) => m && !m.deleted && typeof m.text === 'string').sort((a, b) => a.seq - b.seq);
       let text = '';
@@ -113,7 +122,7 @@ function titleOf(entry, channel, mine, ownerId, nameOf) {
 }
 
 // The readable copy into `out`. Throws an ExportStop when any part of it could not be copied or read.
-async function writeReadableCopy({ root, out, doc, ownerId, teamName, projectNames, exportedAt, limit }) {
+async function writeReadableCopy({ root, out, doc, ownerId, teamName, projectNames, exportedAt, limit, halt }) {
   const names = new Map(list(doc.members).map((m) => [m.member_id, typeof m.display_name === 'string' ? m.display_name : '']));
   const nameOf = (id) => names.get(id) || 'Someone';
   const mine = new Map();
@@ -128,7 +137,7 @@ async function writeReadableCopy({ root, out, doc, ownerId, teamName, projectNam
   for (const [id, name] of mine) {
     const from = realInside(path.join(root, 'projects'), path.join(root, 'projects', id));
     if (!from) continue; // a project with no folder yet has no files
-    const copied = await copyTreeAsync(from, path.join(projectsOut, unique(safeName(name, 'project'), takenProjects)), { limit });
+    const copied = await copyTreeAsync(from, path.join(projectsOut, unique(safeName(name, 'project'), takenProjects)), { limit, halt });
     const stop = stopOf(copied, limit);
     if (stop) throw stop;
   }
@@ -145,8 +154,9 @@ async function writeReadableCopy({ root, out, doc, ownerId, teamName, projectNam
       const title = titleOf(entry, readJsonFile(path.join(dir, 'channel.json')), mine, ownerId, nameOf);
       if (!title) continue;
       const file = path.join(messagesOut, `${unique(safeName(title, 'conversation'), takenFiles)}.md`);
-      await writeConversation(file, dir, `# ${title}\n\n${teamName}, exported ${dateOf(exportedAt)}.\n\n`, nameOf);
+      await writeConversation(file, dir, `# ${title}\n\n${teamName}, exported ${dateOf(exportedAt)}.\n\n`, nameOf, halt);
     } catch {
+      halt(); // a cancel is not an unread conversation
       unread += 1;
     }
   }
@@ -210,10 +220,11 @@ async function freeBytes(dir, statfs) {
 /**
  * Exports the team under the real `root` into `picked`. `secrets`: { seed (Buffer), relayToken }; `setting`:
  * { name, direct_port, internet }; `userDataPath`: where the folder being written is recorded. Answers
- * { ok, folder, bytes, backup_left_out? } or { ok: false, reason, count? }.
+ * { ok, folder, bytes, backup_left_out? } or { ok: false, reason, count? }. `signal`: an AbortSignal (hostExportCancel).
  */
 async function exportTeam({ root, picked, userDataPath, ownerId, setting, secrets, password, now = Date.now(),
-  limit = 2_000_000, statfs = fs.promises.statfs }) {
+  limit = 2_000_000, statfs = fs.promises.statfs, signal = null }) {
+  const halt = () => { if (signal?.aborted) throw new ExportStop('team_export_cancelled'); };
   const realPicked = realInside(picked, picked);
   if (!realPicked || isWithin(root, realPicked) || isWithin(realPicked, root)) return { ok: false, reason: 'team_export_folder_invalid' };
   const members = readMemberStore(root);
@@ -234,6 +245,7 @@ async function exportTeam({ root, picked, userDataPath, ownerId, setting, secret
   // (No backup is written over a member store that does not read: E73.)
   const copies = members.unreadable ? 1 : 2;
   if (free !== null && free < source.bytes * copies + SPARE_BYTES) return { ok: false, reason: 'team_disk_full' };
+  if (signal?.aborted) return { ok: false, reason: 'team_export_cancelled' }; // nothing written yet
   const teamName = setting.name;
   const taken = new Set(fs.readdirSync(realPicked).map((n) => n.toLowerCase()));
   const out = path.join(realPicked, unique(`${safeName(teamName, 'Team')} ${dateOf(now)}`, taken));
@@ -245,21 +257,27 @@ async function exportTeam({ root, picked, userDataPath, ownerId, setting, secret
     return { ok: false, reason: 'team_export_write_failed' };
   }
   try {
-    await writeReadableCopy({ root, out, doc, ownerId, teamName, projectNames, exportedAt: now, limit });
+    await writeReadableCopy({ root, out, doc, ownerId, teamName, projectNames, exportedAt: now, limit, halt });
     if (members.unreadable) {
       const bytes = (await walkTreeAsync(out)).bytes;
+      halt();
       clearPendingExport(userDataPath);
       return { ok: true, folder: out, bytes, backup_left_out: true };
     }
     const manifest = { schema: 1, team_name: teamName, team_id: doc?.team?.team_id ?? null, exported_at: now,
       key: secrets.seed.toString('base64url'), relay_token: secrets.relayToken ?? null,
       setting: { name: teamName, direct_port: setting.direct_port ?? null, internet: setting.internet ?? null } };
-    await writeBackup({ target: path.join(out, `${safeName(teamName, 'Team')}.jennyteam`), password, manifest, entries: source.entries });
+    await writeBackup({ target: path.join(out, `${safeName(teamName, 'Team')}.jennyteam`), password, manifest, entries: haltingEntries(source.entries, halt) });
     const bytes = (await walkTreeAsync(out)).bytes;
+    halt(); // a cancel before the answer removes even a finished copy
     clearPendingExport(userDataPath);
     return { ok: true, folder: out, bytes };
   } catch (error) {
-    if ((await removeTreeInsideAsync(realPicked, out)).ok) clearPendingExport(userDataPath);
+    const removed = (await removeTreeInsideAsync(realPicked, out)).ok;
+    if (removed) clearPendingExport(userDataPath);
+    // writeBackup answers its own reason for any throw, so a cancel is read from the signal. A folder that could
+    // not be removed is not "cancelled, nothing kept": it answers the write failure and the next start sweeps it.
+    if (signal?.aborted) return { ok: false, reason: removed ? 'team_export_cancelled' : 'team_export_write_failed' };
     return { ok: false, reason: error?.reason || 'team_export_write_failed',
       ...(Number.isSafeInteger(error?.count) ? { count: error.count } : {}) };
   }

@@ -189,6 +189,25 @@ test('an accepted plan folds into the local receipt with who and when, and keeps
   assert.equal(button(off, 'plan-build-accepted'), null, 'plan mode already off: built');
 });
 
+test('a plan restored without its decider takes who and when from the conversation receipts', async (t) => {
+  const receipt = { seq: 7, session_id: S1, outcome: 'approved', tool_name: 'exit_plan_mode', approver_member_id: MAYA, prompter_member_id: DOT,
+    decided_at: at(60), approval_id: 'appr_plan', call_id: 'call_plan' };
+  const m = mount(t, { open: saved('accepted', {}, {}, { receipts: [receipt] }) });
+  await flush();
+  assert.equal(text(m.q('.plan-document-receipt__state')), `Accepted by Maya · ${msgRow.timeText(at(60))} · not built`);
+  const other = mount(t, { open: saved('accepted', {}, {}, { receipts: [{ ...receipt, approval_id: 'appr_other', call_id: 'call_other' }] }) });
+  await flush();
+  assert.equal(text(other.q('.plan-document-receipt__state')), 'Accepted · not built', 'the receipt of another plan is not borrowed');
+  const tool = mount(t, { open: saved('accepted', {}, {}, { receipts: [{ ...receipt, tool_name: 'write_file' }] }) });
+  await flush();
+  assert.equal(text(tool.q('.plan-document-receipt__state')), 'Accepted · not built', 'only the receipt of the plan tool counts');
+  const reused = { ...receipt, seq: 9, approver_member_id: LENA, approval_id: 'appr_later', decided_at: at(90) };
+  const both = mount(t, { open: saved('accepted', {}, {}, { receipts: [receipt, reused] }) });
+  await flush();
+  assert.equal(text(both.q('.plan-document-receipt__state')), `Accepted by Maya · ${msgRow.timeText(at(60))} · not built`,
+    'a later plan reusing the call id does not take over: the approval id decides');
+});
+
 test('a built plan reads "Approved by"; its receipt keeps no Build it', async (t) => {
   const m = mount(t, { open: saved('approved', { decided_by: DOT, decided_at: at(120) }, { plan_mode: false }) });
   await flush();
@@ -286,4 +305,30 @@ test('the Plan chip also switches with Alt+P (the local composer’s own shortcu
   await flush();
   assert.equal(alt.defaultPrevented, true);
   assert.deepEqual(m.sent('conversationPreferences'), [{ ...IDS, plan_mode: true }]);
+});
+
+test('C16: Build it is greyed with the reason while the connection is down or the picked model is offline, and plan mode stays on', async (t) => {
+  const down = mount(t, { teamState: 'offline', open: saved('accepted'), answers: { conversationPreferences: { ok: true }, conversationSend: { ok: true } } });
+  await flush();
+  const build = button(down, 'plan-build-accepted');
+  assert.equal(build.disabled, true, 'greyed, not hidden');
+  assert.match(build.title, /offline|back/i, 'the reason is its title');
+  click(down, build);
+  await flush();
+  assert.deepEqual([down.sent('conversationPreferences').length, down.sent('conversationSend').length], [0, 0], 'plan mode is not turned off and nothing is sent');
+  assert.equal(chip(down).getAttribute('aria-pressed'), 'true', 'plan mode stays on');
+  const gone = { nodes: [{ node_id: 'node_1', member_id: MAYA, online: true, models: [{ name: 'other:8b', thinking: false }] }] };
+  const away = mount(t, { gpus: gone, open: saved('accepted', {}, { preferred_model: 'llama:8b' }) });
+  await flush();
+  assert.equal(button(away, 'plan-build-accepted').disabled, true);
+  assert.match(button(away, 'plan-build-accepted').title, /llama:8b|model/i);
+  const fine = mount(t, { open: saved('accepted') });
+  await flush();
+  assert.equal(button(fine, 'plan-build-accepted').disabled, false, 'online with nothing wrong: Build it as before');
+  assert.equal(button(fine, 'plan-build-accepted').title, 'Build it');
+  // Live run 2026-11-25: the team default with no shared GPU online sent the build, failed and left plan mode off.
+  const none = mount(t, { gpus: { nodes: [] }, open: saved('accepted') });
+  await flush();
+  assert.equal(button(none, 'plan-build-accepted').disabled, true, 'nobody shares a GPU');
+  assert.equal(button(none, 'plan-build-accepted').title, 'No shared GPU can answer now. Build it when one is online.');
 });

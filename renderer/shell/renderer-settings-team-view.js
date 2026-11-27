@@ -269,7 +269,6 @@
       case 'deleted':
       case 'revoked':
       case 'needs_repair': return button(vm, 'remove-team', jt('settings.team.joined.remove', 'Remove this team'), { ids, busyKey: 'remove:' + team.team_id });
-      case 'update_required': return '';
       case 'online':
         return button(vm, 'device-invite', jt('settings.team.joined.addDevice', 'Add a device'), { ids, busyKey: 'device-invite:' + team.team_id })
           + button(vm, 'leave', jt('settings.team.joined.leave', 'Leave'), { ids, busyKey: 'leave:' + team.team_id });
@@ -288,10 +287,12 @@
     if (!vm.joined.length) return '';
     const rows = vm.joined.map((team) => {
       const name = words.teamName(team);
+      const repair = team.state === 'needs_repair';
+      const heading = repair ? jt('settings.team.joined.unreadable', 'Unreadable team') : name;
       // A needs_repair row has no role: its state words and the sentence for its reason. Slice 5-6: a deleted row
       // has no role either; `vm.memberRow` (renderer-settings-team-network.js) adds the path, hint and code.
       const extra = vm.memberRow ? vm.memberRow(team) : {};
-      const fact = team.state === 'needs_repair' ? words.connectionText(team.state) + ' · ' + words.repairText(team.reason)
+      const fact = repair ? words.connectionText(team.state) + ' · ' + words.repairText(team.reason) + ' · ' + jt('settings.team.joined.repairId', 'Saved as {id}', { id: name })
         : team.state === 'deleted' || team.state === 'force_local' ? words.connectionText(team.state)
           : words.roleText(team.role) + ' · ' + (team.state === 'revoked' ? revokedFact(vm, team) : extra.fact || words.connectionText(team.state));
       const ids = { teamId: team.team_id };
@@ -308,7 +309,7 @@
       const ownKey = words.ownKeyText(team);
       const hint = ownKey || extra.hint;
       const keyHtml = hint ? '<p class="team-set-person__hint">' + escapeHtml(hint) + '</p>' : '';
-      return row(name, fact, joinedRowActions(vm, team, extra), { extraHtml: keyHtml + confirm + (code ? '<div class="team-set-row-wide">' + code + '</div>' : '') });
+      return row(heading, fact, joinedRowActions(vm, team, extra), { extraHtml: keyHtml + confirm + (code ? '<div class="team-set-row-wide">' + code + '</div>' : '') });
     }).join('');
     return group('joined', jt('settings.team.joined.heading', 'Teams you have joined'), {
       extra: jt('settings.team.joined.count', '{count} of {max}', { count: vm.teamCount, max: vm.maxTeams }),

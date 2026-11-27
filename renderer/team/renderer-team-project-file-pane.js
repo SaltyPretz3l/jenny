@@ -104,8 +104,11 @@
 
     function treeHeadHtml() {
       const c = explorer.counts();
-      const meta = c.status === 'ready' ? jt('team.projectFiles.headMeta', '{project} · {count} entries', { project: project(), count: Number(c.total).toLocaleString() }) : project();
-      const acts = mode === 'column' ? iconBtn('workspace', jt('team.projectFiles.workspace', 'Open in workspace panel'), GLYPH.panel)
+      const meta = c.status !== 'ready' ? project() : Number(c.total) === 1 ? jt('team.projectFiles.headMetaOne', '{project} · 1 entry', { project: project() })
+        : jt('team.projectFiles.headMeta', '{project} · {count} entries', { project: project(), count: Number(c.total).toLocaleString() });
+      const reload = jt('team.projectFiles.refresh', 'Refresh');
+      const glyph = inv().stateIcon ? inv().stateIcon('refresh') : '';
+      const acts = mode === 'column' ? (glyph ? iconBtn('refresh', reload, glyph) : textBtn('refresh', reload)) + iconBtn('workspace', jt('team.projectFiles.workspace', 'Open in workspace panel'), GLYPH.panel)
         + iconBtn('close', jt('team.projectFiles.closeFiles', 'Close files'), GLYPH.close) : '';
       return '<div class="team-preview__title"><span class="team-preview__name">' + escapeHtml(jt('team.projectFiles.title', 'Files')) + '</span>'
         + '<span class="team-preview__meta" dir="auto">' + escapeHtml(meta) + '</span></div><div class="team-preview__acts">' + acts + '</div>';
@@ -311,10 +314,22 @@
         case 'close': onClose(); return;
         case 'back': backToFiles(); return;
         case 'workspace': openPanel(target); return;
+        case 'refresh': refresh(); return;
         case 'copy': copyFile(); return;
         case 'retry': if (live.file) void load(live.file); return;
         default:
       }
+    }
+    // A turn ended or a file tool wrote: the kept answers go and the tree is read again (the Refresh button does the same).
+    function refresh() {
+      if (live.disposed) return;
+      kept.clear();
+      void explorer.refresh();
+      if (live.file && live.file.state !== 'loading') void load(live.file);
+    }
+    function onFiles(event) {
+      const d = event.detail;
+      if (d && d.teamId === teamId && d.projectId === projectId) refresh();
     }
     function onView(event) {
       if (!live.file || !event.detail || event.detail.id !== segmentId) return;
@@ -323,8 +338,10 @@
     }
     el.addEventListener('click', onClick);
     el.addEventListener('inv-segmented-change', onView);
+    doc.addEventListener('team:files-changed', onFiles);
 
     const api = {
+      refresh,
       /** Shows `p` (a relative path), or the tree when `p` is empty. */
       show(p) { if (p) showFile(p); else if (mode === 'column' && live.view !== 'tree') backToFiles(); },
       isPanelOpen: () => panelOpen && current !== null && current.owner === api,
@@ -335,6 +352,7 @@
         explorer.dispose();
         el.removeEventListener('click', onClick);
         el.removeEventListener('inv-segmented-change', onView);
+        doc.removeEventListener('team:files-changed', onFiles);
         if (current && current.owner === api) closeWorkspace();
         el.innerHTML = '';
       },

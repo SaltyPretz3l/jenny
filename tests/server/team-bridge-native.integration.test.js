@@ -404,15 +404,35 @@ test('a key the host now names as known leaves the real bridge cooldown and conn
   const server = await createLoopbackServer(t);
   const memberSeed = seedOf(41);
   const allowed = new Set();
-  const host = await startHost(t, h, { server, seed: seedOf(42), admit: (key) => (allowed.has(hex(key)) ? 'device' : null) });
+  const answers = [];
+  const admit = (key) => {
+    const answer = allowed.has(hex(key)) ? 'device' : null;
+    answers.push(answer);
+    return answer;
+  };
+  const host = await startHost(t, h, { server, seed: seedOf(42), admit });
   const first = await startMember(h, { host, seed: memberSeed });
   await waitFor(() => first.bridge.state().state === 'offline', { timeoutMs: 15_000 });
   assert.deepEqual(first.bridge.state(), { state: 'offline', reason: 'host_refused' });
   await first.bridge.stop();
   allowed.add(hex(publicKeyOf(memberSeed)));
   host.bridge.setKnownKeys([publicKeyOf(memberSeed)]);
-  const second = await startMember(h, { host, seed: memberSeed });
-  await waitFor(() => second.bridge.state().state !== 'connecting', { timeoutMs: 15_000 });
+  // A member says online once connected, before the host decides; a cooled key is turned away without asking
+  // `admit`, so the host asking again (and admitting) is the proof the key left the cooldown. The binary does not
+  // answer the line, and under a loaded run a handshake can reach it first (full CI, 2026-11-26): one more try is
+  // still a real test, since the cooldown lasts a minute and only a line the binary read ends it.
+  const join = async () => {
+    const member = await startMember(h, { host, seed: memberSeed });
+    await waitFor(() => answers.includes('device') || member.bridge.state().state === 'offline', { timeoutMs: 15_000 });
+    return member;
+  };
+  let second = await join();
+  if (second.bridge.state().reason === 'host_cooldown') {
+    await second.bridge.stop();
+    second = await join();
+  }
+  assert.deepEqual(answers, [null, 'device'], `${JSON.stringify(second.bridge.state())}; a bridge binary older than the known_keys line is never sent it (npm run build:team-bridge)`);
+  await waitFor(() => host.bridge.stats().connections === 1);
   assert.equal(second.bridge.state().state, 'online', JSON.stringify(second.bridge.state()));
   assert.deepEqual(host.downs, [], 'the binary read the line and stayed up');
 });

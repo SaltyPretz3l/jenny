@@ -108,8 +108,9 @@
   // ----------------------------------------------------------- change lines
 
   // One change as a quiet line: the actor in bold ("You" for the viewer), the channel names as isolated text. `c`: the frame
-  // context ({ me, nameOf, channelName }).
-  function changeHtml(change, c) {
+  // context ({ me, nameOf, channelName }). "made" says the name the channel was made with: the first rename's `from` in
+  // `changes` (the list drops its oldest first, so a held `created` has every rename after it), else the current name.
+  function changeHtml(change, c, changes = []) {
     const actor = change.by === c.me ? jt('team.channels.change.you', 'You') : c.nameOf(change.by);
     const marks = ['', '', '']; // private-use placeholders, replaced after escaping
     const params = { actor: marks[0], channel: marks[1], from: marks[1], to: marks[2] };
@@ -122,7 +123,7 @@
       case 'unarchived': text = jt('team.channels.change.unarchived', '{actor} brought the channel back', params); break;
       default: return '';
     }
-    const values = [actor, '#' + (change.kind === 'renamed' ? change.from : c.channelName), '#' + change.to];
+    const values = [actor, '#' + (change.from || (changes.find((x) => x && x.from) || {}).from || c.channelName), '#' + change.to];
     return escapeHtml(text).replace(/[-]/gu, (mark) => (mark === marks[0] ? '<b dir="auto">' + escapeHtml(values[0]) + '</b>'
       : '<bdi>' + escapeHtml(values[marks.indexOf(mark)]) + '</bdi>'));
   }
@@ -315,11 +316,12 @@
         busy = true;
         action.disabled = true;
         note.hidden = true;
-        const answer = await manage('chatChannelDelete', { team_id: team.team_id, channel_id: row.channel_id });
+        let answer = null;
+        // A throw from the call must not leave Delete disabled for the rest of the dialog's life.
+        try { answer = await manage('chatChannelDelete', { team_id: team.team_id, channel_id: row.channel_id }); }
+        finally { if (!(answer && answer.ok)) { busy = false; action.disabled = false; } }
         if (!dialog) return;
         if (answer.ok) { deps.channels.select(team.team_id, deps.channels.CHANNEL); closeDialog(); deps.render(); return; }
-        busy = false;
-        action.disabled = false;
         note.textContent = failText(answer);
         note.hidden = false;
       };

@@ -8,10 +8,14 @@ With a local model, Jenny processes your prompts locally; no cloud account is ne
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.9.0
+## Jenny 1.9.1
 
-**[Jenny 1.9.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.9.0)**.
-New in 1.9.0: on Windows a local vision model can use a desktop program you
+**[Jenny 1.9.1 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.9.1)**.
+New in 1.9.1: Team polish from a product review and two real-window runs: one
+Allow on the approval card, a summary-first project admin page, a cancellable
+host export, model transfers that say why they ended and a Team bar that keeps
+Send in view. Ctrl+F in the browser panel finds in the page.
+1.9.0 brought computer use on Windows: a local vision model can use a desktop program you
 grant with the `computer` tool, and a chat's Live tab runs your project's own
 program beside the chat. Strata joins the local engines. Chat joins the
 Workspace and the Board on one layout, with Chats on the left, the chat panes in the centre and one right-hand panel of four
@@ -94,7 +98,7 @@ The setup tiles disappear when you're done. You can run setup again from **Setti
 
 ### macOS: experimental; installer untested
 
-The 1.9.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.9.1 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
@@ -102,9 +106,9 @@ The 1.9.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Sil
 
 ### Linux (experimental)
 
-Jenny 1.9.0 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.9.1 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.9.0).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.9.1).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -305,7 +309,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.9.0
+### Source version 1.9.1
 
 This source tree includes guided setup, local coding tools with live command output, and experimental platform and Docker workflows. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. Crash reporting is optional and off by default.
 

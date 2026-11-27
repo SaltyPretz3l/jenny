@@ -419,3 +419,52 @@ test('one limiter sleep is never longer than the part\'s time at the rate plus a
   await limiter.take(MB, null);
   assert.ok(sleeps.every((ms) => ms <= 2000), JSON.stringify(sleeps));
 });
+
+// ---- Team fixes M: a withdrawn offer whose first command was still out, and quiet row changes during a read -------
+
+function offeringSender(t, { command, ticks = 0, onChange = () => {} }) {
+  const { entry } = modelFolder(t, ['Qwen3-8B-Q4_K_M.gguf']);
+  const hasher = { hash: async (file, { onProgress }) => {
+    for (let n = 1; n <= ticks; n += 1) onProgress(n);
+    return { size: 4096, sha256: 'a'.repeat(64), segments: ['a'.repeat(64)] };
+  } };
+  const sender = createModelSender({
+    teamId: TEAM, discovery: async () => [entry], hasher, self: () => SENDER, offersFile: { load: () => [], save: () => ({ ok: true }) },
+    limiter: { take: async () => {} }, sleep: async () => {}, onChange,
+    transfers: { view: () => null, pauses: () => 0, refresh: async () => null, waitView: async () => {}, replay: () => {} },
+    link: { command, put: async () => ({ ok: true, ready: true }), online: () => true, waitReconnect: async () => {} },
+  });
+  t.after(() => sender.stopAll());
+  return sender;
+}
+const nextTurns = async () => { for (let n = 0; n < 20; n += 1) await new Promise((resolve) => { setImmediate(resolve); }); };
+
+test('M6: an offer withdrawn while its first command was out is withdrawn again with the id the host answers', async (t) => {
+  const commands = [];
+  let answerOffer;
+  const command = (operation, params) => {
+    commands.push([operation, params]);
+    if (operation === 'team.model.offer') return new Promise((resolve) => { answerOffer = resolve; });
+    return Promise.resolve({ ok: true });
+  };
+  const sender = offeringSender(t, { command });
+  const { request_id: requestId } = await sender.offer({ tag: 'qwen3:8b', files: [], display_name: 'Qwen three' });
+  await nextTurns();
+  assert.equal(commands.filter(([operation]) => operation === 'team.model.offer').length, 1, 'the first command is out');
+  assert.deepEqual(await sender.withdraw(requestId), { ok: true }, 'no offer id yet: nothing to withdraw on the host');
+  assert.equal(commands.some(([operation]) => operation === 'team.model.withdraw'), false);
+  const offerId = `offer_${'x'.repeat(22)}`;
+  answerOffer({ ok: true, offer: { offer_id: offerId, state: 'open' } });
+  await nextTurns();
+  assert.deepEqual(commands.filter(([operation]) => operation === 'team.model.withdraw'), [['team.model.withdraw', { offer_id: offerId }]]);
+  assert.deepEqual(sender.records().map((record) => [record.state, record.reason, record.offerId]), [['ended', 'withdrawn', null]]);
+});
+
+test('M7: the hasher\'s ticks tell the row list once per whole percent, not once per tick', async (t) => {
+  let changes = 0;
+  const sender = offeringSender(t, { command: async () => ({ ok: false, error: { reason: 'team_not_connected' } }), ticks: 4096, onChange: () => { changes += 1; } });
+  await sender.offer({ tag: 'qwen3:8b', files: [], display_name: 'Qwen three' });
+  await settled(sender);
+  await nextTurns();
+  assert.ok(changes <= 110, `${changes} list changes for 4096 ticks`);
+});

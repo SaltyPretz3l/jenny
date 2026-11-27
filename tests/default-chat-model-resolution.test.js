@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { resolveDefaultChatModel, resolveModel } = require('../services/backend/backend-chat-model-resolution');
+const { defaultChatLocalFallback, resolveDefaultChatModel, resolveModel } = require('../services/backend/backend-chat-model-resolution');
 const { prepareLocalEngineChatRequest } = require('../services/backend/local-engine-requests');
 
 // 2026-10-27 live incident: the primary chat sat on "Default" ('') while a
@@ -44,6 +44,31 @@ test('cloud engine current, Default chat resolves to the Settings default; a man
   ninfer.ninferRuntime = { artifacts: { artifacts: [{ id: 'qwen3.8-27b-nvfp4', model_id: 'qwen3.8-27b-nvfp4' }] } };
   ninfer.options = { getNinferManager: () => ({}) };
   assert.equal(resolveDefaultChatModel(ninfer), 'qwen3.8-27b-nvfp4', 'the Ollama catalog does not list NInfer models');
+});
+
+test('no default under a cloud engine: a Default chat takes the built-in default on this PC when it can be served (owner 2026-11-26)', async () => {
+  const cloud = ({ servable = true, engine = 'chatgpt', saved = '' } = {}) => {
+    const service = fakeService({ preferredLocalModel: saved, currentModel: 'gpt-6' });
+    Object.assign(service, { currentEngineType: engine, defaultModel: 'ornith-1.5-9b' });
+    if (servable) {
+      service.ninferRuntime = { artifacts: { artifacts: [{ id: 'ornith-1.5-9b', model_id: 'ornith-1.5-9b' }] } };
+      service.options = { getNinferManager: () => ({}) };
+    }
+    return service;
+  };
+  assert.equal(resolveDefaultChatModel(cloud()), 'ornith-1.5-9b');
+  assert.equal(defaultChatLocalFallback(cloud()), 'ornith-1.5-9b', 'the model list carries the same route for the pill');
+  assert.equal(resolveDefaultChatModel(cloud({ servable: false })), '', 'nothing on this PC can serve it: the loaded cloud model stays');
+  assert.equal(resolveDefaultChatModel(cloud({ engine: 'ollama' })), '', 'a local engine keeps its loaded model');
+  const team = cloud({ saved: 'team/team_alpha1/qwen3:8b' });
+  team.featureFlags = { team: true };
+  assert.equal(resolveDefaultChatModel(team), 'ornith-1.5-9b', 'a saved team id reads as unset');
+  const hinted = cloud({ servable: false });
+  hinted._modelEngineHints.set('ornith-1.5-9b', 'ollama');
+  assert.equal(resolveDefaultChatModel(hinted), 'ornith-1.5-9b', 'an installed Ollama copy counts');
+  const prepared = await prepareLocalEngineChatRequest(cloud(), { sessionId: 'sess_a', prompt: 'hi', preferredModel: '', contextPreferences: {} });
+  assert.equal(prepared.runtimePreferredModel, 'ornith-1.5-9b');
+  assert.equal(prepared.normalizedPreferences.preferred_model, '', 'the chat stays on Default');
 });
 
 test('hosted servers keep their pinned model', () => {

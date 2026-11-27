@@ -63,7 +63,7 @@
   function createProjectPage({ root, teamId, projectId, store, ctx, onShow, onClose, renders = { page: 0 } }) {
     const ids = { team_id: teamId, project_id: projectId };
     const live = { members: null, membersError: '', reading: false, again: false, rename: null, confirmDelete: false, confirm: null, addWho: '', addRole: 'writer',
-      notes: {}, busy: new Set(), disposed: false, rowKey: '', transferState: '' };
+      notes: {}, busy: new Set(), disposed: false, rowKey: '', transferState: '', open: new Set(), needed: new Map() };
     const last = {};
     let rules = null;
     let activity = null;
@@ -234,11 +234,13 @@
         : jt('team.projects.transferElsewhere', 'Another upload or download for this team is still running.')) : '';
       const why = deleting ? jt('team.projects.deletingShort', 'This project is being deleted.') : other;
       const writes = role === 'admin' || role === 'writer';
-      const upload = writes ? button('upload', jt('team.projects.upload', 'Upload a folder'), { variant: fresh ? 'primary' : 'secondary', disabled: Boolean(why) || live.busy.has('upload'),
-        title: why || jt('team.projects.uploadTitle', 'Copy a folder from this PC into the project') }) : '';
-      const download = fresh ? '' : button('download', jt('team.projects.download', 'Download a copy'), { disabled: Boolean(other) || live.busy.has('download'),
-        title: other || jt('team.projects.downloadTitle', 'Save a copy of the project’s files into an empty folder') });
-      const start = fresh && writes ? button('conv-new', jt('team.projects.newConversation', 'New conversation'), { title: jt('team.projects.newConversationIn', 'New conversation in {project}', { project: name() }) }) : '';
+      const upload = button('upload', jt('team.projects.upload', 'Upload a folder'), { variant: fresh && writes ? 'primary' : 'secondary', disabled: !writes || Boolean(why) || live.busy.has('upload'),
+        title: !writes ? jt('team.projects.uploadReader', 'Only writers can upload.') : why || jt('team.projects.uploadTitle', 'Copy a folder from this PC into the project') });
+      const download = button('download', jt('team.projects.download', 'Download a copy'), { disabled: fresh || Boolean(other) || live.busy.has('download'),
+        title: fresh ? jt('team.projects.downloadNothing', 'Nothing to download yet.') : other || jt('team.projects.downloadTitle', 'Save a copy of the project’s files into an empty folder') });
+      const making = typeof ctx().creating === 'function' && ctx().creating(); // C23: a conversation is being created
+      const start = fresh && writes ? button('conv-new', jt('team.projects.newConversation', 'New conversation'), { disabled: making,
+        title: making ? jt('team.projects.creatingConversation', 'A conversation is being created.') : jt('team.projects.newConversationIn', 'New conversation in {project}', { project: name() }) }) : '';
       const fact = fresh ? jt('team.projects.noFiles', 'No files yet.') : jt('team.projects.filesFact', 'Files are kept on the team’s host, up to 2 GB a project.');
       const limits = fresh ? '<p class="team-page__fact team-progress__note">' + escapeHtml(jt('team.projects.filesLimits', 'Up to 512 MB an upload and 2 GB a project. Files you upload are copied; your own folder is not changed.')) + '</p>' : '';
       const browse = browseButton();
@@ -296,10 +298,12 @@
             + button('member-add', jt('team.projects.add', 'Add'), { title: jt('team.projects.addTitle', 'Add this person to the project'), disabled: live.busy.has('add') }) + '</div>';
         }
       }
+      const admins = members.filter((m) => m.role === 'admin');
+      const only = admin && admins.length === 1 && admins[0].member_id === ctx().team.member_id; // C20: a project always has an admin
       const leave = live.confirm && live.confirm.kind === 'leave' ? column.confirmBlock(jt('team.projects.leave', 'Leave this project'),
         jt('team.projects.leaveConfirm', 'Leave {project}? You stop seeing its conversations, its channel and its files until a project admin adds you back.', { project: name() }),
         button('leave-go', jt('team.projects.leaveGo', 'Leave {project}', { project: name() }), { variant: 'danger', disabled: live.busy.has('leave') }) + button('leave-cancel', jt('team.projects.cancel', 'Cancel')))
-        : '<div class="team-page__acts">' + button('leave', jt('team.projects.leave', 'Leave this project'), { title: jt('team.projects.leaveTitle', 'Stop being a member of {project}', { project: name() }), disabled: live.busy.has('leave') }) + '</div>';
+        : '<div class="team-page__acts">' + button('leave', jt('team.projects.leave', 'Leave this project'), { title: only ? jt('team.projects.leaveOnlyAdmin', 'A project always has an admin.') : jt('team.projects.leaveTitle', 'Stop being a member of {project}', { project: name() }), disabled: only || live.busy.has('leave') }) + '</div>';
       return section('members', jt('team.projects.members', 'Members'), (rows ? '<ul class="team-set-list">' + rows + '</ul>' : '') + note(live.membersError) + add + leave + note(live.notes.members),
         live.members ? number(members.length) : '');
     }
@@ -318,6 +322,43 @@
       return section('delete', jt('team.projects.deleteHeading', 'Delete this project'), body + confirm + note(live.notes.delete));
     }
 
+    // D2: an admin's rarely used sections fold under their own heading (Settings > Team's markup). A fold is open when the
+    // person opened it, or from the redraw where a confirm, a note or an undo row first shows in it.
+    function fold(id, html) {
+      const head = html && /<h3>([^<]*?)(?: <span class="team-set-count">([^<]*)<\/span>)?<\/h3>/.exec(html);
+      if (!head) return html;
+      // More to answer than at the last draw (a confirm, a note, an undo row, another waiting request) opens it.
+      const needs = (html.match(/team-set-confirm|team-set-note|data-project-action="rule-undo"|data-project-action="rule-decline"/g) || []).length;
+      if (needs > (live.needed.get(id) || 0)) live.open.add(id);
+      live.needed.set(id, needs);
+      // The summary is the heading people see and hear; the section's own h3 is clipped, so it is hidden from readers too.
+      return '<details class="settings-fold" data-team-fold="' + id + '"' + (live.open.has(id) ? ' open' : '') + '><summary id="teamProjectFold_' + id + '">' + head[1]
+        + (head[2] ? '<span class="settings-fold-count">' + head[2] + '</span>' : '') + '</summary>' + html.replace('<h3>', '<h3 aria-hidden="true">') + '</details>';
+    }
+
+    // D2: members, rules and the latest activity in one line, each fact a link to its section; only when all three are known.
+    function summaryLine() {
+      const count = rules ? rules.count() : null;
+      const latest = activity ? activity.latest() : null;
+      if (!live.members || count === null || latest === null) return '';
+      const facts = [['members', jt('team.projects.members', 'Members'), number(live.members.length) + ' · ' + jt('team.projects.youAdmin', 'you are an admin')],
+        ['rules', jt('team.rules.heading', 'Always allowed'), count ? jtn('team.rules.count', count, {}, '{count} rule', '{count} rules') : jt('team.projects.summaryNoRules', 'No rules')],
+        ['activity', jt('team.activity.heading', 'Activity'), latest ? jt('team.projects.summaryLatest', 'latest {time}', { time: ctx().timeText(latest) }) : jt('team.projects.summaryNothing', 'Nothing yet')]];
+      return '<ul class="team-set-summary">' + facts.map(([id, label, value]) => '<li><a href="#" data-project-action="summary-jump" data-jump="' + id + '"><span>' + escapeHtml(label)
+        + '</span><b>' + escapeHtml(value) + '</b></a></li>').join('') + '</ul>';
+    }
+
+    // A summary link opens the fold that holds its section and moves the focus to its visible heading.
+    function jump(id) {
+      if (id !== 'members') live.open.add(id);
+      draw();
+      const heading = root.querySelector('[data-team-fold="' + id + '"] > summary') || root.querySelector('[data-team-project-section="' + id + '"] > h3');
+      if (!heading) return;
+      heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: true });
+      if (typeof heading.scrollIntoView === 'function') heading.scrollIntoView({ block: 'nearest' });
+    }
+
     function memberParts() {
       const r = row();
       const s = state();
@@ -327,9 +368,11 @@
       const deleting = s.deleting.has(projectId) ? '<p class="team-note-line" role="status">' + escapeHtml(jt('team.projects.deleting', 'This project is being deleted. Nothing in it can change; the delete finishes when the team’s host next starts.')) + '</p>' : '';
       const lede = fresh ? jt('team.projects.ledeEmpty', 'A new project starts empty. Bring files in, or start a conversation and let Jenny write them.')
         : jt('team.projects.lede', 'Everyone in this project sees its conversations, its channel and its files. Jenny’s file tools reach only this project’s folder on the team’s host.');
-      return { header: header(subLine(role)), notes: note(live.notes.header) + deleting, lede: '<p class="team-page__lede">' + escapeHtml(lede) + '</p>',
-        files: filesSection(role, fresh), boards: boardsSection(), members: membersSection(role), rules: rules ? rules.html() : '', activity: activity ? activity.html() : '',
-        delete: role === 'admin' || isOwner() ? deleteSection(conversations) : '' };
+      const admin = role === 'admin';
+      return { header: header(subLine(role)), notes: note(live.notes.header) + deleting, lede: '<p class="team-page__lede">' + escapeHtml(lede) + '</p>' + (admin ? summaryLine() : ''),
+        files: filesSection(role, fresh), boards: boardsSection(), members: membersSection(role), rules: rules ? (admin ? fold('rules', rules.html()) : rules.html()) : '',
+        activity: activity ? (admin ? fold('activity', activity.html()) : activity.html()) : '',
+        delete: admin || isOwner() ? (admin ? fold('delete', deleteSection(conversations)) : deleteSection(conversations)) : '' };
     }
 
     function notMemberParts() {
@@ -450,6 +493,7 @@
         case 'delete-go': void run('delete', 'delete', 'projectDelete', {}, () => { store.reread(teamId); onClose(); }); return;
         case 'join': void run('join', 'join', 'projectJoin', { role: 'admin' }, () => store.reread(teamId)); return;
         case 'conv-new': onShow({ newConversation: projectId }); return;
+        case 'summary-jump': event.preventDefault(); jump(target.dataset.jump); return;
         default:
       }
     }
@@ -473,7 +517,16 @@
       }
     }
 
+    // A fold's own `toggle` (it does not bubble) keeps `live.open`, so a redraw writes the `open` the person left.
+    function onToggle(event) {
+      const el = event.target;
+      const id = el && el.tagName === 'DETAILS' ? el.getAttribute('data-team-fold') : null;
+      if (id) { if (el.open) live.open.add(id); else live.open.delete(id); }
+    }
+
     function onKeydown(event) {
+      const link = event.key === ' ' && event.target && event.target.closest ? event.target.closest('[data-project-action="summary-jump"]') : null;
+      if (link) { event.preventDefault(); link.click(); return; } // Space presses a link like a button
       if ((event.key === 'Escape' || event.key === 'Esc') && live.confirm && event.target && event.target.closest && event.target.closest('.team-set-confirm') && partsEl.members.contains(event.target)) {
         event.preventDefault();
         closeConfirm();
@@ -485,8 +538,8 @@
       }
     }
 
-    const listeners = [['click', onClick], ['input', onInput], ['change', onChange], ['keydown', onKeydown]];
-    for (const [type, handler] of listeners) root.addEventListener(type, handler);
+    const listeners = [['click', onClick], ['input', onInput], ['change', onChange], ['keydown', onKeydown], ['toggle', onToggle, true]];
+    for (const [type, handler, capture] of listeners) root.addEventListener(type, handler, capture);
     live.rowKey = JSON.stringify(row());
     readMembers();
     readBoards();
@@ -519,7 +572,7 @@
       dispose() {
         if (live.disposed) return;
         live.disposed = true;
-        for (const [type, handler] of listeners) root.removeEventListener(type, handler);
+        for (const [type, handler, capture] of listeners) root.removeEventListener(type, handler, capture);
         if (rules) rules.dispose();
         if (activity) activity.dispose();
         rules = null;

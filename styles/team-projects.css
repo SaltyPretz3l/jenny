@@ -78,6 +78,12 @@
 /* The message box. */
 .team-conv__box { flex: none; padding-inline: var(--space-8); }
 .team-conv__box .team-composer__hint { margin: 0; padding-inline: var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* "Markdown · Enter to send" beside a long model name (row 172): shown whole or not at all, never "M…". The words are one
+ * item after an empty one in a wrapping line one line tall, so when they do not fit they wrap out of sight (the empty
+ * item is one line tall: a line of no height would leave the wrapped words in view). It gives up its room before the
+ * model pill shortens its name. */
+.team-conv__box .team-composer__hint[data-hint="send"] { display: flex; flex-wrap: wrap; align-content: flex-start; max-block-size: 1lh; text-overflow: clip; flex-shrink: 1000; }
+.team-conv__box .team-composer__hint[data-hint="send"]::before { content: ""; inline-size: 0; block-size: 1lh; }
 /* Above the box: "{Name} took over." and "Nobody is sharing a GPU": in the column, no rule across the page. */
 .team-conv__box .team-note-line, .team-conv__box .team-drive--above { max-inline-size: 860px; margin-inline: auto; box-sizing: border-box; border: 0; padding-inline: var(--space-5); }
 /* Two or more approvals wait in one turn (row 175 item 15): the batch banner above the box, like the chat's. */
@@ -200,6 +206,25 @@
 .team-conv-ctl .inv-popover:focus { outline: none; }
 .team-conv-ctl .inv-chip[aria-disabled="true"] { opacity: 0.55; cursor: default; }
 .team-conv-ctl .composer-model-pill .inv-chip-label { max-inline-size: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A narrow bar (live run 2026-11-25: Send was pushed out of the box between 770 and 1000 px): the pill gives way,
+ * its name shortened with an ellipsis, so the icons, the tools chip and Send always stay inside. */
+.team-conv-ctl--model, .team-conv-ctl--model .composer-model-pill, .team-conv-ctl--model .composer-model-pill .inv-chip-label { min-inline-size: 0; }
+.team-conv-ctl--model { flex: 0 1 auto; }
+.team-conv-ctl--model .composer-model-pill { max-inline-size: 100%; }
+.team-conv--channel .team-composer__bar [data-project-action="send"] { flex: none; }
+/* A narrow bar (2.0 owner call, live run 2026-11-25: at about 800 px the pill showed only its dot): the Tools chip gives
+ * way first, to its icon (its aria-label and title stay; "N off" becomes the amber icon, as in the local composer), and
+ * the pill keeps a floor of about five characters, so the name never reads as nothing. Below about 360 px the controls
+ * would still outrun the box, so the bar wraps (Send stays inside). Measured on the box, which is the bar's own width. */
+.team-conv--channel .team-composer { container: teambar / inline-size; }
+.team-conv-ctl--model .composer-model-pill .inv-chip-label { min-inline-size: 5ch; }
+.team-conv-ctl--model, .team-conv-ctl--model .composer-model-pill { min-inline-size: calc(5ch + 34px); }
+@container teambar (max-width: 380px) {
+  .team-conv-ctl--tools .composer-tools-chip { inline-size: var(--composer-secondary-control-size, 26px); padding: 0; justify-content: center; }
+  .team-conv-ctl--tools .composer-tools-chip :is(.inv-chip-label, .inv-chip-count) { display: none; }
+  .team-conv-ctl--tools .composer-tools-chip--off .inv-chip-icon { color: var(--accent-amber); }
+}
+@container teambar (max-width: 320px) { .team-composer__bar { flex-wrap: wrap; row-gap: var(--space-2); } }
 .team-conv-ctl .composer-tools-chip .inv-chip-count { padding: 0; border: 0; background: none; color: var(--accent-amber); font-size: var(--font-size-caption); }
 .team-conv-ctl .composer-chat-panel-foot > :last-child { margin-inline-start: auto; color: var(--text-muted); }
 /* Who may change: a read-only line in the popover's head. */
@@ -299,3 +324,10 @@
   .team-row__menu { opacity: 1; }
   .team-row--conv .team-row__trail { visibility: hidden; }
 }
+
+/* D2: the project page folds Always allowed, Activity and Delete like Settings > Team folds its owner groups: the summary is the heading, the section's own heading stays for screen readers and the summary link's focus. */
+.team-page .settings-fold { margin-top: var(--space-10); }
+.team-page .settings-fold > summary { font-size: var(--font-size-body); color: var(--text-primary); }
+.team-page .settings-fold > section { margin-top: var(--space-4); }
+.team-page .settings-fold > section > h3 { position: absolute; inline-size: 1px; block-size: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.team-page .team-set-summary { margin-top: var(--space-6); }

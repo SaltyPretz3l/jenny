@@ -484,3 +484,112 @@ test('an accept the host refused is answered only once its fresh staging is canc
   await incoming.offerRead(SUMMARY.offer_id, null);
   assert.notEqual((await incoming.accept(SUMMARY.offer_id, 0)).error?.reason, 'model_receiver_busy');
 });
+
+// ---- Team fixes M: a receive whose offer ended, a restart's byte count, quiet row changes ------------------------
+
+function incomingHeld(t, root, { onChange = () => {}, onProgress = () => {}, receiveLimits = {}, takePart = () => new Promise(() => {}) } = {}) {
+  const incoming = createModelIncoming({
+    teamId: TEAM, hasher: { hash: async () => { throw new Error('unused'); } }, receiveLimits, onChange, onProgress,
+    transport: { accept: async () => {}, resume: async () => {}, takePart, pause: async () => {}, cancel: async () => {}, complete: async () => {} },
+    roots: () => [{ path: root, display: root }], discovery: async () => [], self: () => ({ memberId: ME, displayName: 'Mika Member' }),
+    nameOf: () => 'Olive Owner', command: async (operation, params) => (operation === 'team.model.offer.read'
+      ? { ok: true, offer: { ...SUMMARY, offer_id: params.offer_id }, manifest: MANIFEST } : { ok: true }),
+  });
+  t.after(() => incoming.dispose());
+  return incoming;
+}
+
+test('M1: a paused receive whose offer ended stays as a withdrawn row and holds the receiver until Dismiss', async (t) => {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-model-m1-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const incoming = incomingHeld(t, base);
+  const second = offerIdOf(8);
+  await incoming.offerRead(SUMMARY.offer_id, null);
+  assert.deepEqual(await incoming.accept(SUMMARY.offer_id, 0), { ok: true });
+  assert.deepEqual(await incoming.pause(SUMMARY.offer_id), { ok: true });
+  assert.equal(incoming.takeOf(SUMMARY.offer_id).state, 'paused');
+  incoming.offerEnded(SUMMARY.offer_id);
+  incoming.offerEnded(SUMMARY.offer_id); // a second word of the same end changes nothing
+  const take = incoming.takeOf(SUMMARY.offer_id);
+  assert.deepEqual([take?.state, take?.reason], ['failed', 'withdrawn'], 'the take stays, failed as withdrawn');
+  for (const [word, kept] of [['expired', 'expired'], ['member_gone', 'member_gone'], ['fulfilled', 'withdrawn']]) {
+    const other = incomingHeld(t, fs.realpathSync.native(fs.mkdtempSync(path.join(base, 'end-'))));
+    await other.offerRead(SUMMARY.offer_id, null);
+    await other.accept(SUMMARY.offer_id, 0);
+    await other.pause(SUMMARY.offer_id);
+    other.offerEnded(SUMMARY.offer_id, word);
+    assert.equal(other.takeOf(SUMMARY.offer_id).reason, kept, 'the row says what ended the offer: ' + word);
+  }
+  await incoming.offerRead(second, null);
+  assert.equal((await incoming.accept(second, 0)).error?.reason, 'model_receiver_busy', 'held until the member dismisses it');
+  assert.deepEqual(await incoming.cancel(SUMMARY.offer_id), { ok: true }, 'Dismiss runs the cancel path');
+  assert.equal(incoming.takeOf(SUMMARY.offer_id), null);
+  await incoming.offerRead(second, null);
+  assert.notEqual((await incoming.accept(second, 0)).error?.reason, 'model_receiver_busy', 'the receiver is free after Dismiss');
+});
+
+test('M1: a restart-found take whose offer ends is withdrawn, not dropped, and the team keeps the offer listed until Dismiss', async (t) => {
+  let listed = true;
+  const { base, time, host, pushes, deps } = setup(t, { answers: {
+    'team.model.offers': () => ({ ok: true, offers: listed ? [SUMMARY] : [], transfers: [] }),
+    'team.model.offer.read': () => ({ ok: true, offer: SUMMARY, manifest: MANIFEST }) } });
+  const root = path.join(base, 'incoming-root');
+  fs.mkdirSync(root);
+  const staging = stageRestart(root);
+  const team = createModelTeam({ ...deps, roots: () => [{ path: root, display: root }] });
+  t.after(() => team.stop());
+  team.start();
+  await time.advance(400);
+  const row = () => lastState(pushes).incoming.find((entry) => entry.offer_id === SUMMARY.offer_id);
+  assert.equal(row().transfer.state, 'interrupted', 'found at the restart');
+  listed = false;
+  host.emit({ event_type: 'resync_required' });
+  await time.advance(300);
+  assert.deepEqual([row()?.state, row()?.transfer?.state, row()?.transfer?.reason], ['ended', 'failed', 'withdrawn'], 'still listed, withdrawn');
+  assert.equal(fs.existsSync(staging), true, 'what had arrived is kept until Dismiss');
+  host.emit({ event_type: 'resync_required' });
+  await time.advance(300);
+  assert.equal(row()?.transfer?.state, 'failed', 'a second list without the offer keeps the row too');
+  assert.deepEqual(await call(team, 'modelReceiveCancel', { offer_id: SUMMARY.offer_id }), { ok: true });
+  assert.equal(fs.existsSync(staging), false, 'Dismiss removed the staging');
+  host.emit({ event_type: 'resync_required' });
+  await time.advance(300);
+  assert.equal(row(), undefined, 'the offer goes once its take is gone');
+});
+
+test('M2: a take found after a restart carries the verified bytes of its journal', async (t) => {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-model-m2-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const staging = stageRestart(base);
+  const id = path.basename(staging);
+  const journal = journals.readJournal(staging, { id, segmentBytes: 1024 ** 3, maxBytes: 80 * 1024 }).journal;
+  journal.files[0].verified_segments = 1;
+  journals.writeJournal(staging, journal, { maxBytes: 80 * 1024 });
+  const { incoming } = incomingFor(t, () => [{ path: base, display: base }]);
+  await incoming.probe([SUMMARY]);
+  assert.deepEqual([incoming.takeOf(SUMMARY.offer_id)?.state, incoming.takeOf(SUMMARY.offer_id)?.bytes_done], ['interrupted', 5000]);
+  // A journal that does not read leaves the count at 0, never throws.
+  fs.writeFileSync(path.join(staging, journals.JOURNAL_NAME), '{');
+  const { incoming: broken } = incomingFor(t, () => [{ path: base, display: base }]);
+  await broken.probe([SUMMARY]);
+  assert.equal(broken.takeOf(SUMMARY.offer_id)?.bytes_done, 0);
+});
+
+test('M7: a receive tells the row list only when its state or reason changes; its bytes travel as progress', async (t) => {
+  const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-model-m7-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  let changes = 0;
+  let progress = 0;
+  let parts = 0;
+  const takePart = ({ offset }) => (++parts <= 4 ? Promise.resolve(Buffer.alloc(1000, offset)) : new Promise(() => {}));
+  const incoming = incomingHeld(t, base, { takePart, onChange: () => { changes += 1; }, onProgress: () => { progress += 1; },
+    receiveLimits: { partBytes: 1000, segmentBytes: 5000, progressIntervalMs: 0 } });
+  await incoming.offerRead(SUMMARY.offer_id, null);
+  assert.deepEqual(await incoming.accept(SUMMARY.offer_id, 0), { ok: true });
+  for (let i = 0; i < 200 && parts <= 4; i += 1) await new Promise((done) => setTimeout(done, 10)); // the fifth part is asked for: four arrived
+  await flush();
+  assert.ok(progress >= 3, `${progress} progress events for 4 parts`);
+  const before = changes;
+  assert.ok(before <= 3, `${before} list changes while 4 parts arrived`);
+  assert.equal(incoming.takeOf(SUMMARY.offer_id).state, 'pulling');
+});

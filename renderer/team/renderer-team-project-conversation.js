@@ -113,6 +113,7 @@
     const stores = () => teamStores || globalThis.rendererTeamStore;
     // A call for this conversation; null when the view was disposed before it answered.
     const call = async (method, payload) => { const answer = await store.call(method, { ...ids, ...payload }); return s.disposed ? null : answer; };
+    const filesChanged = () => root.dispatchEvent(new (root.ownerDocument.defaultView.CustomEvent)('team:files-changed', { bubbles: true, detail: { teamId, projectId } }));
     const sendPayload = (prompt) => { const boardId = boardNow(); return boardId ? { prompt, board_id: boardId } : { prompt }; };
 
     // ------------------------------------------------------------ the controllers (the parts file says what each takes)
@@ -126,7 +127,7 @@
     const history = parts.createHistory({ cap: CAPS.messages, read: (cursor) => call('conversationOpen', { before_message_id: cursor }), errorText });
     const plan = (planModule() ? planModule().createPlan : () => NO_PLAN)({ doc: root.ownerDocument, root, idPrefix, snapshot: () => s.snapshot, messages: () => history.messages(), me, role, mayDrive, driver, running: () => running() || s.settling,
       nameOf: (id) => c().nameOf(id), time: () => msgRow.timeText(clock()), timeText: msgRow.timeText, errorText, decide: (payload) => call('conversationDecide', payload), send: (prompt) => send(prompt), redraw: () => draw(),
-      change: (patch) => run('prefs', 'conversationPreferences', patch), takeover: async () => { const a = await run('box', 'conversationControl', { action: 'takeover' }); if (a && a.ok) setControl({ member_id: me(), expires_at: 0 }); return Boolean(a && a.ok); } });
+      change: (patch) => run('prefs', 'conversationPreferences', patch), blocked: () => connection() || (prefs.offline() ? 'model' : prefs.unanswerable() ? 'nogpu' : ''), takeover: async () => { const a = await run('box', 'conversationControl', { action: 'takeover' }); if (a && a.ok) setControl({ member_id: me(), expires_at: 0 }); return Boolean(a && a.ok); } });
     const approvals = parts.createApprovals({ snapshot: () => plan.visible(s.snapshot), send: (payload) => call('conversationDecide', payload), me, mayAnswer: () => role() !== 'reader' && !s.disposed,
       youOr: (id) => (id === me() ? jt('team.conv.you', 'You') : c().nameOf(id)), nameOf: (id) => c().nameOf(id), errorText, timeText: () => msgRow.timeText(clock()), receiptHtml: box.receiptHtml,
       outcomeHtml: box.outcomeHtml, offersAllow: box.offersAllow, acted: () => { s.takenBy = ''; }, redraw: () => draw(),
@@ -139,7 +140,7 @@
     const queue = queues.createQueue({ key: draftKey, send: (prompt) => store.call('conversationSend', { ...ids, ...sendPayload(prompt) }), errorText });
     // Row 172: the Tools chip and model pill (the conversation's preferences) and the quiet lines of their changes.
     const prefs = controls.createControls({ root, idPrefix, nameOf: (id) => c().nameOf(id), projectName, role, mayDrive, driver, running: () => running() || s.settling, busy: () => s.busy.has('prefs'),
-      session: () => (s.snapshot && s.snapshot.session) || null, pool: () => parts.poolRead(stores(), teamId), change: (patch) => run('prefs', 'conversationPreferences', patch), redraw: () => drawBox(), timeText: msgRow.timeText });
+      session: () => (s.snapshot && s.snapshot.session) || null, pool: () => parts.poolRead(stores(), teamId), paused: () => rulesWatch.paused(), change: (patch) => run('prefs', 'conversationPreferences', patch), redraw: () => drawBox(), timeText: msgRow.timeText });
     const ch = channel.createChannel({ s, history, approvals, queue, rows, clock, me, nameOf: (id) => c().nameOf(id), role, mayDrive, running, streamId, asking, projectName, modelName,
       liveText: () => liveCache.text, notes: () => prefs.notes(history.messages()), under: (item) => acts.under(item), underKey: () => acts.underKey(), placed: (id) => acts.placed(id), plan, idPrefix });
 
@@ -153,12 +154,12 @@
     }
     const headHtml = () => parts.headHtml({ board, driver: driver(), me: me(), nameOf: c().nameOf, viewers: s.viewers, projectName: projectName(), titleHtml: () => titles.html(), standing: standingText(), find: find.head(), files: paths.headButton(), acts: acts.headHtml() });
 
-    // Nobody shares a GPU: the team is connected and the store has read its GPU list, which is empty (an unread list claims nothing).
+    // Nobody serves: the team is connected and the store has read its GPU list, and no GPU on it is online and unpaused (an unread list claims nothing).
     // The Board's column cannot open Settings, so it gets the sentence alone.
     function gpuState() {
       const team = c().team;
       const nodes = parts.poolNodes(stores(), teamId);
-      if (!team || team.state !== 'online' || !nodes || nodes.length) return null;
+      if (!team || team.state !== 'online' || !nodes || nodes.some((n) => n && n.online === true && !n.paused)) return null;
       return { team: column.clean(team.team_name, 64) || jt('team.conv.thisTeam', 'this team'), canShare: !board && team.role !== 'read_only' };
     }
     // '' while the team is online; else the box says when it sends and Send waits (row 175 F7).
@@ -180,7 +181,7 @@
       field: q('[id="' + idPrefix + box.BOX_ID + '"]') };
     const scroller = q('.team-conv__scroll');
     const jump = q('.chat-jump-latest');
-    const copier = parts.createCopy({ timers, view: root.ownerDocument.defaultView });
+    const copier = parts.createCopy({ timers, view: root.ownerDocument.defaultView, say: (text) => { s.note = text; s.noteWait = true; drawBox(); } });
     const questions = parts.createQuestions({ log: root, asking, send: call, mayAnswer: () => role() !== 'reader', errorText,
       answered: (ref) => { remember(s.answeredQ, ref, true); draw(); focusBox(); } });
     const titles = parts.createTitle({ head: regions.head, named, shown: title, reason: renameBlock, rename: (next) => call('conversationRename', { title: next }), errorText, redraw: () => { drawHead(); drawBox(); },
@@ -191,7 +192,7 @@
       files: () => typeof store.team === 'function' && Boolean((store.team(teamId) || {}).filesSupported), field: () => boxEls.field, shell: () => boxEls.shell });
     const popper = turnPop.createTurnPop({ host: regions.pop, doc: root.ownerDocument, markdown, liveMarkdown, sessionKey: draftKey, onAction: (kind) => pop.action(kind), paths, idPrefix });
     // A match in Jenny's work opens its turn and that one row; the focus stays in the field (the popover is never focused here).
-    const find = (findModule() ? findModule().createFind : () => NO_FIND)({ root, idPrefix, turns: () => ch.view().turns, markdown, toLocal: turnPop.toLocalMessages, more: () => history.more(), earlier,
+    const find = (findModule() ? findModule().createFind : () => NO_FIND)({ root, idPrefix, turns: () => ch.view().turns, markdown, toLocal: turnPop.toLocalMessages, more: () => history.more(), capped: () => history.hidden(), earlier,
       redrawHead: () => drawHead(), openTurn: (id, ref) => { if (s.popTurn !== id) { s.popTurn = id; draw(); } popper.revealRow(ref); } });
     const acts = (actsModule() ? actsModule().createActions : () => NO_ACTS)({ root, teamId, projectId, sessionId, board: Boolean(board), onOpenConversation: board && typeof board.onOpenConversation === 'function' ? board.onOpenConversation : null, call: (method, payload) => store.call(method, payload), timers, me, role, driver,
       running: () => running() || s.settling, online: () => !connection(), nameOf: (id) => c().nameOf(id), projectName, messages: () => history.messages(), view: () => ch.view(), snapshot: () => s.snapshot,
@@ -304,7 +305,7 @@
       const known = new Set(history.messages().map((m) => m.id));
       const answered = snapshot.messages.some((m) => m.role === 'assistant' && !known.has(m.id));
       s.snapshot = snapshot;
-      if (snapshot.pending_approvals && snapshot.pending_approvals.length) rulesWatch.check();
+      if ((snapshot.pending_approvals && snapshot.pending_approvals.length) || (snapshot.session && snapshot.session.file_tools === 'available')) rulesWatch.check();
       history.take(snapshot);
       approvals.taken(snapshot);
       for (const ref of [...s.answeredQ.keys()]) if (!questionsIn(snapshot).some((p) => p.question_ref === ref)) s.answeredQ.delete(ref);
@@ -324,7 +325,7 @@
     function onStream(event) {
       const type = event.event && event.event.type;
       const before = s.stream;
-      s.stream = tl.applyStream(s.stream, event, clock());
+      s.stream = tl.applyStream(s.stream, event, clock()); if (type === 'tool_result' && /^(write|edit)_file$/.test(String(event.event.tool_name))) s.wrote = true;
       // A new turn: its row is the stream's until a snapshot names its saved turn.
       if (type === 'started') { s.settling = false; s.liveTurn = ''; }
       else if (ENDS.has(type)) {
@@ -333,7 +334,7 @@
         if (before && !before.ended && before.startedAt && s.liveTurn) { remember(s.thought, s.liveTurn, clock() - before.startedAt); ch.invalidate(); }
         s.confirm = false;
         s.settling = true;
-        s.lastEnd = type;
+        s.lastEnd = type; if (s.wrote) { s.wrote = false; filesChanged(); }
         queue.turnEnded(type);
         if (s.noteWait) { s.note = ''; s.noteWait = false; }
       }
@@ -434,7 +435,7 @@
     async function send(again) {
       const fromBox = typeof again !== 'string';
       const prompt = (fromBox ? boxEls.field.value : again).trim();
-      if (!prompt || prefs.offline() || connection()) return;
+      if (!prompt || prefs.offline() || connection()) { if (prompt && !fromBox) { s.note = parts.sendAgainWhy(root.ownerDocument, connection(), prefs.box().above); s.noteWait = true; drawBox(); } return; }
       if (prompt.length > box.PROMPT_MAX) { s.note = jt('team.conv.tooLong', 'That message is too long to send.'); drawBox(); return; }
       if (running() || s.settling) {
         if (!mayDrive()) { s.note = jt('team.conv.waitTurn', 'Jenny is still answering. Send this when the turn ends, or stop it first.'); s.noteWait = true; drawBox(); return; }

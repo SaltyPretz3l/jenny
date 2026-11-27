@@ -75,6 +75,20 @@ test('Ctrl+L and Ctrl+F from inside the page land in the panel', async () => {
   assert.equal(ctx.doc.activeElement, ctx.doc.querySelector('.bu-find input'));
 });
 
+test('row 117: Ctrl+F with the focus in the panel opens the page find; outside the browser shell the key is left alone', async () => {
+  const ctx = await withOpenPanel();
+  const press = (target) => {
+    const event = new ctx.window.KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(press(ctx.doc.body).defaultPrevented, false, 'a key outside the panel is not taken');
+  assert.equal(ctx.visible('.bu-find'), false);
+  assert.equal(press(ctx.doc.querySelector('.bu-shell .bu-status')).defaultPrevented, true);
+  assert.equal(ctx.visible('.bu-find'), true);
+  assert.equal(ctx.doc.activeElement, ctx.doc.querySelector('.bu-find input'));
+});
+
 test('find runs in the line: typing searches, Enter walks the matches, Escape ends it', async () => {
   const ctx = await withOpenPanel();
   ctx.changed(openPage({ command: 'open_find' }));

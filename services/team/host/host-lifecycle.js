@@ -71,6 +71,8 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
   // The old teams, listed once and again after a call that changes them (not on every status push).
   let oldTeamsCache = null;
   const oldTeams = () => { oldTeamsCache ||= listOldTeams(userDataPath); return oldTeamsCache; };
+  // The stop of each export from its picker to its answer; hostExportCancel aborts them outside the lock.
+  const exportStops = new Set();
   let sweeping = null;
   // The leftover sweep (host-sweep.js); one at a time, and every caller waits for the one running.
   const sweep = () => {
@@ -234,7 +236,7 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     return who.keyLost ? fail('team_host_key_missing') : null;
   }
 
-  async function exportCall({ password }, folder) {
+  async function exportCall({ password }, folder, stop) {
     const refused = exportRefusal();
     if (refused) return refused;
     const saved = readSavedHostConfig(userDataPath);
@@ -246,8 +248,10 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
       const relayToken = savedInternet(saved)?.relay_url ? host.tokens.load() : null;
       const answer = await exportTeam({ root: realRoot(), picked: folder, userDataPath, ownerId: who.ownerId, password, now: now(),
         setting: { name: teamName(saved), direct_port: savedDirectPort(saved), internet: savedInternet(saved) },
-        secrets: { seed, relayToken } });
+        secrets: { seed, relayToken }, signal: stop.signal });
+      exportStops.delete(stop); // finished: a cancel from here on changes nothing
       say('INFO', 'team.host.export', { ok: answer.ok, ...(answer.ok ? { backup_left_out: answer.backup_left_out === true } : { reason: answer.reason }) });
+      if (answer.reason === 'team_export_cancelled') return invalidRequest('team_export_cancelled');
       // E73: over a member store that does not read only the readable copy was written, and the answer says so.
       if (answer.ok) return { ok: true, folder: answer.folder, bytes: answer.bytes, ...(answer.backup_left_out ? { backup_left_out: true } : {}) };
       const failed = fail(answer.reason);
@@ -258,6 +262,13 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     } finally {
       seed?.fill(0);
     }
+  }
+
+  // Owner decision 2026-11-25: stops every export still running (its picker or its writing); never under the lock.
+  function exportCancel() {
+    const cancelled = exportStops.size > 0;
+    for (const stop of exportStops) stop.abort();
+    return { ok: true, cancelled };
   }
 
   // Outside the lock: the picker and the header check only; the file is kept for this window.
@@ -326,13 +337,20 @@ function createHostLifecycle({ userDataPath, host, pick = {}, lockPython = () =>
     if (method === 'hostAutostart') return exclusive(() => autostart(value));
     if (method === 'hostSummary') return summary();
     if (method === 'hostOpenFolder') return openFolder();
+    if (method === 'hostExportCancel') return exportCancel();
     if (method === 'hostExport') {
       if (!isBackupPassword(value.password)) return invalidRequest('team_backup_password_short');
       const refused = exportRefusal();
       if (refused) return refused;
-      const folder = typeof pick.folder === 'function' ? await pick.folder() : null;
-      if (!folder) return invalidRequest('team_export_cancelled');
-      return exclusive(() => exportCall(value, folder));
+      const stop = new AbortController();
+      exportStops.add(stop);
+      try {
+        const folder = typeof pick.folder === 'function' ? await pick.folder() : null;
+        if (!folder || stop.signal.aborted) return invalidRequest('team_export_cancelled');
+        return await exclusive(() => exportCall(value, folder, stop));
+      } finally {
+        exportStops.delete(stop);
+      }
     }
     return Object.hasOwn(LOCKED, method) ? exclusive(() => LOCKED[method](value, sender)) : invalidRequest();
   }

@@ -20,6 +20,7 @@ const { ninferModelEntries } = require('./ninfer-model-entries');
 const { strataModelEntries } = require('./strata-load-path');
 const { resolveManagedServerOwner } = require('./managed-server-owner');
 const { resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config-model');
+const { defaultChatLocalFallback } = require('./backend-chat-model-resolution');
 
 const MODEL_LIST_CACHE_TTL_MS = 2000;
 const MODEL_LIST_METADATA_FIELDS = ['source', 'cached_at', 'expires_at', 'last_error', 'daemon_version'];
@@ -288,6 +289,8 @@ function listModels(service) {
       ...metadata,
       available,
       primary_available: payload.available !== false,
+      // The local model a Default chat with no Settings default takes under a cloud engine (owner 2026-11-26).
+      default_local_fallback: defaultChatLocalFallback(service),
       data: taggedData,
     };
   })();

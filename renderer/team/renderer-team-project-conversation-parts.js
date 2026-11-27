@@ -72,6 +72,15 @@
     return offered.size === 1 ? [...offered][0] : '';
   }
 
+  // T2: why a failed turn's Send again does nothing now: the team is not online (`connection`: 'offline' or 'reconnecting'), else the
+  // picked model's own line (`aboveHtml`: the controls' line above the box); the box's own words follow the first sentence.
+  function sendAgainWhy(doc, connection, aboveHtml) {
+    let why = '';
+    if (connection) why = connection === 'offline' ? jt('team.composer.hintOffline', 'Sends when the host is back') : jt('team.composer.hintReconnecting', 'Sends when reconnected');
+    else if (aboveHtml) { const el = doc.createElement('div'); el.innerHTML = aboveHtml; why = ((el.querySelector('span') || {}).textContent || '').trim(); }
+    return jt('team.conv.sendAgainBlocked', 'Cannot send again yet.') + (why ? ' ' + why : '');
+  }
+
   // ------------------------------------------------------------ the shell
 
   // The view's fixed markup (row 171, the channel): the log, the running turn's row and the queued rows are the #team
@@ -147,6 +156,8 @@
     return {
       messages: () => h.messages,
       more: () => h.more,
+      // Older messages exist but this view cannot hold them (the cap): find says its count covers the newest only.
+      hidden: () => h.capped,
       // What stands above the messages: the button that reads an older page, a read that failed, the cap reached.
       topHtml: () => tl.earlierHtml({ more: h.more, busy: h.busy }) + noteLine(h.note)
         + noteLine(h.capped ? jt('team.conv.earlierCap', 'This view holds {count} messages. The ones before them are not shown here.', { count: cap }) : ''),
@@ -170,10 +181,12 @@
         if (h.busy || !h.more || !h.cursor) return null;
         h.busy = true;
         h.note = '';
+        const first = oldest();
         return read(h.cursor).then((answer) => {
           if (!answer) return false;
           h.busy = false;
           if (!answer.ok) { h.note = errorText(answer.error); return true; }
+          if (oldest() !== first) return true; // a gap snapshot replaced what was held: this page no longer joins it
           const known = new Set(h.messages.map((m) => m.id));
           const older = answer.snapshot.messages.filter((m) => !known.has(m.id));
           const room = Math.max(0, cap - h.messages.length);
@@ -197,7 +210,7 @@
   function createApprovals({ snapshot, send, me, mayAnswer, youOr, nameOf, errorText, timeText, cardHtml, receiptHtml, outcomeHtml, acted, redraw, rules, sessionId, projectName, offersAllow }) {
     const answered = new Map();
     const asked = new Map(); // approval id -> { always, tool, failed }: what this member asked for
-    const lost = new Map(); // approval id -> the sentence of an answer that did not land
+    const lost = new Map(); // approval id -> { text, revision }: the sentence of an answer that did not land, and the decision it was for
     const busy = new Set();
     let batching = false;
     const receipts = [];
@@ -234,10 +247,22 @@
       redraw();
     }
 
+    // The caret beside Allow (row 123 layout D1): the app's menu holds the always choice; picking it answers as the old always button did.
+    // A second click on the caret closes its menu (`hide` answers nothing, and its onHide sets aria-expanded back).
+    function openMore(caret) {
+      const menu = (globalThis.inventory && globalThis.inventory.contextMenu) || globalThis.inventoryContextMenu, id = caret.dataset.approvalId;
+      if (!menu || (caret.getAttribute('aria-expanded') === 'true' && !menu.hide()) || !mayAnswer() || !pending().some((p) => p.approval_id === id)) return null;
+      caret.setAttribute('aria-expanded', 'true');
+      menu.show({ anchorEl: caret, placement: 'below', ariaLabel: caret.getAttribute('aria-label'), restoreFocusTo: caret, onHide: () => caret.setAttribute('aria-expanded', 'false'),
+        items: [{ label: caret.dataset.teamMoreLabel, description: caret.dataset.teamMoreNote, action: () => { void decide({ dataset: { approvalId: id, action: 'approve', teamAlways: caret.dataset.teamMore } }); } }] });
+      return null;
+    }
+
     // What this member asked for is noted before the call, so a `decision_changed` that arrives first builds the
     // whole receipt; an always that did not land shows its sentence in the receipt; the card goes once answered.
     // Answers true when the host took the decision, false when it refused, null when nothing was asked.
     async function decide(target) {
+      if (target.dataset.action === 'more') return openMore(target);
       const a = pending().find((p) => p.approval_id === target.dataset.approvalId);
       if (!a || !mayAnswer() || busy.has(a.approval_id)) return null;
       const approved = target.dataset.action === 'approve';
@@ -250,7 +275,7 @@
       const answer = await send({ stream_id: a.stream_id, approval_id: a.approval_id, decision_revision: a.decision_revision, approved, ...(always ? { always } : {}) });
       if (!answer) return null;
       busy.delete(a.approval_id);
-      if (!answer.ok) lost.set(a.approval_id, errorText(answer.error));
+      if (!answer.ok) lost.set(a.approval_id, { text: errorText(answer.error), revision: a.decision_revision });
       else {
         remember(answered, a.approval_id, true);
         const result = answer.always_result;
@@ -284,7 +309,7 @@
       redraw();
       let stopped = null;
       for (const a of group().filter((one) => !approved || offersAllow(one))) {
-        if ((await decide({ dataset: { approvalId: a.approval_id, action: approved ? 'approve' : 'deny' } })) === false) { stopped = lost.get(a.approval_id) || ''; break; }
+        if ((await decide({ dataset: { approvalId: a.approval_id, action: approved ? 'approve' : 'deny' } })) === false) { stopped = (lost.get(a.approval_id) || {}).text || ''; break; }
       }
       batching = false;
       redraw();
@@ -293,11 +318,15 @@
 
     return {
       pending, decided, decide, ruleAnswered, batch, decideAll,
-      cardsHtml: () => pending().map((a) => cardHtml(a, { busy: busy.has(a.approval_id), note: lost.get(a.approval_id) || '' })).join(''),
+      cardsHtml: () => pending().map((a) => cardHtml(a, { busy: busy.has(a.approval_id), note: (lost.get(a.approval_id) || {}).text || '' })).join(''),
       // `placed(approvalId)` (item 11): a decision the host's receipt already draws under its turn is left out here.
       receiptsHtml: (placed = () => false) => receipts.filter((r) => !placed(r.approval_id)).map(receiptHtml).join('') + outcomes.map(outcomeHtml).join(''),
-      // A new snapshot: lost answers are forgotten, and so is an answered approval the snapshot no longer lists.
-      taken(next) { lost.clear(); for (const id of [...answered.keys()]) if (!next.pending_approvals.some((a) => a.approval_id === id)) answered.delete(id); },
+      // A new snapshot: a lost answer stays while its approval is listed at the same decision revision; an answered approval the snapshot no longer lists is forgotten.
+      taken(next) {
+        const listed = next.pending_approvals;
+        for (const [id, one] of [...lost]) if (!listed.some((a) => a.approval_id === id && a.decision_revision === one.revision)) lost.delete(id);
+        for (const id of [...answered.keys()]) if (!listed.some((a) => a.approval_id === id)) answered.delete(id);
+      },
       counts: () => ({ receipts: receipts.length, outcomes: outcomes.length, answered: answered.size }),
     };
   }
@@ -432,24 +461,28 @@
 
   // ------------------------------------------------------------ copy
 
-  function createCopy({ timers, view }) {
-    let timer = null;
+  // `say(text)`: where a failed copy is also said (the box's note), besides the button's own label.
+  function createCopy({ timers, view, say }) {
+    const shown = new Map(); // button -> { label, icon, timer }: what it was before it said anything (kept across quick clicks)
     let stopped = false;
     return {
       // Said on the button itself for a moment; a redraw of the log puts the plain button back.
       async copy(target, text) {
+        if (typeof text !== 'string') return;
         const clipboard = view && view.jennyShell && view.jennyShell.clipboard;
-        if (typeof text !== 'string' || !clipboard || typeof clipboard.writeText !== 'function') return;
-        try { await clipboard.writeText(text); } catch (_error) { return; }
+        let ok = false;
+        try { if (clipboard && typeof clipboard.writeText === 'function') { await clipboard.writeText(text); ok = true; } } catch (_error) { ok = false; }
         if (stopped || !target.isConnected) return;
-        const label = target.getAttribute('aria-label');
-        const icon = target.innerHTML;
-        target.innerHTML = CHECK;
-        target.setAttribute('aria-label', jt('team.conv.copied', 'Copied'));
-        if (timer !== null) timers.clear(timer);
-        timer = timers.set(() => { timer = null; if (target.isConnected) { target.innerHTML = icon; target.setAttribute('aria-label', label); } }, COPIED_MS);
+        const was = shown.get(target) || { label: target.getAttribute('aria-label'), icon: target.innerHTML, timer: null };
+        if (was.timer !== null) timers.clear(was.timer);
+        const said = ok ? jt('team.conv.copied', 'Copied') : jt('team.message.copyFailed', 'The message could not be copied.');
+        target.innerHTML = ok ? CHECK : was.icon;
+        target.setAttribute('aria-label', said);
+        if (!ok && typeof say === 'function') say(said);
+        was.timer = timers.set(() => { shown.delete(target); if (target.isConnected) { target.innerHTML = was.icon; target.setAttribute('aria-label', was.label); } }, COPIED_MS);
+        shown.set(target, was);
       },
-      stop() { stopped = true; if (timer !== null) { timers.clear(timer); timer = null; } },
+      stop() { stopped = true; for (const one of shown.values()) timers.clear(one.timer); shown.clear(); },
     };
   }
 
@@ -517,10 +550,11 @@
   function createPop({ s, ch, popper, host, root, scroller, board, questions, asking, mayAnswer, draw, earlier, stop, focusBox, renders }) {
     let extra = null;
     const chipFor = (id) => Array.from(root.querySelectorAll('.team-turn-chip')).find((el) => el.dataset.turnId === id) || null;
-    function open(id) {
+    // `keepFocus`: a step from the popover's own button leaves the focus on that button (the chip's click moves it in).
+    function open(id, keepFocus = false) {
       s.popTurn = id;
       draw();
-      if (popper().isOpen()) popper().focus();
+      if (!keepFocus && popper().isOpen()) popper().focus();
     }
     function close() {
       const id = s.popTurn;
@@ -535,8 +569,8 @@
       const at = v.turns.findIndex((t) => t.id === s.popTurn);
       if (at < 0) return;
       const next = v.turns[at + by];
-      if (next) { open(next.id); return; }
-      if (by < 0 && (await earlier())) { const again = ch.view(); const now = again.turns.findIndex((t) => t.id === s.popTurn); if (now > 0) open(again.turns[now - 1].id); }
+      if (next) { open(next.id, true); return; }
+      if (by < 0 && (await earlier())) { const again = ch.view(); const now = again.turns.findIndex((t) => t.id === s.popTurn); if (now > 0) open(again.turns[now - 1].id, true); }
     }
     // The cards are synced when what they are drawn from changed (the popover keeps a card's node while its markup stays).
     function paint(v) {
@@ -562,5 +596,5 @@
     return { open, close, paint, action };
   }
 
-  return { RENAME_ID, remember, noteLine, poolNodes, poolRead, oneModel, teamModel, channelShellHtml, createLease, createHistory, createApprovals, createQuestions, createTitle, createCopy, createPainter, headHtml, createPop };
+  return { RENAME_ID, remember, noteLine, sendAgainWhy, poolNodes, poolRead, oneModel, teamModel, channelShellHtml, createLease, createHistory, createApprovals, createQuestions, createTitle, createCopy, createPainter, headHtml, createPop };
 });

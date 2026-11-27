@@ -13,7 +13,7 @@ const {
   refusalMessageForStatus,
   withVramPreflight,
 } = require('../services/backend/vram-load-preflight');
-const { parseLinuxHolders, parseWindowsHolders } = require('../services/gpu-memory-holders');
+const { holderMbOnCard, listGpuMemoryHolders, parseLinuxHolders, parseWindowsHolders } = require('../services/gpu-memory-holders');
 
 const MIB = 1024 * 1024;
 
@@ -326,7 +326,7 @@ test('holder parsers keep names and parent chains and drop small or malformed ro
     { pid: 3, mb: 100, chain: [] },
     { pid: 'x', mb: 9000 },
   ]));
-  assert.deepEqual(windows, [{ pid: 25432, mb: 23496, name: 'llama-server.exe', chain: [{ pid: 25432, name: 'llama-server.exe' }] }]);
+  assert.deepEqual(windows, [{ pid: 25432, mb: 23496, name: 'llama-server.exe', chain: [{ pid: 25432, name: 'llama-server.exe' }], cards: [] }]);
   assert.deepEqual(parseWindowsHolders('{"pid":7,"mb":4000,"chain":[{"pid":7,"name":"a.exe"}]}').map((entry) => entry.name), ['a.exe']);
   assert.deepEqual(parseWindowsHolders('not json'), []);
   const proc = {
@@ -341,4 +341,61 @@ test('holder parsers keep names and parent chains and drop small or malformed ro
   assert.equal(linux.length, 1);
   assert.equal(linux[0].name, 'llama server');
   assert.deepEqual(linux[0].chain.map((link) => link.name), ['llama server', 'ollama', 'systemd']);
+});
+
+// Row 187 G1. Two cards: nvidia-smi lists the 5090 as index 0 at 01:00.0 and a second card as index 1 at 05:00.0;
+// an integrated GPU at 00:02.0 is in the Windows counters and not in nvidia-smi.
+const CARD_ROWS = '0, 00000000:01:00.0\n1, 00000000:05:00.0\n';
+const helperRows = () => JSON.stringify([
+  { pid: 900, mb: 21000, chain: [{ pid: 900, name: 'game.exe' }], cards: [{ bus: '05:00.0', mb: 20400 }, { bus: '01:00.0', mb: 600 }] },
+  { pid: 950, mb: 700, chain: [{ pid: 950, name: 'dwm.exe' }], cards: [{ bus: '00:02.0', mb: 400 }, { bus: '01:00.0', mb: 300 }] },
+]);
+
+test('G1: holders are grouped per card with the card’s nvidia-smi index; unmatched cards leave the lists empty', () => {
+  const holders = parseWindowsHolders(helperRows(), CARD_ROWS);
+  assert.deepEqual(holders.map((entry) => [entry.pid, entry.mb, entry.cards]), [
+    [900, 21000, [{ index: 1, mb: 20400 }, { index: 0, mb: 600 }]],
+    [950, 700, [{ index: null, mb: 400 }, { index: 0, mb: 300 }]],
+  ]);
+  assert.deepEqual([holderMbOnCard(holders[0], { index: 0 }), holderMbOnCard(holders[0], { index: 1 }), holderMbOnCard(holders[1], { index: 1 })], [600, 20400, 0]);
+  assert.equal(holderMbOnCard(holders[0], { usedMb: 1, totalMb: 2 }), 21000, 'a summed sample has no card: all of it');
+  for (const rows of ['', 'garbage']) {
+    const blind = parseWindowsHolders(helperRows(), rows);
+    assert.deepEqual(blind.map((entry) => entry.cards), [[], []], 'nvidia-smi listed no card: ' + rows);
+    assert.equal(holderMbOnCard(blind[0], { index: 0 }), 21000, 'cards not told apart: all of it');
+  }
+  // Only an integrated GPU's holder is listed: it is on another card, not on the one nvidia-smi lists.
+  const igpu = parseWindowsHolders(JSON.stringify([{ pid: 5, mb: 600, chain: [{ pid: 5, name: 'msedge.exe' }], cards: [{ bus: '00:02.0', mb: 600 }] }]), '0, 00000000:02:00.0\n');
+  assert.deepEqual([igpu[0].cards, holderMbOnCard(igpu[0], { index: 0 })], [[{ index: null, mb: 600 }], 0]);
+  // A card whose address could not be read is counted wherever the model loads, as before the cards were told apart.
+  const lost = parseWindowsHolders(JSON.stringify([{ pid: 6, mb: 9000, chain: [{ pid: 6, name: 'game.exe' }], cards: [{ bus: '', mb: 8000 }, { bus: '05:00.0', mb: 1000 }] }]), CARD_ROWS);
+  assert.deepEqual([holderMbOnCard(lost[0], { index: 0 }), holderMbOnCard(lost[0], { index: 1 })], [8000, 9000]);
+  const proc = { '/proc/50/stat': '50 (llama server) S 1 50 50 0', '/proc/1/stat': '1 (systemd) S 0 1 1 0' };
+  const linux = parseLinuxHolders('50, 9000, 00000000:05:00.0\n50, 500, 00000000:01:00.0\n', { readFileSync: (file) => proc[file] }, CARD_ROWS);
+  assert.deepEqual([linux[0].mb, linux[0].cards], [9500, [{ index: 1, mb: 9000 }, { index: 0, mb: 500 }]]);
+});
+
+test('G1: the Windows lookup reads the helper’s rows and the card list together; a failed helper names nobody', async () => {
+  const calls = [];
+  const execFile = (file, args, _options, done) => {
+    calls.push(file);
+    if (file === 'nvidia-smi') return done(null, CARD_ROWS);
+    return done(null, helperRows());
+  };
+  const holders = await listGpuMemoryHolders({ platform: 'win32', execFile });
+  assert.deepEqual(calls.sort(), ['nvidia-smi', 'powershell.exe']);
+  assert.deepEqual(holders.map((entry) => [entry.name, holderMbOnCard(entry, { index: 0 })]), [['game.exe', 600], ['dwm.exe', 300]]);
+  const noCards = await listGpuMemoryHolders({ platform: 'win32', execFile: (file, _a, _o, done) => (file === 'nvidia-smi' ? done(new Error('missing')) : done(null, helperRows())) });
+  assert.deepEqual(noCards.map((entry) => [entry.mb, entry.cards]), [[21000, []], [700, []]], 'no nvidia-smi: holders are still named, by their whole memory');
+  assert.deepEqual(await listGpuMemoryHolders({ platform: 'win32', execFile: (_f, _a, _o, done) => done(new Error('constrained')) }), []);
+});
+
+test('G1: memory a program holds on another card is neither named nor credited on the loading card', async () => {
+  const holders = parseWindowsHolders(helperRows(), CARD_ROWS);
+  const refused = await preflight({ samples: [vramSample(25000)], holders }).instance.check({ engine: 'ollama', requiredMb: 28000, reclaimPids: [900] });
+  assert.equal(refused.ok, false, 'the 20.4 GB the replaced program holds on the other card frees nothing here');
+  assert.deepEqual(refused.holders.map((entry) => [entry.name, entry.mb]), [['dwm.exe', 300]], 'named with what it holds on this card; the reclaimed one is not named');
+  assert.equal(refused.freeMb, 32607 - 25000 + 600, 'its 600 MB on this card is credited');
+  const admitted = await preflight({ samples: [vramSample(25000)], holders }).instance.check({ engine: 'ollama', requiredMb: 9000, reclaimPids: [900] });
+  assert.deepEqual(admitted, { ok: true, reason: 'reclaimable' });
 });

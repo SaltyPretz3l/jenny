@@ -149,6 +149,9 @@ test('the sender\'s row in every state, with its buttons and their calls', async
   const cases = [
     [outgoing({ state: 'reading', read_done: false }), 'Reading the file before offering it to Maya.', ['Cancel']],
     [outgoing({ audience: 'team', member_id: null, member_name: null, state: 'reading' }), 'Reading the file before offering it to everyone in Studio.', ['Cancel']],
+    [outgoing({ state: 'offering' }), 'Offering to Maya. Waiting to reach Studio.', ['Cancel']],
+    [outgoing({ state: 'offering', audience: 'team', member_id: null, member_name: null }), 'Offering to everyone in Studio. Waiting to reach the host.', ['Cancel']],
+    [outgoing({ state: 'offering', read_done: 400_000_000 }), 'Reading the file before offering it to Maya.', ['Cancel']],
     [outgoing(), 'Offered to Maya. Waiting for them to accept. The offer ends after 24 hours with no answer.', ['Withdraw']],
     [outgoing({ audience: 'team', member_id: null, member_name: null }), 'Offered to everyone in Studio. Nobody has taken it yet.', ['Withdraw']],
     [outgoing({ transfers: [transfer({ state: 'accepted', queued: true })] }), 'Maya accepted. Waiting for a turn: the team moves only a few models at a time.', ['Stop']],
@@ -168,6 +171,10 @@ test('the sender\'s row in every state, with its buttons and their calls', async
     assert.deepEqual([...block.querySelectorAll('button')].map((b) => b.textContent.trim()), buttons, line);
     for (const b of block.querySelectorAll('button')) assert.ok(b.title, 'every button has a tooltip');
   }
+  const offering = await openShare(t, withState({ outgoing: [outgoing({ state: 'offering' })] }));
+  assert.equal(offering.act('withdraw').title, 'Withdraw this offer', 'the Cancel of an offer already read withdraws it');
+  const reading = await openShare(t, withState({ outgoing: [outgoing({ state: 'reading', read_done: 5 })] }));
+  assert.equal(reading.act('withdraw').title, 'Stop reading and offer nothing');
   const people = await openShare(t, withState({ outgoing: [outgoing({ audience: 'team', member_id: null, member_name: null, transfers: [transfer(),
     transfer({ transfer_id: 'mxfer_TX2aaaaaaaaaaaaaaaaaaa', member_name: 'Arjun', state: 'accepted', queued: true }), transfer({ transfer_id: 'mxfer_TX3aaaaaaaaaaaaaaaaaaa', member_name: 'Brendan', state: 'done' })] })] }));
   const list = people.row(CARD).querySelector('.mrow-share-people');
@@ -206,6 +213,11 @@ test('incoming rows in every state, the two lines only while something is incomi
     [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_hash_mismatch' }) }), 'It did not arrive as Arjun sent it, after three tries. Nothing was kept.', ['Try again', 'Dismiss']],
     [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_not_gguf' }) }), 'This is not a model file Jenny can use, so it was not added. Nothing was kept.', ['Dismiss']],
     [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'cancelled_by_sender' }) }), 'Arjun stopped sending. Dismiss removes what had arrived.', ['Dismiss']],
+    [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'withdrawn' }) }), 'Arjun stopped sending. Dismiss removes what had arrived.', ['Dismiss']],
+    [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'expired' }) }), 'The offer from Arjun ran out before this finished. Dismiss removes what had arrived.', ['Dismiss']],
+    [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'member_gone' }) }), 'Arjun is no longer in the team, so this stopped. Dismiss removes what had arrived.', ['Dismiss']],
+    [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'host_stopping' }) }), 'The team’s server stopped, so the offer ended. Dismiss removes what had arrived.', ['Dismiss']],
+    [incoming({ state: 'ended', transfer: take({ state: 'paused', reason: 'paused_by_receiver' }) }), 'Paused. What has arrived is kept.', ['Resume', 'Cancel']],
     [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_exists' }) }), 'A file with the same name appeared in that folder while this arrived. Nothing was overwritten, and what arrived was removed.', ['Dismiss']],
     [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_staging_failed' }) }), 'Jenny could not write to that folder. Check the folder, then try again.', ['Try again', 'Dismiss']],
   ];
@@ -222,17 +234,69 @@ test('incoming rows in every state, the two lines only while something is incomi
   assert.equal(offered.row(':offer:offer_IN1aaaaaaaaaaaaaaaaaaa').querySelector('.mrow-meta').textContent, 'Arjun offers this · 2 files · 1.9 GB');
   const away = await openShare(t, { teams: [team(TEAM)], answers: { modelState: stateAnswer({ online: false, incoming: [incoming({ transfer: take({ state: 'interrupted', reason: 'sender_offline' }) })] }) } });
   assert.equal(away.row(':offer:offer_IN1aaaaaaaaaaaaaaaaaaa').querySelector('.model-card-note').textContent, 'Not connected to Studio. What has arrived is kept and carries on when you are connected.');
-  const calls = [['receive-pause', 'modelReceivePause', take()], ['receive-cancel', 'modelReceiveCancel', take()], ['receive-resume', 'modelReceiveResume', take({ state: 'paused', reason: 'paused_by_receiver' })],
+  const calls = [['receive-pause', 'modelReceivePause', take()], ['receive-cancel', 'modelReceiveCancel', take({ bytes_done: 0 })], ['receive-resume', 'modelReceiveResume', take({ state: 'paused', reason: 'paused_by_receiver' })],
     ['receive-retry', 'modelReceiveRetry', take({ state: 'failed', reason: 'model_hash_mismatch' })], ['decline', 'modelDecline', null]];
   for (const [action, method, transferRow] of calls) {
     const s = await openShare(t, withState({ incoming: [incoming({ transfer: transferRow })] }));
     await s.clickAct(action);
     assert.deepEqual(s.sent(method), [{ team_id: TEAM, offer_id: 'offer_IN1aaaaaaaaaaaaaaaaaaa' }], action);
   }
-  const gone = await openShare(t, withState({ incoming: [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_not_gguf' }) })] }));
+  const gone = await openShare(t, withState({ incoming: [incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_not_gguf', bytes_done: 0 }) })] }));
   await gone.clickAct('in-dismiss');
   assert.deepEqual(gone.sent('modelReceiveCancel'), [{ team_id: TEAM, offer_id: 'offer_IN1aaaaaaaaaaaaaaaaaaa' }]);
   assert.equal(gone.rows().includes(':offer:offer_IN1aaaaaaaaaaaaaaaaaaa'), false, 'dismissed, and the two lines with it');
+});
+
+// ------------------------------------------------------------------ C22: the question before removing received data
+
+const IN1 = 'offer_IN1aaaaaaaaaaaaaaaaaaa';
+const asking = (s) => s.row(':offer:' + IN1).querySelector('.model-card-note').textContent;
+const labels = (s) => [...s.row(':offer:' + IN1).querySelectorAll('button')].map((b) => b.textContent.trim());
+const press = (s, el, key) => el.dispatchEvent(new s.h.windowRef.KeyboardEvent('keydown', { key, bubbles: true }));
+
+test('Cancel on a transfer with data asks first: Keep downloading restores the row and the focus, Remove cancels', async (t) => {
+  const s = await openShare(t, withState({ incoming: [incoming({ transfer: take() })] }));
+  s.act('receive-cancel').focus();
+  await s.clickAct('receive-cancel');
+  assert.deepEqual(s.sent('modelReceiveCancel'), [], 'nothing is cancelled yet');
+  assert.equal(asking(s), 'Remove the 476.8 MB received so far?');
+  assert.deepEqual(labels(s), ['Remove', 'Keep downloading']);
+  assert.equal(s.row(':offer:' + IN1).querySelector('[data-mshare-progress]') !== null, true, 'the bar stays');
+  // A progress push and a state push keep the question.
+  s.push({ kind: 'progress', direction: 'receive', transfer_id: 'mxfer_TXINaaaaaaaaaaaaaaaaaa', offer_id: IN1, bytes_done: 1_000_000_000, bytes_total: 2_000_000_000, rate_bps: 0 });
+  await flush();
+  assert.equal(asking(s), 'Remove the 953.7 MB received so far?', 'a push patches the bar and the size asked about');
+  s.push({ kind: 'state', ...stateAnswer({ incoming: [incoming({ transfer: take({ bytes_done: 1_000_000_000 }) })] }) });
+  await flush();
+  assert.equal(asking(s), 'Remove the 953.7 MB received so far?', 'a repaint keeps the question and uses the bytes now');
+  await s.clickAct('ask-keep');
+  assert.deepEqual(labels(s), ['Pause', 'Cancel']);
+  assert.equal(s.h.document.activeElement.getAttribute('data-mshare-action'), 'receive-cancel', 'focus is back on the button that asked');
+  await s.clickAct('receive-cancel');
+  await s.clickAct('ask-remove');
+  assert.deepEqual(s.sent('modelReceiveCancel'), [{ team_id: TEAM, offer_id: IN1 }]);
+});
+
+test('Dismiss on a failed row with data asks first; Escape keeps it; a transfer with nothing received cancels at once', async (t) => {
+  const failed = incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_not_gguf' }) });
+  const s = await openShare(t, withState({ incoming: [failed] }));
+  s.act('in-dismiss').focus();
+  await s.clickAct('in-dismiss');
+  assert.deepEqual(s.sent('modelReceiveCancel'), []);
+  assert.equal(asking(s), 'Remove the 476.8 MB received so far?');
+  assert.deepEqual(labels(s), ['Remove', 'Keep']);
+  assert.equal(s.h.document.activeElement.getAttribute('data-mshare-action'), 'ask-keep', 'focus lands on the safe choice');
+  press(s, s.act('ask-keep'), 'Escape');
+  await flush();
+  assert.deepEqual(labels(s), ['Dismiss']);
+  assert.equal(s.h.document.activeElement.getAttribute('data-mshare-action'), 'in-dismiss');
+  await s.clickAct('in-dismiss');
+  await s.clickAct('ask-remove');
+  assert.deepEqual(s.sent('modelReceiveCancel'), [{ team_id: TEAM, offer_id: IN1 }]);
+  assert.equal(s.rows().includes(':offer:' + IN1), false, 'dismissed once the data is gone');
+  const none = await openShare(t, withState({ incoming: [incoming({ transfer: take({ bytes_done: 0, queued: true }) })] }));
+  await none.clickAct('receive-cancel');
+  assert.deepEqual(none.sent('modelReceiveCancel'), [{ team_id: TEAM, offer_id: IN1 }], 'nothing received: no question');
 });
 
 test('a progress push repaints one bar: no row or list rebuilt, an open menu and drawer stay', async (t) => {

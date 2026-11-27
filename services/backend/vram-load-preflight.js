@@ -26,7 +26,7 @@ const path = require('path');
 const { t } = require('../i18n-main');
 const { buildFeatureFlags } = require('../feature-flags');
 const { largestGpuDevice, probeNvidiaSmiVram } = require('../gpu-vram-probe');
-const { listGpuMemoryHolders } = require('../gpu-memory-holders');
+const { MIN_HOLDER_MB, holderMbOnCard, listGpuMemoryHolders } = require('../gpu-memory-holders');
 const { getPidFilePath, readPidFile } = require('../llama-server-pidfile');
 const { isPortOpen } = require('./process-utils');
 
@@ -239,7 +239,9 @@ function createVramLoadPreflight({
       if (short() <= 0) return admit('credited', { engine, creditMb: credit });
       let holders = [];
       try {
-        holders = await listHolders();
+        // Counted on the card the model loads on: memory a program holds on another card frees nothing here.
+        holders = (await listHolders()).map((holder) => ({ ...holder, mb: holderMbOnCard(holder, device) }))
+          .filter((holder) => holder.mb >= MIN_HOLDER_MB);
       } catch (_error) { /* unnamed refusal below */ }
       const pids = new Set((Array.isArray(reclaimPids) ? reclaimPids : []).filter((pid) => Number(pid) > 0));
       const reclaimed = (holder) => holder.chain.some((link) => pids.has(link.pid));

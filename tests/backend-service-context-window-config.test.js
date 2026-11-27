@@ -73,3 +73,20 @@ test('managed config uses the selected llama-server profile window for openai-co
   assert.equal(config.context_length, 131072);
   assert.equal(config.context_length_override, null);
 });
+
+test('the chat-stream fan-out of a full desktop or team host does not trip the max-listeners warning', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-listeners-'));
+  trackDirectory(userDataPath);
+  const service = createService(userDataPath);
+  const warnings = [];
+  const onWarning = (warning) => { if (warning.name === 'MaxListenersExceededWarning') warnings.push(warning); };
+  process.on('warning', onWarning);
+  try {
+    for (let i = 0; i < 20; i += 1) service.on('chat-stream', () => {});
+    assert.equal(service.listenerCount('chat-stream'), 21);
+    assert.ok(service.getMaxListeners() >= 21);
+  } finally {
+    process.off('warning', onWarning);
+  }
+  assert.deepEqual(warnings, []);
+});

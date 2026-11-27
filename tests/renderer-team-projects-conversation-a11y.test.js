@@ -87,19 +87,19 @@ test('C10.1: the rows are one tab stop with arrows, Home and End; the toolbar bu
 });
 
 const writeApproval = () => ({ ok: true, snapshot: snapshot({ pending_approvals: [approval({ tool_name: 'write_file' })] }) });
-const buttonsOf = (m) => [...m.root.querySelectorAll('.tool-approval-block .tool-approve-btn, .tool-approval-block .tool-deny-btn')].map((b) => b.getAttribute('data-team-always') || b.getAttribute('data-approval-scope') || 'deny');
+const buttonsOf = (m) => [...m.root.querySelectorAll('.tool-approval-block .tool-approve-btn, .tool-approval-block .tool-deny-btn')].map((b) => b.getAttribute('data-team-more') || b.getAttribute('data-approval-scope') || 'deny');
 
 test('OD-2: while the rules are paused an approval card has only the one-off answers; unpaused it has the always button', async (t) => {
   const paused = mount(t, { role: 'admin', open: writeApproval(), answers: { projectRules: { ok: true, project_id: P1, revision: 1, rules: [], open_request_count: 0, requests: [], paused: 'file_tools' } } });
   await flush();
   assert.deepEqual(buttonsOf(paused), ['once', 'deny'], 'no Always allow while paused');
-  assert.equal(paused.q('.tool-approval-scope-note'), null, 'and no note about a rule');
+  assert.equal(paused.q('.tool-approve-caret'), null, 'and no caret');
   const writer = mount(t, { role: 'writer', open: writeApproval(), answers: { projectRules: { ok: true, project_id: P1, revision: 1, rules: [], open_request_count: 0, requests: [], paused: 'file_tools' } } });
   await flush();
   assert.deepEqual(buttonsOf(writer), ['once', 'deny'], 'no Allow once, ask for always for a writer either');
   const free = mount(t, { role: 'admin', open: writeApproval(), answers: { projectRules: { ok: true, project_id: P1, revision: 1, rules: [], open_request_count: 0, requests: [] } } });
   await flush();
-  assert.deepEqual(buttonsOf(free), ['once', 'rule', 'deny'], 'not paused: the always button is back');
+  assert.deepEqual(buttonsOf(free), ['once', 'rule', 'deny'], 'not paused: the caret is back');
 });
 
 test('OD-2: a rules read that fails keeps the always buttons away (fail closed); a later read that says unpaused brings them back', async (t) => {
@@ -140,5 +140,53 @@ test('C9.3: two conversations with their Tools panel, model popover, rename fiel
         }
       }
     }
+  }
+});
+
+test('T4: Earlier turn and Later turn in the turn popover leave the focus on the pressed button; the chip still moves it into the popover', async (t) => {
+  const turn = (n) => [message('u' + n, 'user', 'Question ' + n, { author: { kind: 'member', member_id: DOT }, turn_id: 'turn_' + n }), message('a' + n, 'assistant', 'Answer ' + n, { turn_id: 'turn_' + n })];
+  const m = mount(t, { open: { ok: true, snapshot: snapshot({ messages: [...turn(1), ...turn(2), ...turn(3)] }) } });
+  await flush();
+  const popEl = () => m.q('[id$="teamTurnPop"]');
+  const chip = (n) => m.q('.team-turn-chip[data-turn-id="turn_' + n + '"]');
+  click(m, chip(3));
+  assert.equal(m.window.document.activeElement, popEl().querySelector('.team-turn-pop__scroll'), 'the chip click moves the focus into the popover');
+  for (const [kind, shown] of [['prev', 'turn_2'], ['next', 'turn_3']]) {
+    const button = popEl().querySelector('[data-pop-action="' + kind + '"]');
+    button.focus();
+    click(m, button);
+    assert.equal(popEl().dataset.turnId, shown);
+    assert.equal(m.window.document.activeElement, popEl().querySelector('[data-pop-action="' + kind + '"]'), kind + ' keeps the focus');
+  }
+});
+
+test('D1: the caret opens the menu with the one always item and its note; Escape closes it and the focus returns to the caret; picking it sends the always answer', async (t) => {
+  t.after(() => { delete globalThis.inventoryContextMenu; });
+  globalThis.inventoryContextMenu = require('../renderer/inventory/context-menu');
+  for (const [role, label, always] of [['admin', 'Always allow edits in this project', 'rule'], ['writer', 'Allow once and ask an admin for always', 'ask']]) {
+    const m = mount(t, { role, open: writeApproval() });
+    await flush();
+    const doc = m.window.document;
+    const caret = m.q('.tool-approve-caret');
+    assert.equal(caret.getAttribute('aria-expanded'), 'false');
+    click(m, caret);
+    const items = [...doc.querySelectorAll('.inv-context-menu-item')];
+    assert.equal(items.length, 1, 'one item');
+    assert.equal(items[0].textContent.includes(label), true, role);
+    assert.match(items[0].textContent, role === 'admin' ? /Always allow saves a rule for write_file/ : /Ask for always lets the turn go on now/, 'the note is its description');
+    assert.equal(caret.getAttribute('aria-expanded'), 'true');
+    key(m, doc.activeElement, 'Escape');
+    assert.equal(doc.querySelector('.inv-context-menu-item'), null, 'Escape closes the menu');
+    assert.equal(doc.activeElement, caret, 'the focus returns to the caret');
+    click(m, caret);
+    click(m, caret);
+    assert.deepEqual([doc.querySelector('.inv-context-menu-item'), caret.getAttribute('aria-expanded')], [null, 'false'], 'a second click on the caret closes its menu');
+    assert.equal(caret.getAttribute('aria-expanded'), 'false');
+    click(m, caret);
+    doc.querySelector('.inv-context-menu-item').click();
+    await flush();
+    assert.equal(m.sent('conversationDecide').at(-1).always, always);
+    assert.equal(m.sent('conversationDecide').at(-1).approved, true);
+    m.restore();
   }
 });

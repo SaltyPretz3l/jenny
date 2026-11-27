@@ -9,7 +9,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const controls = require('../renderer/team/renderer-team-conversation-controls');
-const { S1, OTHER, DOT, MAYA, LENA, message, snapshot, flush } = require('./helpers/team-project-renderer-host');
+const { S1, OTHER, DOT, MAYA, LENA, message, snapshot, approval, flush } = require('./helpers/team-project-renderer-host');
 const { mount, field, type } = require('./helpers/team-conversation-mount');
 
 const T0 = Date.parse('2026-11-16T15:40:00.000Z');
@@ -307,4 +307,80 @@ test('the channel draws the folded lines between the rows in time order; a membe
   const order = [...m.root.querySelectorAll('[data-conv-region="log"] > *')].filter((el) => !el.matches('.team-day'))
     .map((el) => (el.matches('.team-conv-note') ? text(el).replace(/ · .*/, '') : el.dataset.messageId || 'jenny'));
   assert.deepEqual(order, ['m1', 'jenny', 'Dot turned off Write and edit files', 'm3', 'Dot set Jenny to gemma4-12b', 'Lena set Jenny back to the team default']);
+});
+
+// C15: an available file tools value means the host has project files on, which pauses the rules (server/team/team-project-rules.js
+// `pausedReason`, server/team-conversation-preferences.js `fileToolsState`): the sentence drops its rule clause until a read says the rules are not paused.
+test('C15: the write row says each change asks a writer first, and "unless a project rule allows it" only after a read says the rules are not paused', async (t) => {
+  const sub = (m) => text(m.q('[id$="teamPrefSub-write"]'));
+  const paused = mount(t, { open: opened({}, { pending_approvals: [approval()] }), gpus: GPUS, answers: { projectRules: { ok: true, rules: [], requests: [], paused: 'file_tools' } } });
+  await flush();
+  click(paused, chip(paused));
+  assert.equal(sub(paused), 'Each change asks a writer first.');
+  const open = mount(t, { open: opened({}, { pending_approvals: [approval()] }), gpus: GPUS, answers: { projectRules: { ok: true, rules: [], requests: [] } } });
+  await flush();
+  click(open, chip(open));
+  assert.equal(sub(open), 'Each change asks a writer first, unless a project rule allows it');
+  const off = mount(t, { open: opened({ file_tools: 'unavailable' }), gpus: GPUS });
+  await flush();
+  click(off, chip(off));
+  assert.match(text(off.q('[id$="teamPrefSub-write"]')), /^Off on this host/, 'file tools off: the host reason, not a rule sentence');
+});
+
+// ------------------------------------------------------------------ paused PCs in the picker (fix P)
+
+const paused = (member, label, models, over = {}) => ({ ...node(member, label, models), paused: true, ...over });
+const THINKS = [{ name: 'qwen3.8-27b', thinking: true }];
+
+test('P1: a model offered only by a paused PC is a disabled option marked "paused" with no green dot; as the own pick it holds Send with the paused line', async (t) => {
+  const gpus = { team_model: 'qwen3.8-27b', nodes: [node(DOT, 'Dot PC', THINKS), paused(MAYA, 'Maya PC', [{ name: 'gemma4-12b', thinking: false }])] };
+  const m = mount(t, { open: opened({ preferred_model: 'gemma4-12b' }), gpus });
+  await flush();
+  click(m, pill(m));
+  const gemma = option(m, 'gemma4-12b');
+  assert.deepEqual([gemma.disabled, gemma.classList.contains('is-unavailable'), text(gemma.querySelector('.composer-model-picker-meta'))], [true, true, 'paused']);
+  assert.equal(gemma.querySelector('[title="Available now"]'), null, 'no green dot');
+  assert.ok(option(m, 'qwen3.8-27b').querySelector('[title="Available now"]'), 'a model a ready PC offers keeps it');
+  assert.equal(pill(m).querySelector('.composer-model-pill-dot').classList.contains('status-dot--error'), true);
+  assert.equal(spoken(m.q('[data-conv-box="above"]')), 'gemma4-12b is paused. Pick another model or use the team default. Use the team default');
+  assert.equal(m.q('[data-conv-box="bar"] [data-project-action="send"]').disabled, true);
+});
+
+test('P1: a model one ready PC offers stays available while another PC with it is paused; a paused model nobody picked blocks nothing', async (t) => {
+  const both = { team_model: 'qwen3.8-27b', nodes: [paused(DOT, 'Dot PC', THINKS), node(MAYA, 'Maya PC', THINKS)] };
+  const a = mount(t, { open: opened({ preferred_model: 'qwen3.8-27b' }), gpus: both });
+  await flush();
+  assert.deepEqual([a.q('[data-conv-box="above"] .team-drive'), a.q('[data-conv-box="bar"] [data-project-action="send"]').disabled], [null, false]);
+  const other = { team_model: 'qwen3.8-27b', nodes: [node(DOT, 'Dot PC', THINKS), paused(MAYA, 'Maya PC', [{ name: 'gemma4-12b', thinking: false }])] };
+  const b = mount(t, { open: opened(), gpus: other });
+  await flush();
+  assert.deepEqual([b.q('[data-conv-box="above"] .team-drive'), b.q('[data-conv-box="bar"] [data-project-action="send"]').disabled], [null, false]);
+});
+
+test('P3: the team default nobody ready offers draws the line and the error dot but does not hold Send; a ready default draws neither', async (t) => {
+  const gpus = { team_model: 'qwen3.8-27b', nodes: [paused(DOT, 'Dot PC', THINKS), node(MAYA, 'Maya PC', [{ name: 'gemma4-12b', thinking: false }])] };
+  const m = mount(t, { open: opened(), gpus });
+  await flush();
+  assert.equal(spoken(m.q('[data-conv-box="above"]')), 'The team default, qwen3.8-27b, is not available now. Pick another model.');
+  assert.equal(pill(m).querySelector('.composer-model-pill-dot').classList.contains('status-dot--error'), true);
+  assert.equal(m.q('[data-conv-box="bar"] [data-project-action="send"]').disabled, false, 'Send is not held');
+  const ok = mount(t, { open: opened(), gpus: GPUS });
+  await flush();
+  assert.equal(ok.q('[data-conv-box="above"] .team-drive'), null);
+});
+
+test('unanswerable(): true when no ready PC offers the model this conversation would use (own pick, else the team default), including no GPUs at all; false while the pool is unknown', () => {
+  const make = (pool, preferred) => controls.createControls({ root: { ownerDocument: {} }, pool: () => pool, session: () => ({ preferred_model: preferred }),
+    mayDrive: () => true, driver: () => null, role: () => 'writer', running: () => false, nameOf: (id) => id });
+  const gpus = { team_model: 'qwen3.8-27b', nodes: [node(DOT, 'Dot PC', THINKS), paused(MAYA, 'Maya PC', [{ name: 'gemma4-12b', thinking: false }])] };
+  assert.equal(make(gpus, null).unanswerable(), false, 'the default is offered by a ready PC');
+  assert.equal(make(gpus, 'qwen3.8-27b').unanswerable(), false);
+  assert.equal(make(gpus, 'gemma4-12b').unanswerable(), true, 'only a paused PC offers it');
+  assert.equal(make(gpus, 'gone').unanswerable(), true, 'nobody offers it');
+  assert.equal(make({ ...gpus, team_model: 'gemma4-12b' }, null).unanswerable(), true, 'the team default is on a paused PC');
+  assert.equal(make({ team_model: 'qwen3.8-27b', nodes: [] }, null).unanswerable(), true, 'nobody shares a GPU');
+  assert.equal(make({ team_model: '', nodes: [] }, null).unanswerable(), true, 'Automatic with nobody sharing');
+  assert.equal(make({ team_model: '', nodes: [node(DOT, 'Dot PC', THINKS)] }, null).unanswerable(), false, 'Automatic with a ready PC');
+  assert.equal(make(null, 'gemma4-12b').unanswerable(), false, 'the pool is not read yet');
+  assert.equal(make({ nodes: [{ ...node(DOT, 'Dot PC', THINKS), online: false }] }, null).unanswerable(), true, 'an offline PC offers nothing');
 });

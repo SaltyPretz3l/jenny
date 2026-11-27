@@ -243,3 +243,44 @@ test('a pinned cloud model is marked and keeps its Pinned badge; a team model is
   assert.equal(cloudOf(team).cloud, false);
   assert.equal(cloudOf(team).icon, false);
 });
+
+// Layout D4 A: the team model notice sits once under each team's group heading, not inside every row.
+const TEAM_NOTICE = 'The team’s host and the person whose hardware responds can read your prompts and replies.';
+const teamModel = (team, name, id) => ({ id: `team/${id}/${name}`, engine_type: 'openai-compatible', team_id: id, team_name: team });
+
+test('the team notice is drawn once under each team heading and the rows carry none', (t) => {
+  const catalog = [{ id: 'qwen3:27b', engine_type: 'ollama' }, { id: 'qwen3:8b', engine_type: 'ollama' },
+    teamModel('Studio', 'a:1b', 'team_s'), teamModel('Studio', 'b:2b', 'team_s'), teamModel('Studio', 'c:3b', 'team_s'), teamModel('Garage', 'd:4b', 'team_g')];
+  const h = harness(t, { pin: '', sessionId: 'other', preferred: '', catalog });
+  h.open();
+  const notes = [...h.host.querySelectorAll('.composer-model-picker-group-note')];
+  assert.equal(notes.length, 2, 'one per team');
+  assert.ok(notes.every((note) => note.textContent === TEAM_NOTICE));
+  assert.equal(h.host.textContent.split(TEAM_NOTICE).length - 1, 2, 'the sentence appears nowhere else');
+  assert.equal(h.host.querySelectorAll('[data-picker-model^="team/"] .composer-model-picker-hint').length, 0, 'no team row carries it');
+  const studio = notes[0];
+  assert.equal(studio.previousElementSibling.textContent, 'Studio', 'directly under the team name');
+  assert.equal(studio.nextElementSibling.dataset.pickerModel, 'team/team_s/a:1b', 'above its first model');
+  const group = studio.closest('[role="group"]');
+  assert.equal(group.getAttribute('aria-describedby'), studio.id);
+  assert.equal(group.querySelectorAll('[data-picker-model]').length, 3);
+  assert.equal(h.host.querySelectorAll('[data-picker-model="qwen3:27b"] .composer-model-picker-hint').length, 0);
+});
+
+test('a team that is the only group still shows the notice, and a search that leaves one team row keeps it', (t) => {
+  const only = harness(t, { pin: '', sessionId: 'other', preferred: '', catalog: [teamModel('Studio', 'a:1b', 'team_s')] });
+  only.open();
+  assert.equal(only.host.querySelectorAll('.composer-model-picker-group-note').length, 1);
+  const many = [...Array.from({ length: 8 }, (_, i) => ({ id: `loc${i}:7b`, engine_type: 'ollama' })), teamModel('Studio', 'zed:1b', 'team_s'), teamModel('Studio', 'yak:2b', 'team_s')];
+  const h = harness(t, { pin: '', sessionId: 'other', preferred: '', catalog: many });
+  h.open();
+  const search = h.host.querySelector('[data-picker-search]');
+  search.value = 'zed';
+  search.dispatchEvent(new h.dom.window.Event('input', { bubbles: true }));
+  assert.deepEqual(optionIds(h).filter((id) => id.startsWith('team/')), ['team/team_s/zed:1b']);
+  assert.equal(h.host.querySelectorAll('.composer-model-picker-group-note').length, 1);
+  const again = h.host.querySelector('[data-picker-search]');
+  again.value = 'loc1';
+  again.dispatchEvent(new h.dom.window.Event('input', { bubbles: true }));
+  assert.equal(h.host.querySelectorAll('.composer-model-picker-group-note').length, 0, 'no team row listed, no note');
+});

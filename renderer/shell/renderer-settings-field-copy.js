@@ -252,7 +252,7 @@
       sectionId: 'appearance',
       keywords: ['zoom', jt('settings.fieldCopy.appearanceAppZoomSelect.keywords.uiScale', 'ui scale'), jt('settings.fieldCopy.appearanceAppZoomSelect.keywords.appSize', 'app size'), 'magnify'],
     },
-    appearanceTeamDensitySelect: { label: jt('settings.fieldCopy.appearanceTeamDensitySelect.label', 'Team chat density'), sectionId: 'team',
+    appearanceTeamDensitySelect: { label: jt('settings.fieldCopy.appearanceTeamDensitySelect.label', 'Team chat density'), sectionId: 'chat',
       description: jt('settings.fieldCopy.appearanceTeamDensitySelect.description', 'How close messages sit in the Team tab. Compact drops the pictures and puts the time, name and text on one line.'),
       keywords: [jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.team', 'team'), jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.compact', 'compact'), jt('settings.fieldCopy.appearanceTeamDensitySelect.keywords.density', 'density')] },
     appearanceResetButton: {

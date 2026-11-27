@@ -243,7 +243,7 @@ test('team models list under "From your teams" with the team in the name, read-o
   for (const row of rows) {
     assert.equal(row.querySelector('button'), null, 'no Load, Tune, Set as default or menu');
     assert.doesNotMatch(row.textContent, /Ollama|team\/team_/);
-    assert.match(row.textContent, /can read your prompts/, 'the D7 notice');
+    assert.doesNotMatch(row.textContent, /can read your prompts/, "the notice is the group's, not the row's");
   }
   assert.equal(root.querySelector('[data-model-key^="team/"]'), null, 'no On this PC row');
   assert.deepEqual(view.libraryRowsModel(teamMerged(), options).counts, { all: 4, mine: 2, get: 2 }, 'On this PC counts exclude team models');
@@ -256,6 +256,29 @@ test('team models list under "From your teams" with the team in the name, read-o
   const none = fragment(`<div>${view.buildLibraryList(teamMerged({ teamModels: [] }), options)}</div>`);
   assert.equal(none.querySelector('[data-team-model]'), null);
   assert.equal([...none.querySelectorAll('.mrow-sep')].some((el) => /From your teams/.test(el.textContent)), false, 'no group without a team model');
+});
+
+// Layout D4 A: the team model privacy notice is drawn once under the group heading, not under every row.
+test('the team model notice is drawn once, directly under "From your teams", and every team row points at it', () => {
+  const notice = 'The team’s host and the person whose hardware responds can read your prompts and replies.';
+  const three = teamMerged({ teamModels: ['a', 'b', 'c'].map((n) => ({ id: `team/team_alpha1/m-${n}`, modelId: `m-${n}`, teamId: 'team_alpha1', teamName: 'Studio', contextLength: 8192 })) });
+  const options = { scope: 'all', query: '', sort: 'name', actions: ['use', 'tune', 'pull', 'menu', 'unload'] };
+  const count = (html) => html.split(notice).length - 1;
+  const html = view.buildLibraryList(three, options);
+  assert.equal(count(html), 1, 'once for three team rows');
+  const root = fragment(`<div>${html}</div>`);
+  const sep = root.querySelector('[data-item="sep-team"]');
+  const note = root.querySelector('.mlib-team-note');
+  assert.equal(note.textContent, notice);
+  assert.equal(sep.nextElementSibling, note, 'directly under the heading, above the first row');
+  assert.equal(note.nextElementSibling.dataset.teamModel, 'team/team_alpha1/m-a');
+  assert.ok(note.id);
+  for (const row of root.querySelectorAll('[data-team-model]')) assert.equal(row.getAttribute('aria-describedby'), note.id);
+  const one = view.buildLibraryList(three, { ...options, query: 'm-b' });
+  assert.equal(count(one), 1, 'a search that leaves one team row still shows the notice');
+  assert.equal(fragment(`<div>${one}</div>`).querySelectorAll('[data-team-model]').length, 1);
+  assert.equal(count(view.buildLibraryList(teamMerged({ teamModels: [] }), options)), 0, 'no team model, no notice');
+  assert.equal(count(view.buildLibraryList(three, { ...options, scope: 'mine' })), 0, 'no group outside All, no notice');
 });
 
 // --- row 200: the Strata row ---

@@ -161,7 +161,7 @@
 
     // The first read starts after the page holds this section (its first redraw would otherwise make another).
     void Promise.resolve().then(() => { if (!disposed) void load(); });
-    return { html, onClick, refresh: load, dispose() { disposed = true; entries = []; } };
+    return { html, latest: () => (loaded && !error ? (entries.length ? entries[0].entry.at : 0) : null), onClick, refresh: load, dispose() { disposed = true; entries = []; } };
   }
 
   return { createActivity, sizeText };

@@ -702,6 +702,8 @@
       // behavior; defaultPrevented also protects any earlier consumer.
       if (!ownsKeys()) return;
       if (event.defaultPrevented) return;
+      // Row 117: inside the browser panel Ctrl+F is the page's find (renderer-browser-use-bar.js), whichever listener runs first.
+      if (event.target && typeof event.target.closest === 'function' && event.target.closest('.bu-shell')) return;
       event.preventDefault();
       event.stopPropagation();
       open({ seed: selectionSeed() });

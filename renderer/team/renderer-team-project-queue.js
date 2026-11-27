@@ -165,11 +165,11 @@
     const words = state === 'waiting' ? jt('team.queue.waits', 'Waits for Jenny’s turn to end')
       : state === 'sending' ? jt('team.queue.sending', 'Sending…')
         : str(entry.note) || notSent();
-    const button = (action, label, disabled) => actionButton({ plain: true, className: 'team-foot-btn', label, disabled: Boolean(disabled),
+    const button = (action, label, disabled, title) => actionButton({ plain: true, className: 'team-foot-btn', label, disabled: Boolean(disabled), ...(title ? { title } : {}),
       dataset: { 'project-action': action, 'queue-id': id } });
     const busy = state === 'sending';
     return '<span class="team-queued" dir="auto">' + escapeHtml(words) + '</span>'
-      + (state === 'paused' || state === 'failed' ? button('queue-send', jt('team.queue.sendNow', 'Send now'), running) : '')
+      + (state === 'paused' || state === 'failed' ? button('queue-send', jt('team.queue.sendNow', 'Send now'), running, running ? jt('team.queue.sendNowWaits', 'Waits until Jenny’s turn ends.') : '') : '')
       + button('queue-edit', jt('team.queue.edit', 'Edit'), busy)
       + button('queue-discard', jt('team.queue.discard', 'Discard'), busy);
   }

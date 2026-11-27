@@ -297,7 +297,7 @@
       // Offers waiting for this member's answer, across teams (the Team tab's number, decision 11).
       offerCount() {
         let total = 0;
-        for (const state of byTeam.values()) total += state.incoming.filter((row) => row.state === 'open' && !row.transfer).length;
+        for (const state of byTeam.values()) total += state.incoming.filter((row) => row.state === 'open' && !row.transfer && !dismissed.has(row.offer_id)).length;
         return total;
       },
       setReview(teamId, offerId) { review = id(teamId) && id(offerId) ? { team_id: teamId, offer_id: offerId } : null; emit({ type: 'review' }); },

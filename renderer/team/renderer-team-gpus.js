@@ -89,8 +89,8 @@
     switch (row.state) {
       case 'ready': return jt('team.gpus.readyText', 'Ready: it takes the next request for its models.');
       case 'busy': return jt('team.gpus.busyText', 'Busy answering a request.');
-      case 'inuse': return jt('team.gpus.inUseText', '{owner} is using it. It takes requests again when they are done.', { owner: row.owner });
-      case 'paused': return jt('team.gpus.pausedText', '{owner} has paused it. Requests only it can answer wait up to 10 minutes.', { owner: row.owner });
+      case 'inuse': return jt('team.gpus.inUseText', '{owner} is using it. It takes requests again when they are done. Requests for its models fail meanwhile.', { owner: row.owner });
+      case 'paused': return jt('team.gpus.pausedText', '{owner} has paused it. It answers nothing until they resume.', { owner: row.owner });
       default: return jt('team.gpus.offlineText', 'Not connected. It is listed while {owner} still shares it.', { owner: row.owner });
     }
   }

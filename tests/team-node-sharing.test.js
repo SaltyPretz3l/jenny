@@ -185,7 +185,7 @@ test('Pause, Resume, Stop now (beside Pause) and Stop after it do what the picks
   await s.drive(() => held.length === 1, 'forwarding a third time');
   await s.sharing.set(TEAM, false);
   assert.equal(s.store.records.get(TEAM).on, false);
-  assert.equal(s.sharing.snapshot(), null);
+  assert.equal(s.sharing.snapshot().state, 'finishing');
   assert.equal(s.host.of('team.node.unregister').length, 0, 'not before the request ended');
   held[0].end(Buffer.concat([sse('rest'), DONE]));
   await s.drive(() => s.host.of('team.node.unregister').length === 1, 'unregisters after it');
@@ -377,6 +377,37 @@ test('fix 11 and 20: Stop now in the stop-after-it window ends the request; turn
   await s.sharing.stopNow(TEAM);
   await s.drive(() => s.host.of('team.node.unregister').length === 1, 'stopped at once', 250, 20);
   assert.equal(job.state, 'failed');
+});
+
+test('C1: after Stop after it the state stays finishing, the saved setting is off, and it clears when the request ends', async (t) => {
+  const s = await setup(t);
+  await shareOn(s);
+  const held = holdEngine(s.engine);
+  const job = s.host.queueJob();
+  await s.drive(() => held.length === 1, 'forwarding');
+  const answer = await s.sharing.set(TEAM, false);
+  assert.equal(s.store.records.get(TEAM).on, false);
+  assert.equal(answer.sharing?.state, 'finishing');
+  assert.equal(s.sharing.snapshot().state, 'finishing');
+  assert.equal(s.sharing.snapshot().team_id, TEAM);
+  held[0].end(Buffer.concat([sse('rest'), DONE]));
+  await s.drive(() => s.sharing.snapshot() === null, 'finishing clears after the request');
+  assert.equal(job.state, 'done');
+});
+
+test('C1: Stop now in the finishing state ends the request at once and clears the state', async (t) => {
+  const s = await setup(t);
+  await shareOn(s);
+  const held = holdEngine(s.engine);
+  const job = s.host.queueJob();
+  await s.drive(() => held.length === 1, 'forwarding');
+  await s.sharing.set(TEAM, false);
+  assert.equal(stateOf(s), 'finishing');
+  const stopping = s.sharing.stopNow(TEAM);
+  await s.drive(() => s.host.of('team.node.unregister').length === 1, 'unregistered');
+  assert.equal((await stopping).sharing, null);
+  assert.equal(job.state, 'failed');
+  assert.equal(stateOf(s), 'off');
 });
 
 for (const word of ['role_forbidden', 'member_revoked', 'member_pending']) {

@@ -468,6 +468,8 @@
 .team-ov-fact__wide { padding-bottom: var(--space-4); }
 .team-ov-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 var(--space-8); }
 .team-ov-people .team-row { padding-inline: 0; }
+/* The role sits beside its own name: at the cell's far edge it read as the next person's (live run 2026-11-25). */
+.team-ov-people .team-row__name { flex: 0 1 auto; }
 .team-ov-log { color: var(--text-secondary); }
 .team-ov-log li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: var(--space-6); padding: var(--space-2) 0; }
 .team-ov-log time { color: var(--text-muted); font-size: var(--font-size-footnote); }

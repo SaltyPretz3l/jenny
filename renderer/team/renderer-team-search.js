@@ -98,7 +98,7 @@
     let wanted = ''; // the latest query asked for
     let flight = null; // { gen, query, cursor }: the call out now; a clear does not forget it (the host allows one)
     let queued = null; // the one waiting for it
-    let found = null; // { query, pattern, matches, next, capped }
+    let found = null; // { query, pattern, matches, next, capped, direct }
     let status = 'idle'; // idle | searching | rate | offline | error
     let error = null;
     let lastFailed = null; // { cursor }: what Try again asks with `wanted`
@@ -108,6 +108,7 @@
     let wait = null;
     let retry = null;
     let wasOnline = Boolean(ctx().online);
+    let wasDirect = Boolean(ctx().direct);
     let disposed = false;
     let drawnRows = '';
 
@@ -136,6 +137,7 @@
       if (status === 'error') return escapeHtml(chatWrites.failText({ error }));
       if (!found) return '';
       if (!found.matches.length) {
+        if (found.direct) return strong(jt('team.search.noneDirect', 'No messages match "{query}" in this conversation.', { query: found.query }), jt('team.search.noneHelpDirect', 'Deleted messages are left out.'));
         return strong(jt('team.search.none', 'No messages match "{query}".', { query: found.query }),
           jt('team.search.noneHelp', 'Search looks at the text of messages in the channels you can read. Deleted messages are left out.'));
       }
@@ -156,7 +158,8 @@
       if (disposed) return;
       const c = ctx();
       const list = found ? found.matches : [];
-      const count = found ? '<h3 class="team-panel__label"><span>' + escapeHtml(jt('team.search.heading', 'Messages')) + '</span><span>'
+      const scope = found && found.direct ? ' <span class="team-results__scope">' + escapeHtml(jt('team.search.scope', 'In this conversation')) + '</span>' : '';
+      const count = found ? '<h3 class="team-panel__label"><span>' + escapeHtml(jt('team.search.heading', 'Messages')) + scope + '</span><span>'
         + escapeHtml(String(list.length) + (found.next && !found.capped ? '+' : '')) + '</span></h3>' : '';
       const html = count + list.map((match) => rowHtml(match, c)).join('');
       if (html !== drawnRows) {
@@ -208,7 +211,8 @@
     async function send(query, cursor) {
       const mine = { gen, query, cursor };
       flight = mine;
-      const scope = ctx().direct ? { channel_id: ctx().channelId } : {};
+      const direct = Boolean(ctx().direct);
+      const scope = direct ? { channel_id: ctx().channelId } : {};
       const answer = await call('chatSearch', { query, limit: PAGE, ...scope, ...(cursor ? { cursor } : {}) });
       if (disposed) return;
       flight = null;
@@ -223,7 +227,7 @@
         const seen = new Set(held.map((m) => m.message_id));
         const matches = held.concat(answer.matches.filter((m) => isMatch(m) && !seen.has(m.message_id) && seen.add(m.message_id)));
         const capped = matches.length >= MAX_MATCHES && (matches.length > MAX_MATCHES || Boolean(answer.next_cursor));
-        found = { query, pattern: patternOf(query), matches: matches.slice(0, MAX_MATCHES), next: answer.next_cursor || null, capped };
+        found = { query, pattern: patternOf(query), matches: matches.slice(0, MAX_MATCHES), next: answer.next_cursor || null, capped, direct };
         status = 'idle';
       } else {
         const reason = answer && answer.error ? answer.error.reason : '';
@@ -342,6 +346,12 @@
       update(change) {
         if (disposed) return;
         if (change && change.type === 'cleared') { input.value = ''; before = null; drop(); return; }
+        const direct = Boolean(ctx().direct);
+        if (direct !== wasDirect) { // the scope changed: the results are cleared and the query is asked again
+          wasDirect = direct;
+          if (active() && wanted) { gen += 1; found = null; current = ''; error = null; drawnRows = ''; rowsBox.innerHTML = ''; ask(wanted, { force: true }); return; }
+          found = null; // hidden results from the other scope are not shown again
+        }
         const online = Boolean(ctx().online);
         const back = online && !wasOnline;
         wasOnline = online;

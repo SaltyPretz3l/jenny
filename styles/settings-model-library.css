@@ -236,6 +236,11 @@
   font-size: var(--font-size-caption);
 }
 
+.mlib-team-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-1) var(--space-4);
+}
+
 .mp-more--inlist {
   margin: 0;
   padding: 12px var(--space-1);

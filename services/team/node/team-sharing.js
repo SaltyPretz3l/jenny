@@ -8,7 +8,7 @@
 //   off (null), starting, host_not_ready (the host has no shared GPUs yet: retried at the
 //   agent's pace), team_offline (with the team's connection state), idle (sharing, nobody's
 //   request), serving (since when), busy_own (the member's own chat runs), paused, no_model
-//   (no local model runs: the agent is not running).
+//   (no local model runs: the agent is not running), finishing (Stop after it: the setting is off, a request still runs).
 //
 // What is saved (sharing-file.js, its own file beside the client file, one atomic write each):
 // whether sharing is on for the team and the claim number mark. Before the agent starts the mark
@@ -155,8 +155,11 @@ function createTeamSharing({
 
   // ------------------------------------------------------------ the state
 
+  function nodeIdOf(agent) { try { const id = agent.status().node_id; return typeof id === 'string' ? id : null; } catch { return null; } }
+
   function stateOf() {
-    if (!wanted) return null;
+    // Stop after it: the setting is off but a request still runs, so the page keeps a line (and Stop now) until it ends.
+    if (!wanted) return active?.after ? { team_id: active.teamId, serving_since: null, models: [], engine: active.engine.kind, node_id: nodeIdOf(active.agent), state: 'finishing' } : null;
     const base = { team_id: wanted.teamId, serving_since: null, models: [], engine: null, node_id: null };
     const row = rowOf(wanted.teamId);
     if (!isReady(row)) return { ...base, state: 'team_offline', connection: typeof row?.state === 'string' ? row.state : 'offline' };

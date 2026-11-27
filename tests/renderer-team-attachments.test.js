@@ -139,6 +139,24 @@ test('a drop anywhere over the channel shows the overlay and adds to its compose
   assert.deepEqual(chips(h), [['a.pdf', 'PDF · 2 KB'], ['b.txt', 'Text · 1 KB']]);
 });
 
+test('a paste of files while offline adds nothing and says so in the composer hint, until the next typing or the team is back', async (t) => {
+  const { h } = await openChat();
+  t.after(h.restore);
+  await offline(h);
+  const event = paste(h, [fake('a.pdf')]);
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(hint(h), 'Files need the team online');
+  assert.deepEqual(chips(h), []);
+  type(h, 'x');
+  assert.notEqual(hint(h), 'Files need the team online');
+  type(h, '');
+  paste(h, [fake('a.pdf')]);
+  assert.equal(hint(h), 'Files need the team online');
+  h.listeners.state({ teams: [memberTeam()] });
+  await flush();
+  assert.notEqual(hint(h), 'Files need the team online', 'online again: the sentence is no longer true');
+});
+
 test('offline the overlay says files need the team online and a drop adds nothing; the paperclip is greyed with its reason', async (t) => {
   const { h } = await openChat();
   t.after(h.restore);

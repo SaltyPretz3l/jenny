@@ -124,6 +124,7 @@ test('Dismiss keeps the row and says why when main refuses; it goes on ok', asyn
   const failed = incoming({ state: 'ended', transfer: take({ state: 'failed', reason: 'model_not_gguf' }) });
   const s = await openShare(t, { answers: { modelState: stateAnswer({ incoming: [failed] }), modelReceiveCancel: { ok: false, error: { code: 'CMP-TEAM-0011', reason: 'team_not_connected' } } } });
   await s.clickAct('in-dismiss');
+  await s.clickAct('ask-remove');
   assert.ok(s.rows().includes(':offer:' + IN1), 'the row stays');
   assert.ok(s.status().length > 10 && !/team_/.test(s.status()), 'the reason as a sentence');
   assert.equal(s.store.isDismissed(IN1), false);

@@ -24,65 +24,80 @@ const CHUNK = delta('x'.repeat(60 * 1024));
 
 // Answers the next job for a reader that never reads: chunks until the host holds
 // bytes the socket would not take, then [DONE].
-async function finishUnflushed(node, response) {
+async function finishUnflushed(node, response, beforeDone = () => {}) {
   const claimed = await node.claimNext();
   for (let i = 0; i < 400 && response().writableLength === 0; i += 1) {
     claimed.send(CHUNK);
     await sleep(5);
   }
   assert.ok(response().writableLength > 0, 'the host holds bytes the reader has not taken');
+  beforeDone();
   claimed.send(DONE, true);
 }
 
-// A paused stream answered to its end, then its waiting bytes put under the test's
-// hand: once settled, nothing but the write deadline reads them, so `reads` counts
-// deadlines. `shrink` answers one byte fewer at each read; otherwise the count stays.
+const settledCount = (fx) => fx.logger.calls.filter(([, event]) => event === 'team.engine.request').length;
+
+// A paused stream answered to its end with its waiting bytes under the test's hand.
+// The hand is in place before the answer ends, so no write deadline ever reads the
+// real count, however late this test is scheduled. Once the request has settled
+// (its log line, written in the same tick), nothing but the write deadline reads
+// them, so `reads` counts deadlines. While `held.shrink` is on each read answers one
+// byte fewer; otherwise the count stays.
 async function heldAnswer(fx, node, who, { shrink }) {
   const index = fx.responses.length;
   const rows = fx.usageRows().length;
+  const settled = settledCount(fx);
   const stream = openStream(fx.port, { headers: headersFor(who), body: chatBody(), paused: true });
-  await finishUnflushed(node, () => fx.responses[index]);
+  const held = { response: null, stream, reads: 0, shrink };
+  await finishUnflushed(node, () => fx.responses[index], () => {
+    held.response = fx.responses[index];
+    let waiting = held.response.writableLength;
+    Object.defineProperty(held.response, 'writableLength', { configurable: true, get() {
+      if (settledCount(fx) > settled) held.reads += 1;
+      if (held.shrink) waiting -= 1;
+      return waiting;
+    } });
+  });
   await waitFor(() => fx.usageRows().length === rows + 1, 'the job completed and its lease went back');
-  const response = fx.responses[index];
-  let waiting = response.writableLength;
-  const held = { response, stream, reads: 0 };
-  Object.defineProperty(response, 'writableLength', { configurable: true, get() {
-    held.reads += 1;
-    if (shrink) waiting -= 1;
-    return waiting;
-  } });
   return held;
 }
+
+// For a test that must look at held answers before any deadline ends them: a
+// draining answer lives FLUSH_CEILING of these, seconds where the checks take
+// milliseconds, so a loaded machine cannot put the deadline first.
+const SLOW_IDLE_MS = 1000;
 
 const cutsOf = (fx) => fx.logger.calls.filter(([, event]) => event === 'team.engine.unflushed_destroyed')
   .map(([, , fields]) => fields);
 
 test('a finished stream whose reader stopped stays counted, then the write-idle deadline destroys it', async (t) => {
-  const fx = await setupEngine(t, { limits: { responseWriteTimeoutMs: WRITE_IDLE_MS } });
+  // Both answers keep draining until the busy answer has been seen, then stop, so
+  // the deadline that frees them comes after the checks it would undo.
+  const fx = await setupEngine(t, { limits: { responseWriteTimeoutMs: SLOW_IDLE_MS } });
   const node = createNode(fx.scheduler, fx.nodeIds[0]);
-  const streams = [];
-  for (let i = 0; i < 2; i += 1) {
-    streams.push(openStream(fx.port, { headers: headersFor('member'), body: chatBody(), paused: true }));
-    await finishUnflushed(node, () => fx.responses[i]);
-  }
-  await waitFor(() => fx.usageRows().length === 2, 'both jobs completed and their leases went back');
+  const held = [];
+  for (let i = 0; i < 2; i += 1) held.push(await heldAnswer(fx, node, 'member', { shrink: true }));
   assert.equal(fx.routes.resources().requests, 2, 'both unflushed answers still count');
   const third = await send(fx.port, { headers: headersFor('member'), body: chatBody() });
   assert.deepEqual([third.status, engineError(third.text)], [429, 'engine_member_busy']);
-  await waitFor(() => fx.routes.resources().requests === 0, 'the deadline frees both', WRITE_IDLE_MS * 20);
-  for (const response of fx.responses.slice(0, 2)) assert.equal(response.destroyed, true);
-  assert.equal(cutsOf(fx).length, 2);
+  for (const answer of held) answer.shrink = false;
+  await waitFor(() => fx.routes.resources().requests === 0, 'the deadline frees both', SLOW_IDLE_MS * 4);
+  for (const answer of held) assert.equal(answer.response.destroyed, true);
+  assert.deepEqual(cutsOf(fx).map((fields) => fields.reason ?? null), [null, null]);
   assert.deepEqual(fx.routes.resources(), { requests: 0, timers: 0, leases: 0, body_bytes: 0 });
-  for (const stream of streams) assert.equal(stream.state.ended, false, 'never a clean end');
+  for (const answer of held) assert.equal(answer.stream.state.ended, false, 'never a clean end');
 });
 
 test('an answer whose waiting bytes shrink survives the deadline; one whose bytes stay is destroyed', async (t) => {
-  const fx = await setupEngine(t, { limits: { responseWriteTimeoutMs: WRITE_IDLE_MS } });
+  // The stuck answer first: the draining one's ceiling then starts last, three
+  // deadlines after the two this test waits for.
+  const idle = WRITE_IDLE_MS * 3;
+  const fx = await setupEngine(t, { limits: { responseWriteTimeoutMs: idle } });
   const node = createNode(fx.scheduler, fx.nodeIds[0]);
-  const draining = await heldAnswer(fx, node, 'member', { shrink: true });
   const stuck = await heldAnswer(fx, node, 'other', { shrink: false });
-  await waitFor(() => stuck.response.destroyed, 'the stuck answer is destroyed', WRITE_IDLE_MS * 20);
-  await waitFor(() => draining.reads >= 2 || draining.response.destroyed, 'two deadlines pass', WRITE_IDLE_MS * 20);
+  const draining = await heldAnswer(fx, node, 'member', { shrink: true });
+  await waitFor(() => stuck.response.destroyed, 'the stuck answer is destroyed', idle * 20);
+  await waitFor(() => draining.reads >= 2 || draining.response.destroyed, 'two deadlines pass', idle * 20);
   assert.equal(draining.response.destroyed, false, 'bytes that keep leaving are never cut');
   assert.equal(fx.routes.resources().requests, 1, 'the draining answer still counts until it has flushed');
   assert.deepEqual(cutsOf(fx).map((fields) => fields.reason ?? null), [null]);

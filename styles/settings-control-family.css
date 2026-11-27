@@ -25,6 +25,13 @@
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+/* A dropdown that cannot be used reads as unavailable (Team model with no GPU online), like a disabled segmented control. */
+.settings-field--row .inv-select-field-control:disabled,
+.team-set-inline > .inv-select-field .inv-select-field-control:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* The number field draws its box in settings-rows.css with the same tokens. An
    error border outranks the hover. */
 .settings-field--row:not([data-state="error"]) .inv-select-field-control:hover:not(:disabled),

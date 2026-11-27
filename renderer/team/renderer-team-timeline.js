@@ -79,6 +79,7 @@
     const bodies = new Map(); // message id or 'out:' + entry id -> { rev, names, html }; one per row shown
     let opened = false;
     let newAfter = null;
+    let newOwn = false; // Mark unread: the line may sit before your own message
     let landOnNew = false; // the first open with unread: the log still has to land on the New line
     let unseen = 0;
     let drawn = 0; // message rows after the last pass (the store has merged a push before it tells)
@@ -89,7 +90,7 @@
     const main = root.closest('.team-main') || root;
     const pop = popModule.createPop({ host: main });
     const acts = actions.createActions({ root, chat, teamId, channelId, ctx, writes, focusComposer, onReply, pop,
-      redraw: () => update({ type: 'acts' }), holdRead: (on) => { const was = readHeld; readHeld = on; return was; } });
+      redraw: () => update({ type: 'acts' }), holdRead: (on, from) => { const was = readHeld; readHeld = on; if (on && Number.isSafeInteger(from)) { newAfter = from; newOwn = true; } return was; } });
     const pins = pinsModule.createPins({ main, chat, teamId, channelId, ctx, call: writes.call, pop });
     // Slice 2c: a message's pictures and files; a fetched picture or a download's state redraws only its row.
     const files = filesModule.createFiles({ teamId, channelId, scroll, ctx, onChange: () => update({ type: 'files' }) });
@@ -140,7 +141,7 @@
       const related = rows.relatedEntries(all, channelId);
       // A channel's change records, placed among the messages held; none until the window is loaded.
       const placed = channelMenu.placeChanges(current.loaded && record ? record.changes : [], current.list, { hasMore: current.hasMore, hasNewer: current.hasNewer });
-      const lines = (list) => list.map((change, i) => ({ key: 'chg:' + change.kind + ':' + change.at + ':' + change.seq_after + ':' + i, kind: 'chan', html: channelMenu.changeHtml(change, c) }))
+      const lines = (list) => list.map((change, i) => ({ key: 'chg:' + change.kind + ':' + change.at + ':' + change.seq_after + ':' + i, kind: 'chan', html: channelMenu.changeHtml(change, c, record.changes) }))
         .filter((item) => item.html).map((item) => ({ ...item, sig: item.html }));
       if (current.loaded && !current.list.length && !pending.length) {
         const invite = c.soleOwner && !c.direct ? inv().actionButton({ label: jt('settings.team.invite.heading', 'Invite someone'), variant: 'primary', size: 'sm', dataset: { 'team-tab-action': 'invite' } }) : '';
@@ -159,7 +160,7 @@
         const key = rows.dayKey(message.created_at);
         if (key && key !== day) { items.push({ key: 'day:' + key, kind: 'day', sig: rows.dayLabel(key), html: escapeHtml(rows.dayLabel(key)) }); day = key; prev = null; }
         if (message === current.list[0] && placed.lead.length) { items.push(...lines(placed.lead)); prev = null; }
-        if (newAfter !== null && !freshPlaced && message.seq > newAfter && !rows.isOwnMessage(message, c.me)) {
+        if (newAfter !== null && !freshPlaced && message.seq > newAfter && (newOwn || !rows.isOwnMessage(message, c.me))) {
           items.push({ key: 'new', kind: 'new', sig: 'n', html: escapeHtml(jt('team.chat.new', 'New')) });
           freshPlaced = true;
           prev = null;
@@ -243,7 +244,7 @@
     // while the newest are held.
     function update(change = {}) {
       if (disposed) return;
-      if (change.type === 'cleared') { opened = false; newAfter = null; landOnNew = false; unseen = 0; bodies.clear(); }
+      if (change.type === 'cleared') { opened = false; newAfter = null; newOwn = false; landOnNew = false; unseen = 0; bodies.clear(); }
       if (change.type === 'timeline' && change.reset && newAfter === null && line().loaded) {
         const record = chat.channel(teamId, channelId);
         if (record && record.unread > 0 && record.last_read_seq < record.last_seq) { newAfter = record.last_read_seq; landOnNew = true; }

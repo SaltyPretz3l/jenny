@@ -139,6 +139,10 @@ function readJournal(stagingDir, { id, segmentBytes, maxBytes, validate = valida
   return journalHolds(value, { id, segmentBytes, validate }) ? { ok: true, journal: value } : { ok: false };
 }
 
+/** The bytes a read journal counts as received: each file up to its last verified segment. */
+const verifiedBytes = (journal, segmentBytes) => journal.manifest.files.reduce(
+  (sum, file, index) => sum + verifiedOffset(file, journal.files[index], segmentBytes), 0);
+
 /** Writes atomically; a journal past `maxBytes` throws `journal_too_large` and is not written. */
 function writeJournal(stagingDir, journal, { maxBytes }) {
   if (Buffer.byteLength(JSON.stringify(journal), 'utf8') > maxBytes) {
@@ -149,5 +153,5 @@ function writeJournal(stagingDir, journal, { maxBytes }) {
 
 module.exports = {
   INCOMING_DIR, JOURNAL_NAME, PROVENANCE_STAGED, ROLLBACK_REASONS, TRANSFER_ID, newJournal, readJournal, sameFiles, segmentsOf,
-  stagingFileName, transferIdFor, verifiedOffset, writeJournal,
+  stagingFileName, transferIdFor, verifiedBytes, verifiedOffset, writeJournal,
 };

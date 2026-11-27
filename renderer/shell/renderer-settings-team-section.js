@@ -33,7 +33,7 @@
     return { displayName: undefined, label: undefined, teamName: '', invite: '', rename: undefined, inviteRole: 'member', inviteTtl: 86_400_000 };
   }
   function freshLive() {
-    return { busy: new Set(), folds: new Set(), confirm: '', reveal: null, copied: false, errors: {}, readErrors: {}, readSeen: {},
+    return { busy: new Set(), folds: new Set(), forced: new Set(), confirm: '', reveal: null, copied: false, errors: {}, readErrors: {}, readSeen: {},
       drafts: freshDrafts(), activity: { expanded: false, pages: [], nextCursor: null } };
   }
 
@@ -101,6 +101,7 @@
     // The Remove confirm of a needs_repair row lasts only while that row still needs repair.
     if (live.confirm.startsWith('remove-team:')
       && !teams.some((team) => live.confirm === 'remove-team:' + team.team_id && team.state === 'needs_repair')) live.confirm = '';
+    if (live.confirm === 'share-off' && !(data().sharing && data().sharing.state === 'serving')) live.confirm = ''; // nothing is serving to stop
     return {
       host, hosting, online, revokedHostedId, status: lifecycle.hostStatus(host, online && lists.roster ? lists.roster.length : null, teamStore.MAX_MEMBERS), forceLocal: store().forceLocal(),
       hosted: hosting ? { team: hosted, owner: online && hosted.role === 'owner', roster: lists.roster || null, invites: lists.invites,
@@ -134,15 +135,20 @@
     const owner = Boolean(vm.hosted && vm.hosted.owner);
     // Row 168: the connected owner's page opens with a summary line and folds its rarely used groups. A fold is open
     // when the person opened it or something in it must be seen: a confirm, a note, a running export.
-    const isOpen = (id, groupHtml) => live.folds.has(id) || /team-set-confirm|team-set-note/.test(groupHtml)
-      || ((id === 'ownership' || id === 'delete') && vm.isBusy('export'));
+    // It is forced open only on the redraw where that first shows; after that it follows the person's toggle.
+    const isOpen = (id, groupHtml) => {
+      const needs = /team-set-confirm|team-set-note/.test(groupHtml) || ((id === 'ownership' || id === 'delete') && vm.isBusy('export'));
+      if (!needs) live.forced.delete(id);
+      else if (!live.forced.has(id)) { live.forced.add(id); live.folds.add(id); }
+      return live.folds.has(id);
+    };
     const fold = owner ? (id, groupHtml) => view.fold(id, groupHtml, isOpen) : (id, groupHtml) => groupHtml;
     const net = owner ? network.networkGroup(vm, data(), vm.hosted.team) : '';
     const summary = owner ? view.summaryLine(ownerView.summaryFacts(vm, vm.hosted, data(), { network: net !== '', share: shareGpu !== '' })) : '';
     let html = view.statusLine(vm) + summary + lifecycle.banner();
     if (vm.reclaim) html += view.reclaimGroup(vm);
     if (vm.needNames) html += view.youGroup(vm);
-    html += lifecycle.lostKeyGroup(vm, data()) + server.groupHtml(vm) + server.profileHtml(vm, data()) + (vm.teamCount ? densityHtml() : '');
+    html += lifecycle.lostKeyGroup(vm, data()) + server.groupHtml(vm) + server.profileHtml(vm, data());
     if (vm.hosting && vm.online) {
       html += ownerView.hostedGroups(vm, vm.hosted, net + share + (owner ? view.foldLast('use', gpu.ownerGroups(vm, data(), vm.hosted), isOpen) + models.hostGroup(vm, data(), vm.hosted) + files.hostGroup(vm, data(), vm.hosted) : ''), fold);
     } else if ((vm.hosting || vm.stoppedHere) && !lost && !vm.revokedHostedId) {
@@ -160,15 +166,6 @@
     if (owner) html += fold('ownership', ownerView.ownershipGroup(vm));
     // Fork 8 on the page too: owner (from the live role while it runs, from main's saved membership while stopped), or the key is lost.
     return html + fold('delete', lifecycle.deleteGroup(vm, data(), Boolean(vm.host && vm.host.deployed && (lost || owner || (vm.stoppedHere && vm.host.owner === true)))));
-  }
-
-  // Row 193 C14: Team chat density (saved with Appearance, bound by the Settings view); it shows the density applied to the page.
-  function densityHtml() {
-    const binding = globalThis.rendererSettingsFieldBinding || require('./renderer-settings-field-binding');
-    const descriptors = globalThis.rendererSettingsFieldDescriptors || require('./renderer-settings-field-descriptors');
-    const descriptor = descriptors.getSettingDescriptor('appearanceTeamDensitySelect');
-    const applied = globalThis.document && globalThis.document.documentElement.dataset.teamDensity;
-    return '<div class="settings-group team-set-group" data-team-group="density">' + binding.renderSettingRow(descriptor, descriptors.normalizeSettingValue(descriptor, applied), {}) + '</div>';
   }
 
   // Writes the page only when its markup changed, so an idle push keeps an open select and the focus.
@@ -223,6 +220,17 @@
     if (!container) return;
     applyReads();
     render();
+    ungreyDensity();
+  }
+
+  // Settings > Chat drew "Team chat density" greyed if no team existed then (row 123 layout D5): the first team gives it
+  // back at once, without waiting for Settings to be opened again.
+  function ungreyDensity() {
+    const mount = container.ownerDocument.querySelector('[data-setting-mount="appearanceTeamDensitySelect"]');
+    if (!mount || !mount.querySelector('.settings-field-reason') || !data().teams.length) return;
+    const descriptor = globalThis.rendererSettingsFieldDescriptors?.getSettingDescriptor?.('appearanceTeamDensitySelect');
+    const chosen = mount.querySelector('[data-value][aria-checked="true"]');
+    if (descriptor) globalThis.rendererSettingsFieldBinding?.mountSettingRow?.(mount, descriptor, chosen ? chosen.dataset.value : descriptor.default, { className: 'select-shell', disabledReason: '' });
   }
 
   // ---------------------------------------------------------------- actions
@@ -405,6 +413,7 @@
     // Slice 5-6 (network and lifecycle): a secret is read from its field when used, never kept in `live`.
     seed: (value) => store().seed(value), refreshAll, names,
     secret: (id) => { const el = body() && body().querySelector('#' + id); return el ? String(el.value || '') : ''; },
+    clearSecret: (id) => { const el = body() && body().querySelector('#' + id); if (el) el.value = ''; },
     setNote: (group, text) => { live.errors[group] = text; },
   };
 
@@ -446,7 +455,8 @@
       case 'invite-create': if (hosted) void createInvite(hosted); return;
       case 'invite-revoke': void command('invite-revoke:' + inviteId, 'invite', 'inviteRevoke', { team_id: hostedId, invite_id: inviteId }); return;
       case 'admit': void command('admit:' + memberId, 'people', 'memberAdmit', { team_id: hostedId, member_id: memberId }); return;
-      case 'decline': void command('decline:' + memberId, 'people', 'memberRevoke', { team_id: hostedId, member_id: memberId }); return;
+      case 'decline': live.confirm = 'decline:' + memberId; render(); return;
+      case 'confirm-decline': if (live.confirm === 'decline:' + memberId) void command('decline:' + memberId, 'people', 'memberRevoke', { team_id: hostedId, member_id: memberId }, { after: done }); return;
       case 'more': openMore(button, memberId); return;
       case 'confirm-cancel': cancelConfirm(); return;
       case 'confirm-remove': void command('remove:' + memberId, 'people', 'memberRevoke', { team_id: hostedId, member_id: memberId }, { after: done }); return;

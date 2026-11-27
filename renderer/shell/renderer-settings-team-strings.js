@@ -223,7 +223,7 @@
     model_staging_failed: () => jt('settings.team.reason.modelStagingFailed', 'Jenny could not write to that folder. Check the folder, then try again.'),
     model_journal_invalid: () => jt('settings.team.reason.modelJournalInvalid', 'Jenny lost track of this download. Cancel it, then accept the offer again.'),
     model_transfer_interrupted: () => jt('settings.team.reason.modelInterrupted', 'The download was interrupted. What has arrived is kept; resume to carry on.'),
-    model_receiver_busy: () => jt('settings.team.reason.modelReceiverBusy', 'Jenny is already receiving a model from this team. Wait for it to finish.'),
+    model_receiver_busy: () => jt('settings.team.reason.modelReceiverBusy', 'Jenny takes one model at a time from this team. Cancel or finish the one in Settings, Models first.'),
     model_receiver_disposed: () => jt('settings.team.reason.closing', 'Jenny is closing. Try again after it restarts.'),
     team_model_manifest_invalid: () => jt('settings.team.reason.modelHostManifest', 'The team’s host refused the offer’s file list. Offer the model again.'),
     team_model_name_invalid: () => jt('settings.team.reason.modelNameInvalid', 'Use a name of 1 to 128 characters with no hidden characters.'),
@@ -437,7 +437,9 @@
     const subject = entry.name || nameOf(entry.subject_member_id) || someone;
     const params = { actor, subject };
     switch (entry.kind) {
-      case 'invite_created': return jt('settings.team.activity.inviteCreated', '{actor} created an invite', params);
+      // An invite made in the server's own Jenny carries no member: say where it was made, not "Someone".
+      case 'invite_created': return entry.actor_member_id ? jt('settings.team.activity.inviteCreated', '{actor} created an invite', params)
+        : jt('settings.team.activity.inviteCreatedLocal', 'An invite was created on the server’s PC');
       case 'invite_redeemed': return jt('settings.team.activity.inviteRedeemed', '{subject} used an invite', params);
       case 'invite_revoked': return jt('settings.team.activity.inviteRevoked', '{actor} revoked an invite', params);
       case 'member_admitted': return jt('settings.team.activity.memberAdmitted', '{actor} let {subject} in', params);

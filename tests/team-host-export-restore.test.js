@@ -295,6 +295,42 @@ test('the readable copy is written a step at a time: main keeps answering while 
   assert.ok([...counts].some((n) => n > 0 && n < 1500), `seen part way: ${[...counts].slice(0, 8)}`);
 });
 
+// Owner decision 2026-11-25: Cancel stops a running export, removes only what that export wrote, and answers cancelled.
+test('hostExportCancel stops an export while it writes or while its picker is open, and keeps what was there before', async (t) => {
+  const host = team(t);
+  const big = path.join(host.userDataPath, 'team-host', 'projects', 'project_site', 'many');
+  fs.mkdirSync(big);
+  for (let i = 0; i < 1500; i += 1) fs.writeFileSync(path.join(big, `f${i}.txt`), String(i));
+  const outside = fs.realpathSync.native(host.outside);
+  fs.mkdirSync(path.join(outside, `${TEAM_NAME} 2026-11-12`)); // the owner's own folder of the export's name
+  fs.writeFileSync(path.join(outside, 'keep.txt'), 'mine');
+  const before = [`${TEAM_NAME} 2026-11-12`, 'keep.txt'];
+  assert.deepEqual(await host.controller.handle('hostExportCancel', {}), { ok: true, cancelled: false }, 'nothing is running');
+  const exporting = host.controller.handle('hostExport', { password: PASSWORD });
+  const copied = path.join(outside, `${TEAM_NAME} 2026-11-12 (2)`, 'projects', 'jenny-site', 'many');
+  const started = () => { try { return fs.readdirSync(copied).length > 0; } catch { return false; } };
+  for (let i = 0; i < 5000 && !started(); i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  assert.ok(started(), 'the export is writing');
+  assert.deepEqual(await host.controller.handle('hostExportCancel', {}), { ok: true, cancelled: true });
+  assert.equal((await exporting).error?.reason, 'team_export_cancelled');
+  assert.deepEqual(fs.readdirSync(outside).sort(), before, 'the partial export is gone, nothing else');
+  assert.deepEqual(fs.readdirSync(path.join(outside, `${TEAM_NAME} 2026-11-12`)), []);
+  assert.equal(fs.existsSync(path.join(host.userDataPath, 'team-export-pending.json')), false);
+  assert.equal(JSON.stringify([host.logs, host.pushed]).includes(PASSWORD), false, 'the password is not logged');
+  let release = null;
+  host.picks.folder = new Promise((resolve) => { release = resolve; });
+  const picking = host.controller.handle('hostExport', { password: PASSWORD });
+  for (let i = 0; i < 50 && !release; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  assert.deepEqual(await host.controller.handle('hostExportCancel', {}), { ok: true, cancelled: true }, 'cancelled while the picker is open');
+  release(outside);
+  assert.equal((await picking).error?.reason, 'team_export_cancelled');
+  assert.deepEqual(fs.readdirSync(outside).sort(), before, 'the export never started');
+  host.picks.folder = outside;
+  const done = await exported(host);
+  assert.deepEqual(await host.controller.handle('hostExportCancel', {}), { ok: true, cancelled: false }, 'a cancel after the end');
+  assert.equal(fs.existsSync(path.join(done.folder, `${TEAM_NAME}.jennyteam`)), true, 'and the finished export stays');
+});
+
 test('no password, key or relay token in any log, push or answer of a wrong password, a tampered file or a failed delete', async (t) => {
   const host = team(t);
   const answer = await exported(host);

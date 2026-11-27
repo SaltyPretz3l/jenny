@@ -55,9 +55,9 @@
 //
 // Slice 5-6: LIFECYCLE_METHODS, the owner's whole-team operations on the host this Jenny runs: hostInventory,
 // hostDelete { name }, hostStartNew { name, display_name, label }, hostOldDelete { set_aside_id, name? },
-// hostOldShow { set_aside_id }, hostExport { password }, hostRestorePick, hostRestore { password, display_name, label,
-// name? }. The host controller checks who may (the owner, or a lost key) and the typed names; the folder and the
-// file are picked in main, never sent by the renderer.
+// hostOldShow { set_aside_id }, hostExport { password }, hostExportCancel (stops a running export), hostRestorePick,
+// hostRestore { password, display_name, label, name? }. The host controller checks who may (the owner, or a lost
+// key) and the typed names; the folder and the file are picked in main, never sent by the renderer.
 //
 // Slice 3-9: the shared project methods (services/team/team-projects.js), each mirroring one host operation
 // (PROJECT_OPERATIONS; the ones marked local there send what their client decides). Project ids use the host's
@@ -292,6 +292,7 @@ const METHODS = Object.freeze({
   hostOldDelete: { fields: { set_aside_id: setAsideId, name }, optional: ['name'] },
   hostOldShow: { fields: { set_aside_id: setAsideId } },
   hostExport: { fields: { password: passwordText } },
+  hostExportCancel: { fields: {} },
   hostRestorePick: { fields: {} },
   hostRestore: { fields: { password: passwordText, display_name: name, label: name, name }, optional: ['name'] },
   // Row 170: the server page. Start with Jenny, the facts of a stopped server, and its folder.
@@ -417,7 +418,7 @@ const isChatMethod = (method) => Object.hasOwn(CHAT_OPERATIONS, method) || CHAT_
 const LOCAL_METHODS = Object.freeze(['join', 'status', 'removeTeam', 'teamReconnectCode']);
 // Slice 5-6: the owner's whole-team operations (services/team/host/host-lifecycle.js).
 const LIFECYCLE_METHODS = Object.freeze(['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow',
-  'hostExport', 'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder']);
+  'hostExport', 'hostExportCancel', 'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder']);
 const HOST_METHODS = Object.freeze(['hostDeploy', 'hostStop', 'hostStatus', 'hostRecover', 'hostReconnectCode',
   'hostInternet', 'hostModelRelay', 'hostFileTools', 'hostPoolContext', ...LIFECYCLE_METHODS]);
 const RECONNECT_METHODS = Object.freeze(['teamReconnectCode', 'hostReconnectCode']);

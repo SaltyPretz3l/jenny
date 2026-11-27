@@ -101,7 +101,7 @@ test('the popover: the state sentence for each of the four states, Offers, and S
   assert.equal(text(el.querySelector('p')), 'Busy answering a request.');
   assert.equal(el.querySelector('[data-team-tab-action="share-settings"]'), null, 'not this PC: no settings link');
   el = await openRow(2);
-  assert.equal(text(el.querySelector('p')), 'Arjun has paused it. Requests only it can answer wait up to 10 minutes.');
+  assert.equal(text(el.querySelector('p')), 'Arjun has paused it. It answers nothing until they resume.');
   el = await openRow(3);
   assert.equal(text(el.querySelector('p')), 'Not connected. It is listed while Maya still shares it.');
   assert.equal(h.window.document.querySelectorAll('#teamGpuPop').length, 1, 'one popover at a time');
@@ -153,7 +153,7 @@ test('the list follows the push: a row changes its word and the open popover its
   await flush();
   assert.deepEqual(h.view.qa('.team-gpu-row .team-row__meta').map(text), ['', 'paused', 'paused']);
   assert.deepEqual([...h.view.q('[data-team-gpus] .team-panel__label').children].map(text), ['GPUs', '1 of 3']);
-  assert.equal(text(h.window.document.querySelector('#teamGpuPop p')), 'Brendan has paused it. Requests only it can answer wait up to 10 minutes.');
+  assert.equal(text(h.window.document.querySelector('#teamGpuPop p')), 'Brendan has paused it. It answers nothing until they resume.');
   await push(h, [NODES[0]]);
   await flush();
   assert.equal(h.window.document.getElementById('teamGpuPop'), null);
@@ -186,8 +186,12 @@ test('hiding the tab removes an open popover', async (t) => {
 
 test('the members’ notice in the model picker is the owner’s final sentence', () => {
   const utils = require('../renderer/chat/renderer-composer-model-picker-utils');
-  const entry = utils.normalizeCatalogEntry({ id: 'team/team_alpha1/qwen3:8b-q4', engine_type: 'openai-compatible', team_id: 'team_alpha1', team_name: 'Alpha crew' });
-  assert.equal(entry.hint, 'The team’s host and the person whose hardware responds can read your prompts and replies.');
+  const row = { id: 'team/team_alpha1/qwen3:8b-q4', engine_type: 'openai-compatible', team_id: 'team_alpha1', team_name: 'Alpha crew' };
+  const entry = utils.normalizeCatalogEntry(row);
+  const group = utils.groupCatalogEntries([row], {}).find((g) => g.key === 'team:team_alpha1');
+  const section = utils.groupSectionHtml(group, '', { escapeHtml: (value) => String(value), id: 'g1', showHeading: true });
+  assert.match(section, />The team’s host and the person whose hardware responds can read your prompts and replies\.</);
+  assert.equal(entry.hint, '', 'drawn once under the team heading, not on each row');
 });
 
 test('E76: a GPU its owner is using says so in the list and the popover; one the owner paused by hand still says paused', async (t) => {
@@ -199,5 +203,5 @@ test('E76: a GPU its owner is using says so in the list and the popover; one the
   assert.deepEqual([...h.view.q('[data-team-gpus] .team-panel__label').children].map(text), ['GPUs', '1 of 3'], 'a GPU in use takes no request: not counted');
   rows[1].click();
   await flush();
-  assert.match(text(h.window.document.getElementById('teamGpuPop').querySelector('p')), /^Arjun is using it/);
+  assert.equal(text(h.window.document.getElementById('teamGpuPop').querySelector('p')), 'Arjun is using it. It takes requests again when they are done. Requests for its models fail meanwhile.');
 });

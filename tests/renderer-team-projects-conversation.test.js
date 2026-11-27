@@ -257,9 +257,9 @@ test('take over and stop: a refused stop says so and leaves the Stop button; the
 
 test('the approval card: the always button by project role (the team owner who is a writer asks), only for the two file tools, never in Plan mode; a reader has none', async (t) => {
   const cases = [
-    ['writer', 'member', 'edit_file', false, 'Allow once, ask for always'],
-    ['admin', 'member', 'write_file', false, 'Always allow'],
-    ['writer', 'owner', 'edit_file', false, 'Allow once, ask for always'],
+    ['writer', 'member', 'edit_file', false, 'Allow once and ask an admin for always'],
+    ['admin', 'member', 'write_file', false, 'Always allow edits in this project'],
+    ['writer', 'owner', 'edit_file', false, 'Allow once and ask an admin for always'],
     ['admin', 'member', 'run_command', false, null],
     ['admin', 'member', 'edit_file', true, null],
   ];
@@ -267,10 +267,10 @@ test('the approval card: the always button by project role (the team owner who i
     const m = mount(t, { role, teamRole, open: { ok: true, snapshot: snapshot({ session: { session_id: S1, title: 'T', revision: 'r1', plan_mode: plan }, pending_approvals: [approval({ tool_name: tool })] }) } });
     await flush();
     const card = m.q('.tool-approval-block');
-    assert.ok(card.querySelector('.tool-approve-btn[data-approval-scope="once"]') && card.querySelector('.tool-deny-btn'), 'Allow once and Deny');
-    const button = card.querySelector('[data-team-always]');
-    assert.equal(button ? button.textContent : null, always, `${role}/${teamRole}/${tool}/${plan}`);
-    if (button) assert.ok(button.getAttribute('title') && button.nextElementSibling.classList.contains('tool-deny-btn'), 'before Deny, with its tooltip');
+    assert.ok(card.querySelector('.tool-approve-btn[data-approval-scope="once"]') && card.querySelector('.tool-deny-btn'), 'Allow and Deny');
+    const button = card.querySelector('.tool-approve-caret');
+    assert.equal(button ? button.dataset.teamMoreLabel : null, always, `${role}/${teamRole}/${tool}/${plan}`);
+    if (button) assert.ok(button.getAttribute('aria-label') && button.parentElement.nextElementSibling.classList.contains('tool-deny-btn'), 'joined to Allow, before Deny, with its label');
     assert.match(card.querySelector('.tool-approval-who').textContent, /Lena’s turn asked\. Anyone who can write in this project and is viewing this conversation can answer\./);
     m.restore();
   }
@@ -292,7 +292,7 @@ test('answering: the payloads, a losing answer\'s sentence, receipts allowed, de
   assert.match(m.q('.tool-approval-block').textContent, /Only someone who can write in this project and is viewing this conversation can answer\./, 'the losing answer\'s sentence');
   assert.equal(m.q('.tool-approve-btn[data-approval-scope="once"]').disabled, false, 'not stuck');
   fail = false;
-  m.q('[data-team-always="ask"]').click();
+  t.after(() => { delete globalThis.inventoryContextMenu; }); globalThis.inventoryContextMenu = require('../renderer/inventory/context-menu'); m.q('.tool-approve-caret').click(); m.window.document.querySelector('.inv-context-menu-item').click();
   // decision_changed arrives before the answer: the receipt is whole from what this member asked.
   m.event('decision_changed', { stream_id: 'stream_1', approval_id: 'appr_1', approver_member_id: DOT, prompter_member_id: LENA, approved: true });
   assert.match(m.q('[data-approval-status="resolved"]').textContent, /^You allowed this once at .+, in Lena’s turn, and asked the project’s admins to always allow edit_file here\./);

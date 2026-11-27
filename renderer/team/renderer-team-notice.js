@@ -74,9 +74,10 @@
       + '<div class="inv-toast__body"><p class="inv-toast__eyebrow">' + escapeHtml(jt('team.tab.wantsToJoin', 'Wants to join')) + '</p>'
       + '<p class="inv-toast__message" dir="auto">' + escapeHtml(jt('team.notice.person', '{name} · {device} · key {key}', {
         name, device: device.label || '', key: words.formatFingerprint(device.fingerprint) })) + '</p>'
-      + '<p class="team-notice__hint">' + escapeHtml(jt('settings.team.people.hint', 'Check the name and the key with them before you admit them. They see the same key on their screen.')) + '</p>'
-      + '<div class="inv-toast__actions">' + button('admit', jt('team.notice.admit', 'Admit {name}', { name }), 'primary')
-      + button('decline', jt('settings.team.people.decline', 'Decline'), 'secondary') + pager + '</div>'
+      + '<p class="team-notice__hint">' + escapeHtml(state.declining ? jt('settings.team.people.declineConfirm', 'Decline {name}? Their invite is used up; invite them again to let them in.', { name })
+        : jt('settings.team.people.hint', 'Check the name and the key with them before you admit them. They see the same key on their screen.')) + '</p>'
+      + '<div class="inv-toast__actions">' + (state.declining ? button('confirm-decline', jt('settings.team.people.declineAction', 'Decline {name}', { name }), 'primary') + button('confirm-cancel', jt('settings.team.cancel', 'Cancel'), 'secondary')
+        : button('admit', jt('team.notice.admit', 'Admit {name}', { name }), 'primary') + button('decline', jt('settings.team.people.decline', 'Decline'), 'secondary')) + pager + '</div>'
       + (state.error ? '<p class="team-notice__error" role="alert">' + escapeHtml(state.error) + '</p>' : '') + '</div>'
       + inv().actionButton({ plain: true, className: 'inv-toast__dismiss', ariaLabel: jt('team.notice.later', 'Later'), title: later,
         dataset: { 'team-notice': 'later', 'member-id': id }, trustedHtml: CLOSE })

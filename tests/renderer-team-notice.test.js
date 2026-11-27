@@ -106,6 +106,9 @@ test('two and three waiting: one notice, one person at a time in the order they 
   assert.equal(counter(h), '2 of 2');
   assert.match(shownName(h), /^Lee/);
   notice(h).querySelector('[data-team-action="decline"]').click();
+  assert.equal(h.sent('memberRevoke').length, 0, 'Decline asks first');
+  assert.match(notice(h).textContent, /Their invite is used up/);
+  notice(h).querySelector('[data-team-action="confirm-decline"]').click();
   await flush();
   assert.deepEqual(h.sent('memberRevoke').map((call) => call.payload), [{ team_id: TEAM, member_id: 'member_lee' }]);
   assert.match(shownName(h), /^Sam/);

@@ -10,6 +10,7 @@
  *   (`hostPoolContext { context_cap }`; an empty field is Auto, the host state's `pool_context_cap` is the saved
  *   value). It is one of the owner's host settings that lives in this group because it needs no group of its own;
  *   it applies at the server's next start, and only an owner's page draws it.
+ *   Layout D3: with a GPU pool the row is drawn in Team GPUs under Team model (renderer-settings-team-gpu.js calls `poolRowHtml`).
  * The page (renderer-settings-team-section.js) places the group and hands each call its context. The fold, the
  * field drafts and the shown code live here until the page is left (`reset`). The relay token is never read
  * back: the page knows only `has_token`. Markup through the page's builders; every value is escaped. */
@@ -37,7 +38,7 @@
 
   let ui = fresh();
   let copyTimer = null;
-  function fresh() { return { fold: null, address: undefined, relay: undefined, tokenTyped: false, code: '', copied: false, pool: undefined }; }
+  function fresh() { return { fold: null, address: undefined, relay: undefined, tokenTyped: false, code: '', codeFor: '', copied: false, pool: undefined, poolGroup: 'network', changes: false }; }
   function inv() { return globalThis.inventory || {}; }
 
   // ------------------------------------------------------------- the state
@@ -193,20 +194,28 @@
     const items = [jt('settings.team.net.onPort', 'Jenny asks your router to open one port (UDP {port}) for this team, and closes it when you turn this off.', { port: host.direct_port }),
       jt('settings.team.net.onAnyone', 'Anyone on the internet can then try to connect. Only people you invited get in.'),
       jt('settings.team.net.onLearn', 'Members and anyone holding an invite learn this network’s public address.'),
-      others ? jt('settings.team.net.onRestartNames', 'The server restarts now. {names} are disconnected for a moment and reconnect by themselves.', { names: others })
+      others ? jt('settings.team.net.onRestartNames', 'The server restarts now. It disconnects {names} for a moment; they reconnect by themselves.', { names: others })
         : jt('settings.team.net.onRestart', 'The server restarts now.'),
       jt('settings.team.net.onOldInvites', 'Invites you made before now work on this network only. Make new ones for people elsewhere.'),
       jt('settings.team.net.onVersion', 'Members need this version of Jenny or later to join over the internet.')];
     const label = jt('settings.team.net.turnOn', 'Turn on');
+    const line = (text) => '<p class="team-net-confirm-line">' + escapeHtml(text) + '</p>';
+    // Layout D6: two sentences, the six facts behind "What this changes" (closed until pressed; reset when the confirm closes).
+    const facts = '<details class="team-net-fold team-net-changes"' + (ui.changes ? ' open' : '') + '><summary id="teamNetChanges" data-team-net-changes aria-expanded="' + ui.changes + '">'
+      + escapeHtml(jt('settings.team.net.onChanges', 'What this changes')) + '</summary>' + (ui.changes ? '<ul>' + items.map((t) => '<li>' + escapeHtml(t) + '</li>').join('') + '</ul>' : '') + '</details>';
     return '<div class="team-set-confirm" role="group" aria-label="' + escapeHtml(label) + '"><p>' + escapeHtml(jt('settings.team.net.onAsk', 'Let people join {team} over the internet?', { team }))
-      + '</p><ul>' + items.map((t) => '<li>' + escapeHtml(t) + '</li>').join('') + '</ul><div class="team-set-inline">'
+      + '</p>' + line(jt('settings.team.net.onSummaryPort', 'Jenny asks your router to open one port for this team, and the server restarts now.'))
+      + line(jt('settings.team.net.onSummaryWho', 'Only people you invited get in. They, and anyone holding an invite, learn this network’s public address.')) + facts + '<div class="team-set-inline">'
       + view.button(vm, 'net-on', label, { variant: 'primary', busyKey: 'net-save' }) + view.button(vm, 'confirm-cancel', jt('settings.team.cancel', 'Cancel')) + '</div></div>';
   }
+
+  function codeKey(host) { const i = host.internet; return JSON.stringify([host.direct_port, i ? [i.public_address, i.relay_url] : null]); }
 
   function codeRow(vm, host) {
     const stopped = host.state !== 'running';
     const help = jt('settings.team.net.codeHelp', 'Helps a member’s Jenny find this PC again after its address changes. It holds no secret.')
       + (stopped ? ' ' + jt('settings.team.net.codeWhileRuns', 'Available while the server runs.') : '');
+    if (ui.code && ui.codeFor !== codeKey(host)) ui.code = ''; // the code was made for other addresses
     const code = ui.code && !stopped ? ui.code : '';
     let html = view.fieldRow('teamNetCodeRow', jt('settings.team.net.code', 'Reconnect code'), help,
       code ? '' : view.button(vm, 'net-code', jt('settings.team.net.showCode', 'Show code'), { disabled: stopped }));
@@ -230,6 +239,15 @@
     return cap >= POOL_MIN && cap <= POOL_MAX ? { ok: true, cap } : { ok: false };
   }
 
+  // Layout D3: the row with its note group: 'gpus' when Team GPUs draws it, else 'network' (no GPU pool, or the server stopped).
+  function poolRowHtml(vm, data, where) {
+    const host = data.host;
+    if (!host || !host.deployed || host.key !== 'ok' || !host.direct_port || host.pool_context_cap === undefined) return '';
+    ui.poolGroup = where;
+    return poolRow(vm, host, vm.isBusy('pool-save'));
+  }
+  function poolInGpus(vm, data, hosted) { return Boolean(vm.hosted && vm.hosted.owner && hosted && data.pools && data.pools[hosted.team_id]); }
+
   function poolRow(vm, host, busy) {
     const label = jt('settings.team.pool.label', 'Pool context length');
     const dirty = poolShown(host).trim() !== poolSaved(host);
@@ -250,6 +268,7 @@
     const on = Boolean(host.internet);
     const busy = vm.isBusy('net-save');
     const asking = vm.confirm === 'net-on' || vm.confirm === 'net-off';
+    if (vm.confirm !== 'net-on') ui.changes = false;
     const toggle = inv().toggleSwitch({ id: 'teamNet', domId: 'teamNet', bare: true, labelledBy: 'teamNetTitle', describedBy: 'teamNetHelp',
       checked: asking ? vm.confirm === 'net-on' : on, disabled: busy || vm.forceLocal === true, ...(vm.forceLocal === true ? { tooltip: words.forceLocalText() } : {}) });
     let html = inv().settingsField({ id: 'teamNetRow', variant: 'row', titleId: 'teamNetTitle', helpId: 'teamNetHelp', controlHtml: toggle,
@@ -263,7 +282,7 @@
     }
     if (on) html += onBody(vm, host, busy);
     html += codeRow(vm, host);
-    if (host.pool_context_cap !== undefined) html += poolRow(vm, host, vm.isBusy('pool-save'));
+    if (!poolInGpus(vm, data, hosted)) html += poolRowHtml(vm, data, 'network');
     return view.group('network', jt('settings.team.net.heading', 'Network'), { body: html + view.note(vm.errors.network) });
   }
 
@@ -330,9 +349,11 @@
     const answer = await ctx.run('net-save', 'network', () => ctx.call('hostInternet', body));
     if (answer) {
       Object.assign(ui, { address: undefined, relay: undefined, tokenTyped: false, fold: null });
+      ctx.clearSecret('teamNetToken');
       ctx.setConfirm('');
       if (answer.host) ctx.seed({ host: answer.host });
     }
+    ui.code = ''; // every internet save drops the shown Reconnect code
     // A failure answer may still have saved the token or the setting (`changed`): the host state is read again.
     await ctx.refreshAll();
   }
@@ -340,8 +361,8 @@
   // Saves the cap the field says (empty is Auto); one outside the bounds is refused here, with the host's own sentence.
   async function savePool(ctx, host) {
     const parsed = poolParse(poolShown(host));
-    if (!parsed.ok) { ctx.setNote('network', words.errorText({ reason: 'team_pool_context_invalid' })); ctx.render(); return; }
-    const answer = await ctx.run('pool-save', 'network', () => ctx.call('hostPoolContext', { context_cap: parsed.cap }));
+    if (!parsed.ok) { ctx.setNote(ui.poolGroup, words.errorText({ reason: 'team_pool_context_invalid' })); ctx.render(); return; }
+    const answer = await ctx.run('pool-save', ui.poolGroup, () => ctx.call('hostPoolContext', { context_cap: parsed.cap }));
     if (!answer) return;
     ui.pool = undefined;
     if (answer.host) ctx.seed({ host: answer.host });
@@ -350,7 +371,7 @@
 
   async function showCode(ctx) {
     const answer = await ctx.run('net-code', 'network', () => ctx.call('hostReconnectCode'));
-    if (answer && typeof answer.code === 'string') { ui.code = answer.code; ui.copied = false; ctx.render(); }
+    if (answer && typeof answer.code === 'string') { ui.code = answer.code; ui.codeFor = codeKey(ctx.data().host || {}); ui.copied = false; ctx.render(); }
   }
 
   function copy(ctx) {
@@ -397,6 +418,12 @@
       ctx.render(true);
       return true;
     }
+    if (target.closest && target.closest('[data-team-net-changes]')) {
+      event.preventDefault();
+      ui.changes = !ui.changes;
+      ctx.render(true);
+      return true;
+    }
     const sw = target.closest && target.closest('#teamNet');
     const host = ctx.data().host;
     if (sw && host) {
@@ -410,8 +437,8 @@
       case 'net-on': void save(ctx, { enabled: true }); return true;
       case 'net-off': void save(ctx, { enabled: false }); return true;
       case 'net-save': void save(ctx, payload(ctx, host)); return true;
-      case 'net-clear-token': void save(ctx, clearBody(host)); return true;
-      case 'net-discard': Object.assign(ui, { address: undefined, relay: undefined, tokenTyped: false }); ctx.render(true); return true;
+      case 'net-clear-token': ctx.clearSecret('teamNetToken'); void save(ctx, clearBody(host)); return true;
+      case 'net-discard': Object.assign(ui, { address: undefined, relay: undefined, tokenTyped: false }); ctx.clearSecret('teamNetToken'); ctx.render(true); return true;
       case 'pool-save': void savePool(ctx, host); return true;
       case 'net-code': void showCode(ctx); return true;
       case 'net-code-copy': copy(ctx); return true;
@@ -447,5 +474,5 @@
     ui = fresh();
   }
 
-  return { networkGroup, inviteLine, memberRow, codeEntry, onClick, onInput, reset, _pathOf: pathOf };
+  return { networkGroup, poolRowHtml, inviteLine, memberRow, codeEntry, onClick, onInput, reset, _pathOf: pathOf };
 });

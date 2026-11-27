@@ -361,6 +361,39 @@
   --tool-approval-button-border: color-mix(in srgb, var(--widget-approve-border) 60%, transparent);
 }
 
+/* The Team approval card (row 123 layout D1): one Allow with a caret beside it, a split button. */
+.tool-approve-split {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.tool-approve-split > .tool-approve-btn:first-child {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.tool-approve-split > .tool-approve-caret {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: -1px;
+  padding-inline: var(--space-3);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  border-inline-start-color: color-mix(in srgb, var(--widget-approve-color) 28%, var(--widget-approve-border));
+}
+
+.tool-approve-caret svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tool-approve-caret[aria-expanded="true"] svg { rotate: 180deg; }
+
 .tool-deny-btn {
   --tool-approval-button-border: var(--widget-deny-border);
   --tool-approval-button-bg: var(--widget-deny-bg);

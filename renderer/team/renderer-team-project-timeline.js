@@ -428,7 +428,10 @@
       return { state: 'live', label: (said && !ITERATION.test(said) ? said : '') || jt('team.conv.thinking', 'Thinking…'), elapsed };
     }
     if (t.status === 'failed') return failedChip(t);
-    if (t.status === 'stopped') return { state: 'stopped', label: jt('team.turn.stopped', 'Stopped before Jenny answered'), elapsed: '' };
+    if (t.status === 'stopped') {
+      const words = str(t.text) || str(obj(stream).text); // T1: a stop after some words was not before an answer
+      return { state: 'stopped', label: words ? jt('team.turn.stoppedPartly', 'Stopped before Jenny finished') : jt('team.turn.stopped', 'Stopped before Jenny answered'), elapsed: '' };
+    }
     const span = toMs(t.finishedAt) - toMs(t.startedAt);
     const ms = span > 0 ? span : typeof thoughtMs === 'number' && thoughtMs > 0 ? thoughtMs : NaN;
     const duration = Number.isFinite(ms) ? elapsedText(ms) : '';

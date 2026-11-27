@@ -7,7 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { MAYA, flush, memberTeam, harness, layout, chatChannel, message, overview } = require('./helpers/team-settings-harness');
+const { MAYA, flush, memberTeam, harness, layout, chatChannel, message, overview, menu } = require('./helpers/team-settings-harness');
 
 const at = (ms) => new Date(ms).toISOString();
 const HOUR = 3_600_000;
@@ -68,6 +68,16 @@ test('H22.1: when all the unread fits in view the channel is read at once, the N
   assert.ok(h.view.q('.team-new'));
   assert.equal(log().scrollTop, log().scrollHeight - 400, 'the end is reached by landing on New');
   assert.deepEqual(marked(h), [12]);
+});
+
+test('C14: Mark unread draws the New line at the chosen message', async (t) => {
+  const { h } = await open({ count: 12, lastRead: 12 });
+  t.after(h.restore);
+  assert.equal(h.view.q('.team-new'), null, 'nothing unread yet');
+  h.view.q('.team-msg[data-seq="5"] [data-team-msg-action="more"]').click();
+  [...menu(h).querySelectorAll('.inv-context-menu-item')].find((el) => el.textContent.trim() === 'Mark unread').click();
+  await flush();
+  assert.equal(h.view.q('.team-new').nextElementSibling.dataset.seq, '5');
 });
 
 test('H22.1: a channel with nothing unread still opens at the bottom', async (t) => {

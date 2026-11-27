@@ -93,16 +93,17 @@ test('"Reload window" runs the guarded reload (the removed title-bar tile\'s rou
   assert.equal(without.some((entry) => entry.id === 'action:reload-window'), false, 'absent-safe: no seam, no row');
 });
 
-test('the palette lists Team and the Team-only density row only while the Team flag is on, as it is at each open', () => {
+test('the palette lists Team only while the Team flag is on, as it is at each open; the density row is always listed (it sits on Chat)', () => {
   const teamItem = { dataset: { featureFlag: 'team' }, hidden: true };
   const document = { querySelectorAll: () => [{ dataset: {}, hidden: false }, teamItem] };
   const globalRef = { rendererSettingsSearch: require('../renderer/shell/renderer-settings-search.js'), document };
   const providers = createPaletteProviders({ state: { ui: {}, sessions: [] }, globalRef });
   const ids = () => providers.snapshot().filter((item) => item.group === 'Settings').map((item) => item.id);
-  const flagged = ['setting:section:team', 'setting:appearanceTeamDensitySelect'];
+  const flagged = ['setting:section:team'];
   const off = ids();
   assert.ok(off.includes('setting:notificationsCategoryTeamToggle'), 'fix item 3: Settings search finds the greyed team switch with the flag off');
   assert.ok(off.includes('setting:section:models'), 'other settings are listed');
+  assert.ok(off.includes('setting:appearanceTeamDensitySelect'), 'the density row is greyed on Chat with the flag off, so it is still found');
   for (const id of flagged) assert.equal(off.includes(id), false, `${id} is not offered with the flag off`);
   teamItem.hidden = false;
   const on = ids();

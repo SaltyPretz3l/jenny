@@ -493,6 +493,40 @@ test('a failed post keeps its row with Retry and Delete; Delete discards it', as
   assert.equal(h.sent('chatPost').length, 0);
 });
 
+test('Delete on a failed post puts its text back into an empty composer, then discards it', async (t) => {
+  const failed = outEntry('out_f_entry_00000000', { text: 'try me <@member_dot>', state: 'failed', error: { code: 'CMP-HOST-0001', reason: 'role_forbidden' } });
+  const { h } = await openChat({ answers: { chatOverview: overview({ outbox: [failed] }) } });
+  t.after(h.restore);
+  h.view.q('.team-msg[data-pending="true"] [data-team-msg-action="discard"]').click();
+  await flush();
+  assert.equal(h.view.q('.team-composer__input').value, 'try me @Dot');
+  assert.equal(h.view.q('.team-confirm'), null, 'no question when the composer was empty');
+  assert.deepEqual(h.sent('chatOutboxDiscard').map((call) => call.payload), [{ team_id: OTHER, entry_id: 'out_f_entry_00000000' }]);
+});
+
+test('Delete on a failed post asks first when the composer has text; Cancel keeps the post, Discard drops it and the typed text stays', async (t) => {
+  const failed = outEntry('out_f_entry_00000000', { text: 'lost words', state: 'failed', error: { code: 'CMP-HOST-0001', reason: 'role_forbidden' } });
+  const { h } = await openChat({ answers: { chatOverview: overview({ outbox: [failed] }) } });
+  t.after(h.restore);
+  const box = h.view.q('.team-composer__input');
+  box.value = 'typed already';
+  const pending = () => h.view.q('.team-msg[data-pending="true"]');
+  pending().querySelector('[data-team-msg-action="discard"]').click();
+  await flush();
+  assert.match(pending().querySelector('.team-confirm').textContent, /^Discard this unsent message\?/);
+  assert.equal(h.sent('chatOutboxDiscard').length, 0, 'nothing discarded before the answer');
+  pending().querySelector('[data-team-msg-action="discard-cancel"]').click();
+  await flush();
+  assert.equal(pending().querySelector('.team-confirm'), null);
+  assert.equal(h.sent('chatOutboxDiscard').length, 0);
+  pending().querySelector('[data-team-msg-action="discard"]').click();
+  await flush();
+  pending().querySelector('[data-team-msg-action="discard-confirm"]').click();
+  await flush();
+  assert.equal(h.sent('chatOutboxDiscard').length, 1);
+  assert.equal(box.value, 'typed already', 'the typed text is untouched');
+});
+
 test('Retry sends the same post again, then discards the failed entry once that answers ok; a double click sends once', async (t) => {
   const failed = outEntry('out_f_entry_00000000', { text: 'try me', state: 'failed', error: { code: 'CMP-HOST-0001', reason: 'role_forbidden' } });
   const gate = heldAnswers();

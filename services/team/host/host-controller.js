@@ -69,7 +69,7 @@ const { createHostForceLocal } = require('./host-force-local');
 
 const HELD_METHODS = new Set(['hostDeploy', 'hostRecover', 'hostInternet', 'hostRestore', 'hostStartNew', 'hostModelRelay', 'hostFileTools']);
 const LIFECYCLE_METHODS = new Set(['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow', 'hostExport',
-  'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder']);
+  'hostExportCancel', 'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder']);
 
 const OWNER_INVITE_WAIT_MS = 15_000;
 const ROSTER_PUSH_MS = 250;

@@ -159,18 +159,34 @@
       return state === 'approved' ? jt('team.plan.approvedBy', 'Approved by {name} · {time}', p) : '';
     }
     const newest = () => docsOf(blank(o.messages())).pop() || null;
+    // Why a send cannot go now (the box's own conditions), or ''.
+    function sendBlock() {
+      const state = typeof o.blocked === 'function' ? o.blocked() : '';
+      if (state === 'model') return jt('team.plan.buildModel', 'The picked model is offline. Pick another model or use the team default.');
+      if (state === 'nogpu') return jt('team.plan.buildNoGpu', 'No shared GPU can answer now. Build it when one is online.');
+      return state ? (state === 'offline' ? jt('team.plan.buildOffline', 'The team is offline. Build it when the host is back.') : jt('team.plan.buildReconnecting', 'Reconnecting. Build it when the team is back.')) : '';
+    }
     // Build it: the newest accepted plan, while plan mode is on.
     function buildHtml(doc) {
       const last = newest();
       if (!mayDecide() || !last || last.id !== doc.id || !on()) return '';
       const build = jt('team.plan.buildIt', 'Build it');
-      return '<div class="team-plan-act">' + column.button('plan-build-accepted', build, { variant: 'primary', disabled: o.running() || busy.has('build'),
-        title: o.running() ? jt('team.plan.buildWait', 'Wait for the turn to end.') : build })
+      const why = o.running() ? jt('team.plan.buildWait', 'Wait for the turn to end.') : sendBlock();
+      return '<div class="team-plan-act">' + column.button('plan-build-accepted', build, { variant: 'primary', disabled: Boolean(why) || busy.has('build'), title: why || build })
         + (o.driver() === o.me() ? '' : who(jt('team.plan.buildDrives', 'Build it starts a turn as you and makes you the driver.'))) + '</div>';
+    }
+    // A restored plan_document carries no decider; the conversation's approval receipts do. The approval id decides; a call id
+    // (unique only within one request) is used only when no receipt carries the approval id.
+    function receiptOf(p) {
+      const snap = o.snapshot();
+      const list = (snap && Array.isArray(snap.receipts) ? snap.receipts : []).filter((r) => r && r.tool_name === 'exit_plan_mode' && r.approver_member_id);
+      const byApproval = p.approval_id ? list.filter((r) => r.approval_id === p.approval_id) : [];
+      const r = (byApproval.length ? byApproval : list.filter((x) => p.tool_call_id && !x.approval_id && x.call_id === p.tool_call_id)).pop();
+      return r ? { by: r.approver_member_id, at: o.timeText(r.decided_at), kind: '' } : null;
     }
     function decidedHtml(doc, build) {
       const p = doc.plan;
-      const rec = decisions.get(p.approval_id) || (p.decided_by ? { by: p.decided_by, at: o.timeText(p.decided_at), kind: '' } : null);
+      const rec = decisions.get(p.approval_id) || (p.decided_by ? { by: p.decided_by, at: o.timeText(p.decided_at), kind: '' } : null) || receiptOf(p);
       const state = p.state === 'pending' && rec && rec.kind ? rec.kind : p.state;
       return receiptHtml({ ...p, state }, labelOf(state, rec)) + (build && state === 'accepted' ? buildHtml(doc) : '');
     }
@@ -202,7 +218,7 @@
       redraw();
     }
     async function build() {
-      if (!mayDecide() || o.running() || busy.has('build') || !newest()) return;
+      if (!mayDecide() || o.running() || sendBlock() || busy.has('build') || !newest()) return;
       busy.add('build');
       redraw();
       const driving = o.driver() === o.me() || (await o.takeover());
@@ -267,7 +283,7 @@
 
     return {
       visible, blank, on, click, key, input, decided,
-      version: () => { visible(o.snapshot()); return rev; },
+      version: () => { visible(o.snapshot()); return rev + ':' + (on() ? sendBlock() : ''); }, // Build it's reason is part of the row
       footHtml: (item) => inItem(item, false),
       popHtml: (item) => inItem(item, true),
       cardsHtml: () => pairs().filter((p) => !p.doc).map((p) => pendingHtml(p.a, null)).join(''),

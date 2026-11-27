@@ -127,7 +127,7 @@
   // `snapshot()`.
   function createExplorer({ teamId, projectId, projectName = '', call, onOpen = () => {}, onChange = () => {}, toastHost = () => null, seed = null }) {
     const s = { status: 'loading', entries: [], next: 0, total: 0, capped: false, error: null, moreError: '', busy: false,
-      expanded: new Set(), selected: '', focus: '', token: 0, disposed: false };
+      expanded: new Set(), selected: '', focus: '', token: 0, disposed: false, again: false };
     let tree = null;
     let host = null;
     if (seed && Array.isArray(seed.entries)) {
@@ -160,19 +160,23 @@
       tree = null;
     }
 
-    async function read(append) {
-      if (s.disposed || s.busy) return;
+    // `quiet`: the rows stay drawn while the first page is read again (Refresh); a read already out is repeated after it.
+    async function read(append, quiet = false) {
+      if (s.disposed) return;
+      if (s.busy) { if (quiet) s.again = true; return; }
       const mine = ++s.token;
       s.busy = true;
-      if (!append) { s.status = 'loading'; s.entries = []; tree = null; }
+      if (!append && !quiet) { s.status = 'loading'; s.entries = []; tree = null; }
       paint();
       let answer;
       try { answer = await call('projectFiles', append ? { ...ids, cursor: s.next } : ids); } catch (_error) { answer = null; }
       if (s.disposed || mine !== s.token) return;
       s.busy = false;
-      take(answer, append);
+      const refused = quiet && s.status === 'ready' && !(answer && answer.ok === true); // a refused Refresh keeps the rows shown
+      if (!refused) take(answer, append);
       paint();
-      if (append && answer && answer.ok) focusMore();
+      if (append && answer && answer.ok && !s.refilling) focusMore();
+      if (s.again) { s.again = false; void read(false, true); }
     }
     const load = () => read(false);
     const more = () => (s.next === null ? Promise.resolve() : read(true));
@@ -368,6 +372,14 @@
       },
       unmount,
       load,
+      // Reads the first page again, then as many more as were loaded before, so loaded pages do not fall away.
+      async refresh() {
+        const had = s.entries.length;
+        await read(false, true);
+        s.refilling = true;
+        for (let before = -1; !s.disposed && s.status === 'ready' && s.next !== null && s.entries.length < had && s.entries.length !== before && !s.moreError;) { before = s.entries.length; await read(true); }
+        s.refilling = false;
+      },
       more,
       select,
       focusRow,

@@ -493,17 +493,23 @@ test('Chat page shows Long chats and This chat as standard rows (row 133: the Co
   assert.deepEqual(JSON.parse(JSON.stringify(patches.at(-1))), { featureOverrides: { primary_digests: true } }, 'the digest switch binds through its wrapper');
 });
 
-test('Chat › This chat says whose rows they are: the next chat, then the open chat by name', async (t) => {
+test('Chat › This chat: disabled with its reason while no chat is open, then named after the open chat (owner 2026-11-26)', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const note = doc.getElementById('contextScopeNote');
+  const heading = doc.getElementById('contextSourcesHeading');
+  const scope = () => doc.getElementById('contextHistoryScopeSelect');
   assert.equal(note.closest('.settings-card').dataset.settingsSection, 'chat');
-  assert.equal(note.textContent, 'No chat is open. These apply to the next chat you start.');
+  assert.equal(note.textContent, 'Open a chat to change its settings.');
+  assert.equal(heading.textContent, 'This chat');
+  assert.equal(scope().disabled, true, 'no chat open: the rows cannot change anything');
   doc.getElementById('newChatButton').click();
   await waitForUi(window, 30);
   await openSettingsView(window);
+  assert.equal(heading.textContent, 'This chat: New Chat');
   assert.equal(note.textContent, 'These change only the chat you have open: New Chat.');
-  assert.equal(note.children.length, 0, 'the title is written as text, never as markup');
+  assert.equal(note.children.length + heading.children.length, 0, 'the title is written as text, never as markup');
+  assert.equal(scope().disabled, false);
 });
 
 test('Settings keeps only additive custom summarization guidance', async (t) => {

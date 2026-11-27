@@ -195,6 +195,7 @@ test('the primary cannot be moved out of General', async () => {
   });
   assert.equal(moved.ok, false);
   assert.equal(moved.error.reason, 'primary_protected');
+  assert.equal(moved.error.message, 'The Jenny chat stays in General and cannot be moved to a project.', 'its own sentence, not the storage one');
   const stays = ProjectApplicationService.prototype.assignSessionProject.call(fake, {
     project_id: GENERAL_PROJECT_ID, session_id: id,
   });

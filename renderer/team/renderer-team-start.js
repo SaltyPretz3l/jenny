@@ -108,25 +108,22 @@
     return null;
   }
 
-  // One call per button at a time. A failure says its sentence under the button's column; a success clears the field
-  // it used and re-reads everything, and the view then follows the store.
+  // One call per button at a time. A failure says its sentence under its column; a success clears its field and
+  // re-reads all. The button comes back even when a step throws.
   async function send(key, method, payload, ctx, after) {
     const s = page;
     s.busy.add(key);
     s.errors.you = '';
-    ctx.render();
-    const answer = await ctx.store.call(method, payload);
-    teamStore.afterFirstAct(ctx.store, answer); // E50: the first answered act ends the quiet start
-    if (answer.ok && answer.host) ctx.store.seed({ host: answer.host });
-    if (s !== page) return;
-    if (!answer.ok) {
-      s.busy.delete(key);
-      s.errors[key] = words.errorText(answer.error || teamStore.NO_ANSWER);
+    try {
       ctx.render();
-      return;
-    }
-    after();
-    try { await ctx.store.refreshAll(); } finally { s.busy.delete(key); if (s === page) ctx.render(); }
+      const answer = await ctx.store.call(method, payload);
+      teamStore.afterFirstAct(ctx.store, answer); // E50: the first answered act ends the quiet start
+      if (answer.ok && answer.host) ctx.store.seed({ host: answer.host });
+      if (s !== page) return;
+      if (!answer.ok) { s.errors[key] = words.errorText(answer.error || teamStore.NO_ANSWER); return; }
+      after();
+      await ctx.store.refreshAll();
+    } finally { s.busy.delete(key); if (s === page) ctx.render(); }
   }
 
   // `ctx`: { store, render, target }. True when the action was the start page's or the stopped server page's.
@@ -162,5 +159,5 @@
 
   function reset() { page = fresh(); serverPage.tab.reset(); }
 
-  return { phase, html, fill, onInput, action, restart, reset };
+  return { phase, html, fill, onInput, action, restart, reset, send };
 });

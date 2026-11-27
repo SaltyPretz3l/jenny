@@ -78,6 +78,7 @@
     let reading = null;
     let again = false;
     let form = null; // { kind: 'add' | 'change' | 'decline', request_seq?, tool, where, folder, reason }
+    let undo = null; // C19: the rule just removed, { tool, folder, at (its place), seq, sig (the list after it, once read) }, until the list changes again
     const busy = new Set();
     let disposed = false;
     const ids = { team_id: teamId, project_id: projectId };
@@ -91,11 +92,17 @@
       reading = call('projectRules', ids).then((answer) => {
         reading = null;
         if (disposed) return;
-        if (answer.ok) { data = answer; error = ''; if (paused()) form = null; } else error = errorText(answer.error);
+        if (answer.ok) { data = answer; error = ''; if (paused()) form = null; settleUndo(); } else error = errorText(answer.error);
         if (again) { again = false; void read(); }
         onChange();
       });
       return reading;
+    }
+
+    function settleUndo() {
+      if (!undo) return;
+      const sig = data.rules.map((r) => r.rule_seq).join();
+      if (undo.sig === null) { if (!data.rules.some((r) => r.rule_seq === undo.seq)) undo.sig = sig; } else if (undo.sig !== sig) undo = null;
     }
 
     async function run(key, method, payload, after) {
@@ -155,7 +162,10 @@
       const copy = jt('team.rules.copy', 'Changes Jenny may make in this project without asking, for everyone’s turns.')
         + (admin ? '' : ' ' + jt('team.rules.copyAsk', 'Project admins set these; you can ask for one from an approval.'));
       const requests = admin && data ? data.requests.filter((request) => request.state === 'open') : [];
-      const rows = requests.map(requestRow).join('') + rules.map((rule) => ruleRow(rule, admin)).join('');
+      const listed = rules.map((rule) => ruleRow(rule, admin));
+      if (undo && admin) listed.splice(Math.min(undo.at, listed.length), 0, row(jt('team.rules.removed', 'Rule removed.'), '',
+        pausable('rule-undo', jt('team.rules.undo', 'Undo'), { title: jt('team.rules.undoTitle', 'Always allow {tool} {where} again', { tool: undo.tool, where: whereText(undo.folder) }), disabled: busy.has('undo') })));
+      const rows = requests.map(requestRow).join('') + listed.join('');
       const add = admin ? (form && form.kind === 'add' ? formHtml(jt('team.rules.addHeading', 'Always allow in this project:'), 'rule-add-go', jt('team.rules.addGo', 'Add rule'))
         : '<div class="team-page__acts">' + pausable('rule-add', jt('team.rules.add', 'Add a rule'), { title: jt('team.rules.addTitle', 'Always allow a file tool in this project, for everyone’s turns'), disabled: rules.length >= 32 }) + '</div>') : '';
       const notes = [error, note].filter(Boolean).map((text) => '<p class="team-set-note" role="status">' + escapeHtml(text) + '</p>').join('');
@@ -182,7 +192,14 @@
         case 'rule-decline': openForm('decline', seq); return true;
         case 'rule-add': openForm('add', 0); return true;
         case 'rule-form-cancel': form = null; note = ''; onChange(); return true;
-        case 'rule-remove': void run('remove:' + target.dataset.ruleSeq, 'projectRuleRemove', { rule_seq: Number(target.dataset.ruleSeq) }); return true;
+        case 'rule-remove': {
+          const gone = data ? data.rules.find((r) => String(r.rule_seq) === target.dataset.ruleSeq) : null;
+          const at = gone ? data.rules.indexOf(gone) : 0;
+          const after = gone ? () => { undo = { tool: gone.tool_name, folder: gone.folder || null, at, seq: gone.rule_seq, sig: null }; } : undefined;
+          void run('remove:' + target.dataset.ruleSeq, 'projectRuleRemove', { rule_seq: Number(target.dataset.ruleSeq) }, after);
+          return true;
+        }
+        case 'rule-undo': if (undo) void run('undo', 'projectRuleAdd', { tool_name: undo.tool, folder: undo.folder }, () => { undo = null; }); return true;
         case 'rule-change-go':
         case 'rule-add-go': {
           const where = checkedWhere(form);
@@ -218,7 +235,7 @@
     }
 
     void read();
-    return { html, onClick, onInput, onSelect, refresh: read, dispose() { disposed = true; form = null; busy.clear(); } };
+    return { html, count: () => (data ? data.rules.length : null), onClick, onInput, onSelect, refresh: read, dispose() { disposed = true; form = null; undo = null; busy.clear(); } };
   }
 
   function createPausedWatch({ read, clock, live, redraw }) {

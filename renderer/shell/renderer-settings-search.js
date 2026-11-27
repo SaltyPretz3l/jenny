@@ -49,9 +49,6 @@
     return (definition && definition.label) || sectionId;
   }
 
-  // Rows that exist only while a feature flag is on: the index offers them only then.
-  var FLAGGED_FIELDS = { appearanceTeamDensitySelect: 'team' };
-
   // The lowercase text a query is matched against, built once per entry.
   function withHaystack(entry) {
     var keywords = Array.isArray(entry.keywords) ? entry.keywords.join(' ') : '';
@@ -97,7 +94,6 @@
         rawSectionId: field.sectionId,
         sectionLabel: sectionLabel(fieldHostId),
         keywords: field.keywords || [],
-        featureFlag: Object.hasOwn(FLAGGED_FIELDS, field.id) ? FLAGGED_FIELDS[field.id] : '',
       }));
     }
     return entries;

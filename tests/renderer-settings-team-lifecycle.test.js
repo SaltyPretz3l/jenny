@@ -180,6 +180,33 @@ test('export: the standing row and the delete form send the password once; the p
   assert.ok(h.q('[data-team-group="delete"] [data-team-action="export-open"]'), 'Export a copy first… in the confirmation');
 });
 
+test('export: Cancel stays enabled while the export runs, stops it in main and says nothing was kept; idle, it closes the form', async (t) => {
+  let finish = null;
+  const h = owner(t, {}, { hostInventory: { ok: true, inventory: INVENTORY }, hostExportCancel: { ok: true, cancelled: true },
+    hostExport: () => new Promise((resolve) => { finish = resolve; }) });
+  await flush();
+  h.click('[data-team-group="ownership"] [data-team-action="export-open"]');
+  await flush();
+  h.type('#teamExportPass', PASSWORD);
+  h.type('#teamExportPass2', PASSWORD);
+  h.click('[data-team-action="export-go"]');
+  await flush();
+  assert.equal(h.q('[data-team-action="export-go"]').disabled, true, 'the export is running');
+  const cancel = () => h.q('[data-team-action="export-cancel"]');
+  assert.equal(cancel().disabled, false, 'Cancel can stop it');
+  cancel().click();
+  await flush();
+  assert.deepEqual(h.sent('hostExportCancel').map((c) => c.payload), [{}]);
+  finish({ ok: false, error: { code: 'invalid_request', reason: 'team_export_cancelled' } });
+  await flush();
+  assert.match(text(h.q('[data-team-export-form]')), /Export cancelled\. Nothing was kept\./);
+  assert.equal(h.q('[data-team-action="export-go"]').disabled, false);
+  cancel().click();
+  await flush();
+  assert.equal(h.q('[data-team-export-form]'), null, 'with nothing running Cancel closes the form');
+  assert.equal(h.sent('hostExportCancel').length, 1);
+});
+
 test('restore on a PC that hosts no team: pick, a wrong password changes nothing, the right one brings the team back', async (t) => {
   const answers = [{ ok: false, error: { code: 'CMP-HOST-0002', reason: 'team_backup_password_wrong' } },
     { ok: true, team_name: 'Studio', exported_at: Date.UTC(2026, 10, 12, 12), host: host() }];

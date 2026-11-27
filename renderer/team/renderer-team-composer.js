@@ -71,6 +71,7 @@
     let mode = '';
     let input = null;
     let error = '';
+    let needsOnline = false; // the hint says files need the team online
     let disposed = false;
     let touched = false;
     const where = threadRootId ? { channel_id: channelId, thread_root_id: threadRootId } : { channel_id: channelId };
@@ -343,12 +344,26 @@
     function onFocusOut(event) {
       if (menu.open && !root.contains(event.relatedTarget)) closeMentions();
     }
-    function onPaste(event) { if (mode === 'write') attach.onPaste(event); }
+    function onPaste(event) {
+      if (mode === 'write' && attach.onPaste(event) === 'offline') { error = jt('team.attach.dropOffline', 'Files need the team online'); needsOnline = true; refresh(); }
+    }
+    // A failed post's text back (message actions): only into an empty box, answered in `detail.done`.
+    function onRestore(event) {
+      const detail = event.detail;
+      if (mode !== 'write' || !input || input.value.trim() || !detail || typeof detail.text !== 'string') return;
+      if (detail.probe) { detail.done = true; return; } // asked only whether the box can take it
+      names = new Map();
+      input.value = chatWrites.toDisplay(detail.text, ctx().knownName, names);
+      detail.done = true;
+      onInput();
+      input.focus();
+    }
 
     // ------------------------------------------------------------ lifecycle
 
     function build() {
       const c = ctx();
+      if (needsOnline && c.online) { needsOnline = false; error = ''; }
       const next = c.archived ? 'archived' : c.canWrite ? 'write' : 'read';
       if (next === mode) { refresh(); return; }
       if (mode === 'write') { draft.final = chatWrites.toWire(input.value, names); void saveDraft(); attach.unmount(); }
@@ -367,6 +382,7 @@
     root.addEventListener('mousedown', onMouseDown);
     root.addEventListener('focusout', onFocusOut);
     root.addEventListener('paste', onPaste);
+    root.addEventListener('team-restore', onRestore);
     build();
 
     return {
@@ -383,6 +399,7 @@
         root.removeEventListener('mousedown', onMouseDown);
         root.removeEventListener('focusout', onFocusOut);
         root.removeEventListener('paste', onPaste);
+        root.removeEventListener('team-restore', onRestore);
         attach.unmount();
         clearTimeout(draft.timer);
         draft.timer = null;

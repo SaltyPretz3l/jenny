@@ -265,13 +265,28 @@ test('resolveDefaultChatModel names the Settings default under any engine, else 
   assert.deepEqual(utils.resolveDefaultChatModel(null), { model: '', engineType: '' });
 });
 
+test('no default under a cloud engine: the pill names the local model the backend takes, else stays cloud (owner 2026-11-26)', () => {
+  const data = [{ id: 'gpt-6', engine_type: 'chatgpt' }, { id: 'ornith-1.5-9b', engine_type: 'openai-compatible' }];
+  const cloud = { status: { model: 'gpt-6', engine: 'chatgpt' }, offline: {}, modelList: { data, default_local_fallback: 'ornith-1.5-9b' } };
+  assert.deepEqual(utils.resolveDefaultChatModel(cloud), { model: 'ornith-1.5-9b', engineType: 'openai-compatible' });
+  assert.equal(utils.describeCloudPill({}, cloud), null, 'the turn runs on this PC, so the pill does not say cloud');
+  const none = { ...cloud, modelList: { data } };
+  assert.deepEqual(utils.resolveDefaultChatModel(none), { model: 'gpt-6', engineType: 'chatgpt' });
+  assert.ok(utils.describeCloudPill({}, none), 'nothing on this PC can serve it: the turn and the pill stay cloud');
+  const local = { status: { model: 'qwen3:8b', engine: 'ollama' }, offline: {}, modelList: { data, default_local_fallback: 'ornith-1.5-9b' } };
+  assert.deepEqual(utils.resolveDefaultChatModel(local), { model: 'qwen3:8b', engineType: 'ollama' }, 'a local engine keeps its loaded model');
+});
+
 test('row 123: a team model sits in its team group with the notice, and the pill shows the team model id', () => {
   const notice = 'The team’s host and the person whose hardware responds can read your prompts and replies.';
   const team = { id: 'team/team_alpha1/qwen3:8b-q4', engine_type: 'openai-compatible', team_id: 'team_alpha1',
     team_name: 'Alpha crew' };
   const entry = utils.normalizeCatalogEntry(team);
   assert.deepEqual(entry.group, { key: 'team:team_alpha1', label: 'Alpha crew', order: 65 });
-  assert.equal(entry.hint, notice);
+  assert.equal(entry.hint, '', 'no per-row notice; the picker draws it once per group');
+  const section = utils.groupSectionHtml({ key: entry.group.key, label: 'Alpha crew', entries: [entry] }, '<i>rows</i>', { showHeading: true, id: 'g0', escapeHtml: (v) => String(v) });
+  assert.equal(section.split(notice).length - 1, 1, 'the group section carries the notice once');
+  assert.equal(utils.groupSectionHtml({ key: 'ollama', label: 'Ollama', entries: [] }, '<i>rows</i>', { showHeading: false, id: 'g1', escapeHtml: (v) => String(v) }), '<i>rows</i>', 'a local group is unchanged');
   assert.deepEqual([entry.family, entry.tag, entry.engineHint], ['qwen3', '8b-q4', 'team']);
   assert.equal(utils.normalizeCatalogEntry({ ...team, team_name: '' }).group.label, 'Unnamed team', 'never the raw team id');
   // A local model of the same name stays in its own group with no notice.

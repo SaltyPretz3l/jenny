@@ -27,8 +27,8 @@ const { attachTeamChat, commandAs } = require('./helpers/team-chat-hook');
 const { PROJECT_METHODS } = require('./helpers/team-project-client-host'); const { BOARD_METHODS, MODEL_METHODS } = require('./helpers/team-model-methods'); // 6-5, row 151 T3
 
 // Slice 5-6: the owner's whole-team operations (tests/team-host-delete.test.js, tests/team-host-export-restore.test.js).
-const LIFECYCLE = ['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow', 'hostExport', 'hostRestorePick',
-  'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder'];
+const LIFECYCLE = ['hostInventory', 'hostDelete', 'hostStartNew', 'hostOldDelete', 'hostOldShow', 'hostExport', 'hostExportCancel',
+  'hostRestorePick', 'hostRestore', 'hostAutostart', 'hostSummary', 'hostOpenFolder'];
 const INVOKE_METHODS = ['join', 'status', 'leave', 'removeTeam', 'members', 'inviteCreate', 'inviteReveal',
   'inviteRevoke', 'inviteList', 'deviceInvite', 'deviceList', 'deviceRevoke', 'memberAdmit', 'memberSetRole',
   'memberRevoke', 'ownerTransfer', 'auditRead', 'rename', 'profileSet', 'hostDeploy', 'hostStop', 'hostStatus', 'hostRecover',

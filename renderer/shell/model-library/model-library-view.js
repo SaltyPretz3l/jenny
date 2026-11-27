@@ -700,10 +700,9 @@
     var context = formatContext(entry.contextLength);
     var meta = [jt('models.library.team.sharedGpu', "A team's shared GPU")];
     if (context) meta.push(jt('settings.models.library.context', '{size} context', { size: context }));
-    return '<div class="mrow" data-team-model="' + escapeHtml(entry.id) + '">'
+    return '<div class="mrow" data-team-model="' + escapeHtml(entry.id) + '" aria-describedby="mlib-team-note">'
       + '<div class="mrow-main"><div class="mrow-title"><span class="mrow-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span></div>'
-      + '<div class="mrow-meta">' + escapeHtml(meta.join(' \u00b7 ')) + '</div>'
-      + '<div class="mrow-meta">' + escapeHtml(jt('team.engine.notice', 'The team’s host and the person whose hardware responds can read your prompts and replies.')) + '</div></div></div>';
+      + '<div class="mrow-meta">' + escapeHtml(meta.join(' \u00b7 ')) + '</div></div></div>';
   }
 
   // The group's rows for a scope and query, as keyed items; none outside "All" (it is not on this PC, and not a download).
@@ -715,7 +714,8 @@
       return entry && entry.id && (!query || (teamModelName(entry) + ' ' + entry.id).toLowerCase().indexOf(query) >= 0);
     });
     if (!shown.length) return [];
-    return [{ key: ':team-sep', html: '<div class="mrow-sep" data-item="sep-team">' + escapeHtml(jt('models.library.fromTeams', 'From your teams')) + '</div>' }]
+    var note = '<p class="mlib-team-note" id="mlib-team-note" data-item="team-note"><span class="mp-quiet">' + escapeHtml(jt('team.engine.notice', 'The team’s host and the person whose hardware responds can read your prompts and replies.')) + '</span></p>'; // layout D4: the notice once, under the heading
+    return [{ key: ':team-sep', html: '<div class="mrow-sep" data-item="sep-team">' + escapeHtml(jt('models.library.fromTeams', 'From your teams')) + '</div>' }, { key: ':team-note', html: note }]
       .concat(shown.map(function (entry) { return { key: entry.id, html: buildTeamModelRow(entry) }; }));
   }
 

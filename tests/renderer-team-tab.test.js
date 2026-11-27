@@ -201,6 +201,10 @@ test('a failed Admit prints one sentence and gives the control back; Decline cal
   assert.match(notes[0].textContent, /The team is full/);
   assert.equal(h.view.q('[data-team-action="admit"]').disabled, false);
   h.view.q('[data-team-action="decline"]').click();
+  h.view.q('[data-team-action="confirm-cancel"]').click();
+  assert.equal(h.sent('memberRevoke').length, 0, 'Decline asks first, and Cancel sends nothing');
+  h.view.q('[data-team-action="decline"]').click();
+  h.view.q('[data-team-action="confirm-decline"]').click();
   await flush();
   assert.deepEqual(h.sent('memberRevoke').map((call) => call.payload), [{ team_id: TEAM, member_id: MAYA }]);
 });

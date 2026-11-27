@@ -364,7 +364,7 @@ test('delete: your own message through the two-step confirm; Cancel sends nothin
   row(h, 2).focus();
   key(h, row(h, 2), 'Delete');
   const confirm = row(h, 2).querySelector('.team-confirm');
-  assert.match(confirm.textContent, /Delete this message\?/);
+  assert.match(confirm.textContent, /Delete this message\? Its edits, reactions, files and pin go with it\. This cannot be undone\./);
   confirm.querySelector('[data-team-msg-action="delete-cancel"]').click();
   await flush();
   assert.equal(row(h, 2).querySelector('.team-confirm'), null);

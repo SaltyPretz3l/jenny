@@ -212,7 +212,7 @@ function createModelTeam({
     offers.set(summary.offer_id, summary);
     if (!firstSeen.has(summary.offer_id)) firstSeen.set(summary.offer_id, new Date(clock()).toISOString());
     sender.offerSeen(summary);
-    if (summary.state === 'ended') incoming.offerEnded(summary.offer_id);
+    if (summary.state === 'ended') incoming.offerEnded(summary.offer_id, summary.reason);
   }
 
   async function readRoster() {
@@ -249,7 +249,12 @@ function createModelTeam({
     sharing = 'on';
     sharingReason = null;
     const seenOffers = new Set(list.offers.map((summary) => summary.offer_id));
-    for (const id of [...offers.keys()]) if (!seenOffers.has(id)) { dropOffer(id); incoming.offerEnded(id); }
+    for (const id of [...offers.keys()]) {
+      if (seenOffers.has(id)) continue;
+      incoming.offerEnded(id);
+      // A take kept as withdrawn keeps its offer listed (as ended) until Dismiss removes the take.
+      if (incoming.takeOf(id)) offers.set(id, { ...offers.get(id), state: 'ended' }); else dropOffer(id);
+    }
     const seenViews = new Set(list.transfers.map((view) => view.transfer_id));
     for (const id of [...views.keys()]) if (!seenViews.has(id)) dropView(id);
     sender.listed(list.offers);

@@ -239,6 +239,7 @@ for (const [action, method] of [['admit', 'memberAdmit'], ['decline', 'memberRev
     assert.equal(s.count(), '1');
     assert.equal(shown.getAttribute('aria-label'), 'Team: 1 person wants to join');
     h.view.q(`[data-team-action="${action}"]`).click();
+    if (action === 'decline') h.view.q('[data-team-action="confirm-decline"]').click(); // Decline asks first
     await flush();
     assert.equal(h.sent(method).length, 1);
     assert.equal(s.count(), '');

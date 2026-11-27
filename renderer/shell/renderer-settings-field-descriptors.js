@@ -351,7 +351,7 @@
     keywords: [jt('settings.changePictures.keywords.beforeAfter', 'before and after'), jt('settings.changePictures.keywords.pictures', 'pictures'), jt('settings.changePictures.keywords.screenshot', 'screenshot'), jt('settings.changePictures.keywords.compare', 'compare')],
   } });
   def({ id: 'appearanceAppZoomSelect', sectionId: 'appearance', kind: 'enum', default: 110, adapterId: 'windowUi', key: 'appZoomPercent', options: 'source:appZoomPresets' });
-  def({ id: 'appearanceTeamDensitySelect', sectionId: 'team', kind: 'enum', default: 'comfortable', adapterId: 'appearance', key: 'teamDensityId',
+  def({ id: 'appearanceTeamDensitySelect', sectionId: 'chat', kind: 'enum', default: 'comfortable', adapterId: 'appearance', key: 'teamDensityId',
     options: [{ value: 'comfortable', label: jt('appearance.teamDensity.comfortable', 'Comfortable') }, { value: 'compact', label: jt('appearance.teamDensity.compact', 'Compact') }] });
   def({ id: 'uiLanguageSelect', sectionId: 'general', kind: 'enum', default: 'en', adapterId: 'chatUi', key: 'uiLanguage', options: 'source:uiLanguages', restartRequired: true });
   def({ id: 'use24HourTime', sectionId: 'general', kind: 'boolean', default: false, controlId: 'use24HourTimeToggle', adapterId: 'chatUi', key: 'use24HourTime', copy: 'field-copy:use24HourTimeToggle' });

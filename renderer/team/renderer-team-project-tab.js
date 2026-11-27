@@ -27,6 +27,7 @@
     const projects = () => projectStores.getProjectStore();
     const render = () => tab.render();
     const born = new Map(); // session id -> project id, for a conversation created here and not listed yet
+    const creating = new Set(); // C23: teams with a conversationCreate out; both "New conversation" buttons are disabled meanwhile
     const forceLocalText = () => (typeof store().forceLocal === 'function' && store().forceLocal() ? words.forceLocalText() : '');
     const errorText = (error) => words.errorText(error || teamStore.NO_ANSWER);
 
@@ -85,7 +86,7 @@
 
     function columnView(team, current) {
       return column.columnView({ team, state: team ? projects().team(team.team_id) : null, current: column.isPage(current) ? current : '',
-        channelRows: team ? (chat().team(team.team_id) || {}).channels : [], errorText });
+        channelRows: team ? (chat().team(team.team_id) || {}).channels : [], errorText, making: Boolean(team) && creating.has(team.team_id) });
     }
 
     function ctxOf(teamId) {
@@ -107,7 +108,7 @@
 
     function mount(region, teamId, page) {
       const id = column.idOf(page);
-      const ctx = () => ({ ...ctxOf(teamId), fresh: () => column.isFresh(teamId, page) });
+      const ctx = () => ({ ...ctxOf(teamId), fresh: () => column.isFresh(teamId, page), creating: () => creating.has(teamId) });
       if (page.startsWith(column.PROJECT)) {
         return pages.createProjectPage({ root: region, teamId, projectId: id, store: projects(), ctx, onShow: (what) => void newConversation(teamId, what.newConversation),
           onClose: () => closePage(teamId, page) });
@@ -128,7 +129,19 @@
       return () => Boolean(tab.container()) && tab.live() === live && tab.turn() === turn && (selectedTeam() || {}).team_id === teamId;
     }
 
+    // Both buttons are drawn from `creating`: the column's through its view, the page's through its ctx.
+    function paintNew(teamId) {
+      if (tab.container()) render();
+      const frame = tab.frame();
+      if (frame && frame.project && String(frame.key).startsWith(teamId + '|' + column.PROJECT)) frame.project.update({ type: 'roster', team_id: teamId });
+    }
     async function newConversation(teamId, projectId) {
+      if (creating.has(teamId)) return;
+      creating.add(teamId);
+      paintNew(teamId);
+      try { await createIn(teamId, projectId); } finally { creating.delete(teamId); paintNew(teamId); }
+    }
+    async function createIn(teamId, projectId) {
       const still = shownNow(teamId);
       const answer = await projects().call('conversationCreate', { team_id: teamId, project_id: projectId });
       if (!tab.container()) return;

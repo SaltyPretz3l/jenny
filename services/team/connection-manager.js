@@ -77,6 +77,7 @@ function createConnectionManager({
   let generation = 0;
   let timer = null;
   let failures = 0;
+  let nudged = false; // `retryNow` asked during a dial in flight: that dial's failure dials again at once, backoff started over
   // Streams in a row that ended on a rejected frame; while above zero an opened stream does not reset `failures`.
   let frameRejections = 0;
   const refusals = createRefusalWindow({ now, cooldownMs: refusedCooldownMs });
@@ -283,11 +284,12 @@ function createConnectionManager({
           return;
         }
         if (result.reason === 'host_refused') { refused(); return; }
+        if (nudged && result.reason !== 'host_cooldown') { nudged = false; failures = 0; run(attempt); return; }
         retryLater(OFFLINE_REASONS.has(result.reason) ? STATES.OFFLINE : STATES.RECONNECTING, result.reason, undefined,
           result.reason === 'host_cooldown' ? refusals.left() : null);
         return;
       }
-      link = result.link;
+      link = result.link; nudged = false;
       const target = link;
       target.unsubscribe = target.bridge.onState((state) => {
         if (state.state !== 'offline') return;
@@ -574,9 +576,11 @@ function createConnectionManager({
   return {
     teamId,
     start() { if (!stopped) run(attempt); },
-    // Only a wait between attempts (this PC's own host just came up) ends: the backoff starts over and one dial runs now.
-    retryNow() { if (stopped || timer === null || (current.state !== STATES.RECONNECTING && current.state !== STATES.OFFLINE)) return false;
-      cancelTimer(); failures = 0; run(attempt); return true; },
+    // A wait between attempts ends (this PC's own host just came up): backoff starts over, one dial runs now; a dial in flight is nudged.
+    retryNow() { if (stopped || TERMINAL.has(current.state) || link) return false;
+      if (timer === null) { nudged = true; return true; }
+      if (current.state !== STATES.RECONNECTING && current.state !== STATES.OFFLINE) return false;
+      cancelTimer(); failures = 0; nudged = false; run(attempt); return true; },
     stop, snapshot, command,
     // This connection while online: the team engine call (team-engine.js) and the node link (node/team-link.js) borrow it.
     borrow,

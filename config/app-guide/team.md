@@ -73,7 +73,7 @@ On a host that cannot yet give Jenny confined access to files, the project page 
 
 When Jenny wants to write or edit a file, the conversation shows an approval card. Any member with write access on the project who is viewing the conversation can answer it. The first valid answer wins, and both the person who asked Jenny and the person who approved are recorded in the project's audit log.
 
-A project admin can choose "Always allow" on the card, which saves a rule for that tool in the project, for everyone's turns. Other writers see "Allow once, ask for always", which asks an admin. Rules are listed on the project's "Always allowed" page, where an admin can add, allow, decline or remove them. A project can have 32 rules. Rules cover writing and editing files only, never folders that start with a dot, and never a plan or read-only turn. When there is any doubt, a person is asked.
+The card has one "Allow" button with a small arrow beside it. A project admin can open the arrow and choose "Always allow edits in this project", which saves a rule for that tool in the project, for everyone's turns. Other writers see "Allow once and ask an admin for always" there, which asks an admin. Rules are listed on the project's "Always allowed" page, where an admin can add, allow, decline or remove them. A project can have 32 rules. Rules cover writing and editing files only, never folders that start with a dot, and never a plan or read-only turn. When there is any doubt, a person is asked.
 
 ## Boards in a team project
 

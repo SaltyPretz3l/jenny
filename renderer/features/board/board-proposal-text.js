@@ -54,8 +54,22 @@
       case 'move': return jt('board.changes.move', 'Move {target} into {group}', { target: firstLine(s.target, SHORT_MAX), group });
       case 'tidy': return group ? jt('board.changes.tidy', 'Tidy {group}', { group }) : jt('board.changes.tidyAll', 'Tidy the whole board');
       case 'redraw': return jt('board.changes.redraw', 'Redraw {title} ({lines})', { title: firstLine(s.title, SHORT_MAX), lines: linesText(s.lines) });
-      case 'remove': return jt('board.changes.remove', 'Remove {kind} {target}: "{label}"', { kind: firstLine(s.kind, SHORT_MAX), target: firstLine(s.target, SHORT_MAX), label: firstLine(s.label, SHORT_MAX) });
+      case 'remove': return jt('board.changes.remove', 'Remove {kind} {target}: "{label}"', { kind: kindWord(s.kind), target: firstLine(s.target, SHORT_MAX), label: firstLine(s.label, SHORT_MAX) });
       default: return jt('board.changes.other', 'Change {n}', { n: change && Number.isFinite(change.n) ? change.n : 0 });
+    }
+  }
+
+  // A removal's kind in the reader's language (the board's card kinds and group); a value the board does not know reads "card".
+  function kindWord(kind) {
+    switch (str(kind)) {
+      case 'note': return jt('board.changes.kind.note', 'note');
+      case 'file': return jt('board.changes.kind.file', 'file card');
+      case 'image': return jt('board.changes.kind.image', 'image');
+      case 'link': return jt('board.changes.kind.link', 'link');
+      case 'chat': return jt('board.changes.kind.chat', 'chat card');
+      case 'diagram': return jt('board.changes.kind.diagram', 'diagram');
+      case 'group': return jt('board.changes.kind.group', 'group');
+      default: return jt('board.changes.kind.card', 'card');
     }
   }
 

@@ -58,7 +58,10 @@ fn escapes_in_strings_are_decoded() {
     let request = parse(json).unwrap();
     assert_eq!(request.argv[0], "a\"b");
     assert_eq!(request.argv[1], "\u{e9}\u{1F600}");
-    assert_eq!(request.env.unwrap(), vec![("KA".to_string(), "v\n".to_string())]);
+    assert_eq!(
+        request.env.unwrap(),
+        vec![("KA".to_string(), "v\n".to_string())]
+    );
 }
 
 #[test]
@@ -126,7 +129,15 @@ fn bad_utf8_is_rejected() {
 
 #[test]
 fn bad_json_is_rejected() {
-    for json in ["", "{", "{\"argv\":", "nonsense", "{'argv':[]}", "{} {}", "{\"a\":1,}"] {
+    for json in [
+        "",
+        "{",
+        "{\"argv\":",
+        "nonsense",
+        "{'argv':[]}",
+        "{} {}",
+        "{\"a\":1,}",
+    ] {
         assert_eq!(parse(json), Err(Rejected), "{json}");
     }
     assert_eq!(parse(&format!("{VALID} x")), Err(Rejected));
@@ -240,12 +251,22 @@ fn bad_base64_is_rejected() {
     // Missing padding, bad alphabet, whitespace, data after padding, URL-safe
     // alphabet, wrong padding count, non-canonical trailing bits.
     for value in [
-        "aGVsbG8", "a*b=", "aGVs bG8=", "aGVsbG8=aGVsbG8=", "-_-_", "aGVsbG8==", "aGVsbG9=",
-        "a", "====",
+        "aGVsbG8",
+        "a*b=",
+        "aGVs bG8=",
+        "aGVsbG8=aGVsbG8=",
+        "-_-_",
+        "aGVsbG8==",
+        "aGVsbG9=",
+        "a",
+        "====",
     ] {
         assert_eq!(parse(&wrap(value)), Err(Rejected), "{value}");
     }
-    assert_eq!(parse(&wrap("aGVsbG8=")).unwrap().input, Some(b"hello".to_vec()));
+    assert_eq!(
+        parse(&wrap("aGVsbG8=")).unwrap().input,
+        Some(b"hello".to_vec())
+    );
 }
 
 #[test]

@@ -583,6 +583,10 @@ test('Ctrl+F and Escape typed in the chat Terminal panel stay with the shell', (
   };
   assert.equal(press(doc.getElementById('xtermInput'), { key: 'f', ctrlKey: true }).defaultPrevented, false);
   assert.equal(overlay.isOpen(), false);
+  // Row 117: the same key inside the browser panel belongs to the page's find.
+  doc.body.insertAdjacentHTML('beforeend', '<div class="bu-shell"><button id="buInside"></button></div>');
+  assert.equal(press(doc.getElementById('buInside'), { key: 'f', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(overlay.isOpen(), false);
   overlay.open();
   assert.equal(press(doc.getElementById('xtermInput'), { key: 'Escape' }).defaultPrevented, false);
   assert.equal(overlay.isOpen(), true, 'Escape in the terminal does not close the chat search');

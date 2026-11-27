@@ -77,6 +77,9 @@ const FINISHED_LIMIT = 64;
 const VIEW_LIMITS = Object.freeze({ pageSize: 500, readBytes: 256 * 1024, sniffBytes: 8 * 1024, imageBytes: 4 * MIB });
 // Row 175 round 2: how long a walked listing serves pages, and how many projects' listings are kept at once.
 const LIST_CACHE_MS = 30_000;
+// A first page (a new read, a Refresh, the reload after a turn wrote) takes a walk no older than this; later pages
+// keep the walk they started on. A file tool's write does not move the store's revision.
+const LIST_FRESH_MS = 2_000;
 const LIST_CACHE_PROJECTS = 4;
 const LIST_CACHE_VIEWS = 16;
 // The picture types the reader view answers as an image: the type an extension names, and its signature.
@@ -161,6 +164,7 @@ function createProjectFiles({
   const finished = new Map();
   // Row 175 round 2: project id -> { key, at, listed, views: Map(dir -> sorted rows) }, oldest first.
   const listings = new Map();
+  const walking = new Map(); // project id -> { key, walk }: the walk now running
 
   // Each entry point calls it once.
   function filesUnavailable() {
@@ -338,6 +342,7 @@ function createProjectFiles({
     if (!installed.ok) return { answer: installRefusal(installed.reason), cleanup: true };
     quota.installed(record.projectId, installed.bytes, installed.files);
     listings.delete(record.projectId);
+    walking.delete(record.projectId);
     if (!appended({ kind: 'files_uploaded', project_id: record.projectId, actor_member_id: record.memberId,
       detail: { files: installed.files, bytes: installed.bytes, skipped: 0 } })) {
       log('WARN', 'team.project_files.upload_unrecorded', { project_id: record.projectId, upload_id: record.id });
@@ -394,10 +399,19 @@ function createProjectFiles({
 
   // The project's walked listing: the kept one while it is younger than LIST_CACHE_MS and the store has not moved,
   // else a new walk (kept when it succeeded).
-  async function listing(projectId) {
+  async function listing(projectId, firstPage = false) {
     const key = storeRevision();
     const held = listings.get(projectId);
-    if (held && key !== null && held.key === key && clock() - held.at < LIST_CACHE_MS) return held;
+    if (held && key !== null && held.key === key && clock() - held.at < (firstPage ? LIST_FRESH_MS : LIST_CACHE_MS)) return held;
+    // Members reloading at once (a turn wrote a file) share one walk.
+    const going = walking.get(projectId);
+    if (going && going.key === key) return going.walk;
+    const walk = walkListing(projectId, key).finally(() => { if (walking.get(projectId)?.walk === walk) walking.delete(projectId); });
+    if (key !== null) walking.set(projectId, { key, walk });
+    return walk;
+  }
+
+  async function walkListing(projectId, key) {
     const listed = await folders.listFiles(projectId);
     listings.delete(projectId);
     const entry = { key, at: clock(), listed, views: new Map() };
@@ -425,7 +439,7 @@ function createProjectFiles({
     if (dir !== undefined && (!validateRelativePath(dir).ok || sensitiveSegment(dir) !== null)) {
       return hostFailure('invalid', PATH_INVALID);
     }
-    const held = await listing(params.project_id);
+    const held = await listing(params.project_id, cursor === 0);
     const again = refusalFor(actor.device_id, VIEW, params.project_id);
     if (again) return again;
     const { listed } = held;
@@ -494,6 +508,7 @@ function createProjectFiles({
       quota.forget(event.project_id);
     }
     listings.clear();
+    walking.clear();
     let open;
     try { open = store.open().ok === true; } catch { open = false; }
     if (!open) {

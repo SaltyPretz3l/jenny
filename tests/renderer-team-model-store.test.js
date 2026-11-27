@@ -182,6 +182,10 @@ test('the review id, kept paths, Later and dismissed rows', async () => {
   assert.equal(w.store.offerCount(), 2, 'Later hides the card; the number keeps counting it');
   w.store.dismiss('moff_0003');
   assert.equal(w.store.isDismissed('moff_0003'), true);
+  const told = [];
+  w.store.subscribe((change) => told.push(change.type));
+  w.store.dismiss('moff_0004');
+  assert.deepEqual([w.store.offerCount(), told], [1, ['state']], 'a dismissed open offer leaves the number, and the change is told');
   w.store.setReview(OTHER, 'moff_0004');
   w.box.teams = [team(TEAM)];
   w.store.sync();

@@ -10,7 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ME, message, msgId, openChat, type, flush, key, menu, memberTeam, chatChannel, overview, searchField, searchMatch } = require('./helpers/team-settings-harness');
+const { ME, TEAM, OTHER, CHAT_MEMBERS, message, msgId, openChat, type, flush, key, menu, memberTeam, snapshot, chatChannel, overview, searchField, searchMatch } = require('./helpers/team-settings-harness');
 const { listAnswer, openProjects } = require('./helpers/team-project-renderer-host');
 
 const css = (name) => fs.readFileSync(path.join(__dirname, '..', 'styles', name), 'utf8');
@@ -258,4 +258,41 @@ test('OD-8 (row 201): a search hit in a project channel shows that channel, name
   assert.equal(h.view.q('.team-head__name').textContent, '#jenny-site', 'the project channel is shown by its project\'s name');
   assert.equal(h.view.text().includes('does not show yet'), false, 'never "not shown yet"');
   assert.equal(searchField(h).value, 'hello');
+});
+
+// ------------------------------------------------------------------ C14 (team polish 2026-11-25)
+
+test('C14: Save in an edit whose box is empty is greyed with its reason, and live again with words', async (t) => {
+  const { h } = await openChat({ messages: [message(1)] });
+  t.after(h.restore);
+  rowEl(h, 1).querySelector('[data-team-msg-action="more"]').click();
+  menu(h).querySelector('[data-value="edit"]').click();
+  const box = rowEl(h, 1).querySelector('.team-edit__input');
+  const save = () => rowEl(h, 1).querySelector('[data-team-msg-action="edit-save"]');
+  assert.equal(save().disabled, false);
+  type(h, '   ', box);
+  assert.equal(save().disabled, true);
+  assert.equal(save().title, 'Type a message first.');
+  type(h, 'words', box);
+  assert.equal(save().disabled, false);
+  assert.equal(save().hasAttribute('title'), false);
+});
+
+test('C14: a push for a team that is not shown repaints nothing', async (t) => {
+  const { h } = await openChat({ teams: [memberTeam(), snapshot()], messages: [message(1)] });
+  t.after(h.restore);
+  const store = require('../renderer/team/renderer-team-store').getTeamStore();
+  const chat = require('../renderer/team/renderer-team-chat-store').getChatStore();
+  let paints = 0;
+  const paint = store.setShownTeam;
+  store.setShownTeam = (...args) => { paints += 1; return paint.apply(store, args); };
+  t.after(() => { store.setShownTeam = paint; });
+  const push = (team, body) => h.listeners.chat({ team_id: team, ...body });
+  push(OTHER, { type: 'channels', partial: true, channels: [chatChannel({ unread: 3 })] });
+  assert.ok(paints > 0, 'the shown team repaints');
+  assert.ok(chat.team(TEAM), 'the other team is tracked, so its push reaches the tab');
+  paints = 0;
+  push(TEAM, { type: 'channels', partial: true, channels: [chatChannel({ unread: 5 })] });
+  push(TEAM, { type: 'members', members: CHAT_MEMBERS });
+  assert.equal(paints, 0, 'nothing repaints for the team that is not shown');
 });

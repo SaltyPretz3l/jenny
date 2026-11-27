@@ -187,7 +187,8 @@
       showMenu({ anchorEl: anchor, rootEl: anchor, restoreFocusTo: anchor, heading, ariaLabel: heading, items });
     }
 
-    const button = (act, label, variant, disabled = false) => actionButton({ label, variant, size: 'sm', title: label, disabled, dataset: { 'conv-act': act } });
+    const button = (act, label, variant, disabled = false, why = '') => actionButton({ label, variant, size: 'sm', title: disabled && why ? why : label, disabled, dataset: { 'conv-act': act } });
+    const waits = () => jt('team.actions.busy', 'Wait for the last action to finish.');
     const status = (note) => (note ? '<p class="team-set-note" role="status" dir="auto">' + escapeHtml(note) + '</p>' : '');
     function panelHtml(p) {
       if (p.kind === 'redo') {
@@ -195,11 +196,11 @@
         return '<div class="team-set-confirm team-conv-act" role="group" aria-label="' + escapeHtml(label) + '" data-conv-act-panel="redo"><p dir="auto">'
           + escapeHtml(jt('team.actions.regenerateConfirm', 'The current answer is replaced. Branch from here first to keep it.')) + '</p><div class="team-set-inline">'
           + button('redo-go', label, 'danger', p.busy) + button('redo-branch', jt('team.actions.branchFirst', 'Branch first'), 'secondary', p.busy || !p.answerId)
-          + button('panel-cancel', jt('team.projects.cancel', 'Cancel'), 'ghost') + '</div>' + status(p.note) + '</div>';
+          + button('panel-cancel', jt('team.projects.cancel', 'Cancel'), 'ghost', p.busy, waits()) + '</div>' + status(p.note) + '</div>';
       }
       return '<div class="team-edit team-conv-act" data-conv-act-panel="edit"><textarea class="team-edit__input" rows="2" dir="auto" maxlength="' + d.promptMax + '" aria-label="'
         + escapeHtml(jt('team.actions.editLabel', 'Edit your question')) + '"' + (p.busy ? ' disabled' : '') + '></textarea><div class="team-edit__bar"><span class="team-edit__hint">'
-        + escapeHtml(jt('team.actions.editHint', 'Enter to send · Esc to cancel')) + '</span>' + button('panel-cancel', jt('team.projects.cancel', 'Cancel'), 'ghost')
+        + escapeHtml(jt('team.actions.editHint', 'Enter to send · Esc to cancel')) + '</span>' + button('panel-cancel', jt('team.projects.cancel', 'Cancel'), 'ghost', p.busy, waits())
         + button('edit-save', jt('team.actions.editSave', 'Save and send'), 'primary', p.busy) + '</div>' + status(p.note) + '</div>';
     }
     const panelEl = () => d.root.querySelector('[data-conv-act-panel]');
@@ -217,7 +218,8 @@
       const field = el.querySelector('textarea');
       if (field) field.value = p.value;
       const active = doc.activeElement;
-      if (focus || !active || active === doc.body) (field || el.querySelector('button:not([disabled])')).focus({ preventScroll: true });
+      const to = field || el.querySelector('button:not([disabled])'); // a busy panel has none
+      if (to && (focus || !active || active === doc.body)) to.focus({ preventScroll: true });
     }
     function openPanel(kind, t) {
       const said = t.turn ? savedOf(t.turn) : null;
@@ -235,6 +237,7 @@
       if (!p || p.busy) return;
       const prompt = p.value.trim();
       if (p.kind === 'edit' && (!prompt || prompt.length > d.promptMax)) { p.note = prompt ? jt('team.conv.tooLong', 'That message is too long to send.') : jt('team.actions.editEmpty', 'Write the question first.'); mount(true); return; }
+      if (live.busy) { p.note = waits(); mount(true); return; } // another action is out
       p.busy = true;
       p.note = '';
       mount(false);
@@ -311,7 +314,7 @@
       const target = event.target;
       const p = live.panel;
       if (p && target?.closest?.('[data-conv-act-panel]')) {
-        if (event.key === 'Escape' || event.key === 'Esc') { event.preventDefault(); event.stopPropagation(); closePanel(); return; }
+        if (event.key === 'Escape' || event.key === 'Esc') { event.preventDefault(); event.stopPropagation(); if (!p.busy) closePanel(); return; }
         if (p.kind === 'edit' && target.tagName === 'TEXTAREA' && event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void redo(); }
         return;
       }
@@ -330,7 +333,7 @@
         case 'hand': void pick(target, 'hand', ''); return;
         case 'redo-go': case 'edit-save': void redo(); return;
         case 'redo-branch': if (live.panel) { const id = live.panel.answerId; closePanel(); void branch(id); } return;
-        case 'panel-cancel': closePanel(); return;
+        case 'panel-cancel': if (!(live.panel && live.panel.busy)) closePanel(); return;
         default:
       }
     }

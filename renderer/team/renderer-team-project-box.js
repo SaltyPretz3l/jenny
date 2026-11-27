@@ -8,11 +8,11 @@
  * its confirm while a turn runs) takes the field's place (`locked`), so nothing jumps when the driver changes. A
  * picked model that went offline puts its line above the box and holds Send.
  *
- * The approval card is the app's own builder (renderer/chat/renderer-approval-block.js, `oneOffOnly`: Allow once and
- * Deny) with this card's always button before Deny: "Always allow" for the project's admins (E66), "Allow once, ask for
- * always" for writers, only for write_file and edit_file and never in Plan mode, nor while the project's rules are paused (project
- * files on: the host's gate answers nothing, so a rule would never fire; the card offers the one-off answers only); then the scope note and whose turn
- * asked. A reader's card has no buttons. A write_file or edit_file card shows the exact fields the host sent
+ * The approval card is the app's own builder (renderer/chat/renderer-approval-block.js, `oneOffOnly`: Allow and Deny)
+ * with a caret joined to Allow (row 123 layout D1) whose menu holds the always choice: "Always allow edits in this project" for the
+ * project's admins (E66), "Allow once and ask an admin for always" for writers, only for write_file and edit_file and never in Plan
+ * mode, nor while the project's rules are paused (project files on: the host's gate answers nothing, so a rule would never fire; the
+ * card offers the one-off answers only); then whose turn asked. A reader's card has no buttons. A write_file or edit_file card shows the exact fields the host sent
  * (`exact_approval`, row 175 F5: every reader of the conversation sees them, only a writer gets Allow and Deny); one
  * the host marked too large shows the card's note and withholds Allow; a host that sent none (an older one) keeps the
  * summary card. The summary is bounded (600 characters), bidi and zero-width characters
@@ -35,6 +35,7 @@
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   const ALWAYS_TOOLS = new Set(['write_file', 'edit_file']);
+  const CARET_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>';
   const BOX_ID = 'teamConversationInput';
   const HINT_ID = 'teamConversationHint'; // the sentence beside Send, when there is one: the box's description
   const PROMPT_MAX = 100_000;
@@ -138,15 +139,16 @@
   }
 
   // The hint beside the icons: the Board's line, "Jenny is answering…" while a turn runs and a send would wait, "Sending
-  // makes you the driver" when nobody drives, else how to send (the model that answers is the pill's, row 172).
+  // makes you the driver" when nobody drives, else how to send (the model that answers is the pill's, row 172). How to
+  // send is the one line that says nothing new: `data-hint="send"` lets the bar drop it whole when it does not fit.
   function hintHtml(s) {
-    const span = (inner) => '<span class="team-composer__hint" id="' + escapeHtml((s.idPrefix || '') + HINT_ID) + '" dir="auto">' + inner + '</span>';
+    const span = (inner, kind) => '<span class="team-composer__hint" id="' + escapeHtml((s.idPrefix || '') + HINT_ID) + '"' + (kind ? ' data-hint="' + kind + '"' : '') + ' dir="auto">' + inner + '</span>';
     if (s.connection) return span(escapeHtml(offlineHint(s.connection)));
     if (s.boardHint) return span(escapeHtml(s.boardHint));
     if (s.running && s.mayQueue) return span(escapeHtml(jt('team.conv.hintQueue', 'Jenny is answering · what you send waits for her next turn')));
     if (s.planOn) return span(escapeHtml(jt('team.plan.hint', 'Plan mode · nothing changes until a plan is accepted')));
     if (!s.driver) return span(escapeHtml(jt('team.conv.sendDrives', 'Sending makes you the driver')));
-    return span(escapeHtml(jt('team.conv.hintSend', 'Markdown · Enter to send')));
+    return span(escapeHtml(jt('team.conv.hintSend', 'Markdown · Enter to send')), 'send');
   }
 
   // `s`: boxParts's state, plus `idPrefix` (the conversation's, for the hint's id), `files` (item 13: the host serves files, so @ picks one), `mayQueue` (a send while a turn runs waits for the next turn) and `board` (the Board's
@@ -201,24 +203,21 @@
       const admin = s.role === 'admin';
       const once = actions.querySelector('.tool-approve-btn[data-approval-scope="once"]');
       const deny = actions.querySelector('.tool-deny-btn');
+      if (once) once.textContent = jt('team.conv.allow', 'Allow');
       if (ALWAYS_TOOLS.has(tool) && !s.planMode && !s.paused && once && deny) {
+        // One Allow joined to a caret; the caret's menu (renderer-team-project-conversation-parts.js) holds the always choice and its note.
         const params = { tool: column.clean(tool, 64), project: s.projectName };
-        const title = admin ? jt('team.conv.alwaysAllowTitle', 'Always allow {tool} in {project}, for everyone’s turns', params)
-          : jt('team.conv.askAlwaysTitle', 'Allow this once and ask the project’s admins to always allow {tool} here', params);
-        const always = once.cloneNode(false);
-        always.classList.add('tool-approve-always-btn');
-        always.setAttribute('data-approval-scope', 'always');
-        always.setAttribute('data-team-always', admin ? 'rule' : 'ask');
-        always.setAttribute('title', title);
-        always.setAttribute('aria-label', title);
-        always.removeAttribute('id');
-        always.textContent = admin ? jt('team.conv.alwaysAllow', 'Always allow') : jt('team.conv.askAlways', 'Allow once, ask for always');
-        deny.before(always);
-        const note = doc.createElement('p');
-        note.className = 'tool-approval-scope-note';
-        note.textContent = admin ? jt('team.conv.alwaysNote', 'Always allow saves a rule for {tool} in this project, for everyone’s turns. You can change it under Always allowed on the project’s page.', params)
-          : jt('team.conv.askNote', 'Ask for always lets the turn go on now and asks the project’s admins to always allow {tool} here. They can agree, narrow it or say no.', params);
-        actions.after(note);
+        const more = jt('team.conv.moreWays', 'More ways to allow');
+        const split = doc.createElement('span');
+        split.className = 'tool-approve-split';
+        const caret = inv().actionButton({ plain: true, id: 'more', className: 'tool-approve-btn tool-approve-caret', ariaLabel: more, title: more, ariaHaspopup: 'menu', ariaExpanded: false,
+          disabled: Boolean(s.busy), trustedHtml: CARET_ICON, dataset: { 'approval-id': once.getAttribute('data-approval-id') || '', 'team-more': admin ? 'rule' : 'ask',
+            'team-more-label': admin ? jt('team.conv.alwaysMenu', 'Always allow edits in this project') : jt('team.conv.askMenu', 'Allow once and ask an admin for always'),
+            'team-more-note': admin ? jt('team.conv.alwaysNote', 'Always allow saves a rule for {tool} in this project, for everyone’s turns. You can change it under Always allowed on the project’s page.', params)
+            : jt('team.conv.askNote', 'Ask for always lets the turn go on now and asks the project’s admins to always allow {tool} here. They can agree, narrow it or say no.', params) } });
+        once.before(split);
+        split.append(once);
+        split.insertAdjacentHTML('beforeend', caret);
       }
     }
     // `askHtml` (row 175 F13, D8): Ask a teammate, from renderer-team-project-actions.js.

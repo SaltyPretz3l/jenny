@@ -40,6 +40,7 @@
   const NAME_ALL = 'chat-search-match';
   const NAME_CURRENT = 'chat-search-current';
   const SEED_MAX = 200;
+  const MAX_MATCHES = 5000; // the list and the painted ranges stop here; the count says "5000+"
   const WORD = '[\\p{L}\\p{N}_]';
   const FIND_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>';
   const ROWS = '[data-conv-region="log"] .team-msg, [data-conv-region="live"] .team-msg';
@@ -54,6 +55,19 @@
     try { return new RegExp(source, caseSensitive ? 'gu' : 'giu'); } catch (_error) { return null; }
   }
   const countIn = (text, re) => { let n = 0; for (const m of String(text).matchAll(re)) if (m[0]) n += 1; return n; };
+  // The matches in `text` that can be painted: first and last character each on a text segment. Counting and painting both
+  // read this list, so "3 of 5" and the ranges drawn cannot disagree. Each item is { index, length, from, to } (the segments).
+  function matchesIn(text, segments, re, limit = Infinity) {
+    const out = [];
+    const at = (offset) => segments.find((s) => offset >= s.start && offset < s.end);
+    for (const m of String(text).matchAll(re)) {
+      if (out.length >= limit) break;
+      const from = m[0] ? at(m.index) : null;
+      const to = from ? at(m.index + m[0].length - 1) : null;
+      if (to) out.push({ index: m.index, length: m[0].length, from, to });
+    }
+    return out;
+  }
 
   function createFind(o) {
     const { root } = o;
@@ -78,21 +92,15 @@
 
     // ------------------------------------------------------------ matching
 
-    // The ranges of every match in an element's visible text, in order.
-    function rangesIn(el, re) {
+    // The ranges of the first `limit` matches in an element's visible text, in order.
+    function rangesIn(el, re, limit = Infinity) {
       const { text, segments } = textOf(el);
-      const out = [];
-      const at = (offset) => segments.find((s) => offset >= s.start && offset < s.end);
-      for (const m of text.matchAll(re)) {
-        const from = m[0] ? at(m.index) : null;
-        const to = from ? at(m.index + m[0].length - 1) : null;
-        if (!to) continue;
+      return matchesIn(text, segments, re, limit).map(({ index, length, from, to }) => {
         const range = doc.createRange();
-        range.setStart(from.node, m.index - from.start);
-        range.setEnd(to.node, m.index + m[0].length - to.start);
-        out.push(range);
-      }
-      return out;
+        range.setStart(from.node, index - from.start);
+        range.setEnd(to.node, index + length - to.start);
+        return range;
+      });
     }
 
     // A turn's work rows with the text each draws: a reasoning row as its Markdown renders, a tool row's output.
@@ -117,20 +125,25 @@
     }
 
     // Every match in reading order: a turn's work, then her answer; a member's message. `key` names the row and `k` the match in it.
+    // A message body is counted by what rangesIn can paint. A work row has no text segments until the popover draws it (its text
+    // is the Markdown's or the tool's output), so it is counted from its text; the popover's copy is painted by rangesIn.
     function scan(re) {
       const found = [];
+      st.over = false;
       if (!re || !hl()) return found;
+      const add = (item) => { if (found.length >= MAX_MATCHES) { st.over = true; return false; } found.push(item); return true; };
       const turns = new Map(o.turns().map((t) => [t.id, t]));
       for (const row of root.querySelectorAll(ROWS)) {
         const turn = row.dataset.turnId ? turns.get(row.dataset.turnId) : null;
         const key = row.dataset.turnId ? 't:' + row.dataset.turnId : 'm:' + row.dataset.messageId;
         if (turn) {
           for (const w of workOf(turn)) {
-            for (let k = 0, n = countIn(w.text, re); k < n; k += 1) found.push({ key: key + ':' + w.kind + ':' + w.id, k, work: { kind: w.kind, id: w.id }, turn: turn.id });
+            for (let k = 0, n = countIn(w.text, re); k < n; k += 1) if (!add({ key: key + ':' + w.kind + ':' + w.id, k, work: { kind: w.kind, id: w.id }, turn: turn.id })) return found;
           }
         }
         const body = row.querySelector('.team-msg__text');
-        if (body) for (let k = 0, n = rangesIn(body, re).length; k < n; k += 1) found.push({ key, k, row });
+        const seen = body ? textOf(body) : null;
+        if (seen) for (let k = 0, n = matchesIn(seen.text, seen.segments, re).length; k < n; k += 1) if (!add({ key, k, row })) return found;
       }
       return found;
     }
@@ -158,10 +171,10 @@
       const now = list[st.cur] || null;
       if (!win || !re) { clearPaint(); return; }
       const all = [];
-      for (const el of root.querySelectorAll(BODIES)) all.push(...rangesIn(el, re));
-      if (popBody()) all.push(...rangesIn(popBody(), re));
+      for (const el of root.querySelectorAll(BODIES)) if (all.length < MAX_MATCHES) all.push(...rangesIn(el, re, MAX_MATCHES - all.length));
+      if (popBody() && all.length < MAX_MATCHES) all.push(...rangesIn(popBody(), re, MAX_MATCHES - all.length));
       const host = now ? hostOf(now) : null;
-      const current = host ? rangesIn(host, re)[now.k] : null;
+      const current = host ? rangesIn(host, re, now.k + 1)[now.k] : null;
       const mark = new win.Highlight(...all);
       const here = new win.Highlight(...(current ? [current] : []));
       here.priority = 1;
@@ -173,29 +186,32 @@
 
     // ------------------------------------------------------------ the bar and the note
 
+    // Older messages are not shown: `more` (one Load earlier reads a page) or `capped` (the view holds only the newest; nothing to load).
+    const older = () => o.more() || (typeof o.capped === 'function' && o.capped());
+    const cappedText = () => jt('team.find.cappedNote', 'Searched the newest messages held here. Older ones are not in this view.');
     function setNote(show) {
       let note = st.region ? st.region.querySelector('.team-find-note') : null;
       if (!show) { if (note) note.remove(); return; }
       if (!note) { note = doc.createElement('p'); note.className = 'team-find-note'; note.setAttribute('role', 'status'); st.region.appendChild(note); }
       const rows = root.querySelectorAll(ROWS).length;
       const text = jt('team.find.note', 'Searched the {count} messages shown. Load earlier to search further.', { count: rows.toLocaleString() });
-      const html = escapeHtml(text) + ' ' + actionButton({ plain: true, label: jt('team.find.earlier', 'Load earlier'), dataset: { 'find-action': 'earlier' } });
+      const html = o.more() ? escapeHtml(text) + ' ' + actionButton({ plain: true, label: jt('team.find.earlier', 'Load earlier'), dataset: { 'find-action': 'earlier' } }) : escapeHtml(cappedText());
       if (note.dataset.html !== html) { note.innerHTML = html; note.dataset.html = html; }
     }
     function showCount(re) {
       if (!bar) return;
-      const more = o.more();
-      bar.setMatchInfo(st.cur + 1, list.length, { truncated: more });
+      const more = older();
+      bar.setMatchInfo(st.cur + 1, list.length, { truncated: more || st.over });
       const el = barRoot() && barRoot().querySelector('.chat-search-bar-count');
-      if (el && more && list.length) el.setAttribute('title', jt('team.find.moreTitle', 'There may be more in the earlier messages. Load earlier to search further.'));
+      if (el && more && list.length) el.setAttribute('title', o.more() ? jt('team.find.moreTitle', 'There may be more in the earlier messages. Load earlier to search further.') : cappedText());
       setNote(Boolean(re) && more && (list.length === 0 || st.tried));
     }
 
     // Everything again from the page as it is now: the list, where the current match is, the count, the paint.
-    function update({ scrollTo = false } = {}) {
+    function update({ scrollTo = false, rescan = true } = {}) {
       if (!st.open || disposed) return;
       const re = patternNow();
-      list = scan(re);
+      if (rescan) list = scan(re);
       const at = list.findIndex((m) => keyOf(m) === st.curKey);
       st.cur = at >= 0 ? at : Math.min(st.cur, Math.max(0, list.length - 1));
       st.curKey = keyOf(list[st.cur]);
@@ -204,15 +220,17 @@
     }
 
     // Jenny's work opens where the match is; the popover and the focus are the controller's, the field keeps the focus.
-    function reveal() {
+    // `fresh`: the query changed, so the list is read again here, once, and the first match is the place.
+    function reveal(fresh = false) {
+      if (fresh) { list = scan(patternNow()); st.cur = 0; }
       const m = list[st.cur];
       st.curKey = keyOf(m);
       if (m && m.work) o.openTurn(m.turn, m.work);
-      update({ scrollTo: true });
+      update({ scrollTo: true, rescan: !fresh });
     }
     function step(dir) {
       if (!list.length) return;
-      if (dir < 0 && st.cur === 0 && o.more()) { st.tried = true; update(); return; }
+      if (dir < 0 && st.cur === 0 && older()) { st.tried = true; update(); return; }
       st.tried = false;
       st.cur = (st.cur + dir + list.length) % list.length;
       reveal();
@@ -226,7 +244,7 @@
     }
 
     // A new query or option: back to the first match, which Jenny's work opens when it is the one.
-    function restart() { st.cur = 0; st.curKey = ''; st.tried = false; update(); reveal(); }
+    function restart() { st.cur = 0; st.curKey = ''; st.tried = false; if (st.open && !disposed) reveal(true); }
 
     function build() {
       const api = searchBarApi();
@@ -327,5 +345,5 @@
     };
   }
 
-  return { createFind, patternOf, countIn };
+  return { createFind, patternOf, countIn, matchesIn };
 });

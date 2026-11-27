@@ -305,6 +305,10 @@
       // Row 133: Chat › Layout and Side panel, General › Machine status (rows that left Appearance).
       mountSettingRow(chatSettingsSection, 'appearanceChatWidthSelect', appearancePreferences.chatWidthId);
       mountSettingRow(chatSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
+      // Row 123 layout D5: Team chat density sits after Transcript view; greyed with its reason, never hidden, while no team applies.
+      const teamKnown = state.features?.featureFlags?.team === true && (state.features?.teamData !== false || Boolean(globalThis.rendererTeamStore?.getTeamStore?.().snapshot?.().teams?.length));
+      mountSettingRow(chatSettingsSection, 'appearanceTeamDensitySelect', appearancePreferences.teamDensityId, { afterId: 'transcriptViewDefaultSelect',
+        disabledReason: teamKnown ? '' : jt('settings.teamDensity.noTeam', 'Join or host a team to use this.') });
       mountSettingRow(chatSettingsSection, 'appearanceArtifactAutoOpenToggle', appearancePreferences.artifactAutoOpen === true);
       mountSettingRow(chatSettingsSection, 'changePicturesToggle', state.features?.featureFlags?.change_pictures !== false, { afterId: 'appearanceArtifactAutoOpenToggle' });
       // With sketch blocks off the model is told Mermaid whatever this says: keep the row, greyed out, with the reason.
@@ -383,15 +387,20 @@
         ? jt('settings.context.managedSidecarOnly', 'Context controls are available only when the managed sidecar backend is active.')
         : ''));
       if (contextSaveError && contextStatus && globalThis.inventory?.statusRow) contextStatus.innerHTML = globalThis.inventory.statusRow({ tone: 'danger', message: contextSaveError, compact: true });
-      mountSettingRow(contextSettingsSection, 'contextHistoryScopeSelect', contextPreferences.historyScope,
-        { disabled: !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity) });
-      // Chat › This chat says whose rows these are: the open chat, else (like getCurrentRuntimePreferences) the next one.
-      const contextScopeNote = contextSettingsSection?.querySelector?.('#contextScopeNote');
+      // Chat › This chat changes only the open chat: its heading names it, and with no chat open the rows are disabled
+      // with the reason in the group note (owner, 2026-11-26).
       const openChat = typeof getActiveSession === 'function' ? getActiveSession() : null;
+      const thisChatOff = !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity) || !openChat;
+      mountSettingRow(contextSettingsSection, 'contextHistoryScopeSelect', contextPreferences.historyScope, { disabled: thisChatOff });
+      const contextScopeNote = contextSettingsSection?.querySelector?.('#contextScopeNote');
+      const contextScopeHeading = contextSettingsSection?.querySelector?.('#contextSourcesHeading');
+      const openTitle = openChat ? String(openChat.title || '').trim() || jt('settings.chat.thisChat.untitled', 'New chat') : '';
       const scopeText = openChat
-        ? jt('settings.chat.thisChat.scopeOpen', 'These change only the chat you have open: {title}.', { title: String(openChat.title || '').trim() || jt('settings.chat.thisChat.untitled', 'New chat') })
-        : jt('settings.chat.thisChat.scopeNone', 'No chat is open. These apply to the next chat you start.');
+        ? jt('settings.chat.thisChat.scopeOpen', 'These change only the chat you have open: {title}.', { title: openTitle })
+        : jt('settings.chat.thisChat.noChatReason', 'Open a chat to change its settings.');
+      const headingText = openChat ? jt('settings.chat.thisChat.headingNamed', 'This chat: {title}', { title: openTitle }) : jt('settings.chat.thisChat.heading', 'This chat');
       if (contextScopeNote && contextScopeNote.textContent !== scopeText) contextScopeNote.textContent = scopeText;
+      if (contextScopeHeading && contextScopeHeading.textContent !== headingText) contextScopeHeading.textContent = headingText;
       if (modelStartupLoadList) {
         paintSlot(modelStartupLoadList, buildSettingsToggleListMarkup({
           toggleSwitch,
@@ -407,7 +416,7 @@
         const contextToggleLists = buildContextToggleListsMarkup({
           contextPreferences,
           featureFlags,
-          prefsDisabled: !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity),
+          prefsDisabled: thisChatOff,
           flagsDisabled: contextUnavailable,
           escapeHtml,
           toggleSwitch,

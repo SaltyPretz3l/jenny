@@ -120,6 +120,34 @@ test('Chat: chat width and artifact auto-open render in its Layout and Side pane
   assert.equal(chat.querySelector('[data-inv-toggle="appearanceArtifactAutoOpenToggle"]').getAttribute('aria-checked'), 'true');
 });
 
+test('Chat: Team chat density follows Transcript view in Layout; greyed with its reason until a team exists, then it writes the appearance store', async (t) => {
+  const off = await loadRendererApp();
+  t.after(off.dispose);
+  await openSection(off.window, 'chat');
+  const offLayout = card(off.window.document, 'chat').querySelector('[data-settings-field="transcriptViewDefaultSelect"]').closest('.settings-group');
+  assert.deepEqual([...offLayout.querySelectorAll('[data-settings-field]')].map((row) => row.dataset.settingsField),
+    ['appearanceChatWidthSelect', 'transcriptViewDefaultSelect', 'appearanceTeamDensitySelect'], 'the row is drawn right after Transcript view with the Team flag off');
+  const offRow = offLayout.querySelector('[data-settings-field="appearanceTeamDensitySelect"]');
+  assert.equal(offRow.querySelector('.settings-field-title').textContent, 'Team chat density');
+  assert.match(offRow.querySelector('.settings-field-reason').textContent, /Join or host a team to use this\./);
+  assert.ok([...offRow.querySelectorAll('[data-value]')].every((option) => option.disabled), 'greyed out, not hidden');
+  assert.equal(card(off.window.document, 'team')?.querySelector('[data-settings-field="appearanceTeamDensitySelect"]') ?? null, null);
+
+  const { window, dispose } = await loadRendererApp({ shell: { features: { state: { featureFlags: { team: true }, teamData: true } } } });
+  t.after(dispose);
+  const doc = window.document;
+  await openSection(window, 'chat');
+  const row = card(doc, 'chat').querySelector('[data-settings-field="appearanceTeamDensitySelect"]');
+  assert.equal(row.closest('.settings-group').querySelector('.settings-group-heading').textContent, 'Layout');
+  assert.equal(row.querySelector('.settings-field-reason'), null, 'with a team the row has no reason');
+  assert.ok([...row.querySelectorAll('[data-value]')].every((option) => !option.disabled));
+  assert.equal(segmentedValue(doc, 'appearanceTeamDensitySelect'), 'comfortable');
+  chooseSegmented(doc, 'appearanceTeamDensitySelect', 'compact');
+  await waitForUi(window, 30);
+  assert.equal(JSON.parse(window.localStorage.getItem('jenny.appearance.v2')).teamDensityId, 'compact');
+  assert.equal(doc.documentElement.dataset.teamDensity, 'compact', 'the Team tab sees it at once');
+});
+
 test('General: Language and the title-bar load switch render there and write; holo and startup animation stay on Appearance', async (t) => {
   const chatUiPatches = [];
   const { window, dispose } = await loadRendererApp({ shell: {
@@ -171,6 +199,7 @@ test('search resolves one moved row per destination page to that page', () => {
   assert.equal(pageOf('performanceShowCounterToggle'), 'general');
   assert.equal(pageOf('saveLocalProfileButton'), 'general');
   assert.equal(pageOf('appearanceChatWidthSelect'), 'chat');
+  assert.equal(pageOf('appearanceTeamDensitySelect'), 'chat');
   assert.equal(pageOf('changePicturesToggle'), 'chat');
   assert.equal(pageOf('checkUpdatesButton'), 'aboutUpdates');
   assert.equal(pageOf('appearanceComposerHoloToggle'), 'appearance');

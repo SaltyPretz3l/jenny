@@ -70,10 +70,14 @@
     const fact = jt('settings.team.people.pendingFact', 'wants to join as {role} · {label} · key {key}', {
       role: words.roleText(member.role), label: device.label || '', key: words.formatFingerprint(device.fingerprint) });
     const ids = { memberId: member.member_id };
+    const confirm = vm.confirm === 'decline:' + member.member_id
+      ? confirmBlock(vm, jt('settings.team.people.declineConfirm', 'Decline {name}? Their invite is used up; invite them again to let them in.', { name: member.display_name }),
+        'confirm-decline', jt('settings.team.people.declineAction', 'Decline {name}', { name: member.display_name }), { variant: 'danger', ids, busyKey: 'decline:' + member.member_id })
+      : '';
     return row(member.display_name, fact,
       button(vm, 'admit', jt('settings.team.people.admit', 'Admit'), { variant: 'primary', ids, busyKey: 'admit:' + member.member_id })
       + button(vm, 'decline', jt('settings.team.people.decline', 'Decline'), { ids, busyKey: 'decline:' + member.member_id }),
-      { extraHtml: '<p class="team-set-person__hint">' + escapeHtml(jt('settings.team.people.hint', 'Check the name and the key with them before you admit them. They see the same key on their screen.')) + '</p>' });
+      { extraHtml: '<p class="team-set-person__hint">' + escapeHtml(jt('settings.team.people.hint', 'Check the name and the key with them before you admit them. They see the same key on their screen.')) + '</p>' + confirm });
   }
 
   function memberRow(vm, hosted, member) {
@@ -168,7 +172,8 @@
   function ownershipGroup(vm) {
     return group('ownership', jt('settings.team.ownership.heading', 'Ownership and shutdown'), {
       body: fieldRow('teamHandOverRow', jt('settings.team.ownership.handOver', 'Hand over ownership'),
-        jt('settings.team.ownership.handOverHelp', 'Pick a member in People, then “Make … the owner”. You stay as a member.'), '')
+        jt('settings.team.ownership.handOverHelp', 'Pick a member in People, then “Make … the owner”. You stay as a member.'),
+        inv().actionButton({ label: jt('settings.team.ownership.handOverJump', 'Go to People'), variant: 'secondary', size: 'sm', dataset: { 'team-jump': 'people' } }))
         + fieldRow('teamStopRow', jt('settings.team.ownership.stop', 'Stop the server'),
           jt('settings.team.ownership.stopHelp', 'Everyone is disconnected. Members, projects and history stay on this PC and come back when you start it.'),
           button(vm, 'stop', jt('settings.team.ownership.stopAction', 'Stop server'))) + stopConfirm(vm, 'ownership') + (vm.exportRowHtml || ''),
