@@ -48,6 +48,29 @@ no default chosen runs on this PC when it can.
 - Not yet covered by a person: the Team polish fixes in a two-member real-app run (one machine's live runs covered the layout faults); the graphics-memory holders on a non-English Windows. The 1.9.0 list of owed checks still stands.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental.
 
+### 1.9.1 download checksums
+
+Published 2026-11-27 from public `4a9e50cc` (private `82c89e7c5`, tag `v1.9.1`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 5d1a824320d29be3c52a9a1817adf9d0e2d383614f1e744c33486877a101b448 |
+| dist/Jenny-Setup-x64.exe.blockmap | 480dbfd21a35e4354f3ef63fe4e784be43466c7210d91588483dbdea2ef5eae1 |
+| dist/Jenny-amd64.deb | d0d4eff3bbc469247e982e8a139e779a9305f535b64dfceb5c63b00cab391106 |
+| dist/Jenny-arm64.dmg | a17c8f044fc6de5f9b5f2fbd7e189adc40513477c26d90ef9f8647d3579a0528 |
+| dist/Jenny-arm64.zip | 961aadc81c5a9ace4aac5f314adc7067a8f0b670a617eb7e0239d3614debdf73 |
+| dist/Jenny-x86_64.AppImage | a88f40a46c60acd5840b8eb9fee509fc5275d5a43b6114d9590020161a99b88c |
+| dist/SHA256SUMS-linux.txt | 2f46a03036de9c9e31341c27df6853429b6eb30345c91844000bed27278828cc |
+| dist/SHA256SUMS-mac.txt | 019a56d7bc7c56306f5bc9ebd8b4230d7771dbab0a8cbe87cf3acf6db30c648d |
+| dist/SHA256SUMS-windows.txt | c4f2f18a7018ef4852a880c22b05bfa4c79db2baa4427c5e75266bc7d6078be4 |
+| dist/latest-linux.yml | 9b8bd306afe3d861aed19811f8f1ccab1fcb57c85f2b651d176fa458d6b36786 |
+| dist/latest-mac.yml | f55c644dfe83f1a24aafcc73ebb70cab52554643420be630153cba2fabd2e1d7 |
+| dist/latest.yml | c892f3e90aa350d63d42581d3c4501e364c631b77e3c4d2311f987bac37b2ec8 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.9.0 - 2026-11-25
 
 Everything landed since 1.8.7, through private `main` on 2026-11-25. Two
@@ -119,7 +142,6 @@ Published 2026-11-25 from public `abeb92da` (private `984276ff8`, tag `v1.9.0`):
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the build-only run and the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 108f6374d9c2bb835b2300b1fd0c8fd95fa53fd2f603d838fcaf96a71af2f6ee |
@@ -134,7 +156,6 @@ release jobs were green on the build-only run and the tagged run.
 | dist/latest-linux.yml | dd80e55dd6c233a06c17184a7088ccef9430a21bbe5aee36a638ac2ce27dcf04 |
 | dist/latest-mac.yml | f94da19beee5d77362409bb63377f01eec368d8a445c7196fcb63e9f18a4aec3 |
 | dist/latest.yml | a5c78f3211bd6037dc9621e22f16e127c6765b0cc15899af3a36d93030b51966 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.8.7 - 2026-11-18
 
