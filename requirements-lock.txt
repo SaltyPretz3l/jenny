@@ -10,7 +10,7 @@
 # so one file serves the Windows, macOS, and Linux release legs. setuptools is
 # deliberately not emitted here: the hashed build lock installs it first.
 #
-# constraints.txt holds `filelock==3.25.0`: filelock >= 3.25.1 deletes the lock file on release
+# constraints.txt holds `filelock==4.2.1`: filelock >= 3.25.1 deletes the lock file on release
 # on Windows, which makes sidecar/ai/tools/workspace_store.py file_lock() fail its identity
 # revalidation (CMP-TOOL-0006) when two writers contend. Lift the hold only with that fix.
 #
@@ -49,7 +49,7 @@ et-xmlfile==2.0.0 \
     --hash=sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa \
     --hash=sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54
     # via openpyxl
-filelock==3.25.0 \
+filelock==4.2.1 \
     --hash=sha256:5ccf8069f7948f494968fc0713c10e5c182a9c9d9eef3a636307a20c2490f047 \
     --hash=sha256:8f00faf3abf9dc730a1ffe9c354ae5c04e079ab7d3a683b7c32da5dd05f26af3
     # via
